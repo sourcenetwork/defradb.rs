@@ -349,3 +349,32 @@ fn alice_or_bob<'node>(
         alice
     }
 }
+
+/// A delete of a path that isn't there creates nothing, so a later set of an
+/// empty map in the same write still lands: `{}` becomes `{"a": {}}`.
+#[test]
+fn a_delete_through_a_missing_path_keeps_a_later_set_in_the_update() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let doc_id = node.create(serde_json::json!({})).await;
+        let op = |path: &[&str], edit| JsonOp {
+            path: path.iter().map(|key| (*key).to_owned()).collect(),
+            edit,
+        };
+        let mut doc = node.edit(&doc_id);
+        doc.edit(
+            "meta",
+            FieldOp::Paths(vec![
+                op(&["a", "b"], JsonEdit::Delete),
+                op(&["a"], JsonEdit::Set(serde_json::json!({}))),
+            ]),
+        )
+        .unwrap();
+        node.update(doc).await;
+        assert_eq!(
+            node.meta().await,
+            NormalValue::Json(serde_json::json!({"a": {}}))
+        );
+    })
+    .unwrap()
+}

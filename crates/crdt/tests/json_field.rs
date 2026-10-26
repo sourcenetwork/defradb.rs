@@ -280,6 +280,10 @@ fn a_delete_through_a_missing_path_leaves_a_later_set_in_the_write() {
         defra_core::json_crdt::decode_ops(&data).unwrap(),
         vec![op(&["a"], JsonEdit::Map)]
     );
+    assert_eq!(
+        json_crdt().apply(&field(), Some(&empty), &write).unwrap(),
+        NormalValue::Json(json!({"a": {}}))
+    );
 }
 
 fn json_edit() -> impl Strategy<Value = JsonOp> {

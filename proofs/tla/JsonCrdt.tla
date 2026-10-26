@@ -89,7 +89,13 @@
 \*   ApplyOps      json.rs apply_ops: what the writer reads its ops as, in
 \*                 order; ReadAs names the two REDs the property test
 \*                 a_path_edit_write_lands_as_it_reads found
-\*                 (crates/crdt/tests/json_field.rs)
+\*                 (crates/crdt/tests/json_field.rs);
+\*                 "deleteMakesParent" is the bug that lost a set of {} after
+\*                 a delete below it in one write, pinned by
+\*                 a_delete_through_a_missing_path_leaves_a_later_set_in_the_write
+\*                 (json_field.rs) and, through a database update and read,
+\*                 a_delete_through_a_missing_path_keeps_a_later_set_in_the_update
+\*                 (crates/db/tests/merge/json_merge.rs)
 \*   Invariants    INV_DisjointKept, INV_SamePathLww, INV_UpdateWins,
 \*                 INV_TypeClash and INV_DeleteCreatesNothing speak of a
 \*                 block's one path and are checked on single-path runs; the
