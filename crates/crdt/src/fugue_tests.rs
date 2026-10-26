@@ -326,3 +326,11 @@ fn a_long_history_replays_to_its_edits() {
     });
     assert!(replay(&blocks).unwrap().starts_with('>'));
 }
+
+/// Asking for a visible node the chunks don't hold is an error, not a panic.
+#[test]
+fn a_visible_node_past_the_end_is_an_error() {
+    let order = Order::new(vec![1, 2, 3], |node| node != 2);
+    assert!(order.nth_visible(1, |node| node != 2).is_ok());
+    assert!(order.nth_visible(2, |node| node != 2).is_err());
+}

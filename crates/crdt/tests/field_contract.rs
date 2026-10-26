@@ -276,8 +276,8 @@ fn lww_block_state_refuses_bytes_that_are_not_one_cbor_value() {
     assert!(lww.block_state(&field, 1, &[]).is_ok());
 }
 
-/// Two edits of one Text field in one write stack, as #2135's insert_text
-/// calls did: the second counts its positions in the text the first left.
+/// Two `Document::edit` calls with `FieldOp::Edit` on one Text field stack
+/// their edits in order: the second counts its positions in the text the first left.
 #[test]
 fn text_edits_in_one_write_stack_in_order() {
     let text = field(FieldKind::string(), CType::Text);
@@ -294,7 +294,6 @@ fn text_edits_in_one_write_stack_in_order() {
     doc.edit("value", FieldOp::Edit(vec![insert(11, "!")]))
         .unwrap();
     let pending = doc.pending_op("value").unwrap();
-    // #2135's insert_text(5, " world") then insert_text(11, "!") pushed both.
     assert_eq!(
         pending,
         &FieldOp::Edit(vec![insert(5, " world"), insert(11, "!")])

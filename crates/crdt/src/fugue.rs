@@ -163,9 +163,9 @@ impl Order {
         }
     }
 
-    /// The spot of visible node number `k`, counting from 0; `k` is below
-    /// [`Order::visible`].
-    fn nth_visible<F>(&self, mut k: usize, alive: F) -> Spot
+    /// The spot of visible node number `k`, counting from 0. A `k` at or past
+    /// [`Order::visible`] means the chunk counts are wrong, and is an error.
+    fn nth_visible<F>(&self, mut k: usize, alive: F) -> Result<Spot>
     where
         F: Fn(usize) -> bool,
     {
@@ -177,13 +177,15 @@ impl Order {
             for (index, &node) in held.nodes.iter().enumerate() {
                 if alive(node) {
                     if k == 0 {
-                        return Spot { chunk, index };
+                        return Ok(Spot { chunk, index });
                     }
                     k -= 1;
                 }
             }
         }
-        unreachable!("visible node {k} past the end of the text")
+        Err(Error::MergeError(format!(
+            "visible node {k} past the end of the text"
+        )))
     }
 
     /// Put the new, visible `node` at `spot`, and return where it sits.
@@ -328,7 +330,13 @@ impl<'history> Tree<'history> {
 
     /// Apply one op of the block at topological position `block`, which sees
     /// the blocks in `ancestry`. `next_offset` numbers the block's characters.
-    fn apply(&mut self, op: &TextOp, block: usize, ancestry: &Ancestry, next_offset: &mut u32) {
+    fn apply(
+        &mut self,
+        op: &TextOp,
+        block: usize,
+        ancestry: &Ancestry,
+        next_offset: &mut u32,
+    ) -> Result<()> {
         let version = Version { ancestry, block };
         // A block that follows every block before it sees every node, so the
         // kept order is its version's order.
@@ -348,7 +356,7 @@ impl<'history> Tree<'history> {
                     let (origin, mut at) = match p.checked_sub(1) {
                         None => (ROOT, Spot::default()),
                         Some(k) => {
-                            let spot = order.nth_visible(k, |node| !self.dead(node, &version));
+                            let spot = order.nth_visible(k, |node| !self.dead(node, &version))?;
                             (order.at(spot), order.after(spot))
                         }
                     };
@@ -378,7 +386,7 @@ impl<'history> Tree<'history> {
                 let start = clamp(*pos, order.visible);
                 let end = clamp(pos.saturating_add(*len), order.visible);
                 if start < end {
-                    let mut spot = order.nth_visible(start, |node| !self.dead(node, &version));
+                    let mut spot = order.nth_visible(start, |node| !self.dead(node, &version))?;
                     let mut left = end - start;
                     while left > 0 {
                         let node = order.at(spot);
@@ -395,6 +403,7 @@ impl<'history> Tree<'history> {
         if linear {
             self.order = Some(order);
         }
+        Ok(())
     }
 
     fn node(&self, block: usize, next_offset: &mut u32, ch: char) -> Node {
@@ -470,7 +479,7 @@ fn characters(blocks: &[TextBlock]) -> Result<Vec<Character<'_>>> {
         let before = ancestry_of(&parents, &ancestry, step);
         let mut next_offset = 0;
         for op in &block.ops {
-            tree.apply(op, step, &before, &mut next_offset);
+            tree.apply(op, step, &before, &mut next_offset)?;
         }
         ancestry.push(before);
     }
