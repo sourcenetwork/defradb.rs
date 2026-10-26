@@ -248,7 +248,7 @@ where
         drop(snapshot);
         if current.is_some_and(|current| current.id == id && current.pending) {
             let remaining = deadline.saturating_duration_since(n0_future::time::Instant::now());
-            n0_future::time::timeout(remaining, watch.wait())
+            workers::timeout(remaining, watch.wait())
                 .await
                 .map_err(|_| P2PError::transport("replicator replay is still active; try again"))?;
         }

@@ -167,6 +167,28 @@ async fn waiting_has_a_deadline_and_does_not_clear_the_active_install() {
     assert!(next.replay.is_empty());
 }
 
+/// A database worker has no tokio runtime, so the wait for an active replay
+/// must run on the worker clock.
+#[test]
+fn waiting_for_an_active_replay_needs_no_tokio_runtime() {
+    workers::block_on(async {
+        let h = Harness::default();
+        let request = request("peer", &["Note"]);
+        h.prepare(&request).await.unwrap();
+        let error = prepare_with_timeout(
+            &*h.store,
+            retry(),
+            &h.waiters,
+            &request,
+            Duration::from_millis(5),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("still active"));
+    })
+    .unwrap();
+}
+
 #[tokio::test]
 async fn abandoned_replay_reports_interruption_once_and_forces_a_new_replay() {
     let h = Harness::default();
