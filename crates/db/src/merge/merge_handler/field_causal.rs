@@ -246,6 +246,13 @@ where
                 if next == *cid {
                     return Ok(None);
                 }
+                // Only a block merged on this node while its parents held every head
+                // can be critical, and that merge ran `check_version` on it, so
+                // `merge_from` can trust the length it records.
+                debug_assert!(
+                    self.is_critical(tips, &next).await?,
+                    "the walk picked {next}, which is not critical under {tips:?}"
+                );
                 let critical = self.block_data(&waiting[&next], metadata).await?;
                 return Ok(Some((critical, after)));
             }
@@ -347,3 +354,66 @@ where
             .await
     }
 }
+
+impl<S, B> DbMergeHandler<S, B>
+where
+    S: Store,
+    B: blockstore::Blockstore,
+{
+    /// Whether `critical` is critical under `tips`, checked apart from the
+    /// walk in [`critical_block`](Self::critical_block).
+    async fn is_critical(
+        &self,
+        tips: &[Cid],
+        critical: &Cid,
+    ) -> std::result::Result<bool, MergeError> {
+        let below = self.history_parents(std::slice::from_ref(critical)).await?;
+        let all = self.history_parents(tips).await?;
+        Ok(is_critical(&all, &below, critical))
+    }
+
+    /// Every block under `starts`, `starts` included, with its parents.
+    async fn history_parents(
+        &self,
+        starts: &[Cid],
+    ) -> std::result::Result<RapidHashMap<Cid, Vec<Cid>>, MergeError> {
+        let mut parents: RapidHashMap<Cid, Vec<Cid>> = RapidHashMap::default();
+        let mut stack = starts.to_vec();
+        while let Some(next) = stack.pop() {
+            if parents.contains_key(&next) {
+                continue;
+            }
+            let heads = self.stored_block(&next).await?.heads.unwrap_or_default();
+            stack.extend(heads.iter().copied());
+            parents.insert(next, heads);
+        }
+        Ok(parents)
+    }
+}
+
+/// Whether every block of `all` (each with its parents) comes before or after
+/// `critical`. `below` holds `critical` and every block before it. Every
+/// other block has to sit above it: it has parents, and each is `critical` or
+/// another block outside `below`, so every path down from it reaches
+/// `critical`.
+fn is_critical<K>(
+    all: &RapidHashMap<K, Vec<K>>,
+    below: &RapidHashMap<K, Vec<K>>,
+    critical: &K,
+) -> bool
+where
+    K: Eq + std::hash::Hash,
+{
+    all.iter()
+        .filter(|(id, _)| !below.contains_key(*id))
+        .all(|(_, parents)| {
+            !parents.is_empty()
+                && parents
+                    .iter()
+                    .all(|parent| parent == critical || !below.contains_key(parent))
+        })
+}
+
+#[cfg(test)]
+#[path = "field_causal_tests.rs"]
+mod tests;

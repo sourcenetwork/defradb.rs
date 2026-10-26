@@ -104,7 +104,9 @@
 \*   Critical       crates/db/src/merge/merge_handler/field_causal.rs
 \*                  critical_block: the walk down from the heads and the new
 \*                  block that stops when one block is left and no root was
-\*                  passed
+\*                  passed; in debug builds, is_critical checks the block it
+\*                  stops at the way Critical defines it: every other block
+\*                  is before it or after it
 \*   ReplayFrom     "critical" is critical_block; "ancestor" exists only for
 \*                  the RED configuration
 \*   PlaceRule      "fugue" is Tree::apply; "next" exists only for the RED
