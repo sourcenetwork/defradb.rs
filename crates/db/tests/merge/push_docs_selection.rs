@@ -38,6 +38,7 @@ fn selected_document_transfers_match_executed_model() {
             owner,
             expected,
             retained.parse().unwrap(),
+            false,
         ))
         .unwrap();
         count += 1;
@@ -52,6 +53,7 @@ async fn exercise(
     owner: &str,
     expected: &str,
     retained: bool,
+    remove_on_reply: bool,
 ) {
     let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store).unwrap());
@@ -95,8 +97,11 @@ async fn exercise(
             .unwrap();
     }
     let (requests, received) = regolith::sync::bounded(16);
-    let transport =
+    let mut transport =
         ConnectedPeerTransport::new("sender", peer.as_str()).with_replies(acknowledged, requests);
+    if remove_on_reply {
+        transport = transport.removing_subscription_on_reply(Arc::new(db.peerstore()));
+    }
     let filters = p2p::ReplicationFilters::new();
     let authority = p2p::sync::HeadHintCarAuthority::default();
     let result = if explicit {
@@ -138,7 +143,7 @@ async fn exercise(
     let retries = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
     assert_eq!(
         peerstore.has_replicator(peer.as_str()).await.unwrap(),
-        present
+        present && !remove_on_reply
     );
     if owner != "replicator" {
         assert!(
@@ -175,4 +180,32 @@ async fn exercise(
         }
         _ => panic!("unknown model outcome: {expected}"),
     }
+}
+
+#[test]
+fn selected_delivery_records_unchanged_acknowledged_heads() {
+    workers::block_on(exercise(
+        true,
+        true,
+        true,
+        "selected",
+        "acknowledged",
+        true,
+        false,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn selected_delivery_survives_subscription_removal_without_retaining_state() {
+    workers::block_on(exercise(
+        true,
+        true,
+        true,
+        "selected",
+        "acknowledged",
+        false,
+        true,
+    ))
+    .unwrap();
 }

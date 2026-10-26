@@ -437,6 +437,7 @@ pub(super) struct ConnectedPeerTransport {
     local: PeerId,
     remote: PeerId,
     replies: Option<(bool, regolith::sync::BoundedSender<p2p::PushLogRequest>)>,
+    remove_on_reply: Option<Arc<storage::stores::Peerstore<storage::RegolithStore>>>,
 }
 
 impl ConnectedPeerTransport {
@@ -445,6 +446,7 @@ impl ConnectedPeerTransport {
             local: PeerId::new(local.to_string()),
             remote: PeerId::new(remote.to_string()),
             replies: None,
+            remove_on_reply: None,
         }
     }
 
@@ -454,6 +456,14 @@ impl ConnectedPeerTransport {
         requests: regolith::sync::BoundedSender<p2p::PushLogRequest>,
     ) -> Self {
         self.replies = Some((acknowledged, requests));
+        self
+    }
+
+    pub(super) fn removing_subscription_on_reply(
+        mut self,
+        store: Arc<storage::stores::Peerstore<storage::RegolithStore>>,
+    ) -> Self {
+        self.remove_on_reply = Some(store);
         self
     }
 }
@@ -549,6 +559,9 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         requests
             .try_send(req)
             .expect("bounded test request capture");
+        if let Some(store) = &self.remove_on_reply {
+            store.delete_replicator(self.remote.as_str()).await.unwrap();
+        }
         Ok(if *acknowledged {
             PushLogReply::success("selected-transfer")
         } else {
