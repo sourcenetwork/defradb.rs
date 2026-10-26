@@ -82,10 +82,14 @@ impl Fixture {
             .find_collection_by_id("col-users")
             .unwrap()
             .unwrap();
-        let genesis =
-            db::block::builder::build_blocks_from_document(&doc, collection.schema(), &blockstore)
-                .await
-                .unwrap();
+        let genesis = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
+            &doc,
+            collection.schema(),
+            &blockstore,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             handler
                 .handle_block(

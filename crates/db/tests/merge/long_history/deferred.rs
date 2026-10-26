@@ -67,6 +67,7 @@ fn committed_history_frames_release_deferred_composites_before_cleanup() {
             .set("name", NormalValue::String("waiting".into()))
             .unwrap();
         let blocks = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &document,
             collection.schema(),
             handler.blockstore(),

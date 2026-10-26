@@ -17,7 +17,11 @@ impl RetryAttemptFn for Attempt {
             let txn = self
                 .handler
                 .db
-                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(io, 0));
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.handler.db.crdts().clone(),
+                ));
             let store = txn
                 .systemstore()
                 .map_err(|error| corekv::RetryAttemptError::Abort(Box::new(error)))?;

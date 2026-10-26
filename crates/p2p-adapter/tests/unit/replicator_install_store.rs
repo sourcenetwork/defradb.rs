@@ -360,6 +360,10 @@ impl storage::corekv::private::Sealed for ReorderedAllocation {}
 
 #[async_trait::async_trait]
 impl Store for ReorderedAllocation {
+    fn crdts(&self) -> &storage::Crdts {
+        self.harness.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> corekv::Result<std::ops::Range<u64>> {
         use std::sync::atomic::Ordering;
         let reserved = self.harness.store.allocate(key, count).await?;

@@ -58,6 +58,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
             .unwrap()
             .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &initial,
             collection.schema(),
             &blockstore,
