@@ -52,7 +52,9 @@ pub use params::{
     DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_PLAN_PENDING,
     MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
 };
-pub use pending_cache::{Copy, PendingCache, Segment, Tag, MAX_PENDING_CACHE_BYTES};
+pub use pending_cache::{
+    Copy, PendingCache, Segment, Tag, ENTRY_OVERHEAD, MAX_PENDING_CACHE_BYTES,
+};
 
 use std::sync::Arc;
 

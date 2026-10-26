@@ -38,7 +38,7 @@ per-search laws it rests on, for logs of any length.
 
 Rust anchors: `pending_candidates` and `snapshot_pending`
 (`crates/db/src/index/vector/engine/diskann/graph.rs`), and
-`Copy::for_each_through` and `Segment`
+`Copy::for_each_latest_through` and `Segment`
 (`crates/db/src/index/vector/engine/diskann/pending_cache.rs`).
 -/
 

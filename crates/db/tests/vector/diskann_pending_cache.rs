@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::diskann_streaming::{fresh, merge_due, trained_store, value};
 use db::index::vector::engine::diskann::{
-    codec, CodeCaches, Copy, PendingCache, Segment, Tag, MAX_PENDING_CACHE_BYTES,
+    codec, CodeCaches, Copy, PendingCache, Segment, Tag, ENTRY_OVERHEAD, MAX_PENDING_CACHE_BYTES,
 };
 use db::index::vector::index::VectorIndex;
 use db::index::vector::store::NodeId;
@@ -220,7 +220,7 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     let mut held = Vec::new();
     cache
         .load()
-        .for_each_through(u64::MAX, 1, |id, _| held.push(id));
+        .for_each_latest_through(1, 1, |id, _| held.push(id));
     assert_eq!(held, vec![NodeId(4)]);
 
     let mut big = Segment::default();
@@ -234,7 +234,7 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     assert!(marker.is_oversized(), "past the cap only a marker is kept");
     assert_eq!(marker.tag().unwrap().generation, 3);
     let mut held = 0;
-    marker.for_each_through(u64::MAX, 1, |_, _| held += 1);
+    marker.for_each_latest_through(1, 1, |_, _| held += 1);
     assert_eq!(held, 0, "the marker holds nothing");
 }
 
@@ -247,7 +247,7 @@ fn a_catch_up_past_the_cap_is_refused() {
         position: 1,
     };
     let copy = Copy::loaded(tag, segment);
-    let per_entry = size_of::<u64>() + size_of::<NodeId>() + 8;
+    let per_entry = ENTRY_OVERHEAD + 8;
     let room = ((MAX_PENDING_CACHE_BYTES - per_entry) / per_entry) as u64;
     assert!(copy.can_hold(room, 8));
     assert!(
@@ -376,4 +376,75 @@ fn a_snapshot_behind_the_copy_scores_the_codes_it_can_see() {
         assert_eq!(hits[0].id.0, TARGET);
     })
     .unwrap()
+}
+
+fn visible(copy: &Copy, head: u64) -> Vec<(u64, u8)> {
+    let mut seen = Vec::new();
+    copy.for_each_latest_through(head, 1, |id, code| seen.push((id.0, code[0])));
+    seen
+}
+
+fn segment(entries: &[(u64, u64, u8)]) -> Segment {
+    let mut segment = Segment::default();
+    for (position, id, code) in entries {
+        segment.push(*position, NodeId(*id), &[*code]);
+    }
+    segment
+}
+
+/// A later update marks the entry it supersedes, and an older reader of the
+/// same copy still sees that entry, since the marker is past its head.
+#[test]
+fn a_superseded_marker_respects_the_readers_head() {
+    let tag = Tag {
+        generation: 0,
+        position: 3,
+    };
+    let loaded = Copy::loaded(tag, segment(&[(1, 7, 10), (2, 8, 20), (3, 7, 11)]));
+    assert_eq!(visible(&loaded, 3), vec![(8, 20), (7, 11)]);
+    assert_eq!(visible(&loaded, 2), vec![(7, 10), (8, 20)]);
+
+    let caught_up = loaded.caught_up(5, segment(&[(4, 8, 21), (5, 7, 12)]));
+    assert_eq!(visible(&caught_up, 5), vec![(8, 21), (7, 12)]);
+    assert_eq!(visible(&caught_up, 4), vec![(7, 11), (8, 21)]);
+    assert_eq!(
+        visible(&loaded, 3),
+        vec![(8, 20), (7, 11)],
+        "markers set by a catch-up never hide an entry from a reader behind them"
+    );
+}
+
+/// Two searches catching up from one copy both mark it; whichever copy wins,
+/// every reader sees one entry per vector.
+#[test]
+fn racing_catch_ups_agree_on_markers() {
+    let tag = Tag {
+        generation: 0,
+        position: 1,
+    };
+    let loaded = Copy::loaded(tag, segment(&[(1, 7, 10)]));
+    let short = loaded.caught_up(2, segment(&[(2, 7, 11)]));
+    let long = loaded.caught_up(3, segment(&[(2, 7, 11), (3, 7, 12)]));
+    assert_eq!(visible(&short, 2), vec![(7, 11)]);
+    assert_eq!(visible(&long, 3), vec![(7, 12)]);
+    assert_eq!(visible(&long, 2), vec![(7, 11)]);
+    assert_eq!(visible(&loaded, 1), vec![(7, 10)]);
+}
+
+/// Past the segment cap the copy folds into one run and keeps its markers.
+#[test]
+fn a_folded_copy_keeps_one_entry_per_vector() {
+    let tag = Tag {
+        generation: 0,
+        position: 1,
+    };
+    let mut copy = Copy::loaded(tag, segment(&[(1, 7, 0)]));
+    for position in 2..=40u64 {
+        copy = copy.caught_up(
+            position,
+            segment(&[(position, 7 + position % 2, position as u8)]),
+        );
+    }
+    assert_eq!(visible(&copy, 40), vec![(8, 39), (7, 40)]);
+    assert_eq!(visible(&copy, 10), vec![(8, 9), (7, 10)]);
 }

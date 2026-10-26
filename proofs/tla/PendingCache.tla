@@ -57,6 +57,16 @@
 \* one entry per vector, the newest: its own appends are newer than any log
 \* entry, and the last of them is the newest.
 \*
+\* Keeping one entry per vector must not cost a map on every search, so the
+\* cache marks each entry with the position of its vector's next entry: its
+\* superseded marker. A search skips an entry only when that next entry is
+\* at or before its own head; a marker from its future changes nothing for
+\* it. Markers sit on entries copies share, and say only what the log says,
+\* so any search may set them, even one whose copy is never published. A
+\* copy stores no positions: entries run gap-free from the first, so a read
+\* with an entry missing must keep no copy, or every later position in it
+\* would be wrong.
+\*
 \* A tiny example. Vector a is inserted (log position 1) and a search loads
 \* the cache at head 1: {a}. A merge links a and truncates position 1: the
 \* generation is now 1. A search whose snapshot is still at generation 0 has
@@ -88,7 +98,12 @@
 \*   MC_PendingCache_Red_EveryVersion: a search scores every entry of an
 \*     updated vector, so an obsolete code competes with the current one;
 \*   MC_PendingCache_Red_FutureVersion: a search uses every entry of a cache
-\*     that is ahead of it, so a code from its future is the newest it sees.
+\*     that is ahead of it, so a code from its future is the newest it sees;
+\*   MC_PendingCache_Red_HeadBlindMarks: a search skips an entry for any
+\*     marker, even one set by an update from its future, and so loses the
+\*     entry that is newest for it;
+\*   MC_PendingCache_Red_NoGapCheck: a copy loaded from a read with an entry
+\*     missing numbers the rest one short, and searches trust it.
 \*
 \* The log is regolith's commit-ordered append, the truncate is
 \* sourcenetwork/regolith#300, and the own appends are
@@ -105,9 +120,14 @@
 \*   Pending      graph.rs scan_pending: every vector the live entries insert
 \*   cache        pending_cache.rs PendingCache, its published Copy and Tag;
 \*                entries are Segment's positions and ids, read through a
-\*                head by Copy::for_each_through
-\*   Latest       graph.rs pending_candidates: the map from each vector to
-\*                the distance of its last entry visited
+\*                head by Copy::for_each_latest_through
+\*   Latest       graph.rs pending_candidates: on a scan, the map from each
+\*                vector to the distance of its last entry visited
+\*   marks        pending_cache.rs Segment::next (set by Segment::push within
+\*                a segment and Segment::supersede across segments, from
+\*                Copy::caught_up), read by Copy::for_each_latest_through
+\*   fullLoad     scan_pending into a Segment; Segment::push refusing a gap
+\*                (broken) is GapCheck
 \*   Insert       mod.rs insert: the staging write and the log append
 \*   Delete       mod.rs delete: the staging delete and the codec::DELETED
 \*                tombstone; nothing goes to the log
@@ -133,16 +153,20 @@ EXTENDS Naturals, Integers, FiniteSets, Sequences, TLC
 \* transaction may make. The rest switch each guard on (TRUE) or off.
 CONSTANTS Nodes, Readers, MaxCommits, MaxOwn,
           GenerationCheck, OwnAppendsRead, TruncateThroughLinked,
-          LatestOnly, HeadCut
+          LatestOnly, HeadCut, HeadAwareMarks, GapCheck
 
 \* db: one record per commit, the newest last; a snapshot is an index into it.
 \* cache: the published PendingCache; gen = -1 means nothing is loaded.
 \* rs: each search's progress, snapshot, its own appends, the copy of the
 \*     cache it loaded, whether its candidates held everything it needed,
 \*     and whether it scored each vector by its newest entry.
-VARIABLES db, cache, rs
+\* marks: every superseded marker any search has set, as <<p, q>>: the
+\*     entry at position p is followed by its vector's next entry at q. A
+\*     marker sits on an entry that copies share, so it is one set for all
+\*     of them, including what a search whose copy lost the publish set.
+VARIABLES db, cache, rs, marks
 \* Every variable, for the steps that leave some unchanged.
-vars == <<db, cache, rs>>
+vars == <<db, cache, rs, marks>>
 
 \* The cache before anything was loaded. Its entries are <<position, id>>
 \* pairs, so two versions of one vector are two entries.
@@ -172,6 +196,16 @@ PendingEntries(s) == Entries(s, s.trunc, s.head)
 \* What is pending at snapshot s: every vector its live entries insert.
 Pending(s) == Ids(PendingEntries(s))
 
+\* The markers a run of entries carries: each entry, paired with the
+\* position of its vector's next entry in the run, when there is one.
+NextMarks(es) ==
+  {<<e[1], f[1]>> : e \in es, f \in es}
+    \cap {<<p, q>> \in Nat \X Nat : \E e, f \in es :
+             \* e and f are the same vector's entries at p and q, p first
+             /\ e[1] = p /\ f[1] = q /\ e[2] = f[2] /\ p < q
+             \* and no entry of that vector sits between them.
+             /\ ~\E g \in es : g[2] = e[2] /\ p < g[1] /\ g[1] < q}
+
 \* Of a set of entries, each vector's newest: no entry of the same vector has
 \* a later position.
 Latest(es) == {e \in es : \A f \in es : f[2] = e[2] => f[1] <= e[1]}
@@ -186,7 +220,8 @@ Idle == [phase |-> "idle", snap |-> 0, own |-> <<>>, seen |-> NoCache,
          ok |-> TRUE, latest |-> TRUE]
 
 \* At the start: no commit yet, no cache, every search idle.
-Init == /\ db = <<Genesis>>
+Init == /\ marks = {}
+        /\ db = <<Genesis>>
         /\ cache = NoCache
         /\ rs = [r \in Readers |-> Idle]
 
@@ -199,14 +234,14 @@ Insert(n) == /\ CanCommit
              /\ db' = Append(db, [Last EXCEPT !.head = @ + 1,
                                               !.entry = Append(@, n),
                                               !.live = @ \cup {n}])
-             /\ UNCHANGED <<cache, rs>>
+             /\ UNCHANGED <<cache, rs, marks>>
 
 \* A delete (mod.rs delete): the vector is no longer live. Nothing goes to
 \* the log, and a linked vector stays in the graph as a tombstone.
 Delete(n) == /\ CanCommit
              /\ n \in Last.live
              /\ db' = Append(db, [Last EXCEPT !.live = @ \ {n}])
-             /\ UNCHANGED <<cache, rs>>
+             /\ UNCHANGED <<cache, rs, marks>>
 
 \* A merge (merge.rs merge_plan, then merge): reads the log up to a position
 \* c it picks, links the live vectors those entries insert, bumps the
@@ -220,20 +255,20 @@ Merge == /\ CanCommit
                                                !.gen = @ + 1,
                                                !.trunc = IF TruncateThroughLinked
                                                          THEN c ELSE Last.head])
-         /\ UNCHANGED <<cache, rs>>
+         /\ UNCHANGED <<cache, rs, marks>>
 
 \* A search's transaction begins: it takes the newest snapshot. It may run
 \* other statements for a while before it searches.
 Begin(r) == /\ rs[r].phase = "idle"
             /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "snap", !.snap = Len(db)]]
-            /\ UNCHANGED <<db, cache>>
+            /\ UNCHANGED <<db, cache, marks>>
 
 \* The search starts (graph.rs search_graph) and loads the cache's current
 \* value, a copy no one else changes. The cache may be newer than the
 \* snapshot by now.
 Load(r) == /\ rs[r].phase = "snap"
            /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "loaded", !.seen = cache]]
-           /\ UNCHANGED <<db, cache>>
+           /\ UNCHANGED <<db, cache, marks>>
 
 \* The search's own transaction inserts or updates a vector before it
 \* searches. Nothing is committed, so it has no log position; only this
@@ -241,7 +276,7 @@ Load(r) == /\ rs[r].phase = "snap"
 OwnWrite(r, n) == /\ rs[r].phase = "snap"
                   /\ Len(rs[r].own) < MaxOwn
                   /\ rs' = [rs EXCEPT ![r].own = Append(@, n)]
-                  /\ UNCHANGED <<db, cache>>
+                  /\ UNCHANGED <<db, cache, marks>>
 
 \* Whether `next` is newer than the published cache, so a publish of it may
 \* replace it: a newer generation, or the same one caught up further.
@@ -267,14 +302,52 @@ Search(r) ==
       \* A cache's entries up to the search's head; the FutureVersion bug
       \* keeps them all.
       upToHead(es) == IF HeadCut THEN {e \in es : e[1] <= st.head} ELSE es
-      \* Ends the search with log entries `got` plus its own appends, keeping
-      \* each vector's newest; the EveryVersion bug keeps every entry.
+      \* Ends the search with `got`, read from a scan of the log, plus its own
+      \* appends, keeping each vector's newest (graph.rs pending_candidates'
+      \* map); the EveryVersion bug keeps every entry.
       done(got) ==
         LET all == got \cup own
             scored == IF LatestOnly THEN Latest(all) ELSE all
         IN rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done",
                                               !.ok = needed \subseteq Ids(all),
                                               !.latest = (scored = wanted)]]
+      \* Whether markers `ms` say a newer entry of e's vector is in reach: one
+      \* at or before the search's head. The HeadBlindMarks bug skips e for
+      \* any marker, even one from the search's future; the EveryVersion bug
+      \* reads no marker at all.
+      superseded(e, ms) ==
+        /\ LatestOnly
+        /\ \E mk \in ms : mk[1] = e[1] /\ (~HeadAwareMarks \/ mk[2] <= st.head)
+      \* Ends the search with a copy's entries `es`, read through its head by
+      \* Copy::for_each_latest_through: no map, an entry is skipped when its
+      \* marker is in reach. A vector its own transaction appended is ranked
+      \* by its newest own append instead.
+      doneCopy(es, ms) ==
+        LET visited == {e \in upToHead(es) : ~superseded(e, ms)}
+            mineIds == Ids(own)
+            scored == {e \in visited : e[2] \notin mineIds}
+                        \cup (IF LatestOnly THEN Latest(own) ELSE own)
+        IN rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done",
+                                              !.ok = needed \subseteq Ids(visited \cup own),
+                                              !.latest = (scored = wanted)]]
+      \* A full load (Copy::loaded from scan_pending's segment): the search
+      \* scores what the scan read, and the copy is published with the
+      \* markers its entries carry. The scan may also come back with an
+      \* entry missing; Segment::push sees the gap and keeps no copy. The
+      \* NoGapCheck bug numbers the entries after the gap one short and
+      \* publishes them.
+      fullLoad ==
+        LET es == PendingEntries(st)
+            loaded == [gen |-> st.gen, pos |-> st.head, entries |-> es]
+        IN /\ done(es)
+           /\ \/ Publish(loaded) /\ marks' = marks \cup NextMarks(es)
+              \/ \E gap \in (st.trunc + 1)..st.head :
+                   LET shifted == {<<IF e[1] > gap THEN e[1] - 1 ELSE e[1], e[2]>> :
+                                     e \in es \ {<<gap, st.entry[gap]>>}}
+                   IN IF GapCheck
+                      THEN UNCHANGED <<cache, marks>>
+                      ELSE /\ Publish([loaded EXCEPT !.entries = shifted])
+                           /\ marks' = marks \cup NextMarks(shifted)
       \* The cache belongs to this search's generation; the NoGeneration bug
       \* accepts any loaded cache.
       sameGen == IF GenerationCheck THEN seen.gen = st.gen ELSE seen.gen >= 0
@@ -284,22 +357,23 @@ Search(r) ==
   IN /\ rs[r].phase = "loaded"
      \* The rules are tried in order, as the code's if-else chain tries them.
      /\ IF sameGen /\ seen.pos >= st.head
-        \* Rule 1, nothing to catch up on.
-        THEN done(upToHead(seen.entries)) /\ UNCHANGED cache
+        \* Rule 1, nothing to catch up on: the copy as it is, with every
+        \* marker set so far.
+        THEN doneCopy(seen.entries, marks) /\ UNCHANGED <<cache, marks>>
         ELSE IF sameGen
-        \* Rule 1, caught up through the search's head, then published; or,
-        \* when the gap is past the cap or an entry is gone, a full load from
-        \* the log, then published. TLC tries both, since either may happen.
+        \* Rule 1, caught up through the search's head (Copy::caught_up marks
+        \* the entries `added` supersedes before anything reads them), then
+        \* published; or, when the gap is past the cap or an entry is gone, a
+        \* full load from the log. TLC tries both, since either may happen.
         THEN \/ LET next == [seen EXCEPT !.pos = st.head, !.entries = @ \cup added]
-                IN done(upToHead(next.entries)) /\ Publish(next)
-             \/ done(PendingEntries(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
-                                                     entries |-> PendingEntries(st)])
+                    ms == marks \cup NextMarks(next.entries)
+                IN doneCopy(next.entries, ms) /\ Publish(next) /\ marks' = ms
+             \/ fullLoad
         ELSE IF seen.gen < st.gen
-        \* Rule 2: a full load from the log, then published.
-        THEN done(PendingEntries(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
-                                                  entries |-> PendingEntries(st)])
+        \* Rule 2: a full load from the log.
+        THEN fullLoad
         \* Rule 3: the cache is newer than the search.
-        ELSE done(PendingEntries(st)) /\ UNCHANGED cache
+        ELSE done(PendingEntries(st)) /\ UNCHANGED <<cache, marks>>
      \* A search commits nothing.
      /\ UNCHANGED db
 
@@ -310,7 +384,7 @@ Again(r) == /\ rs[r].phase = "done"
             /\ rs[r].ok
             /\ rs[r].latest
             /\ rs' = [rs EXCEPT ![r] = Idle]
-            /\ UNCHANGED <<db, cache>>
+            /\ UNCHANGED <<db, cache, marks>>
 
 \* A step is any commit, any search step, or a search's own write.
 Next == \/ \E n \in Nodes: Insert(n) \/ Delete(n)
