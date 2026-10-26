@@ -184,7 +184,7 @@ async fn a_malformed_bool_is_rejected() {
 #[tokio::test]
 async fn the_rust_names_body_still_works() {
     let (status, options) =
-        refresh_options_for(Call::post("/api/v0/views/refresh").json(r#"{"Names":["A","B"]}"#))
+        refresh_options_for(Call::post("/api/v0/view/refresh").json(r#"{"Names":["A","B"]}"#))
             .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -260,7 +260,7 @@ async fn a_malformed_view_body_is_gos_400_not_422() {
         r#"{"Query":5,"SDL":"s"}"#,
         r#"{"Query":"q","SDL":"s","Transform":"a","TransformCID":"b"}"#,
     ] {
-        for path in ["/api/v0/view", "/api/v0/views"] {
+        for path in ["/api/v0/view"] {
             let (status, _) = Call::post(path).json(body).send().await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{path} with {body}");
         }

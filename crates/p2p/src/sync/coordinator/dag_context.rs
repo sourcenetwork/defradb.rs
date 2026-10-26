@@ -21,7 +21,7 @@ pub(crate) fn block_context_from_data(block_data: &[u8]) -> BlockContext {
     };
 
     BlockContext {
-        collection_id: block.delta.schema_version_id().map(ToString::to_string),
+        collection_id: block.delta.collection_version_id().map(ToString::to_string),
     }
 }
 

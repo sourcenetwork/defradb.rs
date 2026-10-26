@@ -418,7 +418,7 @@ fn sorted(mut cids: Vec<Cid>) -> Vec<Cid> {
 async fn stored_block(db: &db::DB<RegolithStore>, seed: &str, priority: u64) -> Cid {
     let bytes = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: seed.to_string(),
+            collection_version_id: seed.to_string(),
             priority,
             status: 1,
         }),

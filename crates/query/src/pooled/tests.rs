@@ -95,7 +95,7 @@ impl QueryExecutor for Recorder {
         Ok(())
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
@@ -255,7 +255,7 @@ impl QueryExecutor for Gated {
         Ok(())
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

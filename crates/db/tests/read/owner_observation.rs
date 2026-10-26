@@ -135,7 +135,7 @@ fn owner_observation_rejects_a_claim_without_a_bound_transaction_view() {
             1,
             "the real transaction fetcher must consult the claiming provider"
         );
-        runner.rollback_txn(&handle).await.unwrap();
+        runner.discard_txn(&handle).await.unwrap();
     })
     .unwrap();
 }

@@ -17,7 +17,7 @@
 //! every value and only this one matches Go.
 
 use super::super::utils::SEPARATOR;
-use crate::corekv::Key;
+use crate::corekv::{AppendLog, Key};
 use crate::encoding::encode_uvarint_ascending;
 
 /// Marks the meta singleton.
@@ -183,4 +183,17 @@ impl Key for VectorAuxKey<'_> {
             hex::encode(self.key)
         )
     }
+}
+
+/// The commit-ordered log of one build's pending list:
+/// `/vplog/<collShortID>/<indexID>/<epoch>/head` and `.../row/<position>`.
+///
+/// Outside the epoch prefix, because regolith classifies a log by its key's
+/// family and only `append` may write its keys.
+pub fn vector_pending_log(collection_short_id: u32, index_id: u32, epoch: u32) -> AppendLog {
+    let base = format!("/vplog/{collection_short_id}/{index_id}/{epoch}/");
+    AppendLog::new(
+        format!("{base}head").into_bytes(),
+        format!("{base}row/").into_bytes(),
+    )
 }

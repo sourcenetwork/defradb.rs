@@ -67,7 +67,7 @@ fn embedded_upsert_does_not_warn_when_discarding_get_for_update_txn() -> Result<
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let inserted = node
             .execute(

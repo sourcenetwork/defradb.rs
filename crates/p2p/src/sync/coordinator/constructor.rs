@@ -272,6 +272,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 authorizer,
                 classifier,
                 serve_acp,
+                rooted_authorization:
+                    crate::sync::car_authorization::RootedAuthorizationProgress::new(),
                 document_acp: regolith::sync::OnceCell::new(),
                 #[cfg(feature = "kms")]
                 kms_transport: regolith::sync::OnceCell::new(),

@@ -47,7 +47,7 @@ pub struct Document {
     #[serde(skip)]
     collection: Option<CollectionVersion>,
 
-    /// The schema version ID this document was stored with.
+    /// The collection version ID this document was stored with.
     ///
     /// This tracks which collection schema version was active when the document
     /// was created or last migrated. Used by the lens system to determine if
@@ -55,7 +55,7 @@ pub struct Document {
     ///
     /// Stored in the datastore at key `/{collectionShortID}/v/{docID}/v`.
     #[serde(skip)]
-    schema_version_id: Option<String>,
+    collection_version_id: Option<String>,
 
     /// Whether this document has been soft-deleted (marked with DeletedObjectMarker).
     #[serde(skip)]
@@ -95,7 +95,7 @@ impl Document {
             head: None,
             is_dirty: true,
             collection: None,
-            schema_version_id: None,
+            collection_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             write_preparation: None,
@@ -112,7 +112,7 @@ impl Document {
             head: None,
             is_dirty: true,
             collection: Some(collection),
-            schema_version_id: Some(version_id),
+            collection_version_id: Some(version_id),
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             write_preparation: None,
@@ -128,7 +128,7 @@ impl Document {
             head: None,
             is_dirty: true,
             collection: None,
-            schema_version_id: None,
+            collection_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             write_preparation: None,
@@ -203,22 +203,22 @@ impl Document {
         self.collection = Some(collection);
     }
 
-    /// Get the schema version ID this document was stored with.
+    /// Get the collection version ID this document was stored with.
     ///
     /// This is used by the lens migration system to determine if a document
     /// needs to be transformed to match the current collection schema version.
-    pub fn schema_version_id(&self) -> Option<&str> {
-        self.schema_version_id.as_deref()
+    pub fn collection_version_id(&self) -> Option<&str> {
+        self.collection_version_id.as_deref()
     }
 
-    /// Set the schema version ID.
+    /// Set the collection version ID.
     ///
     /// This should be called when:
     /// - Creating a new document (set to current collection version)
     /// - Loading a document from storage (set to stored version)
     /// - After migrating a document (set to target version)
-    pub fn set_schema_version_id(&mut self, version_id: impl Into<String>) {
-        self.schema_version_id = Some(version_id.into());
+    pub fn set_collection_version_id(&mut self, version_id: impl Into<String>) {
+        self.collection_version_id = Some(version_id.into());
     }
 
     /// Check if this document needs migration to the target schema version.
@@ -226,7 +226,7 @@ impl Document {
     /// Returns `true` if the document has a schema version that differs from
     /// the target, indicating lens transforms should be applied.
     pub fn needs_migration(&self, target_version_id: &str) -> bool {
-        match &self.schema_version_id {
+        match &self.collection_version_id {
             Some(version) => version != target_version_id,
             // If no version is set, assume it's already at target (legacy behavior)
             None => false,

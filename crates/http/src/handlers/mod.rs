@@ -28,7 +28,6 @@ pub mod openapi;
 pub mod p2p;
 pub mod schema;
 mod txn_header;
-pub mod txn_ops;
 pub mod utility;
 pub mod views;
 
@@ -42,11 +41,10 @@ pub use graphql::{
 // Re-export REST handlers
 pub use collections::{
     collection_exists, delete_collection_versions, delete_collections_by_names,
-    describe_collection, find_collection_by_id, get_all_collections, get_collection_by_version_id,
-    get_collection_doc_ids, list_collections, patch_collection, set_active, truncate_collection,
-    CollectionDocIdsResponse,
+    describe_collection, get_collection_doc_ids, list_collections, patch_collection, set_active,
+    truncate_collection, CollectionDocIdsResponse,
 };
 pub use documents::{
-    create_document, delete_document, delete_documents_with_filter, get_document, update_document,
+    add_document, delete_document, delete_documents_with_filter, get_document, update_document,
     update_documents_with_filter, DocumentsResult,
 };

@@ -18,22 +18,22 @@ fn arb_scalar_kind() -> impl Strategy<Value = ScalarKind> {
     prop_oneof![
         Just(ScalarKind::None),
         Just(ScalarKind::DocID),
+        Just(ScalarKind::NillableBool),
+        Just(ScalarKind::NillableInt),
+        Just(ScalarKind::NillableFloat64),
+        Just(ScalarKind::NillableFloat32),
+        Just(ScalarKind::NillableDateTime),
+        Just(ScalarKind::NillableString),
+        Just(ScalarKind::NillableBlob),
+        Just(ScalarKind::NillableJson),
         Just(ScalarKind::Bool),
         Just(ScalarKind::Int),
         Just(ScalarKind::Float64),
         Just(ScalarKind::Float32),
-        Just(ScalarKind::DateTime),
         Just(ScalarKind::String),
+        Just(ScalarKind::DateTime),
         Just(ScalarKind::Blob),
         Just(ScalarKind::Json),
-        Just(ScalarKind::NonNillableBool),
-        Just(ScalarKind::NonNillableInt),
-        Just(ScalarKind::NonNillableFloat64),
-        Just(ScalarKind::NonNillableFloat32),
-        Just(ScalarKind::NonNillableString),
-        Just(ScalarKind::NonNillableDateTime),
-        Just(ScalarKind::NonNillableBlob),
-        Just(ScalarKind::NonNillableJson),
     ]
 }
 
@@ -132,7 +132,7 @@ proptest! {
         let is_numeric = kind.is_numeric();
         let expected_numeric = matches!(
             kind.as_scalar().map(ScalarKind::base_kind),
-            Some(ScalarKind::Int | ScalarKind::Float64 | ScalarKind::Float32)
+            Some(ScalarKind::NillableInt | ScalarKind::NillableFloat64 | ScalarKind::NillableFloat32)
         );
         prop_assert_eq!(is_numeric, expected_numeric);
     }

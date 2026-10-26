@@ -48,11 +48,11 @@ pub struct LensListArgs {}
 /// Arguments for lens set command
 #[derive(Args, Debug)]
 pub struct LensSetArgs {
-    /// Source schema version ID
+    /// Source collection version ID
     #[arg(value_name = "SRC")]
     pub src: Option<String>,
 
-    /// Destination schema version ID
+    /// Destination collection version ID
     #[arg(value_name = "DST")]
     pub dst: Option<String>,
 
@@ -111,11 +111,13 @@ impl LensListArgs {
 impl LensSetArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let src = self.src.as_ref().ok_or_else(|| {
-            crate::error::Error::MissingInput("source schema version ID (SRC) is required".into())
+            crate::error::Error::MissingInput(
+                "source collection version ID (SRC) is required".into(),
+            )
         })?;
         let dst = self.dst.as_ref().ok_or_else(|| {
             crate::error::Error::MissingInput(
-                "destination schema version ID (DST) is required".into(),
+                "destination collection version ID (DST) is required".into(),
             )
         })?;
         let config = get_data_from_args(&self.config, &self.file)?;

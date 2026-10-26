@@ -1,10 +1,10 @@
-use crate::one_to_many_common::{add_author, add_book, add_schema};
+use crate::one_to_many_common::{add_author, add_book, add_collection};
 use integration_test::TestCluster;
 
 /// Mirrors Go `TestQueryOneToManyWithParentGroupByOnRelationAndDuplicateRelationSelection`.
 async fn parent_group_by_relation_with_duplicate_selection_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);
@@ -48,7 +48,7 @@ async fn parent_group_by_relation_with_duplicate_selection_test(cluster: TestClu
 /// single-selection request, with one join and an unshared `scanNode` root.
 async fn duplicate_relation_selection_plans_one_join_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let published_group = r#"published(groupBy: [author]) {
         author {
@@ -119,7 +119,7 @@ async fn duplicate_relation_selection_plans_one_join_test(cluster: TestCluster) 
 /// the relation filter needs internally must not leak into the rendered GROUP items.
 async fn group_by_with_parent_relation_filter_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     let voltaire = add_author(&node, "Voltaire", 327, true);
@@ -178,7 +178,7 @@ async fn group_by_with_parent_relation_filter_test(cluster: TestCluster) {
 /// repeat, and must dedup the same way.
 async fn duplicate_selection_via_fragment_spread_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);
@@ -222,7 +222,7 @@ async fn duplicate_selection_via_fragment_spread_test(cluster: TestCluster) {
 /// Same, through an inline fragment.
 async fn duplicate_selection_via_inline_fragment_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);
@@ -254,7 +254,7 @@ async fn duplicate_selection_via_inline_fragment_test(cluster: TestCluster) {
 /// order are the same selection and must dedup.
 async fn duplicate_selection_with_reordered_arguments_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);

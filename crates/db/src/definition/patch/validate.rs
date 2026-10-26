@@ -92,26 +92,22 @@ impl<S: Store> crate::database::DB<S> {
                                 schema::FieldKind::Scalar(k) => match k {
                                     schema::ScalarKind::None => "0".to_string(),
                                     schema::ScalarKind::DocID => "ID".to_string(),
-                                    schema::ScalarKind::Bool => "Boolean".to_string(),
-                                    schema::ScalarKind::NonNillableBool => "Boolean!".to_string(),
-                                    schema::ScalarKind::Int => "Integer".to_string(),
-                                    schema::ScalarKind::NonNillableInt => "Integer!".to_string(),
-                                    schema::ScalarKind::Float64 => "Float".to_string(),
-                                    schema::ScalarKind::NonNillableFloat64 => "Float!".to_string(),
-                                    schema::ScalarKind::Float32 => "Float32".to_string(),
-                                    schema::ScalarKind::NonNillableFloat32 => {
-                                        "Float32!".to_string()
-                                    }
-                                    schema::ScalarKind::DateTime => "DateTime".to_string(),
-                                    schema::ScalarKind::NonNillableDateTime => {
-                                        "DateTime!".to_string()
-                                    }
-                                    schema::ScalarKind::String => "String".to_string(),
-                                    schema::ScalarKind::NonNillableString => "String!".to_string(),
-                                    schema::ScalarKind::Blob => "Blob".to_string(),
-                                    schema::ScalarKind::NonNillableBlob => "Blob!".to_string(),
-                                    schema::ScalarKind::Json => "JSON".to_string(),
-                                    schema::ScalarKind::NonNillableJson => "JSON!".to_string(),
+                                    schema::ScalarKind::NillableBool => "Boolean".to_string(),
+                                    schema::ScalarKind::Bool => "Boolean!".to_string(),
+                                    schema::ScalarKind::NillableInt => "Integer".to_string(),
+                                    schema::ScalarKind::Int => "Integer!".to_string(),
+                                    schema::ScalarKind::NillableFloat64 => "Float".to_string(),
+                                    schema::ScalarKind::Float64 => "Float!".to_string(),
+                                    schema::ScalarKind::NillableFloat32 => "Float32".to_string(),
+                                    schema::ScalarKind::Float32 => "Float32!".to_string(),
+                                    schema::ScalarKind::NillableDateTime => "DateTime".to_string(),
+                                    schema::ScalarKind::DateTime => "DateTime!".to_string(),
+                                    schema::ScalarKind::NillableString => "String".to_string(),
+                                    schema::ScalarKind::String => "String!".to_string(),
+                                    schema::ScalarKind::NillableBlob => "Blob".to_string(),
+                                    schema::ScalarKind::Blob => "Blob!".to_string(),
+                                    schema::ScalarKind::NillableJson => "JSON".to_string(),
+                                    schema::ScalarKind::Json => "JSON!".to_string(),
                                     _ => String::new(),
                                 },
                                 other => format!("{:?}", other),

@@ -5,7 +5,7 @@ use super::*;
 use events::{Message, Update};
 use storage::corekv::OnCommit;
 
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 use query::runner::DocFetcher;
 
 struct UpdateRetryAttempt<S: Store> {
@@ -387,7 +387,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     &headstore,
                     &current_doc,
                     collection.schema(),
-                    DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id),
+                    DocRef::new(collection.resolved_root_id(), doc_short_id),
                     Some(&modified_fields),
                     attempt.context.encryption(),
                     attempt.context.signing(),

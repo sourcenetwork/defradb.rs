@@ -45,7 +45,7 @@ LIVE_CASES = (
     ("writer-update", "strict_replication::native_replicated_update_accepts_granted_writer"),
     ("writer-delete", "strict_replication::native_replicated_delete_accepts_granted_writer"),
 )
-CARGO = ["cargo", "+1.98.0"]
+CARGO = ["cargo", "+1.99.0"]
 BUILD = ["--release", "--frozen", "-j", "2"]
 PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
 
@@ -194,7 +194,7 @@ class Runner:
         self.save()
 
     def runtime_identity(self):
-        return {"version": 1, "source": self.sources["vera"], "rust": "1.98.0",
+        return {"version": 1, "source": self.sources["vera"], "rust": "1.99.0",
                 "profile": "release", "driver_sha256": digest(Path(__file__))}
 
     def restore_runtime(self):

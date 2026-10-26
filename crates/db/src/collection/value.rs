@@ -17,9 +17,9 @@ pub(crate) fn counter_kind(field: &schema::FieldDescription) -> Option<ValueKind
         return None;
     }
     match field.kind.as_scalar().map(ScalarKind::base_kind) {
-        Some(ScalarKind::Int) => Some(ValueKind::Int64),
-        Some(ScalarKind::Float32) => Some(ValueKind::Float32),
-        Some(ScalarKind::Float64) => Some(ValueKind::Float64),
+        Some(ScalarKind::NillableInt) => Some(ValueKind::Int64),
+        Some(ScalarKind::NillableFloat32) => Some(ValueKind::Float32),
+        Some(ScalarKind::NillableFloat64) => Some(ValueKind::Float64),
         _ => None,
     }
 }

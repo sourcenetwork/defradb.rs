@@ -109,6 +109,21 @@ impl Writer for AttemptScopedTxn {
         self.io()?.append_shared(log, entry, once_key).await
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> storage::corekv::Result<()> {
+        self.io()?.truncate_log_shared(log, positions).await
+    }
+
+    async fn appended(
+        &self,
+        log: &storage::corekv::AppendLog,
+    ) -> storage::corekv::Result<Vec<Vec<u8>>> {
+        self.io()?.appended(log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> storage::corekv::Result<()> {
         self.io()?.set_shared(key, value).await
     }

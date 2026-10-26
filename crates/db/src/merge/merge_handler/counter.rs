@@ -34,12 +34,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // with fallback to metadata's collection_id for cross-version sync
         let missing_collection = || {
             MergeError::MissingMetadata(format!(
-                "Collection not found for schema_version_id: {}",
-                payload.schema_version_id
+                "Collection not found for collection_version_id: {}",
+                payload.collection_version_id
             ))
         };
         let collection = self
-            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .block_collection(&payload.collection_version_id, metadata.collection_id)
             .await?
             .ok_or_else(missing_collection)?;
 
@@ -178,12 +178,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Look up the collection to determine field kind and counter type,
         // with fallback to metadata's collection_id for cross-version sync
         let collection = self
-            .block_collection(&payload.schema_version_id, fallback_collection_id)
+            .block_collection(&payload.collection_version_id, fallback_collection_id)
             .await?
             .ok_or_else(|| {
                 MergeError::MissingMetadata(format!(
-                    "Collection not found for schema_version_id: {}",
-                    payload.schema_version_id
+                    "Collection not found for collection_version_id: {}",
+                    payload.collection_version_id
                 ))
             })?;
 
@@ -280,7 +280,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             let context = Context {
                 doc_id: DocId::new(String::from_utf8_lossy(delta.doc_id()).into_owned())
                     .map_err(|e| MergeError::MergeFailed(e.to_string()))?,
-                schema_version: payload.schema_version_id.clone(),
+                schema_version: payload.collection_version_id.clone(),
                 is_create: false,
             };
             counter
@@ -336,9 +336,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             FieldKind::Scalar(scalar_kind) => {
                 use schema::ScalarKind;
                 match scalar_kind.base_kind() {
-                    ScalarKind::Int => Ok(NumericKind::Int64),
-                    ScalarKind::Float32 => Ok(NumericKind::Float32),
-                    ScalarKind::Float64 => Ok(NumericKind::Float64),
+                    ScalarKind::NillableInt => Ok(NumericKind::Int64),
+                    ScalarKind::NillableFloat32 => Ok(NumericKind::Float32),
+                    ScalarKind::NillableFloat64 => Ok(NumericKind::Float64),
                     other => Err(MergeError::UnsupportedDelta(format!(
                         "Counter field '{}' has unsupported scalar kind: {:?}",
                         field.name, other
@@ -374,7 +374,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     payload.field_name.clone(),
                     payload.priority,
                     payload.nonce,
-                    payload.schema_version_id.clone(),
+                    payload.collection_version_id.clone(),
                     increment,
                 )
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))
@@ -391,7 +391,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     payload.field_name.clone(),
                     payload.priority,
                     payload.nonce,
-                    payload.schema_version_id.clone(),
+                    payload.collection_version_id.clone(),
                     increment,
                 )
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))
@@ -408,7 +408,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     payload.field_name.clone(),
                     payload.priority,
                     payload.nonce,
-                    payload.schema_version_id.clone(),
+                    payload.collection_version_id.clone(),
                     increment,
                 )
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))

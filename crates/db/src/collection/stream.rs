@@ -123,7 +123,7 @@ impl DocStream for CollectionDocStream {
                 .await
                 .map_err(|e| self.fuse_err("storage error", e))?
             {
-                doc.set_schema_version_id(version);
+                doc.set_collection_version_id(version);
             }
 
             self.last_short_id = Some(doc_short_id);

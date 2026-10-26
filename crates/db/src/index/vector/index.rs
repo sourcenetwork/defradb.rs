@@ -130,10 +130,11 @@ impl VectorIndex {
         })
     }
 
-    /// Lets a resident-codes DiskANN index search with this node's shared code
-    /// cache; any other index is unchanged.
+    /// Lets a DiskANN index search with this node's shared caches: its copy of
+    /// the pending list and, with resident codes, its codes. Any other index is
+    /// unchanged.
     pub fn with_code_caches(mut self, caches: &CodeCaches) -> Self {
-        if self.vector.algorithm == VectorAlgorithm::DiskAnn && self.diskann.resident_codes {
+        if self.vector.algorithm == VectorAlgorithm::DiskAnn {
             self.codes = Some(caches.get(self.collection_short_id, self.desc.id));
         }
         self

@@ -1,4 +1,4 @@
-//! CreateNode for creating new documents
+//! AddNode for creating new documents
 //!
 //! This node creates documents in storage during query execution, following
 //! the Go DefraDB pattern where persistence happens within the plan node.
@@ -24,12 +24,12 @@ use super::create_conversions::{
 
 /// Input for a create mutation - field values to set on the new document.
 #[derive(Debug, Clone)]
-pub struct CreateInput {
+pub struct AddInput {
     /// Field values keyed by field name
     pub fields: RapidHashMap<String, JsonValue>,
 }
 
-impl CreateInput {
+impl AddInput {
     /// Create a new empty input.
     pub fn new() -> Self {
         Self {
@@ -138,13 +138,13 @@ impl CreateInput {
     }
 }
 
-impl Default for CreateInput {
+impl Default for AddInput {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// CreateNode creates new documents in a collection.
+/// AddNode creates new documents in a collection.
 ///
 /// This node implements the Volcano iterator model, yielding created documents
 /// one at a time. On the first call to `next()`, all documents are created in
@@ -153,11 +153,11 @@ impl Default for CreateInput {
 /// # Example
 ///
 /// ```ignore
-/// let input = CreateInput::new()
+/// let input = AddInput::new()
 ///     .with_field("name", json!("Alice"))
 ///     .with_field("age", json!(30));
 ///
-/// let mut node = CreateNode::new("Users", mutator, mapping)
+/// let mut node = AddNode::new("Users", mutator, mapping)
 ///     .with_input(input);
 ///
 /// node.init().await?;
@@ -168,13 +168,13 @@ impl Default for CreateInput {
 ///     println!("Created: {:?}", created_doc.doc_id());
 /// }
 /// ```
-pub struct CreateNode {
+pub struct AddNode {
     /// Collection name to create documents in
     collection_name: String,
     /// Document mutator for storage operations
     mutator: Arc<dyn DocMutator>,
     /// The context of the request the creates serve: [`RequestContext::ambient`]
-    /// until [`CreateNode::with_context`] sets it
+    /// until [`AddNode::with_context`] sets it
     context: RequestContext,
     /// Document mapping for field positions
     document_mapping: DocumentMapping,
@@ -183,7 +183,7 @@ pub struct CreateNode {
     /// Pre-computed request time for UTC_NOW resolution (ensures consistency within a request)
     request_time: Option<DateTime<FixedOffset>>,
     /// Input documents to create
-    inputs: Vec<CreateInput>,
+    inputs: Vec<AddInput>,
     prepared_documents: Option<Vec<Document>>,
     /// Created documents (populated after first next())
     created_docs: Vec<Doc>,
@@ -197,7 +197,7 @@ pub struct CreateNode {
     initialized: bool,
 }
 
-impl CreateNode {
+impl AddNode {
     /// Create a new create node for a collection.
     ///
     /// # Arguments
@@ -234,13 +234,13 @@ impl CreateNode {
     }
 
     /// Add an input document to create.
-    pub fn with_input(mut self, input: CreateInput) -> Self {
+    pub fn with_input(mut self, input: AddInput) -> Self {
         self.inputs.push(input);
         self
     }
 
     /// Add multiple input documents.
-    pub fn with_inputs(mut self, inputs: Vec<CreateInput>) -> Self {
+    pub fn with_inputs(mut self, inputs: Vec<AddInput>) -> Self {
         self.inputs = inputs;
         self
     }
@@ -296,7 +296,7 @@ impl CreateNode {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl PlanNode for CreateNode {
+impl PlanNode for AddNode {
     async fn init(&mut self) -> Result<()> {
         self.position = 0;
         self.created_docs.clear();
@@ -311,9 +311,7 @@ impl PlanNode for CreateNode {
 
     async fn next(&mut self) -> Result<bool> {
         if !self.initialized {
-            return Err(QueryError::execution(
-                "CreateNode.next() called before init()",
-            ));
+            return Err(QueryError::execution("AddNode.next() called before init()"));
         }
 
         // On first call, create all documents in a single batch transaction
@@ -368,7 +366,7 @@ impl PlanNode for CreateNode {
     }
 
     fn source(&self) -> Option<&dyn PlanNode> {
-        None // CreateNode is a leaf node (generates data)
+        None // AddNode is a leaf node (generates data)
     }
 
     fn document_map(&self) -> &DocumentMapping {

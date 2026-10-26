@@ -114,8 +114,8 @@ fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
                 )
                 .build()
                 .await?;
-            author.add_schema(SDL).await?;
-            receiver.add_schema(SDL).await?;
+            author.add_collection(SDL).await?;
+            receiver.add_collection(SDL).await?;
             let writer = author
                 .node_identity_did
                 .clone()
@@ -186,7 +186,7 @@ fn read_and_write_validators_narrow_local_clients() -> Result<()> {
                 )
                 .build()
                 .await?;
-            node.add_schema(SDL).await?;
+            node.add_collection(SDL).await?;
 
             let refused = node
                 .execute(r#"mutation { add_Note(input: {body: ""}) { _docID } }"#)

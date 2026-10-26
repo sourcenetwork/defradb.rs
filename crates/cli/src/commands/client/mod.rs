@@ -96,7 +96,7 @@ pub struct ClientArgs {
     pub tx: Option<u64>,
 
     /// Enable verbose output (show HTTP requests/responses)
-    #[arg(long, short = 'v', global = true)]
+    #[arg(long, global = true)]
     pub verbose: bool,
 
     #[command(subcommand)]
@@ -160,6 +160,7 @@ impl ClientArgs {
                 identity_name,
                 key_bytes,
                 &url,
+                Some(config.acp.remote_address.as_str()).filter(|a| !a.is_empty()),
             )?)
         } else {
             None
@@ -200,7 +201,7 @@ impl ClientArgs {
 /// Supports both secp256k1 (32 bytes, Go CLI default) and ed25519 (64 bytes) keys.
 pub fn generate_auth_token(identity_hex: &str, audience: &str) -> Result<String> {
     let key_bytes = decode_identity_hex(identity_hex)?;
-    generate_auth_token_from_key_bytes("inline identity", &key_bytes, audience)
+    generate_auth_token_from_key_bytes("inline identity", &key_bytes, audience, None)
 }
 
 fn load_identity_bytes_from_keyring(config: &Config, name: &str) -> Result<Vec<u8>> {
@@ -240,6 +241,7 @@ fn generate_auth_token_from_key_bytes(
     name: &str,
     key_bytes: &[u8],
     audience: &str,
+    authorized_account: Option<&str>,
 ) -> Result<String> {
     use identity::new_token;
 
@@ -251,7 +253,7 @@ fn generate_auth_token_from_key_bytes(
         &identity,
         std::time::Duration::from_secs(15 * 60),
         Some(audience_host.to_string()),
-        None,
+        authorized_account.map(str::to_string),
     )
     .map_err(|e| Error::InvalidIdentity(format!("failed to generate token: {}", e)))?;
 

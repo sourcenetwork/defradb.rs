@@ -96,7 +96,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mut permissions = rapidhash::RapidHashSet::default();
             for mutation in mutations {
                 match mutation.mutation_type {
-                    MutationType::Create | MutationType::Update | MutationType::Upsert => {
+                    MutationType::Add | MutationType::Update | MutationType::Upsert => {
                         permissions.insert(acp::nac::NodePermission::DocumentUpdate);
                     }
                     MutationType::Delete => {
@@ -129,7 +129,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         for mutation in mutations {
             if !matches!(
                 mutation.mutation_type,
-                MutationType::Create
+                MutationType::Add
                     | MutationType::Update
                     | MutationType::Upsert
                     | MutationType::Delete
@@ -179,7 +179,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .context()
                 .into_owned()
                 .or_encryption(mutation.encryption());
-            if mutation.mutation_type == MutationType::Create {
+            if mutation.mutation_type == MutationType::Add {
                 let docs = self
                     .build_create_inputs(mutation, collection)?
                     .into_iter()

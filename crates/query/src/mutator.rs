@@ -332,8 +332,8 @@ pub trait MutationBatchController: MaybeSendSync {
                 Ok(value)
             }
             Err(error) => {
-                if let Err(rollback_error) = self.rollback().await {
-                    tracing::warn!(error = %rollback_error, "Failed to rollback implicit mutation batch");
+                if let Err(discard_error) = self.discard().await {
+                    tracing::warn!(error = %discard_error, "Failed to discard implicit mutation batch");
                 }
                 Err(error)
             }
@@ -344,7 +344,7 @@ pub trait MutationBatchController: MaybeSendSync {
     async fn commit(&self) -> Result<()>;
 
     /// Roll back the shared transaction backing this batch.
-    async fn rollback(&self) -> Result<()>;
+    async fn discard(&self) -> Result<()>;
 }
 
 /// One execution of the parsed mutation sequence with an attempt-local mutator
@@ -423,8 +423,8 @@ impl MutationBatch {
     }
 
     /// Roll back the batch transaction.
-    pub async fn rollback(&self) -> Result<()> {
-        self.controller.rollback().await
+    pub async fn discard(&self) -> Result<()> {
+        self.controller.discard().await
     }
 }
 

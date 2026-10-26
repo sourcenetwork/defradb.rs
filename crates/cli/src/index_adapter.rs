@@ -173,6 +173,11 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
 
         let schema = col.schema().clone();
         let short_id = schema.resolved_root_id();
+        let index_id = schema
+            .indexes
+            .iter()
+            .find(|index| index.name == name)
+            .map(|index| index.id);
 
         let mut index_manager =
             IndexManager::from_collection(short_id, &schema).map_err(|e| format!("{}", e))?;
@@ -215,6 +220,9 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         };
 
         txn.commit().await.map_err(|e| format!("{}", e))?;
+        if let Some(index_id) = index_id {
+            self.database.evict_index_caches(short_id, index_id);
+        }
 
         // Same collection, so the cache takes it; a refusal would mean the
         // index change is durable but invisible, which must not pass quietly.

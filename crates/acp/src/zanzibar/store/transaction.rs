@@ -1,5 +1,5 @@
 //! Zanzibar reads and writes bound to the authorized database transaction.
-//! The caller owns commit/rollback; no operation opens or commits another transaction.
+//! The caller owns commit/discard; no operation opens or commits another transaction.
 use datastore::NamespaceView;
 use identity::Did;
 use storage::corekv::IterOptions;

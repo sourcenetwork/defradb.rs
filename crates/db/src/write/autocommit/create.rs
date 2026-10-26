@@ -4,7 +4,7 @@ use bytes::Bytes;
 use events::{Message, Update};
 use storage::corekv::OnCommit;
 
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 
 use crate::block::builder::{
     compute_document_blocks_with_inputs, insert_computed_blocks, ComputedBlocks,
@@ -57,7 +57,7 @@ struct CreateManyRetryAttempt<S: Store> {
     collection_name: String,
     collection: Collection,
     docs: Vec<Document>,
-    identities: Vec<DocStorageIdentity>,
+    identities: Vec<DocRef>,
     computed: Vec<ComputedBlocks>,
     context: RequestContext,
     acp_registration: Option<AcpRegistration>,
@@ -219,7 +219,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             return Ok(());
         }
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
-        let identity = DocStorageIdentity::new(
+        let identity = DocRef::new(
             collection.resolved_root_id(),
             self.db
                 .next_doc_short_id()
@@ -275,7 +275,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let identity = match crate::write::prepare::prepared_identity(&doc) {
             Some(identity) => identity,
-            None => DocStorageIdentity::new(
+            None => DocRef::new(
                 collection.resolved_root_id(),
                 self.db
                     .next_doc_short_id()
@@ -295,12 +295,12 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await?;
         }
 
-        let schema_version_id = collection.version_id().to_string();
+        let collection_version_id = collection.version_id().to_string();
         let acp_registration = self.owed_acp_registration(context, &collection)?;
         let computed_blocks = doc
             .write_preparation()
             .and_then(|write| write.payload::<PreparedCreateBlocks>())
-            .filter(|prepared| prepared.schema_version_id == schema_version_id)
+            .filter(|prepared| prepared.collection_version_id == collection_version_id)
             .map(|prepared| prepared.computed.clone())
             .map(Ok)
             .unwrap_or_else(|| {
@@ -618,7 +618,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         for doc in &mut prepared_docs {
             let identity = match crate::write::prepare::prepared_identity(doc) {
                 Some(identity) => identity,
-                None => DocStorageIdentity::new(
+                None => DocRef::new(
                     short_id,
                     self.db
                         .next_doc_short_id()

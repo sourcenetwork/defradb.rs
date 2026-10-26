@@ -14,7 +14,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         reads: &mut super::block_reads::BlockReads,
     ) -> std::result::Result<bool, MergeError> {
         let Some(collection) = self
-            .block_collection(&payload.schema_version_id, fallback_collection_id)
+            .block_collection(&payload.collection_version_id, fallback_collection_id)
             .await?
         else {
             return Ok(false);
@@ -88,14 +88,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_id_str.as_bytes().to_vec(),
             payload.field_name.clone(),
             priority,
-            payload.schema_version_id.clone(),
+            payload.collection_version_id.clone(),
             value_bytes,
         )
         .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
 
         let seed_ctx = Context {
             doc_id: DocId::new(doc_id_str).map_err(|e| MergeError::MergeFailed(e.to_string()))?,
-            schema_version: payload.schema_version_id.clone(),
+            schema_version: payload.collection_version_id.clone(),
             is_create: false,
         };
 
@@ -129,7 +129,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // Create the LWW CRDT for this field
         let lww = Lww::new(
-            payload.schema_version_id.clone(),
+            payload.collection_version_id.clone(),
             doc_id_str.as_bytes(),
             payload.field_name.clone(),
         )
@@ -140,7 +140,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_id_str.as_bytes().to_vec(),
             payload.field_name.clone(),
             payload.priority,
-            payload.schema_version_id.clone(),
+            payload.collection_version_id.clone(),
             payload.data.clone(),
         )
         .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
@@ -159,7 +159,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await?;
         let ctx = Context {
             doc_id: DocId::new(doc_id_str).map_err(|e| MergeError::MergeFailed(e.to_string()))?,
-            schema_version: payload.schema_version_id.clone(),
+            schema_version: payload.collection_version_id.clone(),
             is_create: payload.priority == 1 && !doc_exists,
         };
 

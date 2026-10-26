@@ -36,8 +36,7 @@ pub use index_scan::IndexScanNode;
 pub use lens_node::LensNode;
 pub use limit::LimitNode;
 pub use mutation::{
-    CreateInput, CreateNode, DeleteNode, UpdateInput, UpdateNode, UpsertAction, UpsertInput,
-    UpsertNode,
+    AddInput, AddNode, DeleteNode, UpdateInput, UpdateNode, UpsertAction, UpsertInput, UpsertNode,
 };
 pub use orderby::OrderByNode;
 pub use orphan::{new_shared_yielded_ids, OrphanNode, SharedYieldedIds};

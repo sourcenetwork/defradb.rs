@@ -185,7 +185,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 .record(&pair.key, &pair.value);
             let collection = block
                 .as_ref()
-                .and_then(|block| block.delta.schema_version_id())
+                .and_then(|block| block.delta.collection_version_id())
                 .and_then(|id| versions.get(id));
             if let (Some(id), Some(block)) = (collection, block) {
                 let stats = report.collections.get_mut(id).expect("loaded collection");

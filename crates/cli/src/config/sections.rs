@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogConfig {
     pub level: LogLevel,
     pub output: LogOutput,
@@ -43,6 +44,7 @@ impl Default for LogConfig {
 
 /// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApiConfig {
     pub address: String,
     #[serde(default)]
@@ -186,6 +188,7 @@ impl ApiConfig {
 
 /// Embedding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmbeddingConfig {
     #[serde(default)]
     pub url: String,
@@ -211,6 +214,7 @@ impl Default for EmbeddingConfig {
 
 /// Datastore configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DatastoreConfig {
     pub store: DatastoreType,
     pub path: String,
@@ -240,7 +244,7 @@ pub struct DatastoreConfig {
     /// - `eventual`: defer fsync to OS for higher write throughput
     #[serde(default)]
     pub durability: DurabilityMode,
-    /// Maximum DAG traversal depth for merge operations.
+    /// DAG traversal depth limit; longer document histories resume in bounded turns.
     #[serde(default = "default_max_merge_depth")]
     pub max_merge_depth: usize,
     /// Enable engine file encryption at rest for the storage backend.
@@ -289,6 +293,7 @@ impl std::fmt::Debug for NetworkSecretHex {
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NetConfig {
     pub p2p_disabled: bool,
     pub p2p_addresses: Vec<String>,
@@ -574,6 +579,7 @@ impl NetConfig {
 
 /// Keyring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyringConfig {
     pub backend: KeyringBackend,
     pub path: String,
@@ -598,6 +604,7 @@ impl Default for KeyringConfig {
 /// - Node Access Control (NAC): Controls access to node-level operations
 /// - Document Access Control (DAC): Controls access to individual documents
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AcpConfig {
     /// Enable Node Access Control (NAC).
     ///
@@ -651,6 +658,11 @@ pub struct AcpConfig {
     #[cfg(feature = "vera")]
     #[serde(default)]
     pub vera_deployment_id: Option<u64>,
+
+    /// Account the client names as the token's authorized account when it
+    /// talks to a node using remote document ACP (Go: `--remote-dac-address`).
+    #[serde(default)]
+    pub remote_address: String,
 
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
@@ -710,6 +722,7 @@ impl Default for AcpConfig {
             vera_consensus_key: String::new(),
             #[cfg(feature = "vera")]
             vera_deployment_id: None,
+            remote_address: String::new(),
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),

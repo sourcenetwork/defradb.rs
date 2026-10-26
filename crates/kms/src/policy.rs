@@ -57,7 +57,7 @@ pub trait NodeAcpRead: MaybeSendSync {
 ///
 /// Mirrors Go's `internal/db/collection_retriever.go::RetrieveCollectionFromDocID`:
 /// uses the headstore (already keyed by doc_id) to find the doc's first
-/// head block, reads `schema_version_id` off the delta, resolves the
+/// head block, reads `collection_version_id` off the delta, resolves the
 /// collection + its policy. Implementation lives in the embedded-node
 /// layer (Phase K); kms keeps this trait abstract so unit tests can
 /// inject fakes.

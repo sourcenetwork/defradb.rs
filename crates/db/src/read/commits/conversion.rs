@@ -136,10 +136,10 @@ impl<S: Store> CommitsFetcher<S> {
             map.insert("delta".to_string(), JsonValue::Null);
         }
 
-        let schema_version_id = self.get_schema_version_id(&block.delta);
+        let collection_version_id = self.get_collection_version_id(&block.delta);
         map.insert(
             "collectionVersionId".to_string(),
-            schema_version_id
+            collection_version_id
                 .map(|s| json!(s))
                 .unwrap_or(JsonValue::Null),
         );

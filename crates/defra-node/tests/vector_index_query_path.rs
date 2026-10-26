@@ -48,7 +48,7 @@ fn doc_id_restrictions_fill_vector_pages_after_offset() {
             let result = node
                 .execute_request_in_txn(QueryRequest::new(&query), &handle)
                 .await;
-            node.rollback_transaction(&handle).await.unwrap();
+            node.discard_transaction(&handle).await.unwrap();
             result
         } else {
             node.execute(&query).await
@@ -74,7 +74,7 @@ fn protected_similarity_pages_count_only_authorized_documents() {
         )
         .await
         .unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note @policy(id: \"{policy}\", resource: \"notes\") {{
             title: String
             embedding: [Float32!] @index(vector: {{dimensions: 2, flat: {{metric: DOT}}}})
@@ -98,7 +98,7 @@ fn protected_similarity_pages_count_only_authorized_documents() {
         let response = if in_transaction {
             let handle = node.begin_transaction(true).await.unwrap();
             let result = node.execute_request_in_txn(request, &handle).await;
-            node.rollback_transaction(&handle).await.unwrap();
+            node.discard_transaction(&handle).await.unwrap();
             result
         } else {
             node.execute_request(request).await
@@ -237,7 +237,7 @@ fn vector_index(explain: &Value) -> Option<String> {
 
 async fn node_with(algorithm: &str) -> EmbeddedNode {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&schema(algorithm))
+    node.add_collection(&schema(algorithm))
         .await
         .unwrap_or_else(|e| panic!("add schema for {algorithm:?}: {e}"));
     node
@@ -261,7 +261,7 @@ async fn assert_routes(node: &EmbeddedNode, query: &str, context: &str) {
 fn nested_vector_pages_are_scoped_to_each_parent() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Owner { name: String notes: [Note] }
+    node.add_collection("type Owner { name: String notes: [Note] }
         type Note { title: String owner: Owner embedding: [Float32!] @index(vector: {dimensions: 4, flat: {metric: DOT}}) }")
         .await.unwrap();
     for (name, base) in [("a", 100), ("b", 0)] {
@@ -436,7 +436,7 @@ fn a_filtered_similarity_query_returns_a_full_page() {
 fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
     .await
@@ -512,7 +512,7 @@ fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
 fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String @index  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
     ))
     .await
@@ -584,7 +584,7 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
                         "tag: String"
                     };
                     let node = EmbeddedNode::builder().build().await.unwrap();
-                    node.add_schema(&format!(
+                    node.add_collection(&format!(
                         "type Note {{ title: String  {tag_field}  embedding: [Float32!] {} }}",
                         vector_index_sdl(*algorithm, *metric)
                     ))
@@ -691,7 +691,7 @@ fn dimensions_are_required_when_the_schema_is_written() {
         ] {
             let node = EmbeddedNode::builder().build().await.unwrap();
             let error = node
-                .add_schema(&sdl)
+                .add_collection(&sdl)
                 .await
                 .expect_err(&format!("must be refused: {sdl}"))
                 .to_string();
@@ -716,7 +716,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
                 }
                 let node = EmbeddedNode::builder().build().await.unwrap();
                 let result = node
-                    .add_schema(&format!(
+                    .add_collection(&format!(
                         "type Note {{ embedding: [Float32!] {} }}",
                         vector_index_sdl(*algorithm, *metric)
                     ))
@@ -746,7 +746,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
 fn a_relation_filter_above_the_scan_still_fills_the_page() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(
+    node.add_collection(
         "type Owner { name: String  notes: [Note] }
          type Note { title: String  owner: Owner  embedding: [Float32!] @index(vector: {dimensions: 4, hnsw: {metric: DOT}}) }",
     )
@@ -1040,7 +1040,7 @@ fn ascending_order_warns_vector_index_unused() {
 fn a_metric_no_index_carries_scans_and_warns() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
     .await
@@ -1123,7 +1123,7 @@ fn a_metric_no_index_carries_scans_and_warns() {
 fn a_field_without_a_vector_index_never_warns() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}}})  plainEmbedding: [Float32!] }}"
     ))
     .await
@@ -1164,7 +1164,7 @@ fn a_field_without_a_vector_index_never_warns() {
 fn a_named_metric_reaches_its_own_index_among_several() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
          @index(name: \"by_dot\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
@@ -1232,7 +1232,7 @@ fn a_named_metric_reaches_its_own_index_among_several() {
 fn several_indexes_without_a_metric_warn_ambiguous() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
          @index(name: \"by_dot\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"

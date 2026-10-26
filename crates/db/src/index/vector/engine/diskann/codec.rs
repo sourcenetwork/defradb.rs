@@ -4,8 +4,16 @@
 //! Trained  1 version  4 dimensions  4 m
 //! Graph    1 version  1 has entry  8 entry  8 live  8 generation
 //! Record   m own code  4 neighbor count  per neighbor: 8 id, m code
-//! Pending  m code of a vector inserted since the last merge
 //! Deleted  empty: a tombstone awaiting consolidation
+//! ```
+//!
+//! The vectors inserted since the last merge are the build's pending log
+//! (`keys::vector_pending_log`), one entry per insert. A delete appends
+//! nothing: its entry stays a candidate until a merge, which every search
+//! and merge drops by reading the vector.
+//!
+//! ```text
+//! Pending  8 id  m code
 //! ```
 //!
 //! A record carries its neighbours' codes so one read ranks every edge out of
@@ -31,7 +39,6 @@ pub const GRAPH_STATE: u8 = b's';
 pub const CODEBOOK: u8 = b'b';
 pub const GRAPH: u8 = b'g';
 pub const DELETED: u8 = b'd';
-pub const PENDING: u8 = b'p';
 pub const CODE: u8 = b'c';
 
 const VERSION: u8 = 0x01;
@@ -155,9 +162,33 @@ pub fn encode_record(record: &Record) -> Vec<u8> {
     buf
 }
 
+/// A record's own code and its edges, borrowed from the record's bytes.
+pub struct RecordEdges<'bytes> {
+    pub code: &'bytes [u8],
+    edges: std::slice::ChunksExact<'bytes, u8>,
+}
+
+impl<'bytes> Iterator for RecordEdges<'bytes> {
+    type Item = (NodeId, &'bytes [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk = self.edges.next()?;
+        Some((
+            NodeId(u64::from_le_bytes(chunk[..8].try_into().unwrap())),
+            &chunk[8..],
+        ))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.edges.size_hint()
+    }
+}
+
+impl ExactSizeIterator for RecordEdges<'_> {}
+
 /// Every length is checked before it is used, so a corrupt record is an error
 /// rather than a panic or a huge allocation.
-pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
+pub fn record_edges(bytes: &[u8], m: usize) -> Result<RecordEdges<'_>> {
     let header = m + 4;
     if bytes.len() < header {
         return Err(invalid("DISKANN record is truncated"));
@@ -167,18 +198,17 @@ pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
     if bytes.len() != header + count.saturating_mul(entry) {
         return Err(invalid("DISKANN record length disagrees with its count"));
     }
-    let neighbors = bytes[header..]
-        .chunks_exact(entry)
-        .map(|chunk| {
-            (
-                NodeId(u64::from_le_bytes(chunk[..8].try_into().unwrap())),
-                chunk[8..].to_vec(),
-            )
-        })
-        .collect();
+    Ok(RecordEdges {
+        code: &bytes[..m],
+        edges: bytes[header..].chunks_exact(entry),
+    })
+}
+
+pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
+    let edges = record_edges(bytes, m)?;
     Ok(Record {
-        code: bytes[..m].to_vec(),
-        neighbors,
+        code: edges.code.to_vec(),
+        neighbors: edges.map(|(id, code)| (id, code.to_vec())).collect(),
     })
 }
 
@@ -217,6 +247,27 @@ pub fn neighbor_ids(bytes: &[u8], m: usize, resident_codes: bool) -> Result<Vec<
         .into_iter()
         .map(|(id, _)| id)
         .collect())
+}
+
+/// One entry of the pending log: a vector inserted, with the code it was
+/// given.
+pub fn encode_log_entry(id: NodeId, code: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(8 + code.len());
+    buf.extend_from_slice(&id.0.to_le_bytes());
+    buf.extend_from_slice(code);
+    buf
+}
+
+/// The vector and code of a pending log entry, which must carry a code of
+/// `code_len` bytes.
+pub fn decode_log_entry(bytes: &[u8], code_len: usize) -> Result<(NodeId, &[u8])> {
+    let Some((id, code)) = bytes.split_first_chunk::<8>() else {
+        return Err(invalid("DISKANN pending log entry is truncated"));
+    };
+    if code.len() != code_len {
+        return Err(invalid("DISKANN pending log code has the wrong width"));
+    }
+    Ok((NodeId(u64::from_le_bytes(*id)), code))
 }
 
 fn invalid(message: &str) -> Error {

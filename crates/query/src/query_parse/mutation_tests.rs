@@ -16,7 +16,7 @@ fn test_parse_create_mutation() {
     assert_eq!(mutations.len(), 1);
 
     let m = &mutations[0];
-    assert_eq!(m.mutation_type, MutationType::Create);
+    assert_eq!(m.mutation_type, MutationType::Add);
     assert_eq!(m.collection_name, "Users");
     assert_eq!(m.create_input.len(), 1);
     assert_eq!(
@@ -170,7 +170,7 @@ fn test_parse_multiple_mutations() {
 
     let mutations = parse_mutations(query).unwrap();
     assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0].mutation_type, MutationType::Create);
+    assert_eq!(mutations[0].mutation_type, MutationType::Add);
     assert_eq!(mutations[1].mutation_type, MutationType::Delete);
 }
 

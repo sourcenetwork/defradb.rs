@@ -104,8 +104,8 @@ async fn add<S: Store + 'static>(
         serde_json::from_str(config).map_err(|e| format!("failed to parse lens config: {}", e))?;
 
     // If version IDs are present, delegate to set_migration (matches FFI behavior)
-    if !lens_config.source_schema_version_id.is_empty()
-        && !lens_config.destination_schema_version_id.is_empty()
+    if !lens_config.source_collection_version_id.is_empty()
+        && !lens_config.destination_collection_version_id.is_empty()
     {
         let transform_id = database
             .set_migration_as(context, lens_config)

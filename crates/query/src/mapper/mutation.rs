@@ -12,8 +12,8 @@ use crate::document::DocumentMapping;
 /// Type of mutation operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MutationType {
-    /// Create new documents
-    Create,
+    /// Add new documents
+    Add,
     /// Update existing documents
     Update,
     /// Delete existing documents
@@ -30,13 +30,13 @@ impl MutationType {
     /// # Examples
     ///
     /// ```ignore
-    /// MutationType::from_prefix("add") // Some(Create)
+    /// MutationType::from_prefix("add") // Some(Add)
     /// MutationType::from_prefix("update") // Some(Update)
     /// MutationType::from_prefix("delete") // Some(Delete)
     /// ```
     pub fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix.to_lowercase().as_str() {
-            "add" | "create" => Some(Self::Create),
+            "add" | "create" => Some(Self::Add),
             "update" => Some(Self::Update),
             "delete" => Some(Self::Delete),
             "upsert" => Some(Self::Upsert),
@@ -48,7 +48,7 @@ impl MutationType {
     /// Get the operation prefix string.
     pub fn as_prefix(&self) -> &'static str {
         match self {
-            Self::Create => "add",
+            Self::Add => "add",
             Self::Update => "update",
             Self::Delete => "delete",
             Self::Upsert => "upsert",
@@ -100,7 +100,7 @@ impl Mutation {
     /// Create a new CREATE mutation.
     pub fn create(collection_name: impl Into<String>) -> Self {
         Self {
-            mutation_type: MutationType::Create,
+            mutation_type: MutationType::Add,
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
@@ -290,14 +290,8 @@ mod tests {
 
     #[test]
     fn test_mutation_type_from_prefix() {
-        assert_eq!(
-            MutationType::from_prefix("create"),
-            Some(MutationType::Create)
-        );
-        assert_eq!(
-            MutationType::from_prefix("CREATE"),
-            Some(MutationType::Create)
-        );
+        assert_eq!(MutationType::from_prefix("create"), Some(MutationType::Add));
+        assert_eq!(MutationType::from_prefix("CREATE"), Some(MutationType::Add));
         assert_eq!(
             MutationType::from_prefix("update"),
             Some(MutationType::Update)
@@ -320,12 +314,12 @@ mod tests {
     #[test]
     fn test_parse_mutation_name() {
         let (typ, name) = parse_mutation_name("add_Users").unwrap();
-        assert_eq!(typ, MutationType::Create);
+        assert_eq!(typ, MutationType::Add);
         assert_eq!(name, "Users");
 
         // "create_" still accepted as backward-compatible alias
         let (typ, name) = parse_mutation_name("create_Users").unwrap();
-        assert_eq!(typ, MutationType::Create);
+        assert_eq!(typ, MutationType::Add);
         assert_eq!(name, "Users");
 
         let (typ, name) = parse_mutation_name("update_my_collection").unwrap();
@@ -352,7 +346,7 @@ mod tests {
             m
         }]);
 
-        assert_eq!(create.mutation_type, MutationType::Create);
+        assert_eq!(create.mutation_type, MutationType::Add);
         assert_eq!(create.collection_name, "Users");
         assert_eq!(create.create_input.len(), 1);
 

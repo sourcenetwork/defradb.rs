@@ -57,7 +57,7 @@ impl<S: Store + 'static> DbDocFetcher<S> {
         }
     }
 
-    /// Take the transaction out of the fetcher (for commit/rollback). `None`
+    /// Take the transaction out of the fetcher (for commit/discard). `None`
     /// once it was taken, or while another handle still holds it.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
         self.txn.take()

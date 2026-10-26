@@ -313,6 +313,18 @@ impl Writer for DatastoreTxn {
         self.txn.append_shared(log, entry, once_key).await
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log_shared(log, positions).await
+    }
+
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         self.txn.set_shared(key, value).await
     }

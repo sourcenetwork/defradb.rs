@@ -266,7 +266,7 @@ impl Node {
                     Error::InvalidApiAddress(config.api.pg_address.clone(), e.to_string())
                 })?;
 
-        // Wire ACP into the PG schema manager so `add_schema` validates
+        // Wire ACP into the PG schema manager so `add_collection` validates
         // `@policy(id:, resource:)` directives at schema-add time (#746).
         // Mirrors the HTTP server's behavior — without this, PG users would
         // be able to register schemas referencing nonexistent policies.

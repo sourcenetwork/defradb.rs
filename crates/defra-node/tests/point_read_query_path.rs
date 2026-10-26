@@ -28,7 +28,7 @@ fn fetches(value: &Value) -> u64 {
 fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Note { title: String owner: String @index }")
+    node.add_collection("type Note { title: String owner: String @index }")
         .await
         .unwrap();
     let mut id = String::new();
@@ -99,9 +99,11 @@ fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
 fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
-        node.add_schema("type RetainedNote { owner: String @index rank: Int @index body: String }")
-            .await
-            .unwrap();
+        node.add_collection(
+            "type RetainedNote { owner: String @index rank: Int @index body: String }",
+        )
+        .await
+        .unwrap();
         let created = data(
             &node,
             r#"mutation { create_RetainedNote(input: [

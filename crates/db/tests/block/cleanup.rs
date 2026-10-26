@@ -27,7 +27,7 @@ fn deleting_one_owner_keeps_a_shared_block() {
         let block = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -73,7 +73,7 @@ fn deleting_a_dag_keeps_the_shared_subtree() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -83,7 +83,7 @@ fn deleting_a_dag_keeps_the_shared_subtree() {
         let field_cid = field.generate_cid().unwrap();
         let root = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -135,7 +135,7 @@ fn deleting_all_aliases_removes_the_owned_dag() {
         let block = Block::new_with_options(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -191,7 +191,7 @@ fn deleting_one_commit_owner_clears_child_ownership_but_keeps_shared_bytes() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -201,7 +201,7 @@ fn deleting_one_commit_owner_clears_child_ownership_but_keeps_shared_bytes() {
         let field_cid = field.generate_cid().unwrap();
         let root = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -251,7 +251,7 @@ fn pruning_a_commit_keeps_a_field_block_that_is_still_a_head() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "payload".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -261,7 +261,7 @@ fn pruning_a_commit_keeps_a_field_block_that_is_still_a_head() {
         let field_cid = field.generate_cid().unwrap();
         let root = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -316,7 +316,7 @@ fn pruning_a_commit_keeps_an_encryption_block_a_retained_commit_inherits() {
         let encryption_cid = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "_encryption".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![9],
             }),
@@ -328,7 +328,7 @@ fn pruning_a_commit_keeps_an_encryption_block_a_retained_commit_inherits() {
         let commit = |priority, heads| {
             Block::new_with_options(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     status: 1,
                 }),

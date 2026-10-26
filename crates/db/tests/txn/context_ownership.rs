@@ -95,7 +95,7 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
                 .unwrap();
             assert!(foreign.list_collections().await.is_err());
             assert!(foreign
-                .create_document("Users", serde_json::json!({ "name": "stranger" }), None)
+                .add_document("Users", serde_json::json!({ "name": "stranger" }), None)
                 .await
                 .is_err());
         }
@@ -107,7 +107,7 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
             .unwrap();
         assert_eq!(owner.list_collections().await.unwrap(), vec!["Users"]);
         owner
-            .create_document(
+            .add_document(
                 "Users",
                 serde_json::json!({ "name": "alice" }),
                 Some(&alice_did),

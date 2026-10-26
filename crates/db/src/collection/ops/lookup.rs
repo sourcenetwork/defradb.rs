@@ -113,9 +113,9 @@ impl<S: Store> crate::database::DB<S> {
         Ok(self.collections.peek(|cache| cache.contains_name(name)))
     }
 
-    /// Find a collection by its collection ID (schema version ID).
+    /// Find a collection by its collection ID (collection version ID).
     ///
-    /// This is useful for P2P sync where we receive blocks with schema_version_id
+    /// This is useful for P2P sync where we receive blocks with collection_version_id
     /// and need to find the corresponding collection.
     ///
     /// Uses the process-wide cache.

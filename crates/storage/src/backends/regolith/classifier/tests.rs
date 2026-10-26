@@ -70,6 +70,9 @@ fn every_other_family_has_its_declared_class() {
         b"s/arrival/7/head".as_slice(),
         b"s/arrival/7/row/00000000000000000001",
         b"s/arrival/7/doc/bae-1",
+        b"d/vplog/7/3/0/head",
+        b"d/vplog/7/3/0/row/00000000000000000001",
+        b"/vplog/7/3/0/head",
     ] {
         assert_eq!(class(key), KeyClass::Log, "{key:?}");
     }
@@ -79,6 +82,7 @@ fn every_other_family_has_its_declared_class() {
         b"b\x01invalid",
         b"bm\x01\x55\x00\x03abc",
         b"s/arrival",
+        b"d/vplog",
         b"h/p/\x01/0000000000000001/cid",
         b"h/p/applied",
         b"h/r/\x01/field/cid",

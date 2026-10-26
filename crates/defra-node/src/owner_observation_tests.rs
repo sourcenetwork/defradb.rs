@@ -9,7 +9,7 @@ const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n  
 async fn fixture() -> (EmbeddedNode, String, String) {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let policy = node.add_dac_policy(A, POLICY).await.unwrap();
-    node.add_schema(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
+    node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
     let response = node
         .execute_request(
@@ -81,7 +81,7 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
         assert_eq!(observations.len(), 1);
         assert!(observations[0].owner.is_none());
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         let hidden = node
@@ -95,7 +95,7 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
             .unwrap();
         assert!(result[0].owner.is_none());
         node.runner()
-            .rollback_txn_as(&RequestContext::default(), &hidden)
+            .discard_txn_as(&RequestContext::default(), &hidden)
             .await
             .unwrap();
         node.shutdown().await;
@@ -140,7 +140,7 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
         assert_eq!(before, after);
         assert_eq!(after[0].owner.as_ref().map(Did::as_str), Some(A));
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         let next = node
@@ -154,7 +154,7 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
             .unwrap();
         assert_eq!(current[0].owner.as_ref().map(Did::as_str), Some(B));
         node.runner()
-            .rollback_txn_as(&RequestContext::default(), &next)
+            .discard_txn_as(&RequestContext::default(), &next)
             .await
             .unwrap();
         node.shutdown().await;
@@ -187,7 +187,7 @@ fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() 
                 .is_err());
         }
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         let acp = node.document_acp();
@@ -205,7 +205,7 @@ fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() 
             .unwrap();
         assert!(result[0].owner.is_none());
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         node.shutdown().await;
@@ -243,7 +243,7 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
             .unwrap();
         assert!(result[0].owner.is_none());
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         node.shutdown().await;
@@ -281,7 +281,7 @@ fn owner_observation_reports_the_registrant_to_a_different_authorized_reader() {
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].owner.as_ref().map(Did::as_str), Some(A));
         node.runner()
-            .rollback_txn_as(&context, &handle)
+            .discard_txn_as(&context, &handle)
             .await
             .unwrap();
         node.shutdown().await;

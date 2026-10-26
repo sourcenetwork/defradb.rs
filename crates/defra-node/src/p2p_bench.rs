@@ -112,7 +112,9 @@ async fn build_bench_node() -> EmbeddedNode {
         .build()
         .await
         .expect("build P2P node");
-    node.add_schema(BENCH_SDL).await.expect("add bench schema");
+    node.add_collection(BENCH_SDL)
+        .await
+        .expect("add bench schema");
 
     node
 }

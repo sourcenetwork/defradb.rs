@@ -893,14 +893,14 @@ pub struct NacStatusInfo {
 /// Enables adding and managing collection schemas via SDL.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait SchemaOperations: defra_core::thread_bounds::MaybeSendSync {
-    bind_request!(SchemaOperations);
+pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
+    bind_request!(CollectionOperations);
 
     /// Add a schema from SDL string.
     ///
     /// Parses the SDL and creates collections for each type defined.
     /// Returns the created collection versions.
-    async fn add_schema(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
 }
 
 /// Read-only collection-version observation.
@@ -1167,7 +1167,7 @@ pub trait TransactionOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Parses the SDL and creates collections within the transaction.
     /// The collections are only visible after the transaction is committed,
     /// but can be used by queries within the same transaction.
-    async fn add_schema_in_txn(
+    async fn add_collection_in_txn(
         &self,
         txn_id: &str,
         sdl: &str,

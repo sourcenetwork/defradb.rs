@@ -604,7 +604,7 @@ where
             self.created.store(true, Ordering::Release);
             let mut doc = Document::new();
             doc.set_collection(self.plan.target.clone());
-            doc.set_schema_version_id(self.plan.target.version_id.clone());
+            doc.set_collection_version_id(self.plan.target.version_id.clone());
             self.db
                 .apply_window_to_target_doc(
                     &self.plan,
@@ -643,7 +643,7 @@ where
             return done;
         }
         doc.set_collection(self.plan.target.clone());
-        doc.set_schema_version_id(self.plan.target.version_id.clone());
+        doc.set_collection_version_id(self.plan.target.version_id.clone());
         doc.set_id(id);
         mutator
             .update_as(&self.context, target_name, doc, modified_fields)

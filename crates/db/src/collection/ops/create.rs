@@ -158,8 +158,8 @@ impl<S: Store> crate::database::DB<S> {
         let blockstore = txn.blockstore()?;
 
         // Store each field definition block
-        // IMPORTANT: Go uses priority=1 for ALL fields during AddSchema (not incrementing).
-        // This was verified by comparing actual Go AddSchema output with manual CID generation.
+        // IMPORTANT: Go uses priority=1 for ALL fields during AddCollection (not incrementing).
+        // This was verified by comparing actual Go AddCollection output with manual CID generation.
         // Only fields with non-empty FieldID are stored (secondary relations are excluded).
         // Fields must be sorted: _docID first, then alphabetically by name (matches Go).
         let mut sorted_fields: Vec<&schema::FieldDescription> =

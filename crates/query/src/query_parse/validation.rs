@@ -74,7 +74,7 @@ async fn validate_mutation_collection(
     if provider.get_collection(name).await?.is_none() {
         let suggestion = suggest_collection(name, provider).await;
         let field_name = match mutation.mutation_type {
-            crate::mapper::MutationType::Create => format!("add_{}", name),
+            crate::mapper::MutationType::Add => format!("add_{}", name),
             crate::mapper::MutationType::Update => format!("update_{}", name),
             crate::mapper::MutationType::Delete => format!("delete_{}", name),
             crate::mapper::MutationType::Upsert => format!("upsert_{}", name),
@@ -213,7 +213,7 @@ mod tests {
         workers::block_on(async {
             let provider = make_provider(&["User"]);
             let mutation = Mutation {
-                mutation_type: crate::mapper::MutationType::Create,
+                mutation_type: crate::mapper::MutationType::Add,
                 collection_name: "Usr".to_string(),
                 alias: None,
                 create_input: vec![],
