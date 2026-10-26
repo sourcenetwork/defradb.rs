@@ -393,11 +393,11 @@ impl TaggedCrdt for JsonField {
 
     fn tags(&self, field: &FieldDescription, state: Part<'_>) -> Result<Vec<Tag>, FieldCrdtError> {
         Ok(frontier(field, Some(state))?
-            .entries
-            .into_iter()
+            .entries()
+            .iter()
             .map(|entry| Tag {
                 priority: entry.priority,
-                id: entry.block,
+                id: entry.block.clone(),
             })
             .collect())
     }

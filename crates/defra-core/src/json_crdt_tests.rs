@@ -487,9 +487,11 @@ fn decoding_puts_entries_in_path_order_with_the_last_repeat_winning() {
             entry(&["b"], b"x", 4),
         ],
     };
+    let built = Frontier::new(unsorted.removes.clone(), unsorted.entries.clone());
     let decoded = Frontier::decode(&unsorted.encode().unwrap()).unwrap();
     assert_eq!(decoded, compose_by_rebuild(Frontier::default(), unsorted));
     assert_eq!(decoded.entries.len(), 3);
+    assert_eq!(built, decoded, "new sorts as decode does");
 }
 
 #[test]

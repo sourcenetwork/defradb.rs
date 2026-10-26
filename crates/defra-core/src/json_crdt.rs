@@ -72,8 +72,8 @@ pub struct Entry {
 /// entries at a path and below it are one range; `decode` restores the order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frontier {
-    pub removes: Vec<(Path, Vec<u8>)>,
-    pub entries: Vec<Entry>,
+    removes: Vec<(Path, Vec<u8>)>,
+    entries: Vec<Entry>,
 }
 
 /// Removed entries by (path key, block), each with its path and block.
@@ -378,6 +378,24 @@ impl<'a> Index<'a> {
 }
 
 impl Frontier {
+    /// A frontier of `removes` and `entries` in any order, sorted as
+    /// [`decode`](Self::decode) sorts them.
+    pub fn new(removes: Vec<(Path, Vec<u8>)>, entries: Vec<Entry>) -> Self {
+        let mut frontier = Self { removes, entries };
+        frontier.sort();
+        frontier
+    }
+
+    /// The entries it adds, sorted by path key, then block.
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// The entries it removes, by path and block, sorted the same way.
+    pub fn removes(&self) -> &[(Path, Vec<u8>)] {
+        &self.removes
+    }
+
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         ciborium::into_writer(self, &mut bytes)

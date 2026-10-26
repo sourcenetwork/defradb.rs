@@ -582,7 +582,7 @@ fn json_part(
                     name: "meta".to_owned(),
                     kind: ValueKind::Json,
                     priority: 1,
-                    value: Frontier { removes, entries }.encode().unwrap(),
+                    value: Frontier::new(removes, entries).encode().unwrap(),
                 },
             )]
             .into(),
@@ -630,16 +630,16 @@ fn a_whole_document_put_conflicts_with_a_json_operand_committed_after_its_read()
                     name: "meta".to_owned(),
                     kind: ValueKind::Json,
                     priority: u64::from(block),
-                    value: Frontier {
-                        removes: Vec::new(),
-                        entries: vec![Entry {
+                    value: Frontier::new(
+                        Vec::new(),
+                        vec![Entry {
                             path: vec![format!("k{block}")],
                             block: vec![block],
                             priority: u64::from(block),
                             edit: JsonEdit::Set(serde_json::json!(block)),
                             seen: Vec::new(),
                         }],
-                    }
+                    )
                     .encode()
                     .unwrap(),
                 },
@@ -667,7 +667,7 @@ fn a_whole_document_put_conflicts_with_a_json_operand_committed_after_its_read()
         let reader = store.new_txn(true).await.unwrap();
         let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
         let frontier = Frontier::decode(&stored.fields[&7].value).unwrap();
-        assert_eq!(frontier.entries.len(), 2, "the operand survives");
+        assert_eq!(frontier.entries().len(), 2, "the operand survives");
         assert!(!stored.fields.contains_key(&1));
     })
     .unwrap()
