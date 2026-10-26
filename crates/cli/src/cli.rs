@@ -170,7 +170,7 @@ pub struct Cli {
         global = true,
         env = "DEFRA_ACP_DOCUMENT_TYPE"
     )]
-    pub acp_document_type: Option<String>,
+    pub acp_document_type: Option<crate::config::AcpDocumentType>,
 
     /// Document ACP type. Options are none or local
     #[cfg(not(feature = "vera"))]
@@ -179,7 +179,7 @@ pub struct Cli {
         global = true,
         env = "DEFRA_ACP_DOCUMENT_TYPE"
     )]
-    pub acp_document_type: Option<String>,
+    pub acp_document_type: Option<crate::config::AcpDocumentType>,
 
     #[command(subcommand)]
     pub command: Command,

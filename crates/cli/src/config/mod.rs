@@ -230,8 +230,8 @@ impl Config {
         if let Some(node_enable) = cli.acp_node_enable {
             self.acp.node_enable = node_enable;
         }
-        if let Some(ref doc_type) = cli.acp_document_type {
-            self.acp.document_type = doc_type.parse()?;
+        if let Some(doc_type) = cli.acp_document_type {
+            self.acp.document_type = doc_type;
         }
 
         // Vera

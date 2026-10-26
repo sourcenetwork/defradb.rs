@@ -157,7 +157,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     cli.no_telemetry = Some(true);
     cli.development = Some(true);
     cli.acp_node_enable = Some(true);
-    cli.acp_document_type = Some("local".to_string());
+    cli.acp_document_type = Some(cli::config::AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
         cli.vera_address = Some("http://localhost:1317".to_string());
