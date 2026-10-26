@@ -2,6 +2,7 @@
 
 use document::DocID;
 use storage::corekv::Store;
+use storage::stores::Peerstore;
 
 use crate::merge::push_docs_common::{load_collection_head_cids, load_latest_composite_head_cids};
 use crate::DB;
@@ -69,17 +70,16 @@ async fn acknowledged_heads<S: Store + 'static>(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("collection {collection_name} not found"))?;
     let collection_id = collection.collection_id().to_string();
-    let peerstore = storage::stores::Peerstore::new(db.store().clone());
     let txn = db.new_txn(true).await.map_err(|error| error.to_string())?;
     let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
     let headstore = txn.headstore().map_err(|error| error.to_string())?;
     let blockstore = txn.blockstore().map_err(|error| error.to_string())?;
+    let peerstore = txn.peerstore().map_err(|error| error.to_string())?;
 
     let branchable = collection.schema().is_branchable;
     let scope = match scope {
         AcknowledgmentScope::Document => p2p::AckScope::Document,
-        AcknowledgmentScope::Pushed => match peerstore
-            .get_replicator(peer_id)
+        AcknowledgmentScope::Pushed => match Peerstore::<S>::replicator_in(&peerstore, peer_id)
             .await
             .map_err(|error| error.to_string())?
         {
@@ -95,10 +95,10 @@ async fn acknowledged_heads<S: Store + 'static>(
                 .await
                 .map_err(|error| error.to_string())?;
         let current = sorted(load_collection_head_cids(&headstore, short_id).await?);
-        let acked = peerstore
-            .acknowledged_heads(peer_id, &collection_id, true)
-            .await
-            .map_err(|error| error.to_string())?;
+        let acked =
+            Peerstore::<S>::acknowledged_heads_in(&peerstore, peer_id, &collection_id, true)
+                .await
+                .map_err(|error| error.to_string())?;
         Some(acked == Some(current))
     } else {
         None
@@ -124,10 +124,14 @@ async fn acknowledged_heads<S: Store + 'static>(
         }
         let current =
             sorted(load_latest_composite_head_cids(&headstore, &blockstore, doc_short_id).await);
-        let acked = peerstore
-            .acknowledged_heads(peer_id, &canonical.to_string(), false)
-            .await
-            .map_err(|error| error.to_string())?;
+        let acked = Peerstore::<S>::acknowledged_heads_in(
+            &peerstore,
+            peer_id,
+            &canonical.to_string(),
+            false,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         acknowledged.push(acked == Some(current));
     }
     Ok(acknowledged)

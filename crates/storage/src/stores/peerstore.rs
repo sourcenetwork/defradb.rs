@@ -707,9 +707,17 @@ impl<S: Store> Peerstore<S> {
     ///
     /// Returns None if the replicator doesn't exist.
     pub async fn get_replicator(&self, peer_id: &str) -> Result<Option<Bytes>> {
-        let key = ReplicatorKey::new(peer_id);
         let txn = self.store.new_txn(true).await?;
-        txn.get(&key.bytes()).await
+        Self::replicator_in(&txn, peer_id).await
+    }
+
+    /// [`get_replicator`](Self::get_replicator) through `reader`, a view of
+    /// the peerstore namespace, so a caller reads it at its own snapshot.
+    pub async fn replicator_in<R>(reader: &R, peer_id: &str) -> Result<Option<Bytes>>
+    where
+        R: Reader,
+    {
+        reader.get(&ReplicatorKey::new(peer_id).bytes()).await
     }
 
     /// Delete a replicator and all of its persisted push-retry state.
@@ -1405,16 +1413,31 @@ impl<S: Store> Peerstore<S> {
         scope_id: &str,
         is_collection: bool,
     ) -> Result<Option<Vec<String>>> {
+        let txn = self.store.new_txn(true).await?;
+        Self::acknowledged_heads_in(&txn, peer_id, scope_id, is_collection).await
+    }
+
+    /// [`acknowledged_heads`](Self::acknowledged_heads) through `reader`, a
+    /// view of the peerstore namespace, so a caller reads it at its own
+    /// snapshot.
+    pub async fn acknowledged_heads_in<R>(
+        reader: &R,
+        peer_id: &str,
+        scope_id: &str,
+        is_collection: bool,
+    ) -> Result<Option<Vec<String>>>
+    where
+        R: Reader,
+    {
         let marker = if is_collection {
             ReplicatorRetryCollectionKey::new(peer_id, scope_id).bytes()
         } else {
             ReplicatorRetryDocIDKey::new(peer_id, scope_id).bytes()
         };
-        let txn = self.store.new_txn(true).await?;
-        if txn.get(&marker).await?.is_some() {
+        if reader.get(&marker).await?.is_some() {
             return Ok(None);
         }
-        let acked = txn
+        let acked = reader
             .get(&ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes())
             .await?;
         Ok(acked.map(|bytes| {
