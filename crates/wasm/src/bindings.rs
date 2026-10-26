@@ -72,22 +72,35 @@ impl ExecRequestOptions {
     }
 }
 
-/// Collection info returned to JavaScript.
+/// Collection info returned to JavaScript, keyed as Go's JS client returns
+/// `client.CollectionVersion`: Go marshals it with `json.Marshal` and no tags
+/// (`client/collection_description.go:30-67`, via `goji.MarshalJS` at
+/// `js/client_store.go:45`), so the keys are Go's field names.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CollectionInfo {
+    /// `CollectionVersion.Name` (`client/collection_description.go:32`).
+    #[serde(rename = "Name")]
     pub name: String,
+    /// `CollectionVersion.VersionID` (`client/collection_description.go:35`).
     #[serde(rename = "VersionID")]
     pub collection_version_id: String,
+    /// `CollectionVersion.Fields` (`client/collection_description.go:70`).
+    #[serde(rename = "Fields")]
     pub fields: Vec<FieldInfo>,
 }
 
-/// Field info within a collection.
+/// Field info within a collection, keyed as Go's `CollectionFieldDescription`
+/// (`client/collection_field_description.go:24`, same marshalling as above).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FieldInfo {
+    /// `CollectionFieldDescription.Name`.
+    #[serde(rename = "Name")]
     pub name: String,
+    /// `CollectionFieldDescription.Kind`.
+    #[serde(rename = "Kind")]
     pub kind: String,
+    /// `CollectionFieldDescription.Typ`, the field's CRDT type.
+    #[serde(rename = "Typ")]
     pub crdt_type: String,
 }
 
@@ -98,5 +111,35 @@ impl From<&schema::FieldDescription> for FieldInfo {
             kind: format!("{:?}", field.kind),
             crdt_type: format!("{:?}", field.crdt_type),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_info_keys_are_gos_js_client_keys() {
+        let info = CollectionInfo {
+            name: "User".to_string(),
+            collection_version_id: "bae-1".to_string(),
+            fields: vec![FieldInfo {
+                name: "age".to_string(),
+                kind: "Int".to_string(),
+                crdt_type: "Lww".to_string(),
+            }],
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        let mut keys: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["Fields", "Name", "VersionID"]);
+        let mut field_keys: Vec<_> = json["Fields"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        field_keys.sort();
+        assert_eq!(field_keys, ["Kind", "Name", "Typ"]);
     }
 }
