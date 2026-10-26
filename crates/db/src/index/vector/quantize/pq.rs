@@ -22,8 +22,9 @@ pub struct ProductQuantizer {
     /// `m` codebooks, each `CODEBOOK_SIZE * dsub` values.
     books: Vec<Centroids>,
     /// Each codebook again, dimension-major: `dsub` rows of `k` values. Built
-    /// on the first encode that reads it, so a quantizer that only scores
-    /// codes, or whose subspaces are wide, never pays for the copy.
+    /// only by [`prepare_encode`](Self::prepare_encode): the copy costs about
+    /// as much as one encode, so only a quantizer that encodes many vectors
+    /// earns it back.
     columns: OnceCell<Vec<Vec<f32>>>,
 }
 
@@ -164,6 +165,17 @@ impl ProductQuantizer {
         self.m
     }
 
+    /// Readies narrow subspaces to encode sixteen centroids at a time. Called
+    /// by whoever is about to encode many vectors with this quantizer, or
+    /// keeps it across writes; a quantizer built for one write skips it, since
+    /// the copy would cost as much as the encode it speeds up.
+    pub fn prepare_encode(&self) {
+        if self.dsub < kmeans::LANES {
+            self.columns
+                .get_or_init_racy(|| self.books.iter().map(columns).collect());
+        }
+    }
+
     fn subspace<'v>(&self, vector: &'v [f32], j: usize) -> &'v [f32] {
         &vector[j * self.dsub..(j + 1) * self.dsub]
     }
@@ -179,19 +191,16 @@ impl Quantizer for ProductQuantizer {
     }
 
     fn encode(&self, vector: &[f32], code: &mut [u8]) {
+        let transposed = self.columns.get();
         for j in 0..self.m {
             let book = &self.books[j];
             if book.k == 0 || vector.len() < (j + 1) * self.dsub || code.len() <= j {
                 continue;
             }
             let part = self.subspace(vector, j);
-            let nearest = if self.dsub < kmeans::LANES {
-                let transposed = self
-                    .columns
-                    .get_or_init_racy(|| self.books.iter().map(columns).collect());
-                nearest_by_columns(&transposed[j], book.k, part)
-            } else {
-                book.nearest(part).0
+            let nearest = match transposed {
+                Some(transposed) => nearest_by_columns(&transposed[j], book.k, part),
+                None => book.nearest(part).0,
             };
             code[j] = nearest as u8;
         }

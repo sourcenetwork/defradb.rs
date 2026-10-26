@@ -79,6 +79,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 )
                 .await?;
         }
+        quantizer.prepare_encode();
         let _ = self.quantizer.set(Arc::new(quantizer));
 
         let medoid = self

@@ -182,6 +182,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             books,
         )?);
         if let Some((cache, training)) = shared {
+            quantizer.prepare_encode();
             cache.share_quantizer(training, quantizer.clone());
         }
         Ok(self.quantizer.get_or_init_racy(|| quantizer).clone())

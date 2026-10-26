@@ -172,6 +172,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             return Ok(());
         }
         let pq = self.quantizer(&trained).await?;
+        pq.prepare_encode();
         let mut graph = self.graph_state().await?;
 
         if !plan.deleted.is_empty() {

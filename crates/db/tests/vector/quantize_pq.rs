@@ -208,7 +208,8 @@ fn a_code_is_far_smaller_than_the_vector() {
 
 /// A stored code has to equal a re-encode of its vector, so an encode must pick
 /// exactly the centroid `nearest` picks, near-ties included, at every subspace
-/// width and for codebooks smaller than 256 or not a multiple of the lanes.
+/// width, prepared or not, and for codebooks smaller than 256 or not a
+/// multiple of the lanes.
 #[test]
 fn encode_picks_the_centroid_nearest_picks() {
     for (dimensions, m, count) in [
@@ -244,15 +245,20 @@ fn encode_picks_the_centroid_nearest_picks() {
                 .flat_map(|book| book.get(book.k / 2).to_vec())
                 .collect(),
         );
-        for probe in &probes {
-            pq.encode(probe, &mut code);
-            for (j, book) in pq.books().iter().enumerate() {
-                let (want, _) = book.nearest(&probe[j * dsub..(j + 1) * dsub]);
-                assert_eq!(
-                    code[j] as usize, want,
-                    "dims {dimensions}, m {m}, k {}, subspace {j}",
-                    book.k
-                );
+        for prepared in [false, true] {
+            if prepared {
+                pq.prepare_encode();
+            }
+            for probe in &probes {
+                pq.encode(probe, &mut code);
+                for (j, book) in pq.books().iter().enumerate() {
+                    let (want, _) = book.nearest(&probe[j * dsub..(j + 1) * dsub]);
+                    assert_eq!(
+                        code[j] as usize, want,
+                        "dims {dimensions}, m {m}, k {}, subspace {j}, prepared {prepared}",
+                        book.k
+                    );
+                }
             }
         }
     }
