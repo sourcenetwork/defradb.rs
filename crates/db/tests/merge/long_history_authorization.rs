@@ -118,7 +118,7 @@ impl Fixture {
     async fn update(&self, parent: Cid, priority: u64, signer: &Signer) -> (Cid, Vec<u8>) {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority,
                 status: 1,
             }),
@@ -231,7 +231,7 @@ fn strict_collection_history_uses_the_composites_document_identity() {
             fixture.handler.set_composite_merge_hook(hook);
             let root = fixture.history(&owner, None, 64).await;
             let payload = CollectionDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
             };
             let block = Block::new(
@@ -283,7 +283,7 @@ fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
         let root = fixture.history(&attacker, None, 64).await;
         let block = Block::new(
             CrdtDelta::Collection(CollectionDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
             }),
             vec![],
@@ -519,7 +519,7 @@ async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
     let root = fixture.history(&owner, Some(&attacker), 64).await;
     let block = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 1,
         }),
         vec![],

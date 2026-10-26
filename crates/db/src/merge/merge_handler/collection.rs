@@ -663,7 +663,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         // Update collection headstore using the shared headstore view
-        let collection_id = metadata.collection_id.unwrap_or(&payload.collection_version_id);
+        let collection_id = metadata
+            .collection_id
+            .unwrap_or(&payload.collection_version_id);
         let short_id =
             crate::collection::require_persisted_collection_short_id(systemstore, collection_id)
                 .await?;

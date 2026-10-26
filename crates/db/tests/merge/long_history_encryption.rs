@@ -81,7 +81,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         let mut encrypted = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 2,
                 data: ciphertext,
             }),
@@ -95,7 +95,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         let clear = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "age".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 2,
                 data: age,
             }),
@@ -118,7 +118,7 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
                 &blockstore,
                 &Block::new(
                     CrdtDelta::Composite(CompositeDeltaPayload {
-                        schema_version_id: "v1".into(),
+                        collection_version_id: "v1".into(),
                         priority,
                         status: 1,
                     }),

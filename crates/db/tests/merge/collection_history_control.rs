@@ -53,7 +53,7 @@ fn standalone_collection_preserves_linked_driver_errors() {
             let handler = DbMergeHandler::new(db, blocks.clone());
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority: 1,
                     status: 1,
                 }),
@@ -67,7 +67,7 @@ fn standalone_collection_preserves_linked_driver_errors() {
                 .unwrap();
             handler.set_composite_merge_hook(Arc::new(DriverFailure { kind, root }));
             let payload = CollectionDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
             };
             let carrier = Block::new(

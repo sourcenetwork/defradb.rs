@@ -39,7 +39,7 @@ async fn seed(
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: doc.as_bytes().to_vec(),
         }),
         vec![],
@@ -52,7 +52,7 @@ async fn seed(
         .unwrap();
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),

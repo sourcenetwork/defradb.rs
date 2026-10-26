@@ -218,7 +218,7 @@ fn history_pages_batch_their_encryption_keys() {
             let field = Block::new_with_options(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".into(),
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority,
                     data,
                 }),
@@ -234,7 +234,7 @@ fn history_pages_batch_their_encryption_keys() {
                 .unwrap();
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority,
                     status: 1,
                 }),

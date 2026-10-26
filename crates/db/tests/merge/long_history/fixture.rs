@@ -60,7 +60,7 @@ impl History {
             let field = Block::new(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".into(),
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority,
                     data,
                 }),
@@ -74,7 +74,7 @@ impl History {
             let counter = Block::new(
                 CrdtDelta::Counter(CounterDeltaPayload {
                     field_name: "score".into(),
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority,
                     data,
                     nonce: priority.try_into().unwrap(),
@@ -86,7 +86,7 @@ impl History {
             pending.push((counter_cid, counter.to_dag_cbor().unwrap()));
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority,
                     status: 1,
                 }),

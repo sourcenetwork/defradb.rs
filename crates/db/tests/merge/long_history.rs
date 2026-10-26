@@ -294,7 +294,7 @@ fn shared_ancestors_are_applied_once_across_forks() {
             .await;
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 7,
                 status: 1,
             }),
@@ -396,7 +396,7 @@ fn document_and_collection_deliveries_share_history_progress() {
             .await;
         let root = history.root();
         let payload = defra_core::block::CollectionDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 1,
         };
         let collection = Block::new(
