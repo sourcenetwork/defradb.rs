@@ -41,7 +41,7 @@ use crate::p2p::P2PRuntime;
 /// import init, { DefraClient } from 'defra-wasm';
 ///
 /// await init();
-/// const client = await DefraClient.create({ storage: 'memory' });
+/// const client = await DefraClient.create({ dbName: 'my-db' });
 ///
 /// await client.addCollection(`
 ///   type User {
