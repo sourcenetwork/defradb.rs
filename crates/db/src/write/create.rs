@@ -115,10 +115,7 @@ where
         .next_doc_short_id()
         .await
         .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-    Ok(DocRef::new(
-        collection.resolved_root_id(),
-        short_id,
-    ))
+    Ok(DocRef::new(collection.resolved_root_id(), short_id))
 }
 
 /// The storage identity of an attempt's `ordinal`-th create. The short ID is
@@ -151,10 +148,7 @@ where
     let short_id = <[u8; 8]>::try_from(drawn.as_ref())
         .map(u64::from_be_bytes)
         .map_err(|_| query::error::QueryError::execution("invalid prepared document short ID"))?;
-    Ok(DocRef::new(
-        collection.resolved_root_id(),
-        short_id,
-    ))
+    Ok(DocRef::new(collection.resolved_root_id(), short_id))
 }
 
 /// Mint the document's encryption keys through the KMS, unless a preparation
