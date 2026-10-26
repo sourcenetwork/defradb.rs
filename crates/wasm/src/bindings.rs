@@ -17,6 +17,17 @@ pub fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T> {
     serde_wasm_bindgen::from_value(value).map_err(WasmError::from)
 }
 
+/// Convert a JavaScript config object to a Rust type, honouring
+/// `deny_unknown_fields`: `serde_wasm_bindgen` reads only a struct's declared
+/// fields, so an unknown key would otherwise pass unseen.
+pub fn config_from_js<T>(value: JsValue) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let value: serde_json::Value = from_js(value)?;
+    Ok(serde_json::from_value(value)?)
+}
+
 /// Client configuration passed from JavaScript.
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]

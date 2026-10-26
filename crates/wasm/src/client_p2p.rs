@@ -5,7 +5,7 @@ use std::sync::Arc;
 use defra_p2p_adapter::{P2PError, P2POperations, ReplicationFilters};
 use wasm_bindgen::prelude::*;
 
-use crate::bindings::{from_js, to_js};
+use crate::bindings::{config_from_js, from_js, to_js};
 use crate::client::DefraClient;
 use crate::error::{Result, WasmError};
 use crate::p2p::{P2PConfig, P2PRuntime};
@@ -150,7 +150,7 @@ impl DefraClient {
         let config: P2PConfig = if config.is_undefined() || config.is_null() {
             P2PConfig::default()
         } else {
-            from_js(config)?
+            config_from_js(config)?
         };
 
         let runtime = P2PRuntime::start(

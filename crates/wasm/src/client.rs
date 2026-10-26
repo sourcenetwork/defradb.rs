@@ -20,7 +20,7 @@ type WasmRunner =
     QueryRunner<LensedAutoCommitFetcher<RegolithStore>, DbTransactionRegistry<RegolithStore>>;
 
 use crate::bindings::{
-    from_js, to_js, ClientConfig, CollectionInfo, ExecRequestOptions, FieldInfo,
+    config_from_js, to_js, ClientConfig, CollectionInfo, ExecRequestOptions, FieldInfo,
 };
 use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
@@ -253,7 +253,7 @@ impl DefraClient {
         let config: ClientConfig = if config.is_undefined() || config.is_null() {
             ClientConfig::default()
         } else {
-            from_js(config)?
+            config_from_js(config)?
         };
 
         // The page's thread is the pool's one worker, driven by the event
@@ -512,7 +512,7 @@ fn build_runner(
 impl DefraClient {
     pub(crate) async fn query(&self, request: &str) -> std::result::Result<JsValue, JsValue> {
         let response: serde_json::Value =
-            from_js(self.exec_request(request, JsValue::UNDEFINED).await?)
+            crate::bindings::from_js(self.exec_request(request, JsValue::UNDEFINED).await?)
                 .map_err(JsValue::from)?;
         let gql = &response["gql"];
         match gql["errors"][0]["message"].as_str() {
@@ -530,6 +530,7 @@ impl DefraClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bindings::from_js;
     use crypto::keys::{Key as _, PrivateKey as _};
     use identity::Identity as _;
     use wasm_bindgen_test::*;
