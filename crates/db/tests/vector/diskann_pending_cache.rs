@@ -192,8 +192,8 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     let cache = PendingCache::default();
     let copy = |generation, position, ids: &[u64]| {
         let mut segment = Segment::default();
-        for id in ids {
-            segment.push(NodeId(*id), &[0]);
+        for (position, id) in (1..).zip(ids) {
+            segment.push(position, NodeId(*id), &[0]);
         }
         let tag = Tag {
             generation,
@@ -218,11 +218,13 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     assert_eq!(cache.load().tag().unwrap().generation, 2);
 
     let mut held = Vec::new();
-    cache.load().for_each(1, |id, _| held.push(id));
+    cache
+        .load()
+        .for_each_through(u64::MAX, 1, |id, _| held.push(id));
     assert_eq!(held, vec![NodeId(4)]);
 
     let mut big = Segment::default();
-    big.push(NodeId(5), &vec![0; MAX_PENDING_CACHE_BYTES]);
+    big.push(1, NodeId(5), &vec![0; MAX_PENDING_CACHE_BYTES]);
     let tag = Tag {
         generation: 3,
         position: 0,
@@ -232,20 +234,20 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     assert!(marker.is_oversized(), "past the cap only a marker is kept");
     assert_eq!(marker.tag().unwrap().generation, 3);
     let mut held = 0;
-    marker.for_each(1, |_, _| held += 1);
+    marker.for_each_through(u64::MAX, 1, |_, _| held += 1);
     assert_eq!(held, 0, "the marker holds nothing");
 }
 
 #[test]
 fn a_catch_up_past_the_cap_is_refused() {
     let mut segment = Segment::default();
-    segment.push(NodeId(1), &[0; 8]);
+    segment.push(1, NodeId(1), &[0; 8]);
     let tag = Tag {
         generation: 0,
         position: 1,
     };
     let copy = Copy::loaded(tag, segment);
-    let per_entry = size_of::<NodeId>() + 8;
+    let per_entry = size_of::<u64>() + size_of::<NodeId>() + 8;
     let room = ((MAX_PENDING_CACHE_BYTES - per_entry) / per_entry) as u64;
     assert!(copy.can_hold(room, 8));
     assert!(
@@ -296,4 +298,82 @@ fn log_entries_round_trip() {
         codec::decode_log_entry(&bytes, 4).is_err(),
         "a code of the wrong width is refused"
     );
+}
+
+const CROWD: std::ops::Range<u64> = 80_000..80_080;
+const TARGET: u64 = 90_000;
+
+fn negated(vector: &[f32]) -> Vec<f32> {
+    vector.iter().map(|x| -x).collect()
+}
+
+async fn save_all(
+    store: &RegolithStore,
+    index: &VectorIndex,
+    ids: std::ops::Range<u64>,
+    vector: &[f32],
+) {
+    let mut write = store.new_txn(false).await.unwrap();
+    for id in ids {
+        index.save(&mut write, id, &value(vector)).await.unwrap();
+    }
+    write.commit().await.unwrap();
+}
+
+/// More updated vectors than `l_search` once sat at the query: their old
+/// codes must not crowd out the vector that is nearest now.
+#[test]
+fn an_updated_vector_is_scored_by_its_latest_code() {
+    workers::block_on(async {
+        let (store, index) = trained_store().await;
+        let q = fresh(0x123456);
+        save_all(&store, &index, TARGET..TARGET + 1, &q).await;
+        save_all(&store, &index, CROWD, &q).await;
+        save_all(&store, &index, CROWD, &negated(&q)).await;
+        assert_eq!(nearest(&store, &index, &q).await, TARGET);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_transaction_scores_its_own_update_by_its_latest_code() {
+    workers::block_on(async {
+        let (store, index) = trained_store().await;
+        let q = fresh(0x123457);
+        save_all(&store, &index, TARGET..TARGET + 1, &q).await;
+        let mut write = store.new_txn(false).await.unwrap();
+        for vector in [q.clone(), negated(&q)] {
+            for id in CROWD {
+                index.save(&mut write, id, &value(&vector)).await.unwrap();
+            }
+        }
+        let hits = index.search(&mut write, &q, 1, None).await.unwrap();
+        write.discard();
+        assert_eq!(hits[0].id.0, TARGET);
+    })
+    .unwrap()
+}
+
+/// A copy caught up past an older snapshot's head holds codes from that
+/// snapshot's future; the older search must score each vector by the code it
+/// can see.
+#[test]
+fn a_snapshot_behind_the_copy_scores_the_codes_it_can_see() {
+    workers::block_on(async {
+        let (store, index, _caches) = cached_store().await;
+        let q = fresh(0x123458);
+        save_all(&store, &index, TARGET..TARGET + 1, &q).await;
+        save_all(&store, &index, CROWD, &negated(&q)).await;
+        let mut old = store.new_txn(true).await.unwrap();
+        let hits = index.search(&mut old, &q, 1, None).await.unwrap();
+        assert_eq!(hits[0].id.0, TARGET);
+
+        save_all(&store, &index, CROWD, &q).await;
+        nearest(&store, &index, &q).await;
+
+        let hits = index.search(&mut old, &q, 1, None).await.unwrap();
+        old.discard();
+        assert_eq!(hits[0].id.0, TARGET);
+    })
+    .unwrap()
 }

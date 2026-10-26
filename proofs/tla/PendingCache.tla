@@ -13,6 +13,12 @@
 \* are truncated. What is pending at a snapshot is every vector its live
 \* entries insert.
 \*
+\* An update of a pending vector appends again: the vector now has an entry
+\* per version, and only its newest one at or before a search's head is the
+\* code that search may score it by. An older code would rank the vector
+\* where it used to be, and a crowd of such vectors could fill every slot a
+\* search re-ranks, pushing out the vector that is nearest now.
+\*
 \* A delete appends nothing. A deleted vector's entry stays a candidate until
 \* a merge truncates it, which costs a search nothing: a search ranks every
 \* candidate by the full vector it reads in its own snapshot, and drops one
@@ -43,9 +49,13 @@
 \*   3. otherwise (the cache is newer than the search): it reads the log.
 \* Whichever it used, it adds the vectors its own transaction appended and
 \* has not committed: regolith hands those back from the transaction's
-\* buffer, without positions. Catch-ups only ever add, and within one
-\* generation the log only grows, so a cache that is ahead of a search still
-\* holds everything that search needs.
+\* buffer, without positions, oldest first. Catch-ups only ever add, and
+\* within one generation the log only grows, so a cache that is ahead of a
+\* search still holds everything that search needs. It also holds entries
+\* from that search's future, so the cache keeps each entry's position and
+\* the search skips every entry past its own head. Last, the search keeps
+\* one entry per vector, the newest: its own appends are newer than any log
+\* entry, and the last of them is the newest.
 \*
 \* A tiny example. Vector a is inserted (log position 1) and a search loads
 \* the cache at head 1: {a}. A merge links a and truncates position 1: the
@@ -60,17 +70,25 @@
 \*   2. the cache lacks a vector that some snapshot it is valid for has
 \*      pending - INV_CacheCovers;
 \*   3. a live vector is neither linked nor pending, so no search can ever
-\*      find it - INV_NoLostVector.
+\*      find it - INV_NoLostVector;
+\*   4. a search scores a vector by any entry but the newest one its
+\*      snapshot, or its own transaction, holds - INV_ScoresLatest.
 \*
 \* Each guard has a RED configuration that removes it and fails:
 \*   MC_PendingCache_Red_NoGeneration: the cache is used whatever its
-\*     generation, so a search older than a merge uses a cache loaded after
-\*     it and misses what that merge linked, as the example shows;
+\*     generation, so a search newer than a merge scores a vector by an
+\*     entry that merge truncated, and a search older than a merge uses a
+\*     cache loaded after it and misses what that merge linked, as the
+\*     example shows;
 \*   MC_PendingCache_Red_OwnWrites: a search leaves out its own transaction's
 \*     appends, which no log read can show it;
 \*   MC_PendingCache_Red_TruncateThroughHead: a merge truncates through the
 \*     head rather than through what it linked, and drops vectors it never
-\*     linked.
+\*     linked;
+\*   MC_PendingCache_Red_EveryVersion: a search scores every entry of an
+\*     updated vector, so an obsolete code competes with the current one;
+\*   MC_PendingCache_Red_FutureVersion: a search uses every entry of a cache
+\*     that is ahead of it, so a code from its future is the newest it sees.
 \*
 \* The log is regolith's commit-ordered append, the truncate is
 \* sourcenetwork/regolith#300, and the own appends are
@@ -85,7 +103,11 @@
 \*                GraphState::generation), the live vectors (the staging
 \*                store) and the linked ones (codec::GRAPH)
 \*   Pending      graph.rs scan_pending: every vector the live entries insert
-\*   cache        pending_cache.rs PendingCache, its published Copy and Tag
+\*   cache        pending_cache.rs PendingCache, its published Copy and Tag;
+\*                entries are Segment's positions and ids, read through a
+\*                head by Copy::for_each_through
+\*   Latest       graph.rs pending_candidates: the map from each vector to
+\*                the distance of its last entry visited
 \*   Insert       mod.rs insert: the staging write and the log append
 \*   Delete       mod.rs delete: the staging delete and the codec::DELETED
 \*                tombstone; nothing goes to the log
@@ -97,8 +119,8 @@
 \*   OwnWrite     an insert made by the search's own transaction, read back
 \*                by store/kv.rs own_pending_log (regolith
 \*                Transaction::appended)
-\*   Search       graph.rs pending_candidates: the three rules above, the
-\*                own appends, and PendingCache::publish. Rule 1's full load
+\*   Search       graph.rs pending_candidates and snapshot_pending: the three
+\*                rules above, the own appends, and PendingCache::publish. Rule 1's full load
 \*                is Copy::can_hold refusing the gap, or read_pending_log
 \*                finding an entry gone. A copy past the
 \*                64 MiB cap is published as an oversized marker that is
@@ -107,20 +129,24 @@
 EXTENDS Naturals, Integers, FiniteSets, Sequences, TLC
 
 \* Nodes: the vector ids. Readers: the searches. MaxCommits: how many
-\* commits TLC explores. The rest switch each guard on (TRUE) or off.
-CONSTANTS Nodes, Readers, MaxCommits,
-          GenerationCheck, OwnAppendsRead, TruncateThroughLinked
+\* commits TLC explores. MaxOwn: how many appends a search's own
+\* transaction may make. The rest switch each guard on (TRUE) or off.
+CONSTANTS Nodes, Readers, MaxCommits, MaxOwn,
+          GenerationCheck, OwnAppendsRead, TruncateThroughLinked,
+          LatestOnly, HeadCut
 
 \* db: one record per commit, the newest last; a snapshot is an index into it.
 \* cache: the published PendingCache; gen = -1 means nothing is loaded.
 \* rs: each search's progress, snapshot, its own appends, the copy of the
-\*     cache it loaded, and whether its candidates held everything it needed.
+\*     cache it loaded, whether its candidates held everything it needed,
+\*     and whether it scored each vector by its newest entry.
 VARIABLES db, cache, rs
 \* Every variable, for the steps that leave some unchanged.
 vars == <<db, cache, rs>>
 
-\* The cache before anything was loaded.
-NoCache == [gen |-> -1, pos |-> 0, ids |-> {}]
+\* The cache before anything was loaded. Its entries are <<position, id>>
+\* pairs, so two versions of one vector are two entries.
+NoCache == [gen |-> -1, pos |-> 0, entries |-> {}]
 
 \* The state before any commit: an empty log, generation 0, nothing live or
 \* linked. entry is the log, the vector each position inserts; trunc is the
@@ -131,14 +157,33 @@ Genesis == [head |-> 0, entry |-> <<>>, trunc |-> 0, gen |-> 0,
 \* The newest committed state.
 Last == db[Len(db)]
 
+\* Snapshot s's log entries at positions from+1 .. to, as <<position, id>>.
+Entries(s, from, to) == {<<p, s.entry[p]>> : p \in (from + 1)..to}
+
+\* The vectors a set of entries inserts.
+Ids(es) == {e[2] : e \in es}
+
 \* The vectors snapshot s's log inserts at positions from+1 .. to.
-Inserted(s, from, to) == {s.entry[p] : p \in (from + 1)..to}
+Inserted(s, from, to) == Ids(Entries(s, from, to))
+
+\* Snapshot s's live entries.
+PendingEntries(s) == Entries(s, s.trunc, s.head)
 
 \* What is pending at snapshot s: every vector its live entries insert.
-Pending(s) == Inserted(s, s.trunc, s.head)
+Pending(s) == Ids(PendingEntries(s))
+
+\* Of a set of entries, each vector's newest: no entry of the same vector has
+\* a later position.
+Latest(es) == {e \in es : \A f \in es : f[2] = e[2] => f[1] <= e[1]}
+
+\* The entries of a search's own appends. They have no log position; each
+\* is newer than every position (at most MaxCommits) and than the own
+\* appends before it.
+OwnEntries(own) == {<<MaxCommits + i, own[i]>> : i \in 1..Len(own)}
 
 \* A search that has not started.
-Idle == [phase |-> "idle", snap |-> 0, own |-> {}, seen |-> NoCache, ok |-> TRUE]
+Idle == [phase |-> "idle", snap |-> 0, own |-> <<>>, seen |-> NoCache,
+         ok |-> TRUE, latest |-> TRUE]
 
 \* At the start: no commit yet, no cache, every search idle.
 Init == /\ db = <<Genesis>>
@@ -190,12 +235,12 @@ Load(r) == /\ rs[r].phase = "snap"
            /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "loaded", !.seen = cache]]
            /\ UNCHANGED <<db, cache>>
 
-\* The search's own transaction inserts a vector before it searches. Nothing
-\* is committed, so it has no log position; only this search can see it. One
-\* such write is enough to break the rule it tests, and keeps TLC small.
+\* The search's own transaction inserts or updates a vector before it
+\* searches. Nothing is committed, so it has no log position; only this
+\* search can see it. Up to MaxOwn such writes, so one can update another.
 OwnWrite(r, n) == /\ rs[r].phase = "snap"
-                  /\ rs[r].own = {}
-                  /\ rs' = [rs EXCEPT ![r].own = {n}]
+                  /\ Len(rs[r].own) < MaxOwn
+                  /\ rs' = [rs EXCEPT ![r].own = Append(@, n)]
                   /\ UNCHANGED <<db, cache>>
 
 \* Whether `next` is newer than the published cache, so a publish of it may
@@ -208,50 +253,62 @@ Publish(next) == cache' = IF Newer(next) THEN next ELSE cache
 
 \* The search itself (graph.rs pending_candidates), in one step: it decides
 \* by the rules in the story, and records whether its candidates held every
-\* vector it needed.
+\* vector it needed and scored each by its newest entry.
 Search(r) ==
   LET st == db[rs[r].snap]                    \* the search's snapshot
       seen == rs[r].seen                      \* the cache copy it loaded
-      needed == Pending(st) \cup rs[r].own    \* what it must find
+      mine == OwnEntries(rs[r].own)           \* its own appends' entries
+      \* What it must find, and the one entry per vector it must score.
+      needed == Pending(st) \cup Ids(mine)
+      wanted == Latest(PendingEntries(st) \cup mine)
       \* Its own appends, read back from its transaction; the OwnWrites bug
       \* leaves them out.
-      own == IF OwnAppendsRead THEN rs[r].own ELSE {}
-      \* Ends the search with candidates `got` plus its own appends.
-      done(got) == rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done",
-                                                     !.ok = needed \subseteq (got \cup own)]]
+      own == IF OwnAppendsRead THEN mine ELSE {}
+      \* A cache's entries up to the search's head; the FutureVersion bug
+      \* keeps them all.
+      upToHead(es) == IF HeadCut THEN {e \in es : e[1] <= st.head} ELSE es
+      \* Ends the search with log entries `got` plus its own appends, keeping
+      \* each vector's newest; the EveryVersion bug keeps every entry.
+      done(got) ==
+        LET all == got \cup own
+            scored == IF LatestOnly THEN Latest(all) ELSE all
+        IN rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done",
+                                              !.ok = needed \subseteq Ids(all),
+                                              !.latest = (scored = wanted)]]
       \* The cache belongs to this search's generation; the NoGeneration bug
       \* accepts any loaded cache.
       sameGen == IF GenerationCheck THEN seen.gen = st.gen ELSE seen.gen >= 0
-      \* What the log entries after pos, up to the search's head, insert:
-      \* the live ones only, since a truncated entry is gone from the log.
-      added == Inserted(st, IF seen.pos > st.trunc THEN seen.pos ELSE st.trunc, st.head)
+      \* The log entries after pos, up to the search's head: the live ones
+      \* only, since a truncated entry is gone from the log.
+      added == Entries(st, IF seen.pos > st.trunc THEN seen.pos ELSE st.trunc, st.head)
   IN /\ rs[r].phase = "loaded"
      \* The rules are tried in order, as the code's if-else chain tries them.
      /\ IF sameGen /\ seen.pos >= st.head
         \* Rule 1, nothing to catch up on.
-        THEN done(seen.ids) /\ UNCHANGED cache
+        THEN done(upToHead(seen.entries)) /\ UNCHANGED cache
         ELSE IF sameGen
         \* Rule 1, caught up through the search's head, then published; or,
         \* when the gap is past the cap or an entry is gone, a full load from
         \* the log, then published. TLC tries both, since either may happen.
-        THEN \/ LET next == [seen EXCEPT !.pos = st.head, !.ids = @ \cup added]
-                IN done(next.ids) /\ Publish(next)
-             \/ done(Pending(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
-                                              ids |-> Pending(st)])
+        THEN \/ LET next == [seen EXCEPT !.pos = st.head, !.entries = @ \cup added]
+                IN done(upToHead(next.entries)) /\ Publish(next)
+             \/ done(PendingEntries(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
+                                                     entries |-> PendingEntries(st)])
         ELSE IF seen.gen < st.gen
         \* Rule 2: a full load from the log, then published.
-        THEN done(Pending(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
-                                           ids |-> Pending(st)])
+        THEN done(PendingEntries(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
+                                                  entries |-> PendingEntries(st)])
         \* Rule 3: the cache is newer than the search.
-        ELSE done(Pending(st)) /\ UNCHANGED cache
+        ELSE done(PendingEntries(st)) /\ UNCHANGED cache
      \* A search commits nothing.
      /\ UNCHANGED db
 
-\* A finished search that held everything starts over, so TLC also runs
-\* searches after later commits. One that missed something stays, for the
-\* invariant to report.
+\* A finished search that held everything and scored it right starts over,
+\* so TLC also runs searches after later commits. One that went wrong stays,
+\* for the invariant to report.
 Again(r) == /\ rs[r].phase = "done"
             /\ rs[r].ok
+            /\ rs[r].latest
             /\ rs' = [rs EXCEPT ![r] = Idle]
             /\ UNCHANGED <<db, cache>>
 
@@ -272,14 +329,18 @@ Symmetry == Permutations(Nodes) \cup Permutations(Readers)
 \* own transaction, has pending (its `ok`, set when it ended).
 INV_NoHiddenPending == \A r \in Readers: rs[r].phase = "done" => rs[r].ok
 
-\* Promise 2: the published cache holds every vector pending at any snapshot
-\* it is valid for: its generation, and a head it has caught up to.
+\* Promise 2: the published cache holds every entry live at any snapshot it
+\* is valid for: its generation, and a head it has caught up to.
 INV_CacheCovers ==
   cache.gen >= 0 =>
     \A s \in 1..Len(db):
       (db[s].gen = cache.gen /\ db[s].head <= cache.pos)
-        => Pending(db[s]) \subseteq cache.ids
+        => PendingEntries(db[s]) \subseteq cache.entries
 
 \* Promise 3: at every snapshot, every live vector is linked or pending.
 INV_NoLostVector == \A s \in 1..Len(db): db[s].live \subseteq db[s].graph \cup Pending(db[s])
+
+\* Promise 4: every finished search scored each pending vector by exactly
+\* one entry, the newest its snapshot or its own transaction holds.
+INV_ScoresLatest == \A r \in Readers: rs[r].phase = "done" => rs[r].latest
 ====

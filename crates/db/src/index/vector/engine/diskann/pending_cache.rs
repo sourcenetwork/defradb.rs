@@ -7,9 +7,10 @@
 //! (`proofs/tla/PendingCache.tla`, `proofs/lean/PendingCache`): it is tagged
 //! with the graph generation it belongs to and the head it has caught up to.
 //! Within a generation the log only grows and catching up only ever adds, so
-//! a copy holds everything an older snapshot of its generation has. Extra
-//! vectors cost a search nothing but a dropped candidate, since ranking reads
-//! each candidate's vector in the search's own snapshot.
+//! a copy holds everything an older snapshot of its generation has. Each
+//! entry keeps its log position, so a search older than the copy visits only
+//! the entries its own head reaches and never scores a vector by a code from
+//! its future.
 
 use std::sync::Arc;
 
@@ -34,15 +35,20 @@ pub struct Tag {
     pub position: u64,
 }
 
-/// Pending vectors and their codes, `code_len` bytes each, in one run.
+/// Pending log entries in log order: each one's position, vector and code,
+/// `code_len` bytes each, in one run.
 #[derive(Debug, Default)]
 pub struct Segment {
+    positions: Vec<u64>,
     ids: Vec<NodeId>,
     codes: Vec<u8>,
 }
 
+const ENTRY_OVERHEAD: usize = size_of::<u64>() + size_of::<NodeId>();
+
 impl Segment {
-    pub fn push(&mut self, id: NodeId, code: &[u8]) {
+    pub fn push(&mut self, position: u64, id: NodeId, code: &[u8]) {
+        self.positions.push(position);
         self.ids.push(id);
         self.codes.extend_from_slice(code);
     }
@@ -52,7 +58,7 @@ impl Segment {
     }
 
     pub fn bytes(&self) -> usize {
-        self.ids.len() * size_of::<NodeId>() + self.codes.len()
+        self.ids.len() * ENTRY_OVERHEAD + self.codes.len()
     }
 }
 
@@ -93,6 +99,7 @@ impl Copy {
         if segments.len() > MAX_SEGMENTS {
             let mut folded = Segment::default();
             for segment in &segments {
+                folded.positions.extend_from_slice(&segment.positions);
                 folded.ids.extend_from_slice(&segment.ids);
                 folded.codes.extend_from_slice(&segment.codes);
             }
@@ -106,6 +113,15 @@ impl Copy {
         }
     }
 
+    /// How many entries it holds.
+    pub fn len(&self) -> usize {
+        self.segments.iter().map(|segment| segment.ids.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn is_oversized(&self) -> bool {
         self.oversized
     }
@@ -113,7 +129,7 @@ impl Copy {
     /// Whether `entries` more inserts of `code_len`-byte codes still fit
     /// under [`MAX_PENDING_CACHE_BYTES`].
     pub fn can_hold(&self, entries: u64, code_len: usize) -> bool {
-        let per_entry = (size_of::<NodeId>() + code_len) as u64;
+        let per_entry = (ENTRY_OVERHEAD + code_len) as u64;
         entries
             .checked_mul(per_entry)
             .and_then(|more| more.checked_add(self.bytes as u64))
@@ -124,14 +140,22 @@ impl Copy {
         self.bytes <= MAX_PENDING_CACHE_BYTES
     }
 
-    /// Every vector held, with its code. A vector inserted more than once
-    /// appears once per insert.
-    pub fn for_each<F>(&self, code_len: usize, mut visit: F)
+    /// Every entry logged at or before `head`, oldest first, with its code. A
+    /// vector inserted more than once appears once per insert.
+    pub fn for_each_through<F>(&self, head: u64, code_len: usize, mut visit: F)
     where
         F: FnMut(NodeId, &[u8]),
     {
         for segment in &self.segments {
-            for (id, code) in segment.ids.iter().zip(segment.codes.chunks_exact(code_len)) {
+            let entries = segment
+                .positions
+                .iter()
+                .zip(&segment.ids)
+                .zip(segment.codes.chunks_exact(code_len));
+            for ((position, id), code) in entries {
+                if *position > head {
+                    return;
+                }
                 visit(*id, code);
             }
         }

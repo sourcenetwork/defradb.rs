@@ -334,11 +334,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     }
 
     /// Every vector the snapshot and the transaction itself have pending,
-    /// ranked by its code: the transaction's own appends, plus the shared copy
-    /// where it provably covers the snapshot and a scan of the log where it
-    /// may not (`proofs/tla/PendingCache.tla`). A scan the copy could not
-    /// stand in for reloads it, and so does a gap too big to fit under the
-    /// cap: one ordered scan instead of a point read per missing entry.
+    /// ranked by the latest code it holds: an update appends a new code, and
+    /// the older ones must not take its place (`proofs/tla/PendingCache.tla`
+    /// `INV_ScoresLatest`). The transaction's own appends come last, so they
+    /// win.
     async fn pending_candidates(
         &self,
         pq: &ProductQuantizer,
@@ -347,36 +346,56 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         out: &mut Vec<Visit>,
     ) -> Result<()> {
         let m = pq.code_len();
-        let mut push = |id: NodeId, code: &[u8]| {
-            out.push(Visit {
-                id,
-                distance: pq.distance(table, code),
-                code: Vec::new(),
-            })
+        let expected = self
+            .codes
+            .as_ref()
+            .map_or(0, |codes| codes.pending.load().len());
+        let mut latest = RapidHashMap::with_capacity(expected);
+        let mut score = |id: NodeId, code: &[u8]| {
+            latest.insert(id, pq.distance(table, code));
         };
+        self.snapshot_pending(m, generation, &mut score).await?;
         for entry in self.store().own_pending_log().await? {
             let (id, code) = codec::decode_log_entry(&entry, m)?;
-            push(id, code);
+            score(id, code);
         }
+        out.extend(latest.into_iter().map(|(id, distance)| Visit {
+            id,
+            distance,
+            code: Vec::new(),
+        }));
+        Ok(())
+    }
+
+    /// Visits every entry the snapshot's pending log holds, oldest first:
+    /// from the shared copy where it provably covers the snapshot, cut at the
+    /// snapshot's head, and from a scan of the log where it may not. A scan
+    /// the copy could not stand in for reloads it, and so does a gap too big
+    /// to fit under the cap: one ordered scan instead of a point read per
+    /// missing entry.
+    async fn snapshot_pending<F>(&self, m: usize, generation: u64, push: &mut F) -> Result<()>
+    where
+        F: FnMut(NodeId, &[u8]) + MaybeSend,
+    {
         let Some(codes) = &self.codes else {
-            return self.scan_pending(m, None, &mut push).await;
+            return self.scan_pending(m, None, push).await;
         };
         let cache = &codes.pending;
         let head = self.store().pending_log_head().await?;
         let copy = cache.load();
         if copy.is_oversized() && copy.tag().is_some_and(|tag| tag.generation >= generation) {
-            return self.scan_pending(m, None, &mut push).await;
+            return self.scan_pending(m, None, push).await;
         }
         let reload = match copy.tag() {
             Some(tag) if tag.generation == generation => {
                 if tag.position >= head {
-                    copy.for_each(m, push);
+                    copy.for_each_through(head, m, push);
                     return Ok(());
                 }
                 if copy.can_hold(head - tag.position, m) {
                     if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
                         let next = Arc::new(copy.caught_up(head, added));
-                        next.for_each(m, push);
+                        next.for_each_through(head, m, push);
                         cache.publish(next);
                         return Ok(());
                     }
@@ -387,10 +406,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             None => true,
         };
         if !reload {
-            return self.scan_pending(m, None, &mut push).await;
+            return self.scan_pending(m, None, push).await;
         }
         let mut segment = Segment::default();
-        self.scan_pending(m, Some(&mut segment), &mut push).await?;
+        self.scan_pending(m, Some(&mut segment), push).await?;
         let tag = Tag {
             generation,
             position: head,
@@ -412,10 +431,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         F: FnMut(NodeId, &[u8]) + MaybeSend,
     {
         self.store()
-            .iterate_pending_log(|_, entry| {
+            .iterate_pending_log(|position, entry| {
                 let (id, code) = codec::decode_log_entry(entry, m)?;
                 if let Some(segment) = into.as_deref_mut() {
-                    segment.push(id, code);
+                    segment.push(position, id, code);
                     if segment.bytes() > MAX_PENDING_CACHE_BYTES {
                         into = None;
                     }
@@ -436,7 +455,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 return Ok(None);
             };
             let (id, code) = codec::decode_log_entry(&bytes, m)?;
-            added.push(id, code);
+            added.push(position, id, code);
         }
         Ok(Some(added))
     }
@@ -444,8 +463,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     /// Walks the graph and scans the pending codes, then re-ranks the best `L`
     /// admitted candidates of both by their full vectors.
     ///
-    /// A node both in the graph and pending (an update not merged yet) is
-    /// ranked once, by its nearer code; re-ranking reads its current vector.
+    /// A pending node is ranked by its latest pending code. One both in the
+    /// graph and pending (an update not merged yet) is ranked once, by the
+    /// nearer of that and its graph code; re-ranking reads its current vector.
     ///
     /// Falls back to the exact scan when fewer than `k` survive: a selective
     /// filter, or a corpus smaller than `k`. That scan is bounded by the

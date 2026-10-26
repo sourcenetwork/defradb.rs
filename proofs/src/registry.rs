@@ -200,6 +200,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "DiskANN pending cache",
+        name: "INV_ScoresLatest — a search scores each pending vector by the newest entry its snapshot or its own transaction holds, never an obsolete one or one from a cache ahead of it",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates, snapshot_pending; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_through, Segment",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_EveryVersion.cfg / MC_PendingCache_Red_FutureVersion.cfg / MC_PendingCache_Red_NoGeneration.cfg (RED)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "scored_is_last — the code kept for a vector is that of its last entry visited, and a copy cut at a search's head scores as the search's own log does",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_through",
+        model_ref: "PendingCache.Latest.scored_is_last / scored_append / cut_scores_snapshot / uncut_scores_future",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,
