@@ -314,17 +314,17 @@ impl CrdtDelta {
         }
     }
 
-    /// Get the schema version ID / collection version ID (if present)
+    /// Get the collection version ID / collection version ID (if present)
     ///
     /// Note: FieldDefinition and CollectionDefinition deltas do not have
-    /// a schema_version_id, so return None for those types.
-    pub fn schema_version_id(&self) -> Option<&str> {
+    /// a collection_version_id, so return None for those types.
+    pub fn collection_version_id(&self) -> Option<&str> {
         match self {
-            CrdtDelta::Lww(d) => Some(&d.schema_version_id),
-            CrdtDelta::Counter(d) => Some(&d.schema_version_id),
-            CrdtDelta::Composite(d) => Some(&d.schema_version_id),
-            CrdtDelta::Immutable(d) => Some(&d.schema_version_id),
-            CrdtDelta::Collection(d) => Some(&d.schema_version_id),
+            CrdtDelta::Lww(d) => Some(&d.collection_version_id),
+            CrdtDelta::Counter(d) => Some(&d.collection_version_id),
+            CrdtDelta::Composite(d) => Some(&d.collection_version_id),
+            CrdtDelta::Immutable(d) => Some(&d.collection_version_id),
+            CrdtDelta::Collection(d) => Some(&d.collection_version_id),
             CrdtDelta::CollectionSet(_) => None,
             CrdtDelta::FieldDefinition(_) => None,
             CrdtDelta::CollectionDefinition(_) => None,

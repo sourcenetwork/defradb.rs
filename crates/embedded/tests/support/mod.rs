@@ -67,7 +67,7 @@ pub async fn add_policy(node: &Node) -> Result<String> {
     Ok(policy.id)
 }
 
-pub async fn add_schema(node: &Node, sdl: &str, creator: &Did) -> Result<()> {
+pub async fn add_collection(node: &Node, sdl: &str, creator: &Did) -> Result<()> {
     let collections = query::parse_sdl(sdl).expect("SDL parse error");
     schema::definition_validation::validate_new_collections(&collections)
         .expect("schema validation error");

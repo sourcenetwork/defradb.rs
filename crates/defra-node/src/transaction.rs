@@ -20,7 +20,7 @@ impl EmbeddedNode {
     /// let txn = node.begin_transaction_guard(false).await?;
     /// let response = txn.execute("mutation { add_Users(input: {name: \"Alice\"}) { _docID } }").await;
     /// if response.has_errors() {
-    ///     txn.rollback().await
+    ///     txn.discard().await
     /// } else {
     ///     txn.commit().await
     /// }
@@ -61,7 +61,27 @@ impl EmbeddedTransaction<'_> {
     }
 
     /// Roll back the writes and consume the owning transaction.
-    pub async fn rollback(self) -> Result<(), TransactionError> {
-        self.guard.rollback().await
+    pub async fn discard(self) -> Result<(), TransactionError> {
+        self.guard.discard().await
+    }
+}
+
+impl EmbeddedNode {
+    /// Read authenticated owners in the same explicit transaction as its rows.
+    /// The node remains the transaction actor. A supplied document-read identity
+    /// follows the ordinary GraphQL permission path; it does not borrow another
+    /// actor's transaction. This grants no relationship or detached ACP read.
+    pub async fn observe_document_owners_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> query::error::Result<Vec<query::owners::DocumentOwnerObservation>> {
+        let context = self.node_context();
+        let identity = identity.or_else(|| self.node_query_identity.clone());
+        self.runner()
+            .observe_document_owners_in_txn(context, handle, collection, doc_ids, identity)
+            .await
     }
 }

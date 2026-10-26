@@ -23,7 +23,6 @@ pub mod dac_bypass {
     pub use crate::ambient::{get_dac_bypass, set_dac_bypass};
 }
 pub mod doc_id;
-pub mod document;
 pub mod encryption;
 pub mod error;
 pub mod ipld;
@@ -31,9 +30,7 @@ pub mod lens_block;
 pub mod merge;
 pub mod request_context;
 pub mod signing;
-pub mod store;
 pub mod thread_bounds;
-pub mod transaction;
 pub mod types;
 pub mod vector;
 #[cfg(any(test, all(target_arch = "wasm32", feature = "ambient")))]

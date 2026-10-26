@@ -1,5 +1,6 @@
 //! PQ codes of a resident-codes index, kept in memory and shared by every
-//! search on the node.
+//! search on the node, beside the copy of its pending list that every DiskANN
+//! index keeps ([`PendingCache`]).
 //!
 //! Codes only order the walk; the final ranking reads full vectors inside the
 //! query's transaction. So a stale or missing code can cost recall but never
@@ -13,6 +14,7 @@ use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
+use super::pending_cache::PendingCache;
 use crate::index::error::{Error, Result};
 use crate::index::vector::store::NodeId;
 
@@ -64,6 +66,7 @@ impl Codes {
 #[derive(Debug, Default)]
 pub struct CodeCache {
     loaded: Atom<Arc<Loaded>>,
+    pub pending: PendingCache,
 }
 
 #[derive(Debug, Default)]
@@ -116,7 +119,7 @@ impl CodeCache {
     }
 }
 
-/// One [`CodeCache`] per resident-codes index, owned by the database.
+/// One [`CodeCache`] per DiskANN index, owned by the database.
 #[derive(Debug)]
 pub struct CodeCaches {
     by_index: HopscotchMap<(u32, u32), Arc<CodeCache>, RandomState>,
@@ -145,5 +148,33 @@ impl CodeCaches {
         self.by_index
             .get(&key)
             .unwrap_or_else(|| self.by_index.get_or_insert(key, Arc::default()))
+    }
+
+    /// Drops the caches of an index that no longer exists. Nothing rebuilds
+    /// them, since no search can name a dropped index; a search that began
+    /// before the drop and loads a copy afterwards leaves that copy behind.
+    pub fn evict(&self, collection_short_id: u32, index_id: u32) {
+        self.by_index.remove(&(collection_short_id, index_id));
+    }
+
+    /// [`evict`](Self::evict) for every index of a dropped collection.
+    pub fn evict_collection(&self, collection_short_id: u32) {
+        let dropped: Vec<_> = self
+            .by_index
+            .keys()
+            .filter(|(collection, _)| *collection == collection_short_id)
+            .collect();
+        for key in dropped {
+            self.by_index.remove(&key);
+        }
+    }
+
+    /// How many indexes have caches.
+    pub fn len(&self) -> usize {
+        self.by_index.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }

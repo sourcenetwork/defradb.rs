@@ -45,7 +45,7 @@ use defra_core::signing::SigningConfig;
 use document::{DocID, Document, NormalValue};
 use schema::CollectionVersion;
 use storage::corekv::Key;
-use storage::keys::doc_id_index::DocRef;
+pub use storage::keys::doc_id_index::DocRef;
 use storage::keys::headstore::HeadstorePriorityKey;
 
 #[derive(Debug, thiserror::Error)]
@@ -89,31 +89,6 @@ impl BuildError {
                 query::error::QueryError::execution(format!("{context}: {message}"))
             }
         }
-    }
-}
-
-/// Node-local storage identity of a document.
-///
-/// Storage keys are built from the doc short ID; the public DocID exists
-/// only after the genesis composite block CID is known.
-#[derive(Debug, Clone, Copy)]
-pub struct DocStorageIdentity {
-    pub collection_short_id: u32,
-    pub doc_short_id: u64,
-}
-
-impl DocStorageIdentity {
-    pub fn new(collection_short_id: u32, doc_short_id: u64) -> Self {
-        Self {
-            collection_short_id,
-            doc_short_id,
-        }
-    }
-
-    /// Encoded DocRef, used as the encryption key derivation identity
-    /// (mirrors Go's `EncodeDocRef` encryptor cache key).
-    pub fn doc_ref_bytes(&self) -> Vec<u8> {
-        DocRef::new(self.collection_short_id, self.doc_short_id).encode()
     }
 }
 
@@ -506,7 +481,7 @@ mod prepared_signature_tests {
 
     fn block(parent: Option<Cid>) -> Block {
         let payload = CompositeDeltaPayload {
-            schema_version_id: "schema-v1".into(),
+            collection_version_id: "schema-v1".into(),
             priority: 2,
             status: 0,
         };
@@ -572,7 +547,7 @@ mod prepared_signature_tests {
 
     #[test]
     fn changed_kms_encryption_scope_requests_a_fresh_key() {
-        let identity = DocStorageIdentity::new(1, 2);
+        let identity = DocRef::new(1, 2);
         let mut doc = Document::new();
         doc.set("secret", "value");
         let mut prepared = document::WritePreparation::new(1, 2);
@@ -607,7 +582,7 @@ mod prepared_signature_tests {
             crate::write::prepare::PreparedKmsOperation::Generate {
                 doc_id,
                 field: Some(field),
-            } if doc_id == hex::encode(identity.doc_ref_bytes()) && field == "secret"
+            } if doc_id == hex::encode(identity.encode()) && field == "secret"
         ));
     }
 }

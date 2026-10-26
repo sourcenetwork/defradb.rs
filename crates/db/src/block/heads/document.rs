@@ -115,7 +115,7 @@ pub async fn publish(
     parents: &[Cid],
 ) -> Result<bool> {
     let entry = HeadstorePriorityKey::new(head.doc_short_id, priority, head.cid).bytes();
-    if writer.get(&entry).await?.as_deref() == Some(PUBLISHED) {
+    if is_published(writer, head.doc_short_id, priority, &head.cid).await? {
         return Ok(false);
     }
     let mut held = Vec::new();
@@ -136,6 +136,17 @@ pub async fn publish(
     write.add(&name(&head.field_id, &head.cid), priority);
     writer.set(&entry, PUBLISHED).await?;
     Ok(true)
+}
+
+/// Whether this exact head was published, validated by the writing transaction.
+pub async fn is_published(
+    writer: &datastore::NamespaceView,
+    doc_short_id: u64,
+    priority: u64,
+    cid: &Cid,
+) -> Result<bool> {
+    let entry = HeadstorePriorityKey::new(doc_short_id, priority, *cid).bytes();
+    Ok(writer.get(&entry).await?.as_deref() == Some(PUBLISHED))
 }
 
 /// Whether the head `cid` of the document was ever published: its block is

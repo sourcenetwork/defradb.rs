@@ -33,7 +33,7 @@ const TXN_ID_KEY: &str = "txn_id";
 #[async_trait::async_trait]
 pub trait SchemaManager: Send + Sync {
     /// Add a schema from a GraphQL SDL string.
-    async fn add_schema(&self, sdl: &str) -> Result<(), String>;
+    async fn add_collection(&self, sdl: &str) -> Result<(), String>;
 }
 
 /// Handler for Postgres wire protocol queries.
@@ -228,7 +228,7 @@ impl DefraQueryHandler {
         Ok(Response::TransactionEnd(Tag::new("COMMIT")))
     }
 
-    async fn handle_rollback_single<C>(&self, client: &mut C) -> PgWireResult<Response>
+    async fn handle_discard_single<C>(&self, client: &mut C) -> PgWireResult<Response>
     where
         C: ClientInfo + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
     {
@@ -242,7 +242,7 @@ impl DefraQueryHandler {
             .map_err(|e: query::TransactionError| pg_error("XX000", e.to_string()))?;
 
         self.executor
-            .rollback_txn(&handle)
+            .discard_txn(&handle)
             .await
             .map_err(|e| pg_error("XX000", e.to_string()))?;
 

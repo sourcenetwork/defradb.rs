@@ -1,17 +1,21 @@
 //! The walk, linking a node in, and the pruning they share.
 
+use std::borrow::Cow;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
+use super::pending_cache::{Copy, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::select::{EdgeSelector, RobustPrune};
 use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
 use crate::index::vector::store::{NodeId, VectorNodeStore};
+use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Element;
 
 /// A node the walk reached, ranked by its code.
@@ -50,6 +54,33 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             }
         }
         Ok(Some(Record { code, neighbors }))
+    }
+
+    /// Calls `visit` with each of a node's edges and its code, borrowed from
+    /// the record where the record carries codes. False when the node has no
+    /// record.
+    async fn each_edge<F>(&self, m: usize, id: NodeId, mut visit: F) -> Result<bool>
+    where
+        F: FnMut(NodeId, Cow<'_, [u8]>),
+    {
+        if self.params.resident_codes {
+            let Some(record) = self.record(m, id).await? else {
+                return Ok(false);
+            };
+            for (id, code) in record.neighbors {
+                visit(id, Cow::Owned(code));
+            }
+            return Ok(true);
+        }
+        let key = codec::record_key(id);
+        let Some(bytes) = self.store().get_aux(codec::GRAPH, &key).await? else {
+            return Ok(false);
+        };
+        let edges = codec::record_edges(&bytes, m)?;
+        for (id, code) in edges {
+            visit(id, Cow::Borrowed(code));
+        }
+        Ok(true)
     }
 
     /// Writes the record's edges. A resident-codes record holds only ids; the
@@ -135,20 +166,35 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 break;
             };
             expanded.insert(next.id);
-            // Absent when consolidation removed it after an edge was read.
-            let Some(record) = self.record(m, next.id).await? else {
-                continue;
-            };
-            visited.push(next);
-            for (id, code) in record.neighbors {
-                if seen.insert(id) {
-                    frontier.push(Visit {
-                        id,
-                        distance: pq.distance(table, &code),
-                        code,
+            // A neighbour ranked after the frontier's last place is cut by the
+            // truncate below, so its code is never copied.
+            let last = (l > 0 && frontier.len() >= l)
+                .then(|| (frontier[l - 1].distance, frontier[l - 1].id));
+            let mut added = Vec::new();
+            let found = self
+                .each_edge(m, next.id, |id, code| {
+                    if !seen.insert(id) {
+                        return;
+                    }
+                    let distance = pq.distance(table, &code);
+                    let ranked = last.is_none_or(|(d, last)| {
+                        distance.total_cmp(&d).then_with(|| id.cmp(&last)).is_lt()
                     });
-                }
+                    if ranked {
+                        added.push(Visit {
+                            id,
+                            distance,
+                            code: code.into_owned(),
+                        });
+                    }
+                })
+                .await?;
+            // Absent when consolidation removed it after an edge was read.
+            if !found {
+                continue;
             }
+            visited.push(next);
+            frontier.append(&mut added);
             frontier.sort_by(by_distance);
             frontier.truncate(l);
         }
@@ -287,11 +333,161 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .collect()
     }
 
+    /// Every vector the snapshot and the transaction itself have pending,
+    /// ranked by the latest code it holds: an update appends a new code, and
+    /// the older ones must not take its place (`proofs/tla/PendingCache.tla`
+    /// `INV_ScoresLatest`). The transaction's own appends are newer than any
+    /// logged entry, so a vector it appended is ranked by its last append.
+    async fn pending_candidates(
+        &self,
+        pq: &ProductQuantizer,
+        table: &[f32],
+        generation: u64,
+        out: &mut Vec<Visit>,
+    ) -> Result<()> {
+        let m = pq.code_len();
+        let start = out.len();
+        let mut scanned = RapidHashMap::new();
+        let mut latest = |id: NodeId, code: &[u8]| {
+            out.push(Visit {
+                id,
+                distance: pq.distance(table, code),
+                code: Vec::new(),
+            })
+        };
+        let mut every = |id: NodeId, code: &[u8]| {
+            scanned.insert(id, pq.distance(table, code));
+        };
+        self.snapshot_pending(m, generation, &mut latest, &mut every)
+            .await?;
+        let mut own = RapidHashMap::new();
+        for entry in self.store().own_pending_log().await? {
+            let (id, code) = codec::decode_log_entry(&entry, m)?;
+            own.insert(id, pq.distance(table, code));
+        }
+        if !own.is_empty() {
+            let mut index = 0;
+            out.retain(|visit| {
+                index += 1;
+                index <= start || !own.contains_key(&visit.id)
+            });
+            scanned.retain(|id, _| !own.contains_key(id));
+        }
+        out.extend(scanned.into_iter().chain(own).map(|(id, distance)| Visit {
+            id,
+            distance,
+            code: Vec::new(),
+        }));
+        Ok(())
+    }
+
+    /// Visits what the snapshot's pending log holds. From the shared copy,
+    /// where it provably covers the snapshot, `latest` gets each vector's
+    /// latest entry at or before the snapshot's head, once. From a scan of
+    /// the log, where the copy may not cover it, `every` gets every entry,
+    /// oldest first. A scan the copy could not stand in for reloads it, and
+    /// so does a gap too big to fit under the cap: one ordered scan instead
+    /// of a point read per missing entry.
+    async fn snapshot_pending<L, E>(
+        &self,
+        m: usize,
+        generation: u64,
+        latest: &mut L,
+        every: &mut E,
+    ) -> Result<()>
+    where
+        L: FnMut(NodeId, &[u8]),
+        E: FnMut(NodeId, &[u8]) + MaybeSend,
+    {
+        let Some(codes) = &self.codes else {
+            return self.scan_pending(m, None, every).await;
+        };
+        let cache = &codes.pending;
+        let head = self.store().pending_log_head().await?;
+        let copy = cache.load();
+        if copy.is_oversized() && copy.tag().is_some_and(|tag| tag.generation >= generation) {
+            return self.scan_pending(m, None, every).await;
+        }
+        let reload = match copy.tag() {
+            Some(tag) if tag.generation == generation => {
+                if tag.position >= head {
+                    copy.for_each_latest_through(head, m, latest);
+                    return Ok(());
+                }
+                if copy.can_hold(head - tag.position, m) {
+                    if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
+                        let next = Arc::new(copy.caught_up(head, added));
+                        next.for_each_latest_through(head, m, latest);
+                        cache.publish(next);
+                        return Ok(());
+                    }
+                }
+                true
+            }
+            Some(tag) => tag.generation < generation,
+            None => true,
+        };
+        if !reload {
+            return self.scan_pending(m, None, every).await;
+        }
+        let mut segment = Segment::default();
+        self.scan_pending(m, Some(&mut segment), every).await?;
+        let tag = Tag {
+            generation,
+            position: head,
+        };
+        cache.publish(Arc::new(Copy::loaded(tag, segment)));
+        Ok(())
+    }
+
+    /// Visits every vector the snapshot's pending log inserts, copying each
+    /// into `into` when given one, and stops copying once `into` is past the
+    /// cap.
+    async fn scan_pending<F>(
+        &self,
+        m: usize,
+        mut into: Option<&mut Segment>,
+        visit: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(NodeId, &[u8]) + MaybeSend,
+    {
+        self.store()
+            .iterate_pending_log(|position, entry| {
+                let (id, code) = codec::decode_log_entry(entry, m)?;
+                if let Some(segment) = into.as_deref_mut() {
+                    segment.push(position, id, code);
+                    if segment.bytes() > MAX_PENDING_CACHE_BYTES {
+                        into = None;
+                    }
+                }
+                visit(id, code);
+                Ok(ControlFlow::Continue(()))
+            })
+            .await
+    }
+
+    /// The inserts logged after `from` through `through`, or `None` when an
+    /// entry is gone: a truncate the copy did not see, which only a scan can
+    /// stand in for.
+    async fn read_pending_log(&self, m: usize, from: u64, through: u64) -> Result<Option<Segment>> {
+        let mut added = Segment::default();
+        for position in from + 1..=through {
+            let Some(bytes) = self.store().pending_log_entry(position).await? else {
+                return Ok(None);
+            };
+            let (id, code) = codec::decode_log_entry(&bytes, m)?;
+            added.push(position, id, code);
+        }
+        Ok(Some(added))
+    }
+
     /// Walks the graph and scans the pending codes, then re-ranks the best `L`
     /// admitted candidates of both by their full vectors.
     ///
-    /// A node both in the graph and pending (an update not merged yet) is
-    /// ranked once, by its nearer code; re-ranking reads its current vector.
+    /// A pending node is ranked by its latest pending code. One both in the
+    /// graph and pending (an update not merged yet) is ranked once, by the
+    /// nearer of that and its graph code; re-ranking reads its current vector.
     ///
     /// Falls back to the exact scan when fewer than `k` survive: a selective
     /// filter, or a corpus smaller than `k`. That scan is bounded by the
@@ -324,15 +520,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             Some(entry) => self.walk(&pq, entry, &table, l).await?,
             None => Vec::new(),
         };
-        self.store()
-            .iterate_aux(codec::PENDING, b"", |key, code| {
-                candidates.push(Visit {
-                    id: codec::id_from_key(key)?,
-                    distance: pq.distance(&table, code),
-                    code: Vec::new(),
-                });
-                Ok(())
-            })
+        self.pending_candidates(&pq, &table, graph.generation, &mut candidates)
             .await?;
         candidates.sort_by(by_distance);
 

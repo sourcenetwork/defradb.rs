@@ -33,7 +33,7 @@ fn embedded_node_executes_bm25_queries() -> Result<()> {
     workers::block_on(async {
         let node = NodeBuilder::default().build().await?;
 
-        node.add_schema(ARTICLE_SDL).await?;
+        node.add_collection(ARTICLE_SDL).await?;
 
         let auth_insert = node
             .execute(
@@ -109,7 +109,7 @@ fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
     workers::block_on(async {
         let node = NodeBuilder::default().build().await?;
 
-        node.add_schema(RELATION_SDL).await?;
+        node.add_collection(RELATION_SDL).await?;
 
         let auth_file = node
             .execute(
@@ -265,7 +265,7 @@ fn embedded_node_executes_nested_bm25_alias_filter_and_order_queries() -> Result
     workers::block_on(async {
     let node = NodeBuilder::default().build().await?;
 
-    node.add_schema(RELATION_SDL).await?;
+    node.add_collection(RELATION_SDL).await?;
 
     let auth_file = node
         .execute(

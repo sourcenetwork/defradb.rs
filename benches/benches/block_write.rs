@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use datastore::{Namespace, NamespaceView, SharedTxn};
-use db::block::builder::{write_document_blocks, DocStorageIdentity};
+use db::block::builder::{write_document_blocks, DocRef};
 use document::{DocID, Document, NormalValue};
 use storage::{backends::RegolithStore, Store};
 
@@ -83,7 +83,7 @@ fn bench_write_create(c: &mut Criterion) {
                                     headstore,
                                     &doc,
                                     &COLLECTION,
-                                    DocStorageIdentity::new(1, 1),
+                                    DocRef::new(1, 1),
                                     None,
                                     None,
                                     None,
@@ -124,7 +124,7 @@ fn bench_write_update(c: &mut Criterion) {
                                 &headstore,
                                 &doc,
                                 &COLLECTION,
-                                DocStorageIdentity::new(1, 1),
+                                DocRef::new(1, 1),
                                 None,
                                 None,
                                 None,
@@ -149,7 +149,7 @@ fn bench_write_update(c: &mut Criterion) {
                                     headstore,
                                     updated,
                                     &COLLECTION,
-                                    DocStorageIdentity::new(1, 1),
+                                    DocRef::new(1, 1),
                                     Some(&fields),
                                     None,
                                     None,

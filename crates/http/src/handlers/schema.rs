@@ -17,13 +17,13 @@ use schema::CollectionVersion;
 
 /// Add a schema (Go-compatible format).
 ///
-/// POST /api/v0/schema
+/// POST /api/v0/collections
 ///
 /// Body: SDL text (text/plain)
 /// Returns: Array of created CollectionVersions
 ///
 /// Requires `CollectionPatch` permission when NAC is enabled.
-pub async fn add_schema(
+pub async fn add_collection(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
@@ -34,7 +34,7 @@ pub async fn add_schema(
     if let Some(txn_id) = txn_id_from_headers(&headers)? {
         let txn_ops = bound(state.require_txn_ops()?, &identity.context());
         let collections = txn_ops
-            .add_schema_in_txn(txn_id, &body)
+            .add_collection_in_txn(txn_id, &body)
             .await
             .map_err(http_error_from_backend_message)?;
 
@@ -44,7 +44,7 @@ pub async fn add_schema(
     let schema_ops = bound(state.require_schema()?, &identity.context());
 
     let collections = schema_ops
-        .add_schema(&body)
+        .add_collection(&body)
         .await
         .map_err(http_error_from_backend_message)?;
 

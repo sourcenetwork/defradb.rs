@@ -131,7 +131,7 @@ fn requests_on_one_transaction_never_overlap_and_keep_their_order() {
         }
         let ran: Vec<usize> = std::iter::from_fn(|| order.pop()).collect();
         assert_eq!(ran, (0..8).collect::<Vec<_>>());
-        registry.rollback(&handle).await.unwrap();
+        registry.discard(&handle).await.unwrap();
     })
     .unwrap()
 }

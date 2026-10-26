@@ -176,7 +176,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         self.txn = Held::none();
     }
 
-    /// Take the transaction out of the fetcher (for commit/rollback). `None`
+    /// Take the transaction out of the fetcher (for commit/discard). `None`
     /// once it was taken, or while another handle (a stream it opened) still
     /// holds it.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
@@ -225,15 +225,25 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
-    async fn scoped_acp(
+    async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,
-    ) -> query::error::Result<Arc<dyn acp::DocumentACP>> {
+    ) -> query::error::Result<Option<Arc<dyn acp::DocumentACP>>> {
         let txn = &*self.shared_txn()?;
         let view = txn
             .acpstore()
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        Ok(provider.bind_transaction(view).unwrap_or(provider))
+        Ok(provider.bind_transaction(view))
+    }
+
+    async fn scoped_acp(
+        &self,
+        provider: Arc<dyn acp::DocumentACP>,
+    ) -> query::error::Result<Arc<dyn acp::DocumentACP>> {
+        Ok(self
+            .transaction_acp(provider.clone())
+            .await?
+            .unwrap_or(provider))
     }
 
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {

@@ -257,7 +257,7 @@ impl TransactionRegistry for MockTxnRegistry {
         }
     }
 
-    async fn rollback(
+    async fn discard(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

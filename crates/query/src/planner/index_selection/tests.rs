@@ -559,7 +559,7 @@ fn test_filter_to_scan_top_level_json_lte_null_uses_index() {
     let fields = vec![FieldDescription::new(
         "custom",
         "custom",
-        FieldKind::Scalar(ScalarKind::Json),
+        FieldKind::Scalar(ScalarKind::NillableJson),
     )];
 
     let params = filter_to_index_scan(&filter, &index, None, &fields, None, 0).unwrap();

@@ -20,7 +20,7 @@ use storage::namespace::Namespace;
 /// it back into the transaction takes `self`; only the holder of the one
 /// remaining reference gets either ([`Arc::get_mut`], [`Arc::try_unwrap`]), so
 /// a view still open at that moment is an error, never a wait. Each settles
-/// the queue first, so a savepoint's rollback takes back exactly what was
+/// the queue first, so a savepoint's discard takes back exactly what was
 /// registered after it, and so does a drop, so a transaction that ends with
 /// its last view still runs the abort callbacks registered through views.
 pub struct SharedTxn {
@@ -92,6 +92,25 @@ impl SharedTxn {
         self.txn()?
             .append_shared(&log, entry, once_key.as_deref())
             .await
+    }
+
+    pub async fn truncate_log(
+        &self,
+        namespace: Namespace,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let log = log.prefixed(&[namespace.prefix()]);
+        self.txn()?.truncate_log_shared(&log, positions).await
+    }
+
+    pub async fn appended(
+        &self,
+        namespace: Namespace,
+        log: &storage::corekv::AppendLog,
+    ) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[namespace.prefix()]);
+        self.txn()?.appended(&log).await
     }
 
     /// Create a new shared transaction.
@@ -249,6 +268,18 @@ impl NamespaceView {
         self.txn.append(self.namespace, log, entry, once_key).await
     }
 
+    pub async fn truncate_log(
+        &self,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log(self.namespace, log, positions).await
+    }
+
+    pub async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
+    }
+
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
         Self { txn, namespace }
@@ -368,6 +399,18 @@ impl Writer for NamespaceView {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         self.txn.append(self.namespace, log, entry, once_key).await
+    }
+
+    async fn truncate_log_shared(
+        &self,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log(self.namespace, log, positions).await
+    }
+
+    async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {

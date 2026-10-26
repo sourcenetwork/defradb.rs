@@ -387,14 +387,14 @@ pub(super) fn scalar_to_gql_name(scalar: &ScalarKind) -> &'static str {
     match scalar.base_kind() {
         ScalarKind::None => "String",
         ScalarKind::DocID => "ID",
-        ScalarKind::Bool => "Boolean",
-        ScalarKind::Int => "Int",
-        ScalarKind::Float64 => "Float64",
-        ScalarKind::Float32 => "Float32",
-        ScalarKind::DateTime => "DateTime",
-        ScalarKind::String => "String",
-        ScalarKind::Blob => "Blob",
-        ScalarKind::Json => "JSON",
+        ScalarKind::NillableBool => "Boolean",
+        ScalarKind::NillableInt => "Int",
+        ScalarKind::NillableFloat64 => "Float64",
+        ScalarKind::NillableFloat32 => "Float32",
+        ScalarKind::NillableDateTime => "DateTime",
+        ScalarKind::NillableString => "String",
+        ScalarKind::NillableBlob => "Blob",
+        ScalarKind::NillableJson => "JSON",
         _ => "String",
     }
 }

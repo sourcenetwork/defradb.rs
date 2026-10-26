@@ -26,7 +26,7 @@ pub struct CompositeDelta {
     /// Document ID this delta applies to
     doc_id: Vec<u8>,
     /// Schema version identifier
-    schema_version_id: String,
+    collection_version_id: String,
     /// Priority for this delta
     priority: u64,
     /// Document status (1 = Active, 2 = Deleted).
@@ -38,28 +38,28 @@ pub struct CompositeDelta {
 
 impl CompositeDelta {
     /// Create a new composite delta with Active status
-    pub fn new(doc_id: Vec<u8>, schema_version_id: String, priority: u64) -> Result<Self> {
-        Self::with_status(doc_id, schema_version_id, priority, STATUS_ACTIVE)
+    pub fn new(doc_id: Vec<u8>, collection_version_id: String, priority: u64) -> Result<Self> {
+        Self::with_status(doc_id, collection_version_id, priority, STATUS_ACTIVE)
     }
 
     /// Create a new composite delta with the given status
     pub fn with_status(
         doc_id: Vec<u8>,
-        schema_version_id: String,
+        collection_version_id: String,
         priority: u64,
         status: u8,
     ) -> Result<Self> {
         if doc_id.is_empty() {
             return Err(Error::MergeError("doc_id cannot be empty".into()));
         }
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         Ok(Self {
             doc_id,
-            schema_version_id,
+            collection_version_id,
             priority,
             status,
             field_deltas: RapidHashMap::new(),
@@ -95,9 +95,9 @@ impl CompositeDelta {
         &self.doc_id
     }
 
-    /// Get the schema version ID
-    pub fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    /// Get the collection version ID
+    pub fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     /// Get the priority
@@ -144,8 +144,8 @@ impl Delta for CompositeDelta {
         "" // Composite applies to entire document
     }
 
-    fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -158,7 +158,7 @@ pub struct CompositeDAG {
     /// Document ID
     doc_id: DocId,
     /// Schema version
-    schema_version_id: String,
+    collection_version_id: String,
     /// Field-level CRDT managers
     /// Maps field_name -> CRDT instance
     field_managers: RapidHashMap<String, FieldCrdtType>,
@@ -176,10 +176,10 @@ enum FieldCrdtType {
 
 impl CompositeDAG {
     /// Create a new CompositeDAG
-    pub fn new(doc_id: DocId, schema_version_id: impl Into<String>) -> Self {
+    pub fn new(doc_id: DocId, collection_version_id: impl Into<String>) -> Self {
         Self {
             doc_id,
-            schema_version_id: schema_version_id.into(),
+            collection_version_id: collection_version_id.into(),
             field_managers: RapidHashMap::new(),
         }
     }
@@ -209,7 +209,7 @@ impl CompositeDAG {
     /// Build the value key for a field
     fn build_value_key(&self, field_name: &str) -> Vec<u8> {
         CRDTValueKey::new(
-            self.schema_version_id.clone(),
+            self.collection_version_id.clone(),
             self.doc_id.as_str().as_bytes().to_vec(),
             field_name.to_string(),
         )
@@ -219,7 +219,7 @@ impl CompositeDAG {
     /// Build the priority key for a field
     fn build_priority_key(&self, field_name: &str) -> Vec<u8> {
         CRDTValueKey::new(
-            self.schema_version_id.clone(),
+            self.collection_version_id.clone(),
             self.doc_id.as_str().as_bytes().to_vec(),
             field_name.to_string(),
         )
@@ -335,7 +335,7 @@ impl CompositeDAG {
 
                 // Each counter field is its own one-part document value.
                 let counter = Counter::new(
-                    self.schema_version_id.clone(),
+                    self.collection_version_id.clone(),
                     self.build_value_key(field_name),
                     0,
                     field_name.to_string(),
@@ -349,7 +349,7 @@ impl CompositeDAG {
                         field_name.to_string(),
                         *priority,
                         *nonce,
-                        self.schema_version_id.clone(),
+                        self.collection_version_id.clone(),
                         i64::from_be_bytes(data[..8].try_into().map_err(|_| {
                             Error::MergeError(format!(
                                 "invalid counter increment data for field '{}': expected 8 bytes, got {}",
@@ -362,7 +362,7 @@ impl CompositeDAG {
                         field_name.to_string(),
                         *priority,
                         *nonce,
-                        self.schema_version_id.clone(),
+                        self.collection_version_id.clone(),
                         f32::from_be_bytes(data[..4].try_into().map_err(|_| {
                             Error::MergeError(format!(
                                 "invalid counter increment data for field '{}': expected 4 bytes (Float32), got {}",
@@ -375,7 +375,7 @@ impl CompositeDAG {
                         field_name.to_string(),
                         *priority,
                         *nonce,
-                        self.schema_version_id.clone(),
+                        self.collection_version_id.clone(),
                         f64::from_be_bytes(data[..8].try_into().map_err(|_| {
                             Error::MergeError(format!(
                                 "invalid counter increment data for field '{}': expected 8 bytes, got {}",
@@ -390,7 +390,7 @@ impl CompositeDAG {
                         rw,
                         &Context {
                             doc_id: self.doc_id.clone(),
-                            schema_version: self.schema_version_id.clone(),
+                            schema_version: self.collection_version_id.clone(),
                             is_create,
                         },
                         &delta,
@@ -471,7 +471,7 @@ impl ReplicatedData for CompositeDAG {
         }
 
         // Validate schema version
-        if composite_delta.schema_version_id != self.schema_version_id {
+        if composite_delta.collection_version_id != self.collection_version_id {
             return Err(Error::MergeError("schema version mismatch".into()));
         }
 

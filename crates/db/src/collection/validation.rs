@@ -164,9 +164,13 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
     match scalar.base_kind() {
         ScalarKind::None => true,
         ScalarKind::DocID => matches!(value, NormalValue::String(_)),
-        ScalarKind::Bool => matches!(value, NormalValue::Bool(_) | NormalValue::NillableBool(_)),
-        ScalarKind::Int => matches!(value, NormalValue::Int(_) | NormalValue::NillableInt(_)),
-        ScalarKind::Float64 => {
+        ScalarKind::NillableBool => {
+            matches!(value, NormalValue::Bool(_) | NormalValue::NillableBool(_))
+        }
+        ScalarKind::NillableInt => {
+            matches!(value, NormalValue::Int(_) | NormalValue::NillableInt(_))
+        }
+        ScalarKind::NillableFloat64 => {
             // Accept Int values for Float64 fields (common in JSON where 5 and 5.0 are equivalent)
             matches!(
                 value,
@@ -176,7 +180,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
                     | NormalValue::NillableInt(_)
             )
         }
-        ScalarKind::Float32 => {
+        ScalarKind::NillableFloat32 => {
             // Accept Int and Float64 values for Float32 fields (JSON only has one float type)
             matches!(
                 value,
@@ -188,7 +192,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
                     | NormalValue::NillableInt(_)
             )
         }
-        ScalarKind::DateTime => match value {
+        ScalarKind::NillableDateTime => match value {
             NormalValue::Time(_) | NormalValue::NillableTime(_) => true,
             // Document storage is schema-blind for DateTime: a `Time` round-trips
             // through CBOR as an untagged text string and reads back as `String`
@@ -201,13 +205,13 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
             NormalValue::NillableString(Some(s)) => document::is_valid_rfc3339(s),
             _ => false,
         },
-        ScalarKind::String => {
+        ScalarKind::NillableString => {
             matches!(
                 value,
                 NormalValue::String(_) | NormalValue::NillableString(_)
             )
         }
-        ScalarKind::Blob => {
+        ScalarKind::NillableBlob => {
             // Accept String values for Blob fields (hex-encoded strings from JSON)
             matches!(
                 value,
@@ -217,7 +221,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
         // CBOR preserves JSON content but not the Json wrapper: retained scalar
         // and array values return as their inferred native variants. Restrict
         // these to JSON-native values; binary/document/time values remain invalid.
-        ScalarKind::Json => {
+        ScalarKind::NillableJson => {
             matches!(
                 value,
                 NormalValue::Json(_)

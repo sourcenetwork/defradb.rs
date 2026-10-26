@@ -156,6 +156,14 @@ pub struct HeadHintCarAuthority {
     access: Arc<SelectiveCarAccess>,
 }
 
+impl Default for HeadHintCarAuthority {
+    fn default() -> Self {
+        Self {
+            access: Arc::new(SelectiveCarAccess::default()),
+        }
+    }
+}
+
 impl HeadHintCarAuthority {
     pub(super) fn new(access: Arc<SelectiveCarAccess>) -> Self {
         Self { access }

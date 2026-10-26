@@ -486,7 +486,7 @@ fn test_composite_delta_empty_schema_version_rejected() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("schema_version_id cannot be empty"));
+        .contains("collection_version_id cannot be empty"));
 }
 
 #[test]

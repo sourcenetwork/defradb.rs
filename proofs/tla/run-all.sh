@@ -7,6 +7,61 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
+  "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Port.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Defaults.cfg EndpointBind.tla RED"
+  "MC_RootedAuthorization_Green.cfg RootedAuthorization.tla GREEN"
+  "MC_RootedAuthorization_Red_DuplicateOwner.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_LostResume.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_StaleEviction.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_OverReserve.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_Slots.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_ActiveBudget.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_CancelNoWake.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_UnreachedGrant.cfg RootedAuthorization.tla RED"
+  "MC_HistoryDriver_Red_UnpacedRetry.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_TimerDelay.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Green.cfg HistoryDriver.tla GREEN"
+  "MC_HistoryDriver_Red_LocalLoop.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_SwallowedAbort.cfg HistoryDriver.tla RED"
+  "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
+  "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
+  "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
+  "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Fence.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Events.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Reclaim.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Blocks.cfg HistoryTurns.tla RED"
+  "MC_ReplicatorIncarnation_Green.cfg ReplicatorIncarnation.tla GREEN"
+  "MC_ReplicatorIncarnation_Red_Error.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_Rollback.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
+  "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Fence.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Duplicate.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Settle.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Durable.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Deadline.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Ordered.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Recovery.cfg ReplicatorInstall.tla RED"
+  "MC_StorageFailure_Green.cfg StorageFailure.tla GREEN"
+  "MC_StorageFailure_Red_LostCause.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Text.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Retry.cfg StorageFailure.tla RED"
+  "MC_OwnerObservation_Green.cfg OwnerObservation.tla GREEN"
+  "MC_OwnerObservation_Red_Actor.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Node.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_App.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Document.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Member.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Registered.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Bound.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Snapshot.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
@@ -223,6 +278,15 @@ RUNS=(
   "MC_VectorLinks_Green.cfg VectorLinks.tla GREEN"
   "MC_VectorLinks_Red_Puts.cfg VectorLinks.tla RED"
   "MC_VectorLinks_Red_Prune.cfg VectorLinks.tla RED"
+  "MC_PendingCache_Green.cfg PendingCache.tla GREEN" # no search hides a pending vector its snapshot holds
+  "MC_PendingCache_Green_Evict.cfg PendingCache.tla GREEN" # forgetting the cache mid-search, as a drop does, breaks no promise
+  "MC_PendingCache_Red_NoGeneration.cfg PendingCache.tla RED" # a cache of another generation scores truncated entries or lacks what a merge linked
+  "MC_PendingCache_Red_TruncateThroughHead.cfg PendingCache.tla RED" # a merge truncating through the head drops vectors it never linked
+  "MC_PendingCache_Red_OwnWrites.cfg PendingCache.tla RED" # a search leaves out its own transaction's appends
+  "MC_PendingCache_Red_EveryVersion.cfg PendingCache.tla RED" # a search scores an obsolete entry of an updated vector
+  "MC_PendingCache_Red_FutureVersion.cfg PendingCache.tla RED" # a search scores an entry past its head from a cache ahead of it
+  "MC_PendingCache_Red_HeadBlindMarks.cfg PendingCache.tla RED" # a marker from a search's future hides the entry newest for it
+  "MC_PendingCache_Red_NoGapCheck.cfg PendingCache.tla RED" # a copy loaded across a missing entry numbers the rest wrong
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)

@@ -132,7 +132,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 2,
                 data,
             }),
@@ -146,7 +146,7 @@ fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
             .unwrap();
         let update = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 2,
                 status: 1,
             }),

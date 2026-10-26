@@ -784,7 +784,7 @@ fn explicit_txn_discard_drops_pending_counter_ops() {
             })
         })
         .await;
-        registry.rollback(&handle).await.expect("rollback");
+        registry.discard(&handle).await.expect("discard");
 
         assert_eq!(
             read_counter_store_opt(&db, "Counters", &doc_id, "count").await,

@@ -102,7 +102,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     let shared = SharedTxn::new(txn);
     let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
     let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
-    let identity = db::block::builder::DocStorageIdentity::new(1, 1);
+    let identity = db::block::builder::DocRef::new(1, 1);
     let modified: RapidHashSet<String> = field_names(field_count).into_iter().collect();
     let collection = collection_version(field_count);
 

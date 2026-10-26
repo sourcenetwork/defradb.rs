@@ -49,7 +49,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             && !field
                                 .kind
                                 .as_scalar()
-                                .is_some_and(|kind| kind.base_kind() == ScalarKind::Json)
+                                .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
                     })
                     .map(|field| field.name.as_str())
                     .collect()
@@ -308,6 +308,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                     Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
                     Err(error @ MergeError::Kms(_)) => return Err(error),
+                    Err(MergeError::Storage(_))
+                        if matches!(
+                            context.mode,
+                            super::composite::CompositeMergeMode::History
+                        ) =>
+                    {
+                        return Ok(EffectiveLinkedDelta::Skip(MergeOutcome::retryable_skip(
+                            "history encrypted fields are not yet readable",
+                        )));
+                    }
                     Err(error) => {
                         tracing::debug!(
                             error = %error,
@@ -340,6 +350,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                     Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
                     Err(error @ MergeError::Kms(_)) => return Err(error),
+                    Err(MergeError::Storage(_))
+                        if matches!(
+                            context.mode,
+                            super::composite::CompositeMergeMode::History
+                        ) =>
+                    {
+                        return Ok(EffectiveLinkedDelta::Skip(MergeOutcome::retryable_skip(
+                            "history encrypted fields are not yet readable",
+                        )));
+                    }
                     Err(error) => {
                         tracing::debug!(
                             error = %error,

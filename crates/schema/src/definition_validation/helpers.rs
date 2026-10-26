@@ -26,13 +26,13 @@ pub(super) fn is_valid_embedding_generation_kind(kind: &FieldKind) -> bool {
     matches!(
         kind.as_scalar().map(ScalarKind::base_kind),
         Some(
-            ScalarKind::String
-                | ScalarKind::Int
-                | ScalarKind::Float64
-                | ScalarKind::Float32
-                | ScalarKind::Bool
-                | ScalarKind::DateTime
-                | ScalarKind::Blob
+            ScalarKind::NillableString
+                | ScalarKind::NillableInt
+                | ScalarKind::NillableFloat64
+                | ScalarKind::NillableFloat32
+                | ScalarKind::NillableBool
+                | ScalarKind::NillableDateTime
+                | ScalarKind::NillableBlob
         )
     )
 }
@@ -56,22 +56,22 @@ pub(super) fn format_field_kind(kind: &FieldKind) -> String {
         FieldKind::Scalar(s) => match s {
             ScalarKind::None => "None".to_string(),
             ScalarKind::DocID => "ID".to_string(),
-            ScalarKind::Bool => "Boolean".to_string(),
-            ScalarKind::NonNillableBool => "Boolean!".to_string(),
-            ScalarKind::Int => "Int".to_string(),
-            ScalarKind::NonNillableInt => "Int!".to_string(),
-            ScalarKind::Float64 => "Float64".to_string(),
-            ScalarKind::NonNillableFloat64 => "Float64!".to_string(),
-            ScalarKind::Float32 => "Float32".to_string(),
-            ScalarKind::NonNillableFloat32 => "Float32!".to_string(),
-            ScalarKind::DateTime => "DateTime".to_string(),
-            ScalarKind::NonNillableDateTime => "DateTime!".to_string(),
-            ScalarKind::String => "String".to_string(),
-            ScalarKind::NonNillableString => "String!".to_string(),
-            ScalarKind::Blob => "Blob".to_string(),
-            ScalarKind::NonNillableBlob => "Blob!".to_string(),
-            ScalarKind::Json => "JSON".to_string(),
-            ScalarKind::NonNillableJson => "JSON!".to_string(),
+            ScalarKind::NillableBool => "Boolean".to_string(),
+            ScalarKind::Bool => "Boolean!".to_string(),
+            ScalarKind::NillableInt => "Int".to_string(),
+            ScalarKind::Int => "Int!".to_string(),
+            ScalarKind::NillableFloat64 => "Float64".to_string(),
+            ScalarKind::Float64 => "Float64!".to_string(),
+            ScalarKind::NillableFloat32 => "Float32".to_string(),
+            ScalarKind::Float32 => "Float32!".to_string(),
+            ScalarKind::NillableDateTime => "DateTime".to_string(),
+            ScalarKind::DateTime => "DateTime!".to_string(),
+            ScalarKind::NillableString => "String".to_string(),
+            ScalarKind::String => "String!".to_string(),
+            ScalarKind::NillableBlob => "Blob".to_string(),
+            ScalarKind::Blob => "Blob!".to_string(),
+            ScalarKind::NillableJson => "JSON".to_string(),
+            ScalarKind::Json => "JSON!".to_string(),
         },
         FieldKind::ScalarArray(a) => match a {
             crate::ScalarArrayKind::BoolArray => "[Boolean!]".to_string(),

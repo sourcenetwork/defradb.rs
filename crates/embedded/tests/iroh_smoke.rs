@@ -28,8 +28,8 @@ fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
                 .build()
                 .await?;
 
-            node_a.add_schema(BOOK_SDL).await?;
-            node_b.add_schema(BOOK_SDL).await?;
+            node_a.add_collection(BOOK_SDL).await?;
+            node_b.add_collection(BOOK_SDL).await?;
 
             let p2p_b = node_b.p2p().cloned().expect("node_b missing p2p system");
             let p2p_a = node_a.p2p().cloned().expect("node_a missing p2p system");

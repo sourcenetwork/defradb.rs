@@ -33,7 +33,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
             _ => return Ok(None),
         };
-        let Some(collection_id) = block.delta.schema_version_id().map(ToString::to_string) else {
+        let Some(collection_id) = block.delta.collection_version_id().map(ToString::to_string)
+        else {
             return Ok(None);
         };
 

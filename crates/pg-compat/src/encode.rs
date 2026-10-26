@@ -287,14 +287,14 @@ pub fn describe_synthetic_query(sql: &str) -> Vec<FieldInfo> {
 pub fn field_kind_to_pg_type_name(kind: &FieldKind) -> String {
     match kind {
         FieldKind::Scalar(scalar) => match scalar.base_kind() {
-            ScalarKind::Bool => "boolean".to_string(),
-            ScalarKind::Int => "bigint".to_string(),
-            ScalarKind::Float64 => "double precision".to_string(),
-            ScalarKind::Float32 => "real".to_string(),
-            ScalarKind::String | ScalarKind::DocID | ScalarKind::None => "text".to_string(),
-            ScalarKind::DateTime => "timestamp with time zone".to_string(),
-            ScalarKind::Blob => "bytea".to_string(),
-            ScalarKind::Json => "jsonb".to_string(),
+            ScalarKind::NillableBool => "boolean".to_string(),
+            ScalarKind::NillableInt => "bigint".to_string(),
+            ScalarKind::NillableFloat64 => "double precision".to_string(),
+            ScalarKind::NillableFloat32 => "real".to_string(),
+            ScalarKind::NillableString | ScalarKind::DocID | ScalarKind::None => "text".to_string(),
+            ScalarKind::NillableDateTime => "timestamp with time zone".to_string(),
+            ScalarKind::NillableBlob => "bytea".to_string(),
+            ScalarKind::NillableJson => "jsonb".to_string(),
             _ => unreachable!(),
         },
         _ => "text".to_string(),

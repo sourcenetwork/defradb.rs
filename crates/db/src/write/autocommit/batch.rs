@@ -13,7 +13,7 @@ use super::helpers::{
     ensure_collection_is_active, register_block_doc_id_mappings, register_created_doc,
     write_branchable_collection_block, write_local_create, write_local_update,
 };
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::database::DB;
@@ -230,7 +230,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         result
     }
 
-    async fn rollback(&self) -> query::error::Result<()> {
+    async fn discard(&self) -> query::error::Result<()> {
         let txn = self.take_txn().await?;
         let result = txn
             .discard()
@@ -392,7 +392,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let identity = match crate::write::prepare::prepared_identity(&doc) {
             Some(identity) => identity,
-            None => DocStorageIdentity::new(
+            None => DocRef::new(
                 short_id,
                 self.db
                     .next_doc_short_id()
@@ -600,7 +600,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             crate::write::prepare::prepare_keys_with_stores(
                 &self.db,
                 &mut doc,
-                DocStorageIdentity::new(short_id, doc_short_id),
+                DocRef::new(short_id, doc_short_id),
                 Some(&modified_fields),
                 enc_config,
                 Some((&blockstore, &headstore)),
@@ -617,7 +617,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 &headstore,
                 &doc,
                 collection.schema(),
-                DocStorageIdentity::new(short_id, doc_short_id),
+                DocRef::new(short_id, doc_short_id),
                 Some(&modified_fields),
                 enc_config,
                 sign_config,
@@ -733,7 +733,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         )
         .await?;
 
-        let schema_version_id = collection.version_id();
+        let collection_version_id = collection.version_id();
         let sign_config = context.signing();
 
         let (doc_cid, doc_block, col_block_data) = {
@@ -744,7 +744,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 &headstore,
                 &canonical_doc_id.to_string(),
                 doc_short_id,
-                schema_version_id,
+                collection_version_id,
                 sign_config,
                 context.batch_session(),
                 self.prepared_inputs.as_ref(),

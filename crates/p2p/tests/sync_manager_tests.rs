@@ -58,7 +58,7 @@ fn create_lww_block(field_name: &str) -> (Cid, Vec<u8>) {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: field_name.to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -72,7 +72,7 @@ fn create_lww_block(field_name: &str) -> (Cid, Vec<u8>) {
 fn create_composite_block(links: Vec<DAGLink>) -> (Cid, Vec<u8>) {
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -736,7 +736,7 @@ mod pending_persistence {
         let (field_cid, _) = create_lww_block(field_name);
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority,
                 status: 1,
             }),

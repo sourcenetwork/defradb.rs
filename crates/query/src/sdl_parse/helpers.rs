@@ -280,15 +280,15 @@ pub(super) fn parse_graphql_type(ty: &Type<'_, String>) -> ParsedType {
 /// Convert GraphQL scalar type name to FieldKind's ScalarKind
 pub(super) fn graphql_to_scalar_kind(name: &str) -> Option<ScalarKind> {
     match name {
-        "String" => Some(ScalarKind::String),
-        "Int" => Some(ScalarKind::Int),
-        "Float" | "Float64" => Some(ScalarKind::Float64),
-        "Float32" => Some(ScalarKind::Float32),
-        "Boolean" => Some(ScalarKind::Bool),
+        "String" => Some(ScalarKind::NillableString),
+        "Int" => Some(ScalarKind::NillableInt),
+        "Float" | "Float64" => Some(ScalarKind::NillableFloat64),
+        "Float32" => Some(ScalarKind::NillableFloat32),
+        "Boolean" => Some(ScalarKind::NillableBool),
         "ID" => Some(ScalarKind::DocID),
-        "DateTime" => Some(ScalarKind::DateTime),
-        "JSON" => Some(ScalarKind::Json),
-        "Blob" => Some(ScalarKind::Blob),
+        "DateTime" => Some(ScalarKind::NillableDateTime),
+        "JSON" => Some(ScalarKind::NillableJson),
+        "Blob" => Some(ScalarKind::NillableBlob),
         _ => None,
     }
 }
@@ -307,7 +307,7 @@ pub(super) fn hash_to_hex(hash: &[u8]) -> String {
 /// Like Go, includes field definition CIDs as links in the collection block.
 ///
 /// IMPORTANT: Go uses priority=1 for ALL fields and the collection block,
-/// not incrementing priorities. This was verified by comparing actual AddSchema
+/// not incrementing priorities. This was verified by comparing actual AddCollection
 /// output with manual CID generation.
 ///
 /// IMPORTANT: Secondary relation fields (where relation_name is set but is_primary is false)

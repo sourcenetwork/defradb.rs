@@ -161,7 +161,7 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
-    async fn add_schema(
+    async fn add_collection(
         &self,
         context: &RequestContext,
         sdl: &str,

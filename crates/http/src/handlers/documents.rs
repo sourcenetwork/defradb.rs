@@ -73,7 +73,7 @@ pub async fn get_document(
 /// Requires `DocumentUpdate` permission when NAC is enabled.
 ///
 /// Returns the created document IDs in input order.
-pub async fn create_document(
+pub async fn add_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
@@ -89,10 +89,10 @@ pub async fn create_document(
             .as_array()
             .ok_or_else(|| HttpError::BadRequest("Expected array of documents".into()))?
             .clone();
-        rest.create_documents(&collection, docs, identity.did())
+        rest.add_many_documents(&collection, docs, identity.did())
             .await
     } else {
-        rest.create_document(&collection, body, identity.did())
+        rest.add_document(&collection, body, identity.did())
             .await
             .map(|doc| vec![doc])
     };

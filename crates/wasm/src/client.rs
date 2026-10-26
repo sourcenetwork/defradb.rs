@@ -39,7 +39,7 @@ use crate::p2p::P2PRuntime;
 /// await init();
 /// const client = await DefraClient.create({ storage: 'memory' });
 ///
-/// await client.add_schema(`
+/// await client.add_collection(`
 ///   type User {
 ///     name: String
 ///     email: String
@@ -92,7 +92,7 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// await client.add_schema(`
+    /// await client.add_collection(`
     ///   type User {
     ///     name: String
     ///     email: String
@@ -104,9 +104,8 @@ impl DefraClient {
     ///   }
     /// `);
     /// ```
-    #[wasm_bindgen]
-    pub async fn add_schema(&mut self, sdl: &str) -> std::result::Result<JsValue, JsValue> {
-        self.add_schema_impl(sdl).await.map_err(|e| e.into())
+    pub async fn add_collection(&mut self, sdl: &str) -> std::result::Result<JsValue, JsValue> {
+        self.add_collection_impl(sdl).await.map_err(|e| e.into())
     }
 
     /// Execute a GraphQL query.
@@ -325,7 +324,7 @@ impl DefraClient {
         Ok(())
     }
 
-    async fn add_schema_impl(&mut self, sdl: &str) -> Result<JsValue> {
+    async fn add_collection_impl(&mut self, sdl: &str) -> Result<JsValue> {
         let db = self.ensure_open()?;
 
         // Parse SDL into CollectionVersions using the query crate's parser
@@ -425,7 +424,7 @@ impl DefraClient {
                 let schema = col.schema();
                 collections.push(CollectionInfo {
                     name: schema.name.clone(),
-                    schema_version_id: schema.version_id.clone(),
+                    collection_version_id: schema.version_id.clone(),
                     fields: schema.fields.iter().map(FieldInfo::from).collect(),
                 });
             }
@@ -566,7 +565,7 @@ mod tests {
 
     async fn create_one_document(client: &mut DefraClient) {
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
         client
@@ -653,7 +652,7 @@ mod tests {
     async fn concurrent_mutations_are_each_signed() {
         let (mut client, _) = client_with_identity("signing_concurrent").await;
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
 
@@ -683,7 +682,7 @@ mod tests {
         let (mut second, second_key) = client_with_identity("signing_two_second").await;
         for client in [&mut first, &mut second] {
             client
-                .add_schema("type User { name: String }")
+                .add_collection("type User { name: String }")
                 .await
                 .unwrap();
         }
@@ -731,7 +730,7 @@ mod tests {
 
         // And it signs: the seed is a whole key here, not just an identifier.
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
         client.set_identity(&hex::encode(seed), "ed25519").unwrap();
@@ -826,7 +825,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
         let mut changes = client.document_changes().unwrap();
@@ -959,13 +958,13 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_and_get_collections() {
-        let mut client = DefraClient::create(test_config("test_add_schema"))
+    async fn test_add_collection_and_get_collections() {
+        let mut client = DefraClient::create(test_config("test_add_collection"))
             .await
             .unwrap();
 
         let sdl = "type User { name: String, email: String }";
-        client.add_schema(sdl).await.unwrap();
+        client.add_collection(sdl).await.unwrap();
 
         let result = client.get_collections().unwrap();
         let collections: Vec<CollectionInfo> = serde_wasm_bindgen::from_value(result).unwrap();
@@ -975,16 +974,16 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_invalid_sdl_fails() {
+    async fn test_add_collection_invalid_sdl_fails() {
         let mut client = DefraClient::create(test_config("test_bad_sdl"))
             .await
             .unwrap();
-        let result = client.add_schema("not valid graphql {{{{").await;
+        let result = client.add_collection("not valid graphql {{{{").await;
         assert!(result.is_err());
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_rejects_invalid_self_relation_primaries() {
+    async fn test_add_collection_rejects_invalid_self_relation_primaries() {
         let mut client = DefraClient::create(test_config("test_invalid_self_relations"))
             .await
             .unwrap();
@@ -1003,7 +1002,7 @@ mod tests {
                 }
             "#,
         ] {
-            let error = client.add_schema(sdl).await.unwrap_err();
+            let error = client.add_collection(sdl).await.unwrap_err();
             assert!(error
                 .as_string()
                 .unwrap()
@@ -1027,8 +1026,8 @@ mod tests {
             .unwrap();
 
         let sdl = "type Item { name: String }";
-        client.add_schema(sdl).await.unwrap();
-        let result = client.add_schema(sdl).await;
+        client.add_collection(sdl).await.unwrap();
+        let result = client.add_collection(sdl).await;
         assert!(result.is_err());
     }
 
@@ -1039,11 +1038,11 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Book { title: String }")
+            .add_collection("type Book { title: String }")
             .await
             .unwrap();
         client
-            .add_schema("type Author { name: String }")
+            .add_collection("type Author { name: String }")
             .await
             .unwrap();
 
@@ -1061,7 +1060,7 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Product { name: String, price: Int }")
+            .add_collection("type Product { name: String, price: Int }")
             .await
             .unwrap();
 
@@ -1077,7 +1076,7 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
 
@@ -1092,7 +1091,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type User { name: String, age: Int }")
+            .add_collection("type User { name: String, age: Int }")
             .await
             .unwrap();
 
@@ -1127,7 +1126,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Person { name: String }")
+            .add_collection("type Person { name: String }")
             .await
             .unwrap();
 
@@ -1161,7 +1160,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Widget { label: String }")
+            .add_collection("type Widget { label: String }")
             .await
             .unwrap();
 
@@ -1186,7 +1185,7 @@ mod tests {
         {
             let mut client = DefraClient::create(test_config(db_name)).await.unwrap();
             client
-                .add_schema("type Task { title: String }")
+                .add_collection("type Task { title: String }")
                 .await
                 .unwrap();
             client

@@ -25,7 +25,7 @@ pub struct LwwDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// The value data (empty = deletion/tombstone)
     #[serde(with = "serde_bytes")]
@@ -49,7 +49,7 @@ pub struct ImmutableDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Field name to CBOR-encoded value, as an LWW delta's `data`
     pub fields: BTreeMap<String, serde_bytes::ByteBuf>,
@@ -63,7 +63,7 @@ impl ImmutableDeltaPayload {
             .map(|(field_name, data)| LwwDeltaPayload {
                 field_name: field_name.clone(),
                 priority: self.priority,
-                schema_version_id: self.schema_version_id.clone(),
+                collection_version_id: self.collection_version_id.clone(),
                 data: data.to_vec(),
             })
     }
@@ -86,7 +86,7 @@ pub struct CounterDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Increment/decrement value (encoded)
     #[serde(with = "serde_bytes")]
@@ -100,7 +100,7 @@ pub struct CounterDeltaPayload {
 pub struct CompositeDeltaPayload {
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Priority
     pub priority: u64,
@@ -133,7 +133,7 @@ where
 pub struct CollectionDeltaPayload {
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Priority
     pub priority: u64,

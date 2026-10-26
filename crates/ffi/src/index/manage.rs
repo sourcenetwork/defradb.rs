@@ -201,6 +201,7 @@ pub unsafe extern "C" fn delete_index(
             txn.commit()
                 .await
                 .map_err(|e| format!("failed to commit: {}", e))?;
+            database.evict_index_caches(collection.schema().resolved_root_id(), index_id);
 
             database
                 .clear_action(

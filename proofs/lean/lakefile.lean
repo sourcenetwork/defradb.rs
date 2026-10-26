@@ -4,6 +4,9 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib EndpointBind where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]
@@ -29,6 +32,15 @@ lean_lib SingleFlight where
 
 @[default_target]
 lean_lib CommitFence where
+
+@[default_target]
+lean_lib HistoryTurns where
+
+@[default_target]
+lean_lib RootedAuthorization where
+
+@[default_target]
+lean_lib ReplicatorInstall where
 
 @[default_target]
 lean_lib EngineTickers where
@@ -59,3 +71,15 @@ lean_lib GossipFrame where
 
 @[default_target]
 lean_lib ServiceRecord where
+
+@[default_target]
+lean_lib StorageFailure where
+
+@[default_target]
+lean_lib WalkCutoff where
+
+@[default_target]
+lean_lib PqFourSums where
+
+@[default_target]
+lean_lib PendingCache where

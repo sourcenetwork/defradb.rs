@@ -13,12 +13,14 @@ impl<S: Store> crate::database::DB<S> {
     /// 3. The version index entry from `/collection/version/{collection_id}/{version_id}`
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
+    ///
+    /// Returns the collection's short ID.
     #[instrument(skip(self, txn), fields(collection = %name), name = "db.delete_collection")]
     pub(crate) async fn delete_collection_with_txn(
         &self,
         txn: &mut DbTxn<S>,
         name: &str,
-    ) -> Result<()> {
+    ) -> Result<u32> {
         // Get the collection to find its version_id and collection_id
         let collection = txn
             .get_collection(name)
@@ -61,7 +63,7 @@ impl<S: Store> crate::database::DB<S> {
             "Deleted collection"
         );
 
-        Ok(())
+        Ok(collection.schema().resolved_root_id())
     }
 
     /// [`Self::delete_collection_as`] in [`defra_core::RequestContext::ambient`].
@@ -87,8 +89,9 @@ impl<S: Store> crate::database::DB<S> {
         let mut txn = self.new_txn(false).await?;
 
         match self.delete_collection_with_txn(&mut txn, name).await {
-            Ok(()) => {
+            Ok(short_id) => {
                 let collections = std::sync::Arc::clone(&self.collections);
+                let codes = std::sync::Arc::clone(&self.vector_codes);
                 let name = name.to_owned();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
@@ -96,6 +99,7 @@ impl<S: Store> crate::database::DB<S> {
                         cache.remove(&name);
                         cache
                     });
+                    codes.evict_collection(short_id);
                 })))?;
                 txn.commit().await?;
 

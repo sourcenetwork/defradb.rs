@@ -21,7 +21,7 @@ use crate::error::{QueryError, Result};
 use crate::mutator::DocMutator;
 use crate::planner::{Doc, PlanNode};
 
-use super::create::CreateInput;
+use super::add::AddInput;
 use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_value_to_json};
 
 /// Input for an upsert mutation - field values for create or update.
@@ -45,9 +45,9 @@ impl UpsertInput {
         self
     }
 
-    /// Convert to a CreateInput for new documents.
-    pub fn to_create_input(&self) -> CreateInput {
-        let mut input = CreateInput::new();
+    /// Convert to a AddInput for new documents.
+    pub fn to_create_input(&self) -> AddInput {
+        let mut input = AddInput::new();
         for (name, value) in &self.fields {
             input = input.with_field(name.clone(), value.clone());
         }

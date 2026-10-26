@@ -266,9 +266,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         if let schema::FieldKind::ScalarArray(arr) = &f.kind {
                             let ek = arr.element_kind();
                             match ek {
-                                schema::ScalarKind::Int
-                                | schema::ScalarKind::Float32
-                                | schema::ScalarKind::Float64 => Some(ek),
+                                schema::ScalarKind::NillableInt
+                                | schema::ScalarKind::NillableFloat32
+                                | schema::ScalarKind::NillableFloat64 => Some(ek),
                                 _ => None,
                             }
                         } else {
@@ -287,7 +287,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     };
 
                     // For Int fields, validate that vector values are integers
-                    if element_kind == schema::ScalarKind::Int {
+                    if element_kind == schema::ScalarKind::NillableInt {
                         let non_int_values: Vec<String> = sim
                             .vector
                             .iter()

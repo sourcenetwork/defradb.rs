@@ -83,7 +83,7 @@ use signed_query::{execute_with_signing_context, unavailable_node_signer_respons
 /// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
-    async fn add_schema(
+    async fn add_collection(
         &self,
         context: &RequestContext,
         sdl: &str,
@@ -140,20 +140,20 @@ struct HttpSchemaOps {
 
 #[cfg(feature = "http")]
 #[async_trait::async_trait]
-impl defra_http::router::SchemaOperations for HttpSchemaOps {
+impl defra_http::router::CollectionOperations for HttpSchemaOps {
     fn bind_request(
         &self,
         context: &RequestContext,
-    ) -> Option<Arc<dyn defra_http::router::SchemaOperations>> {
+    ) -> Option<Arc<dyn defra_http::router::CollectionOperations>> {
         Some(Arc::new(Self {
             schema_ops: Arc::clone(&self.schema_ops),
             context: Some(context.clone()),
         }))
     }
 
-    async fn add_schema(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
         self.schema_ops
-            .add_schema(
+            .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
             )
@@ -458,13 +458,13 @@ impl EmbeddedNode {
     }
 
     /// Add a schema from a GraphQL SDL type definition.
-    pub async fn add_schema(&self, sdl: &str) -> Result<()> {
+    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
         let (ops, sdl, context) = (
             Arc::clone(&self.schema_ops),
             sdl.to_owned(),
             self.node_context(),
         );
-        self.on_pool(move || async move { ops.add_schema(&context, &sdl).await.map(|_| ()) })
+        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
             .await
     }
 
@@ -559,7 +559,7 @@ impl EmbeddedNode {
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_schema`] (create) or [`Self::patch_collection`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }
@@ -637,12 +637,12 @@ impl EmbeddedNode {
     }
 
     /// Roll back a transaction owned by this embedded node.
-    pub async fn rollback_transaction(
+    pub async fn discard_transaction(
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
         self.runner
-            .rollback_txn_as(&self.node_context(), transaction)
+            .discard_txn_as(&self.node_context(), transaction)
             .await
     }
 
@@ -837,7 +837,7 @@ impl EmbeddedNode {
     /// **The node should not be used after this call.** When the `otel`
     /// feature is on, `shutdown` calls `TelemetryHandle::shutdown` which
     /// flushes and disables the global tracer provider. Subsequent calls
-    /// that emit spans (e.g. `execute`, `add_schema`) go to a no-op
+    /// that emit spans (e.g. `execute`, `add_collection`) go to a no-op
     /// tracer — they still work functionally, but observability is gone
     /// with no error surfaced. Drop the node after shutdown completes.
     pub async fn shutdown(&self) {
@@ -1990,7 +1990,7 @@ mod tests {
                     .await
                     .unwrap();
                 let client = reqwest::Client::new();
-                let schema_url = format!("http://{address}/api/v0/schema");
+                let schema_url = format!("http://{address}/api/v0/collections");
                 let created = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {
                         loop {
@@ -2030,7 +2030,7 @@ mod tests {
                     .unwrap();
                 assert!(schema.contains("type Book"));
 
-                let url = format!("http://{address}/api/v0/collections/versions");
+                let url = format!("http://{address}/api/v0/collections?get_inactive=true");
                 let versions = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {
                         loop {
@@ -2211,3 +2211,6 @@ mod p2p_bench;
 
 #[cfg(all(test, feature = "p2p"))]
 mod p2p_tests;
+
+#[cfg(test)]
+mod owner_observation_tests;

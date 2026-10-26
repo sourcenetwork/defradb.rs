@@ -89,7 +89,7 @@ where
             .map_err(|e| e.to_string())
     }
 
-    async fn add_schema_in_txn(
+    async fn add_collection_in_txn(
         &self,
         txn_id: &str,
         sdl: &str,
@@ -103,7 +103,7 @@ where
             .transpose()
             .map_err(|e| format!("malformed acting identity: {}", e))?;
         self.registry
-            .add_schema_in_txn_with_acp_as(
+            .add_collection_in_txn_with_acp_as(
                 &context,
                 txn_id,
                 sdl,

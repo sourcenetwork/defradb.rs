@@ -63,7 +63,7 @@ pub use mutator::{
     MutationBatchController, UpdateResult,
 };
 pub use plan::{
-    CreateInput, CreateNode, DeleteNode, JoinDirection, JoinSide, LimitNode, ScanNode, SelectNode,
+    AddInput, AddNode, DeleteNode, JoinDirection, JoinSide, LimitNode, ScanNode, SelectNode,
     TypeJoinMany, TypeJoinOne, UpdateInput, UpdateNode, UpsertAction, UpsertInput, UpsertNode,
 };
 pub use planner::{Doc, DocStatus, ExecInfo, PlanNode, Planner};
@@ -85,3 +85,5 @@ pub use txn::{
 };
 
 pub mod prepared;
+
+pub mod owners;

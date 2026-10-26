@@ -239,7 +239,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         if !Self::doc_needs_migration(&doc, target_version_id, has_migrations) {
             trace!(
                 doc_id = ?doc.id(),
-                doc_version = ?doc.schema_version_id(),
+                doc_version = ?doc.collection_version_id(),
                 target_version = %target_version_id,
                 "Document does not need migration, returning as-is"
             );
@@ -249,7 +249,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
             });
         }
 
-        let doc_version = doc.schema_version_id().unwrap_or("unknown").to_string();
+        let doc_version = doc.collection_version_id().unwrap_or("unknown").to_string();
         let doc_id_str = doc.id().map(|id| id.to_string()).unwrap_or_default();
         debug!(
             doc_id = %doc_id_str,

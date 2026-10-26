@@ -17,7 +17,7 @@ fn current_composite_frontier_retains_lower_priority_sibling() {
         let doc_short_id = 7_u64;
         let first = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -31,7 +31,7 @@ fn current_composite_frontier_retains_lower_priority_sibling() {
 
         let second = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 2,
                 status: 1,
             }),
@@ -116,7 +116,7 @@ fn stale_retry_heads_cannot_clear_a_newer_document_marker() {
 
         let old = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -129,7 +129,7 @@ fn stale_retry_heads_cannot_clear_a_newer_document_marker() {
         let old_cid = generate_cid_from_bytes(&old_bytes).unwrap();
         let current = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 2,
                 status: 1,
             }),

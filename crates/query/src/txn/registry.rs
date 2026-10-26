@@ -30,7 +30,7 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     /// Begin a new transaction.
     ///
     /// Returns a handle that names it to [`run`](Self::run),
-    /// [`commit`](Self::commit) and [`rollback`](Self::rollback).
+    /// [`commit`](Self::commit) and [`rollback`](Self::discard).
     async fn begin(
         &self,
         readonly: bool,
@@ -128,18 +128,18 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     /// earlier.
     ///
     /// After rollback, the handle names nothing.
-    async fn rollback(
+    async fn discard(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError>;
 
-    /// [`Self::rollback`] for the request `context` serves.
-    async fn rollback_as(
+    /// [`Self::discard`] for the request `context` serves.
+    async fn discard_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        context.mirror(self.rollback(handle)).await
+        context.mirror(self.discard(handle)).await
     }
 
     /// Let go of a transaction without committing its writes, at once and
@@ -178,7 +178,7 @@ impl TransactionRegistry for NoOpTransactionRegistry {
         ))
     }
 
-    async fn rollback(
+    async fn discard(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

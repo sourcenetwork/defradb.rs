@@ -33,9 +33,8 @@ use crate::error::pool_failure;
 
 /// The route prefixes, under each API prefix (`go_paths::API_PREFIXES`),
 /// whose requests run on the pool.
-pub const ON_POOL: [&str; 10] = [
+pub const ON_POOL: [&str; 9] = [
     "/collections",
-    "/index",
     "/backup",
     "/views",
     "/view",
@@ -178,7 +177,7 @@ mod tests {
         for path in [
             "/api/v0/collections",
             "/api/v0/collections/{name}/document/{docID}",
-            "/api/v0/index",
+            "/api/v0/collections/{name}/indexes",
             "/api/v0/backup/export",
             "/api/v0/view/refresh",
             "/api/v0/acp/node/status",

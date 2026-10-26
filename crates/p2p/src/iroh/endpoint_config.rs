@@ -463,6 +463,7 @@ pub(super) fn apply_bind_config(
 
     match (bind_addr, bind_port) {
         (Some(ip), port) => {
+            builder = builder.clear_ip_transports();
             builder = builder
                 .bind_addr(std::net::SocketAddr::new(ip, port.unwrap_or(0)))
                 .map_err(bind_error)?;
@@ -490,6 +491,9 @@ pub(super) fn apply_bind_config(
 
     Ok(builder)
 }
+
+#[cfg(all(test, not(all(target_family = "wasm", target_os = "unknown"))))]
+mod bind_tests;
 
 #[cfg(test)]
 mod tests {

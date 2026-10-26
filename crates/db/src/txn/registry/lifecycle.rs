@@ -1,4 +1,4 @@
-//! Transaction begin, requests, commit, rollback and abandon, each a message
+//! Transaction begin, requests, commit, discard and abandon, each a message
 //! to the worker that owns the transaction.
 
 use super::*;
@@ -69,8 +69,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             })
             .await
             .map_err(|error| TransactionError::execution(error.to_string()))?;
-        let id = opened
-            .map_err(|error| TransactionError::execution(format!("storage error: {}", error)))?;
+        let id = opened.map_err(crate::error::transaction_error)?;
         Ok(TransactionHandle::new(id.to_string()))
     }
 
@@ -148,9 +147,10 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                 let started = Instant::now();
                 let result = scope
                     .mirror(async move {
-                        let txn = db.new_txn(true).await.map_err(|error| {
-                            TransactionError::execution(format!("storage error: {}", error))
-                        })?;
+                        let txn = db
+                            .new_txn(true)
+                            .await
+                            .map_err(crate::error::transaction_error)?;
                         // A snapshot of its own, never registered: no ID names it.
                         let mut owned = OwnedTxn::new(TxnId::unnamed(), txn, db, None)
                             .map_err(|error| TransactionError::execution(error.to_string()))?;
@@ -196,14 +196,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
     }
 
-    async fn rollback(
+    async fn discard(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.rollback_as(&RequestContext::ambient(), handle).await
+        self.discard_as(&RequestContext::ambient(), handle).await
     }
 
-    async fn rollback_as(
+    async fn discard_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
@@ -216,9 +216,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &caller(context), move |owned| {
                 Box::pin(async move {
-                    owned.rollback().map_err(|error| {
+                    owned.discard().map_err(|error| {
                         TransactionError::execution(format!(
-                            "rollback error for transaction '{label}': {error}"
+                            "discard error for transaction '{label}': {error}"
                         ))
                     })
                 })
@@ -234,6 +234,13 @@ fn commit_error(handle: &str, error: crate::error::Error) -> TransactionError {
     if error.is_txn_conflict() {
         TransactionError::conflict(message)
     } else {
-        TransactionError::execution(message)
+        match crate::error::transaction_error(error) {
+            TransactionError::Storage(storage::Error::Io(cause)) => {
+                TransactionError::Storage(storage::Error::Io(
+                    cause.with_context(format!("commit error for transaction '{handle}'")),
+                ))
+            }
+            _ => TransactionError::execution(message),
+        }
     }
 }

@@ -38,7 +38,7 @@ use super::TransactionHandle;
 ///     for query in queries {
 ///         let resp = guard.execute(query).await;
 ///         if resp.has_errors() {
-///             guard.rollback().await?;  // Consumes guard, rolls back transaction
+///             guard.discard().await?;  // Consumes guard, rolls back transaction
 ///             return Err(TransactionError::execution("query failed"));
 ///         }
 ///         responses.push(resp);
@@ -127,17 +127,17 @@ impl<'a, E: crate::QueryExecutor + ?Sized> TransactionGuard<'a, E> {
         Ok(())
     }
 
-    /// Rollback the transaction and consume the guard.
+    /// Discard the transaction and consume the guard.
     ///
     /// After calling this, the guard cannot be used again (compile-time enforced).
-    pub async fn rollback(mut self) -> std::result::Result<(), TransactionError> {
+    pub async fn discard(mut self) -> std::result::Result<(), TransactionError> {
         let handle = self
             .handle
             .as_ref()
             .ok_or_else(|| TransactionError::already_finalized("transaction already finalized"))?;
         match &self.context {
-            Some(context) => self.executor.rollback_txn_as(context, handle).await?,
-            None => self.executor.rollback_txn(handle).await?,
+            Some(context) => self.executor.discard_txn_as(context, handle).await?,
+            None => self.executor.discard_txn(handle).await?,
         }
         self.handle = None;
         Ok(())

@@ -673,7 +673,7 @@ fn test_counter_constructor_empty_schema_version() {
     let err = result.err().unwrap();
     assert!(err
         .to_string()
-        .contains("schema_version_id cannot be empty"));
+        .contains("collection_version_id cannot be empty"));
 }
 
 #[test]
@@ -722,7 +722,7 @@ fn test_counter_delta_validation_rejects_empty_values() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("field_name"));
 
-    // Empty schema_version_id
+    // Empty collection_version_id
     let result = CounterDelta::new_int64(
         b"doc1".to_vec(),
         "count".to_string(),
@@ -735,7 +735,7 @@ fn test_counter_delta_validation_rejects_empty_values() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("schema_version_id"));
+        .contains("collection_version_id"));
 }
 
 // === Float32 tests (issue #848) ===

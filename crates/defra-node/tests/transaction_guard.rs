@@ -7,7 +7,7 @@ const READ: &str = "{ Users { name } }";
 
 async fn node() -> EmbeddedNode {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Users { name: String }")
+    node.add_collection("type Users { name: String }")
         .await
         .unwrap();
     node
@@ -60,13 +60,13 @@ fn aborted_task_discards_owned_transaction() {
 }
 
 #[test]
-fn explicit_commit_and_rollback_consume_the_guard() {
+fn explicit_commit_and_discard_consume_the_guard() {
     workers::block_on(async {
         let node = node().await;
         let txn = node.begin_transaction_guard(false).await.unwrap();
         assert!(!txn.execute(CREATE).await.has_errors());
         let saved = txn.handle().clone();
-        txn.rollback().await.unwrap();
+        txn.discard().await.unwrap();
         assert_discarded(&node, &saved).await;
 
         let txn = node.begin_transaction_guard(false).await.unwrap();
@@ -111,7 +111,7 @@ fn owned_transaction_keeps_node_signing_context() {
             .build()
             .await
             .unwrap();
-        node.add_schema("type Users { name: String }")
+        node.add_collection("type Users { name: String }")
             .await
             .unwrap();
         let txn = node.begin_transaction_guard(false).await.unwrap();
@@ -150,7 +150,7 @@ fn owned_transaction_keeps_node_signing_context() {
             if commit {
                 node.commit_transaction(&handle).await.unwrap();
             } else {
-                node.rollback_transaction(&handle).await.unwrap();
+                node.discard_transaction(&handle).await.unwrap();
             }
         }
     })
@@ -180,7 +180,7 @@ fn unconfigured_node_preserves_the_callers_transaction_identity() {
                 .execute_request_in_txn(QueryRequest::new(CREATE), &handle)
                 .await
                 .has_errors());
-            node.rollback_transaction(&handle).await.unwrap();
+            node.discard_transaction(&handle).await.unwrap();
         })
         .await;
         assert_discarded(&node, &handle).await;

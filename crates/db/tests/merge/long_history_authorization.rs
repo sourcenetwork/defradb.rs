@@ -1,0 +1,588 @@
+//! Authorization must survive bounded composite-history traversal and retries.
+
+use acp::{DocumentACP, LocalDocumentACP, MemoryAcpStore};
+use async_trait::async_trait;
+use blockstore::{Blockstore as _, DefraBlockstore};
+use cid::Cid;
+use crypto::PrivateKey as _;
+use db::database::DB;
+use db::merge::acp_merge_handler::AcpCompositeMergeHook;
+use db::merge::merge_handler::hook::{CompositeFrame, CompositeMergeHook};
+use db::merge::merge_handler::{DbMergeHandler, MergeError};
+use defra_core::block::{
+    Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta, DAGLink, Signature,
+    SignatureHeader, SignatureType,
+};
+use defra_core::merge::{
+    BlockMetadata, ExplicitReplayAuthorization, MergeBlock, MergeHandler, MergeOutcome,
+};
+use document::{Document, NormalValue};
+use identity::Did;
+use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use storage::RegolithStore;
+
+type Blocks = DefraBlockstore<RegolithStore>;
+
+struct Signer {
+    key: crypto::Ed25519PrivateKey,
+    did: String,
+}
+
+fn signer() -> Signer {
+    let key = crypto::generate_ed25519().unwrap();
+    let did = key.public_key().did().unwrap();
+    Signer { key, did }
+}
+
+struct Fixture {
+    handler: DbMergeHandler<RegolithStore, Blocks>,
+    blockstore: Arc<Blocks>,
+    doc_id: String,
+    genesis: Cid,
+    acp: Option<Arc<LocalDocumentACP>>,
+}
+
+impl Fixture {
+    async fn new(owner: &Signer, hook: Option<Arc<dyn CompositeMergeHook>>) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        db.create_collection(
+            CollectionVersion::new(
+                "Users",
+                "v1",
+                "col-users",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", "name", FieldKind::string()),
+                ],
+            )
+            .with_policy(PolicyDescription::new("policy-1", "users")),
+        )
+        .await
+        .unwrap();
+        let blockstore = Arc::new(DefraBlockstore::new(store, false));
+        let handler = DbMergeHandler::new_with_max_merge_depth(db, blockstore.clone(), 8);
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String("Alice".into()));
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-users")
+            .unwrap()
+            .unwrap();
+        let genesis =
+            db::block::builder::build_blocks_from_document(&doc, collection.schema(), &blockstore)
+                .await
+                .unwrap();
+        assert_eq!(
+            handler
+                .handle_block(
+                    &genesis.cid,
+                    &genesis.block,
+                    BlockMetadata::normal(&genesis.doc_id, "col-users", &owner.did, None, false),
+                )
+                .await
+                .unwrap(),
+            MergeOutcome::Merged
+        );
+        let mut document_acp = None;
+        let hook = match hook {
+            Some(hook) => hook,
+            None => {
+                let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+                acp.register_doc_object(
+                    &Did::new(owner.did.clone()).unwrap(),
+                    "policy-1",
+                    "users",
+                    &genesis.doc_id,
+                )
+                .await
+                .unwrap();
+                let hook = Arc::new(AcpCompositeMergeHook::new(None));
+                hook.set_document_acp(acp.clone());
+                document_acp = Some(acp);
+                hook
+            }
+        };
+        handler.set_composite_merge_hook(hook);
+        Self {
+            handler,
+            blockstore,
+            doc_id: genesis.doc_id,
+            genesis: genesis.cid,
+            acp: document_acp,
+        }
+    }
+
+    async fn update(&self, parent: Cid, priority: u64, signer: &Signer) -> (Cid, Vec<u8>) {
+        let mut block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "v1".into(),
+                priority,
+                status: 1,
+            }),
+            vec![parent],
+            vec![],
+        );
+        let signature = Signature::new(
+            SignatureHeader::new(
+                SignatureType::EdDSA,
+                hex::encode(signer.key.public_key().raw()).into_bytes(),
+            ),
+            signer.key.sign(&block.to_dag_cbor().unwrap()).unwrap(),
+        );
+        let signature_cid = signature.generate_cid().unwrap();
+        self.blockstore
+            .put(&signature_cid, &signature.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        block.signature = Some(signature_cid);
+        let cid = block.generate_cid().unwrap();
+        let bytes = block.to_dag_cbor().unwrap();
+        self.blockstore.put(&cid, &bytes).await.unwrap();
+        (cid, bytes)
+    }
+
+    async fn history(&self, owner: &Signer, attacker: Option<&Signer>, length: u64) -> MergeBlock {
+        let mut cid = self.genesis;
+        let mut bytes = Vec::new();
+        for priority in 2..=length + 1 {
+            // The bad frame is older than several traversal budgets, not the root.
+            let signer = if priority == 3 {
+                attacker.unwrap_or(owner)
+            } else {
+                owner
+            };
+            (cid, bytes) = self.update(cid, priority, signer).await;
+        }
+        MergeBlock {
+            cid,
+            block_data: bytes.into(),
+            doc_id: self.doc_id.clone(),
+            collection_id: "col-users".into(),
+            creator: owner.did.clone(),
+            sender_peer: Some("peer".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        }
+    }
+
+    async fn attempt(&self, root: &MergeBlock, batch: bool) -> MergeOutcome {
+        let handler = self.handler.with_single_history_turn();
+        if batch {
+            let mut results = handler.handle_block_batch(std::slice::from_ref(root)).await;
+            assert_eq!(results.len(), 1);
+            results
+                .remove(0)
+                .expect("history traversal must yield rather than error")
+        } else {
+            // Standalone delivery validates replay authorization separately from handle_block.
+            self.handler
+                .validate_authorization(root.explicit_replay_authorization.as_ref(), root)
+                .await
+                .expect("replay authorization must match the root's own signer");
+            let metadata = BlockMetadata::normal(
+                &root.doc_id,
+                &root.collection_id,
+                &root.creator,
+                root.sender_peer.as_deref(),
+                root.is_explicit_replicator,
+            )
+            .with_explicit_replay_authorization(root.explicit_replay_authorization.clone());
+            handler
+                .handle_block(&root.cid, &root.block_data, metadata)
+                .await
+                .expect("history traversal must yield rather than error")
+        }
+    }
+
+    async fn finish(&self, root: &MergeBlock, batch: bool) -> (MergeOutcome, usize) {
+        for retries in 0..128 {
+            let outcome = self.attempt(root, batch).await;
+            if !matches!(outcome, MergeOutcome::Yielded) {
+                return (outcome, retries);
+            }
+        }
+        panic!("history made no bounded progress after 128 attempts");
+    }
+}
+
+async fn authorized_history(batch: bool) {
+    let owner = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    let root = fixture.history(&owner, None, 32).await;
+    let (outcome, retries) = fixture.finish(&root, batch).await;
+    assert!(retries > 0, "small depth budget must yield");
+    assert_eq!(outcome, MergeOutcome::Merged);
+    assert!(fixture.attempt(&root, batch).await.is_terminal_skip());
+}
+
+#[test]
+fn strict_collection_history_uses_the_composites_document_identity() {
+    workers::block_on(async {
+        for carrier_doc in ["", "unrelated-carrier-document"] {
+            let owner = signer();
+            let fixture = Fixture::new(&owner, None).await;
+            let hook = Arc::new(AcpCompositeMergeHook::new(None));
+            hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
+            hook.set_strict_replicated_doc_access(true);
+            fixture.handler.set_composite_merge_hook(hook);
+            let root = fixture.history(&owner, None, 64).await;
+            let payload = CollectionDeltaPayload {
+                collection_version_id: "v1".into(),
+                priority: 1,
+            };
+            let block = Block::new(
+                CrdtDelta::Collection(payload.clone()),
+                vec![],
+                vec![DAGLink::new("_head", root.cid)],
+            );
+            let cid = block.generate_cid().unwrap();
+            let metadata =
+                BlockMetadata::normal(carrier_doc, "col-users", &owner.did, Some("peer"), false);
+            let mut yielded = false;
+            let mut completed = false;
+            for _ in 0..128 {
+                let outcome = fixture
+                    .handler
+                    .with_single_history_turn()
+                    .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
+                    .await
+                    .unwrap();
+                if outcome == MergeOutcome::Yielded {
+                    yielded = true;
+                } else {
+                    assert!(
+                        outcome.is_merged() || outcome.is_terminal_skip(),
+                        "{outcome:?}"
+                    );
+                    completed = true;
+                    break;
+                }
+            }
+            assert!(yielded, "the history must exceed the fast-path budget");
+            assert!(completed, "collection history did not converge");
+            assert!(fixture.attempt(&root, false).await.is_terminal_skip());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
+    workers::block_on(async {
+        let owner = signer();
+        let attacker = signer();
+        let fixture = Fixture::new(&owner, None).await;
+        let hook = Arc::new(AcpCompositeMergeHook::new(None));
+        hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
+        hook.set_strict_replicated_doc_access(true);
+        fixture.handler.set_composite_merge_hook(hook);
+        let root = fixture.history(&attacker, None, 64).await;
+        let block = Block::new(
+            CrdtDelta::Collection(CollectionDeltaPayload {
+                collection_version_id: "v1".into(),
+                priority: 1,
+            }),
+            vec![],
+            vec![DAGLink::new("_head", root.cid)],
+        );
+        let cid = block.generate_cid().unwrap();
+        let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
+        let expected = MergeOutcome::rejected(format!(
+            "signer {} lacks update permission on protected document {}",
+            attacker.did, fixture.doc_id
+        ));
+        for _ in 0..128 {
+            let outcome = fixture
+                .handler
+                .with_single_history_turn()
+                .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
+                .await
+                .unwrap();
+            if outcome != MergeOutcome::Yielded {
+                assert_eq!(outcome, expected);
+                return;
+            }
+        }
+        panic!("unauthorized history was not rejected");
+    })
+    .unwrap()
+}
+
+async fn unauthorized_ancestor(batch: bool, explicit: bool) {
+    let owner = signer();
+    let attacker = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    let mut root = fixture.history(&owner, Some(&attacker), 64).await;
+    if explicit {
+        authorize_replay(&mut root, &owner);
+    }
+    let (outcome, retries) = fixture.finish(&root, batch).await;
+    assert!(
+        retries > 0,
+        "deep unauthorized frame must require resumption"
+    );
+    let denied = MergeOutcome::rejected(format!(
+        "signer {} lacks update permission on protected document {}",
+        attacker.did, fixture.doc_id
+    ));
+    assert_eq!(outcome, denied);
+    // Neither rejection nor partial progress may mark the authorized root merged.
+    assert_eq!(fixture.finish(&root, batch).await.0, denied);
+}
+
+fn authorize_replay(root: &mut MergeBlock, owner: &Signer) {
+    root.is_explicit_replicator = true;
+    root.explicit_replay_authorization = Some(ExplicitReplayAuthorization {
+        source_peer_id: "peer".into(),
+        target_peer_id: "receiver".into(),
+        collection_id: "col-users".into(),
+        authorizer_did: owner.did.clone(),
+        expires_at: u64::MAX,
+        capability: None,
+    });
+}
+
+async fn authorized_ancestor_with_distinct_replay_signer(batch: bool) {
+    let owner = signer();
+    let updater = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    assert!(fixture
+        .acp
+        .as_ref()
+        .unwrap()
+        .add_actor_relationship(
+            &Did::new(owner.did.clone()).unwrap(),
+            &Did::new(updater.did.clone()).unwrap(),
+            "policy-1",
+            "users",
+            &fixture.doc_id,
+            "updater",
+            &[],
+        )
+        .await
+        .unwrap());
+    let mut root = fixture.history(&updater, None, 32).await;
+    let (cid, bytes) = fixture.update(root.cid, 34, &owner).await;
+    root.cid = cid;
+    root.block_data = bytes.into();
+    root.creator = owner.did.clone();
+    authorize_replay(&mut root, &owner);
+
+    // Replay authorization belongs to the carrier, not its differently signed ancestors.
+    let (outcome, retries) = fixture.finish(&root, batch).await;
+    assert!(retries > 0, "small depth budget must yield");
+    assert_eq!(outcome, MergeOutcome::Merged);
+    assert!(fixture.attempt(&root, batch).await.is_terminal_skip());
+}
+
+#[derive(Default)]
+struct RevocableHook {
+    revoked: AtomicBool,
+    checks: AtomicUsize,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl CompositeMergeHook for RevocableHook {
+    fn guards_protected_updates(&self) -> bool {
+        true
+    }
+
+    async fn on_protected_update(
+        &self,
+        _doc_id: &str,
+        _collection: &CollectionVersion,
+        frame: CompositeFrame<'_>,
+    ) -> Result<Option<MergeOutcome>, MergeError> {
+        if frame.is_genesis {
+            return Ok(None);
+        }
+        assert!(
+            frame.signer.is_some(),
+            "each update must retain its verified signer"
+        );
+        self.checks.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .revoked
+            .load(Ordering::SeqCst)
+            .then(|| MergeOutcome::rejected("update permission revoked")))
+    }
+}
+
+async fn revoked_after_yield(batch: bool) {
+    let owner = signer();
+    let hook = Arc::new(RevocableHook::default());
+    let fixture = Fixture::new(&owner, Some(hook.clone())).await;
+    let root = fixture.history(&owner, None, 32).await;
+    let first = fixture.attempt(&root, batch).await;
+    assert!(
+        matches!(first, MergeOutcome::Yielded),
+        "expected a resumable yield, got {first:?}"
+    );
+    let checks = hook.checks.load(Ordering::SeqCst);
+    hook.revoked.store(true, Ordering::SeqCst);
+    assert_eq!(
+        fixture.finish(&root, batch).await.0,
+        MergeOutcome::rejected("update permission revoked")
+    );
+    assert!(hook.checks.load(Ordering::SeqCst) > checks);
+}
+
+#[test]
+fn standalone_authorized_history_resumes() {
+    workers::block_on(async {
+        authorized_history(false).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_authorized_history_resumes() {
+    workers::block_on(async {
+        authorized_history(true).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn standalone_deep_unauthorized_ancestor_is_rejected() {
+    workers::block_on(async {
+        unauthorized_ancestor(false, false).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_deep_unauthorized_ancestor_is_rejected() {
+    workers::block_on(async {
+        unauthorized_ancestor(true, false).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn standalone_explicit_replay_preserves_ancestor_signer() {
+    workers::block_on(async {
+        unauthorized_ancestor(false, true).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_explicit_replay_preserves_ancestor_signer() {
+    workers::block_on(async {
+        unauthorized_ancestor(true, true).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn standalone_replay_accepts_distinct_authorized_ancestor_signer() {
+    workers::block_on(async {
+        authorized_ancestor_with_distinct_replay_signer(false).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_replay_accepts_distinct_authorized_ancestor_signer() {
+    workers::block_on(async {
+        authorized_ancestor_with_distinct_replay_signer(true).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn standalone_resumption_rechecks_revoked_permission() {
+    workers::block_on(async {
+        revoked_after_yield(false).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_resumption_rechecks_revoked_permission() {
+    workers::block_on(async {
+        revoked_after_yield(true).await;
+    })
+    .unwrap()
+}
+
+async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
+    let owner = signer();
+    let attacker = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    let root = fixture.history(&owner, Some(&attacker), 64).await;
+    let block = Block::new(
+        CrdtDelta::Collection(CollectionDeltaPayload {
+            collection_version_id: "v1".into(),
+            priority: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("_head", root.cid)],
+    );
+    let cid = block.generate_cid().unwrap();
+    let expected = MergeOutcome::rejected(format!(
+        "signer {} lacks update permission on protected document {}",
+        attacker.did, fixture.doc_id,
+    ));
+    let handler = fixture.handler.with_single_history_turn();
+    for _ in 0..128 {
+        let outcome = if batch {
+            let carrier = MergeBlock {
+                cid,
+                block_data: block.to_dag_cbor().unwrap().into(),
+                doc_id: String::new(),
+                collection_id: "col-users".into(),
+                creator: owner.did.clone(),
+                sender_peer: Some("peer".into()),
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+                verified_creator: None,
+            };
+            handler
+                .handle_block_batch(&[carrier])
+                .await
+                .remove(0)
+                .unwrap()
+        } else {
+            handler
+                .handle_block(
+                    &cid,
+                    &block.to_dag_cbor().unwrap(),
+                    BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false),
+                )
+                .await
+                .unwrap()
+        };
+        if outcome != MergeOutcome::Yielded {
+            assert_eq!(outcome, expected);
+            let txn = handler.db().new_txn(true).await.unwrap();
+            let store = txn.systemstore().unwrap();
+            assert!(!store
+                .has(format!("/merge-history/v1/admissions/{}", root.cid).as_bytes())
+                .await
+                .unwrap());
+            assert!(!store
+                .has(format!("/merge-history/v1/{}/state", root.cid).as_bytes())
+                .await
+                .unwrap());
+            return;
+        }
+    }
+    panic!("collection carrier lost the terminal history rejection");
+}
+
+#[test]
+fn standalone_collection_propagates_deep_ancestor_rejection() {
+    workers::block_on(collection_carrier_propagates_deep_ancestor_rejection(false)).unwrap();
+}
+
+#[test]
+fn batch_collection_propagates_deep_ancestor_rejection() {
+    workers::block_on(collection_carrier_propagates_deep_ancestor_rejection(true)).unwrap();
+}

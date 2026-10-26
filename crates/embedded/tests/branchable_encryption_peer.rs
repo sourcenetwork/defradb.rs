@@ -21,7 +21,9 @@ use identity::Did;
 use outcome::Result;
 use std::time::Instant;
 
-use support::{add_policy, add_schema, grant_collection_reader, new_identity, wait_for_fred, Node};
+use support::{
+    add_collection, add_policy, grant_collection_reader, new_identity, wait_for_fred, Node,
+};
 
 #[test]
 fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
@@ -71,8 +73,8 @@ async fn scenario(
     let sdl = format!(
         r#"type Users @branchable @policy(id: "{policy_id}", resource: "users") {{ name: String  age: Int }}"#
     );
-    add_schema(node0, &sdl, jack).await?;
-    add_schema(node1, &sdl, jack).await?;
+    add_collection(node0, &sdl, jack).await?;
+    add_collection(node1, &sdl, jack).await?;
 
     let collection_id = node0
         .database

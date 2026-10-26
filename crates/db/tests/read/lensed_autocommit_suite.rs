@@ -34,7 +34,7 @@ fn unknown_document_version_passes_through() {
 
         let mut doc = document::Document::new();
         doc.set("name", "Alice");
-        doc.set_schema_version_id("foreign-v3");
+        doc.set_collection_version_id("foreign-v3");
 
         let returned = fetcher
             .process_document(doc, &collection, true, &history)
@@ -47,7 +47,10 @@ fn unknown_document_version_passes_through() {
                 .and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(returned.document.schema_version_id(), Some("foreign-v3"));
+        assert_eq!(
+            returned.document.collection_version_id(),
+            Some("foreign-v3")
+        );
         assert!(returned.source_document.is_none());
     })
     .unwrap()
