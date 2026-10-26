@@ -646,6 +646,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        // A write pushes each document's heads to every replicator that should
+        // get the document, and a `@branchable` collection's heads only to
+        // unfiltered replicators. The acknowledgement read compares at the
+        // same scope, through the same AckScope rule, so a filtered
+        // replicator's acknowledgements are read per document.
+        family: "B3 filtered replication",
+        name: "INV_AckedReadsAcked / INV_AckedIsHeld / INV_NeverPushedNeverAcked / INV_FilterRespected: replication acknowledgements are read at the scope they are pushed at",
+        axis: Tla,
+        anchor: "crates/p2p/src/ack_scope.rs AckScope::new; crates/p2p/src/replicator.rs ReplicatorInfo::ack_scope; crates/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs; crates/db/src/merge/replication_ack.rs replication_acknowledged",
+        model_ref: "MC_ReplicationAckScope_{Green,Red_MainRule,Red_PushToFiltered}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,

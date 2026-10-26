@@ -182,6 +182,9 @@ RUNS=(
   "MC_UnknownCrdt_Red_RemoveStored.cfg UnknownCrdt.tla RED" # a node started without a type it stores: a rewrite loses the value for good (INV_ConvergeWhenDone)
   "MC_UnknownCrdt_Red_NoDocument.cfg UnknownCrdt.tla RED" # no document for a block whose only part was parked: its replay writes nowhere (INV_ConvergeWhenDone)
   "MC_UnknownCrdt_Red_FailStall.cfg UnknownCrdt.tla RED" # a store error or missing key sets a parked block aside for good (INV_ConvergeWhenDone)
+  "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
+  "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
+  "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)

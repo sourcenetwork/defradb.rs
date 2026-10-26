@@ -12,7 +12,9 @@ use crate::DB;
 /// A `@branchable` collection replicates at collection scope, so its
 /// documents are acknowledged together with the collection heads. A newer
 /// local write makes a document unacknowledged until the peer acknowledges
-/// again; a missing document is never acknowledged.
+/// again; a missing document is never acknowledged. The scope is the one
+/// [`p2p::ReplicatorInfo::ack_scope`] gives the push, so a filtered replicator
+/// is read per document even for a `@branchable` collection.
 pub async fn replication_acknowledged<S: Store + 'static>(
     db: &DB<S>,
     peer_id: &str,
@@ -24,7 +26,7 @@ pub async fn replication_acknowledged<S: Store + 'static>(
         peer_id,
         collection_name,
         doc_ids,
-        AcknowledgmentScope::CollectionIfBranchable,
+        AcknowledgmentScope::Pushed,
     )
     .await
 }
@@ -50,7 +52,8 @@ pub async fn document_heads_acknowledged<S: Store + 'static>(
 
 #[derive(Clone, Copy)]
 enum AcknowledgmentScope {
-    CollectionIfBranchable,
+    /// The scope the replicator is pushed at.
+    Pushed,
     Document,
 }
 
@@ -72,9 +75,21 @@ async fn acknowledged_heads<S: Store + 'static>(
     let headstore = txn.headstore().map_err(|error| error.to_string())?;
     let blockstore = txn.blockstore().map_err(|error| error.to_string())?;
 
-    let collection_acknowledged = if collection.schema().is_branchable
-        && matches!(scope, AcknowledgmentScope::CollectionIfBranchable)
-    {
+    let branchable = collection.schema().is_branchable;
+    let scope = match scope {
+        AcknowledgmentScope::Document => p2p::AckScope::Document,
+        AcknowledgmentScope::Pushed => match peerstore
+            .get_replicator(peer_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            Some(bytes) => p2p::ReplicatorInfo::from_bytes(&bytes)
+                .map_err(|error| error.to_string())?
+                .ack_scope(&collection_id, branchable),
+            None => p2p::AckScope::new(false, branchable),
+        },
+    };
+    let collection_acknowledged = if scope == p2p::AckScope::Collection {
         let short_id =
             crate::collection::require_persisted_collection_short_id(&systemstore, &collection_id)
                 .await
