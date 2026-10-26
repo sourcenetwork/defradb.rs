@@ -483,8 +483,7 @@ fn batch_and_single_create_build_the_same_genesis() {
     workers::block_on(async {
         let (handler, _, collection) = make_handler().await;
         let doc = record(&collection);
-        let identity =
-            db::block::builder::DocRef::new(collection.resolved_root_id(), 7);
+        let identity = db::block::builder::DocRef::new(collection.resolved_root_id(), 7);
 
         let computed = db::block::builder::compute_document_blocks(
             &doc,
