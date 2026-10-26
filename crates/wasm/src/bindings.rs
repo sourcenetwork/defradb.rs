@@ -40,7 +40,7 @@ pub struct ClientConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CollectionInfo {
     pub name: String,
-    #[serde(rename = "schema_version_id")]
+    #[serde(rename = "VersionID")]
     pub collection_version_id: String,
     pub fields: Vec<FieldInfo>,
 }
