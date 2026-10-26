@@ -316,9 +316,16 @@ fn a_text_updated_to_null_reads_null_on_every_node() {
         let mut cleared = edit(&alice, &doc_id);
         cleared.set("body", NormalValue::Null).unwrap();
         let from_alice = alice.update(cleared, &["body"]).await;
+        // Bob types before he clears, so his clear has other heads than
+        // Alice's and the two clears are different blocks.
+        let mut typed = edit(&bob, &doc_id);
+        typed.set("body", text("?")).unwrap();
+        let typed_by_bob = bob.update(typed, &["body"]).await;
         let mut cleared = edit(&bob, &doc_id);
         cleared.set("body", NormalValue::Null).unwrap();
         let from_bob = bob.update(cleared, &["body"]).await;
+        assert_ne!(from_alice.0, from_bob.0);
+        alice.receive(&bob, &doc_id, &typed_by_bob).await;
         alice.receive(&bob, &doc_id, &from_bob).await;
         bob.receive(&alice, &doc_id, &from_alice).await;
         assert_eq!(alice.body().await, NormalValue::Null);
