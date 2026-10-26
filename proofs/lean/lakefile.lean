@@ -86,3 +86,6 @@ lean_lib TextCrdt where
 
 @[default_target]
 lean_lib JsonCrdt where
+
+@[default_target]
+lean_lib PendingCache where
