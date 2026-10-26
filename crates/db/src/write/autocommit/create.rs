@@ -48,7 +48,10 @@ pub(super) fn acp_registration_retry_callback(
     })
 }
 
-impl<S: Store + 'static> storage::corekv::RetryAttemptFn for CreateRetryAttempt<S> {
+impl<S> storage::corekv::RetryAttemptFn for CreateRetryAttempt<S>
+where
+    S: Store + 'static,
+{
     fn run<'a>(
         &'a mut self,
         retry: &'a mut dyn storage::corekv::RetryTxn,
