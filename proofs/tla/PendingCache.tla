@@ -146,14 +146,19 @@
 \*                64 MiB cap is published as an oversized marker that is
 \*                never read as cover, so it acts as no cache: the log read
 \*                of the last rule
+\*   Evict        cache.rs CodeCaches::evict and evict_collection: an index
+\*                or collection drop forgets the cache, at any moment, even
+\*                while searches that loaded it are still running
 EXTENDS Naturals, Integers, FiniteSets, Sequences, TLC
 
 \* Nodes: the vector ids. Readers: the searches. MaxCommits: how many
 \* commits TLC explores. MaxOwn: how many appends a search's own
 \* transaction may make. The rest switch each guard on (TRUE) or off.
+\* Evictions lets the node forget the cache (a drop), in its own GREEN
+\* configuration, which keeps the main one small.
 CONSTANTS Nodes, Readers, MaxCommits, MaxOwn,
           GenerationCheck, OwnAppendsRead, TruncateThroughLinked,
-          LatestOnly, HeadCut, HeadAwareMarks, GapCheck
+          LatestOnly, HeadCut, HeadAwareMarks, GapCheck, Evictions
 
 \* db: one record per commit, the newest last; a snapshot is an index into it.
 \* cache: the published PendingCache; gen = -1 means nothing is loaded.
@@ -164,9 +169,10 @@ CONSTANTS Nodes, Readers, MaxCommits, MaxOwn,
 \*     entry at position p is followed by its vector's next entry at q. A
 \*     marker sits on an entry that copies share, so it is one set for all
 \*     of them, including what a search whose copy lost the publish set.
-VARIABLES db, cache, rs, marks
+\* evicted: whether the cache has been evicted yet.
+VARIABLES db, cache, rs, marks, evicted
 \* Every variable, for the steps that leave some unchanged.
-vars == <<db, cache, rs, marks>>
+vars == <<db, cache, rs, marks, evicted>>
 
 \* The cache before anything was loaded. Its entries are <<position, id>>
 \* pairs, so two versions of one vector are two entries.
@@ -224,6 +230,7 @@ Init == /\ marks = {}
         /\ db = <<Genesis>>
         /\ cache = NoCache
         /\ rs = [r \in Readers |-> Idle]
+        /\ evicted = FALSE
 
 \* Room for one more commit, so TLC's search stays finite.
 CanCommit == Len(db) <= MaxCommits
@@ -234,14 +241,14 @@ Insert(n) == /\ CanCommit
              /\ db' = Append(db, [Last EXCEPT !.head = @ + 1,
                                               !.entry = Append(@, n),
                                               !.live = @ \cup {n}])
-             /\ UNCHANGED <<cache, rs, marks>>
+             /\ UNCHANGED <<cache, rs, marks, evicted>>
 
 \* A delete (mod.rs delete): the vector is no longer live. Nothing goes to
 \* the log, and a linked vector stays in the graph as a tombstone.
 Delete(n) == /\ CanCommit
              /\ n \in Last.live
              /\ db' = Append(db, [Last EXCEPT !.live = @ \ {n}])
-             /\ UNCHANGED <<cache, rs, marks>>
+             /\ UNCHANGED <<cache, rs, marks, evicted>>
 
 \* A merge (merge.rs merge_plan, then merge): reads the log up to a position
 \* c it picks, links the live vectors those entries insert, bumps the
@@ -255,20 +262,20 @@ Merge == /\ CanCommit
                                                !.gen = @ + 1,
                                                !.trunc = IF TruncateThroughLinked
                                                          THEN c ELSE Last.head])
-         /\ UNCHANGED <<cache, rs, marks>>
+         /\ UNCHANGED <<cache, rs, marks, evicted>>
 
 \* A search's transaction begins: it takes the newest snapshot. It may run
 \* other statements for a while before it searches.
 Begin(r) == /\ rs[r].phase = "idle"
             /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "snap", !.snap = Len(db)]]
-            /\ UNCHANGED <<db, cache, marks>>
+            /\ UNCHANGED <<db, cache, marks, evicted>>
 
 \* The search starts (graph.rs search_graph) and loads the cache's current
 \* value, a copy no one else changes. The cache may be newer than the
 \* snapshot by now.
 Load(r) == /\ rs[r].phase = "snap"
            /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "loaded", !.seen = cache]]
-           /\ UNCHANGED <<db, cache, marks>>
+           /\ UNCHANGED <<db, cache, marks, evicted>>
 
 \* The search's own transaction inserts or updates a vector before it
 \* searches. Nothing is committed, so it has no log position; only this
@@ -276,7 +283,7 @@ Load(r) == /\ rs[r].phase = "snap"
 OwnWrite(r, n) == /\ rs[r].phase = "snap"
                   /\ Len(rs[r].own) < MaxOwn
                   /\ rs' = [rs EXCEPT ![r].own = Append(@, n)]
-                  /\ UNCHANGED <<db, cache, marks>>
+                  /\ UNCHANGED <<db, cache, marks, evicted>>
 
 \* Whether `next` is newer than the published cache, so a publish of it may
 \* replace it: a newer generation, or the same one caught up further.
@@ -375,7 +382,7 @@ Search(r) ==
         \* Rule 3: the cache is newer than the search.
         ELSE done(PendingEntries(st)) /\ UNCHANGED <<cache, marks>>
      \* A search commits nothing.
-     /\ UNCHANGED db
+     /\ UNCHANGED <<db, evicted>>
 
 \* A finished search that held everything and scored it right starts over,
 \* so TLC also runs searches after later commits. One that went wrong stays,
@@ -384,11 +391,24 @@ Again(r) == /\ rs[r].phase = "done"
             /\ rs[r].ok
             /\ rs[r].latest
             /\ rs' = [rs EXCEPT ![r] = Idle]
-            /\ UNCHANGED <<db, cache, marks>>
+            /\ UNCHANGED <<db, cache, marks, evicted>>
 
-\* A step is any commit, any search step, or a search's own write.
+\* The node forgets a loaded cache (CodeCaches::evict), as a drop does. A
+\* search that loaded it before keeps its copy and may publish again
+\* afterwards. Once per run: a second eviction reaches no new kind of state,
+\* only more of them. Markers are facts about the log, so they stay.
+Evict == /\ Evictions
+         /\ ~evicted
+         /\ cache.gen >= 0
+         /\ cache' = NoCache
+         /\ evicted' = TRUE
+         /\ UNCHANGED <<db, rs, marks>>
+
+\* A step is any commit, any search step, a search's own write, or an
+\* eviction.
 Next == \/ \E n \in Nodes: Insert(n) \/ Delete(n)
         \/ Merge
+        \/ Evict
         \/ \E r \in Readers: Begin(r) \/ Load(r) \/ Search(r) \/ Again(r)
         \/ \E r \in Readers, n \in Nodes: OwnWrite(r, n)
 

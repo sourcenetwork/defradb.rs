@@ -239,6 +239,21 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
 }
 
 #[test]
+fn evicting_drops_only_the_named_caches() {
+    let caches = CodeCaches::default();
+    let kept = caches.get(1, 1);
+    caches.get(1, 2);
+    caches.get(2, 1);
+    caches.get(2, 2);
+
+    caches.evict(1, 2);
+    caches.evict_collection(2);
+
+    assert_eq!(caches.len(), 1);
+    assert!(Arc::ptr_eq(&kept, &caches.get(1, 1)));
+}
+
+#[test]
 fn a_catch_up_past_the_cap_is_refused() {
     let mut segment = Segment::default();
     segment.push(1, NodeId(1), &[0; 8]);
@@ -447,4 +462,26 @@ fn a_folded_copy_keeps_one_entry_per_vector() {
     }
     assert_eq!(visible(&copy, 40), vec![(8, 39), (7, 40)]);
     assert_eq!(visible(&copy, 10), vec![(8, 9), (7, 10)]);
+}
+
+/// Clearing an index (a truncate, a drop) restarts its pending log, so a copy
+/// caught up before the clear must not stand in for the new log.
+#[test]
+fn a_cleared_index_does_not_search_its_old_copy() {
+    workers::block_on(async {
+        let (store, index, _caches) = cached_store().await;
+        let before = insert(&store, &index, 60_101, 0x71).await;
+        assert_eq!(nearest(&store, &index, &before).await, 60_101);
+
+        let mut clear = store.new_txn(false).await.unwrap();
+        index.remove_all(&mut clear).await.unwrap();
+        clear.commit().await.unwrap();
+
+        let after = insert(&store, &index, 60_102, 0x72).await;
+        let mut read = store.new_txn(true).await.unwrap();
+        let hits = index.search(&mut read, &after, 1, None).await.unwrap();
+        read.discard();
+        assert_eq!(hits.first().map(|hit| hit.id.0), Some(60_102));
+    })
+    .unwrap()
 }

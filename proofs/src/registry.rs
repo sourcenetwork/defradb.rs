@@ -224,6 +224,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "DiskANN pending cache",
+        name: "Evict — forgetting the pending cache at any moment, as an index or collection drop does, keeps every search's candidates complete and scored by their newest entry",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/cache.rs CodeCaches::evict, evict_collection; crates/db/src/collection/ops/delete.rs delete_collection_as; crates/db/src/collection/ops/version.rs delete_collection_version_as",
+        model_ref: "MC_PendingCache_Green_Evict.cfg (GREEN)",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,

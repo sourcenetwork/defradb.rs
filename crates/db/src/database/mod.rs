@@ -175,7 +175,7 @@ pub struct DB<S: Store> {
     /// In-memory collection cache (name -> Collection).
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
-    vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -655,6 +655,12 @@ impl<S: Store> DB<S> {
         &self.vector_codes
     }
 
+    /// Drops this node's in-memory caches of an index, once its drop has
+    /// committed.
+    pub fn evict_index_caches(&self, collection_short_id: u32, index_id: u32) {
+        self.vector_codes.evict(collection_short_id, index_id);
+    }
+
     /// Execute a function within a transaction.
     ///
     /// If the function returns Ok, the transaction is committed.
@@ -850,6 +856,33 @@ mod vector_cache_tests {
             let ordinary_cache = ordinary.vector_codes().get(17, 29);
             let retry_cache = retry.vector_codes().get(17, 29);
             assert!(Arc::ptr_eq(&ordinary_cache, &retry_cache));
+        })
+        .unwrap()
+    }
+
+    /// Deleting a collection drops every cache its indexes hold, and nothing
+    /// else's.
+    #[test]
+    fn deleting_a_collection_evicts_its_vector_caches() {
+        workers::block_on(async {
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let mut types = query::parse_sdl("type EvictProbe { value: String }").unwrap();
+            db.create_collection(types.remove(0)).await.unwrap();
+            let short_id = db
+                .get_collection("EvictProbe")
+                .unwrap()
+                .unwrap()
+                .schema()
+                .resolved_root_id();
+            db.vector_codes().get(short_id, 1);
+            db.vector_codes().get(short_id, 2);
+            let other = db.vector_codes().get(short_id + 1, 1);
+
+            db.delete_collection("EvictProbe").await.unwrap();
+
+            let left = db.vector_codes();
+            assert_eq!(left.len(), 1, "only the other collection's cache stays");
+            assert!(Arc::ptr_eq(&other, &left.get(short_id + 1, 1)));
         })
         .unwrap()
     }
