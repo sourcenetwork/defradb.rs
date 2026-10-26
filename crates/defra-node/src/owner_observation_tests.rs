@@ -9,7 +9,7 @@ const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n  
 async fn fixture() -> (EmbeddedNode, String, String) {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let policy = node.add_dac_policy(A, POLICY).await.unwrap();
-    node.add_schema(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
+    node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
     let response = node
         .execute_request(
