@@ -62,6 +62,11 @@ impl Browser {
                 .unwrap(),
         )
         .unwrap();
+        assert!(
+            result["gql"]["errors"].is_null(),
+            "request failed: {request}: {}",
+            result["gql"]["errors"]
+        );
         result["gql"]["data"].clone()
     }
 }
