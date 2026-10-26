@@ -24,7 +24,7 @@ fn owner_observation_rejects_a_fetcher_without_a_transaction_view() {
                 .contains("transaction-bound authorization"),
             "{error}"
         );
-        runner.rollback_txn(&handle).await.unwrap();
+        runner.discard_txn(&handle).await.unwrap();
     })
     .unwrap();
 }

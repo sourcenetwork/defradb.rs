@@ -46,7 +46,7 @@ impl QueryExecutor for PanickingExecutor {
         Err(TransactionError::execution("no transactions here"))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
