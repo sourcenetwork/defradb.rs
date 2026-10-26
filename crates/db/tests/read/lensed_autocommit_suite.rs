@@ -48,7 +48,10 @@ fn unknown_document_version_passes_through() {
                 .and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(returned.document.collection_version_id(), Some("foreign-v3"));
+        assert_eq!(
+            returned.document.collection_version_id(),
+            Some("foreign-v3")
+        );
         assert!(returned.source_document.is_none());
     })
     .unwrap()
