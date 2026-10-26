@@ -142,6 +142,19 @@ where
     }
 }
 
+/// Whether `receiver` holds every document head `sender` has. Each document
+/// replicates on its own, so one arriving says nothing about another.
+async fn has_every_block(sender: &EmbeddedNode, receiver: &EmbeddedNode) -> bool {
+    let heads = r#"{ _commits(filter: {fieldName: {_eq: "_C"}}) { cid } }"#;
+    let sent = run(sender, heads).await["_commits"].clone();
+    let held = run(receiver, heads).await["_commits"].clone();
+    let held = held.as_array().unwrap();
+    sent.as_array()
+        .unwrap()
+        .iter()
+        .all(|head| held.contains(head))
+}
+
 async fn best(node: &EmbeddedNode) -> Value {
     run(node, "{ Score { best } }").await["Score"][0]["best"].clone()
 }
@@ -184,11 +197,11 @@ fn a_node_without_the_type_parks_its_blocks_until_it_has_the_type() {
                 r#"mutation { add_Note(input: {text: "still here"}) { _docID } }"#,
             )
             .await;
-            eventually("c has the note", || async {
-                run(&c, "{ Note { text } }").await["Note"]
-                    == serde_json::json!([{"text": "still here"}])
-            })
-            .await;
+            eventually("c has every block", || has_every_block(&a, &c)).await;
+            assert_eq!(
+                run(&c, "{ Note { text } }").await["Note"],
+                serde_json::json!([{"text": "still here"}])
+            );
             assert_eq!(
                 run(&c, "{ Score { player } }").await["Score"],
                 serde_json::json!([{"player": "ann"}]),
@@ -265,15 +278,7 @@ fn a_parked_block_that_cannot_merge_does_not_hold_up_the_others() {
                 )
                 .await;
             }
-            run(
-                &a,
-                r#"mutation { add_Note(input: {text: "last"}) { _docID } }"#,
-            )
-            .await;
-            eventually("c has every block", || async {
-                run(&c, "{ Note { text } }").await["Note"] == serde_json::json!([{"text": "last"}])
-            })
-            .await;
+            eventually("c has every block", || has_every_block(&a, &c)).await;
 
             a.shutdown().await;
             c.shutdown().await;
@@ -309,15 +314,7 @@ fn a_document_of_parked_fields_only_merges_once_the_node_has_the_type() {
             replicate(&a, &c_address, |sender| authorize(&c, sender)).await;
 
             run(&a, r#"mutation { add_Score(input: {best: 5}) { _docID } }"#).await;
-            run(
-                &a,
-                r#"mutation { add_Note(input: {text: "last"}) { _docID } }"#,
-            )
-            .await;
-            eventually("c has every block", || async {
-                run(&c, "{ Note { text } }").await["Note"] == serde_json::json!([{"text": "last"}])
-            })
-            .await;
+            eventually("c has every block", || has_every_block(&a, &c)).await;
             assert_eq!(
                 run(&c, "{ Score { player } }").await["Score"],
                 serde_json::json!([{"player": null}]),
