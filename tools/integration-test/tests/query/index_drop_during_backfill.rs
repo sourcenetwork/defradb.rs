@@ -22,7 +22,7 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
     let api = cluster.api_url(0);
     node.schema_add("type User { name: String age: Int }")
         .expect("add User schema");
-    for batch in 0..6 {
+    for batch in 0..12 {
         let users = (0..500)
             .map(|i| format!("{{name: \"u{batch}_{i}\", age: {i}}}"))
             .collect::<Vec<_>>()
@@ -48,20 +48,23 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
                 .expect("create index status")
         }
     });
-    while actions(api).await == json!([]) {
+    // Drop as soon as the index exists: a drop that waited to see the
+    // backfill running could miss it entirely on a single worker.
+    loop {
         assert!(
             !create.is_finished(),
             "the backfill finished before the drop could race it"
         );
+        let dropped = client
+            .delete(format!("{api}/api/v0/collections/User/indexes/by_age"))
+            .send()
+            .await
+            .expect("drop index request");
+        if dropped.status().is_success() {
+            break;
+        }
         tokio::task::yield_now().await;
     }
-    client
-        .delete(format!("{api}/api/v0/collections/User/indexes/by_age"))
-        .send()
-        .await
-        .expect("drop index request")
-        .error_for_status()
-        .expect("drop index status");
     create.await.expect("create index task");
 
     assert_eq!(actions(api).await, json!([]));
