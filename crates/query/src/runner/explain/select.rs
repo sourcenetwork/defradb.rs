@@ -138,6 +138,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             || order_has_relations
             || has_similarity
             || has_secondary_relation_id
+            || collection.chunk_of.is_some()
         {
             // Use the Planner for views, nested selections, index usage, relation aggregates,
             // relation filters/ordering, similarity, or secondary relation IDs

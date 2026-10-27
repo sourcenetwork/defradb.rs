@@ -86,9 +86,17 @@ impl<S: storage::corekv::Store + Send + Sync + 'static> BlockDocIDResolver
         let systemstore = txn
             .systemstore()
             .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        crate::docid::map::get_doc_ids_for_block(&systemstore, &cid.to_string())
+        let doc_ids = crate::docid::map::get_doc_ids_for_block(&systemstore, &cid.to_string())
             .await
-            .map_err(|e| kms::Error::Storage(e.to_string()))
+            .map_err(|e| kms::Error::Storage(e.to_string()))?;
+        drop(systemstore);
+        // `@chunk` chunks have no policy, so their keys follow their parent's
+        // readers, old chunks included.
+        let owners = crate::chunk::access::read_owners(&db, &txn, doc_ids)
+            .await
+            .map_err(|e| kms::Error::Storage(e.to_string()));
+        let _ = txn.discard();
+        owners
     }
 }
 

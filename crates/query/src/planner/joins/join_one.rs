@@ -341,7 +341,7 @@ impl Planner {
                 if target_relation_field.is_primary
                     && can_use_direct_indexed_child_cache(nested_select)
                     && multi_level_paths_for_relation.is_empty()
-                    && target_collection.policy.is_none()
+                    && !target_collection.reads_are_gated()
                     && !self.app_gates_reads(target_collection)
                     && !select.show_deleted
                 {

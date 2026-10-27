@@ -180,7 +180,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Handle top-level aggregates specially - return single value, not array
         if is_top_level_aggregate {
-            if aggregate_filter_has_relations || aggregate_filter_can_use_index {
+            if aggregate_filter_has_relations
+                || aggregate_filter_can_use_index
+                || collection.chunk_of.is_some()
+            {
                 // Use planner path to join relation data before filtering
                 return self
                     .execute_top_level_aggregate_with_planner(
@@ -344,6 +347,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             || has_or_filter_index
             || has_similarity
             || has_fulltext_search
+            // Only the planner can check a `@chunk` chunk against its parent,
+            // through its shared fetcher.
+            || collection.chunk_of.is_some()
             // Cursor queries must go through the planner so CursorNode wraps the top.
             || select.is_cursor;
 

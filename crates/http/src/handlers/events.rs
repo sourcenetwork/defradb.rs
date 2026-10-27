@@ -89,13 +89,9 @@ impl EventAccessContext {
         doc_id: &str,
     ) -> Result<bool, HttpError> {
         let dac_bypass = resolve_dac_bypass(&self.state, &self.identity).await;
-        if !self.acp_enabled {
-            return Ok(true);
-        }
-
         let Some(collection_mgmt) = &self.collection_mgmt else {
             // Without collection metadata we cannot safely prove visibility.
-            return Ok(false);
+            return Ok(!self.acp_enabled);
         };
 
         // The version lookup reads the store for a version the cache does not
@@ -113,10 +109,16 @@ impl EventAccessContext {
         };
 
         let Some(collection) = collection else {
-            return Ok(false);
+            return Ok(!self.acp_enabled);
         };
 
-        if collection.policy.is_none() {
+        // A chunk is gated by its parent even without ACP.
+        let gated = if self.acp_enabled {
+            collection.reads_are_gated()
+        } else {
+            collection.chunk_of.is_some()
+        };
+        if !gated {
             return Ok(true);
         }
 

@@ -186,6 +186,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // resolved is denied (Go errors the query here). Never allow
                     // an unresolved version through unchecked.
                     None => false,
+                    Some(collection) if collection.chunk_of.is_some() => self
+                        .chunk_readable(
+                            fetcher,
+                            &identity,
+                            caller_identity.as_ref(),
+                            collection,
+                            doc_id,
+                        )
+                        .await
+                        .map_err(|error| match error {
+                            error @ QueryError::NeedsInput(_) => error,
+                            error => QueryError::commit_access_check_failed(error),
+                        })?,
                     Some(collection) => match &collection.policy {
                         None => true,
                         Some(policy) => crate::txn::check_doc_read_access_as(

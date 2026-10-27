@@ -125,6 +125,16 @@ impl<S: Store> crate::database::DB<S> {
             .peek(|cache| cache.by_id(collection_id).cloned()))
     }
 
+    /// Find a collection by the root ID its documents' refs carry.
+    pub fn find_collection_by_root_id(&self, root_id: u32) -> Option<Collection> {
+        self.collections.peek(|cache| {
+            cache
+                .values()
+                .find(|collection| collection.resolved_root_id() == root_id)
+                .cloned()
+        })
+    }
+
     pub(crate) fn forbid_collection_id(&self, collection_id: &str) -> Result<()> {
         self.forbidden_collection_ids
             .insert(collection_id.to_string(), ());

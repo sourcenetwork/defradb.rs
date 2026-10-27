@@ -222,14 +222,8 @@ impl Planner {
             .is_some_and(|validator| validator.governs(collection))
     }
 
-    /// Wrap a plan with a PermissionFilterNode when the collection has an ACP
-    /// policy or an app read validator governs it.
-    pub(super) fn maybe_wrap_with_acp_filter(
-        &self,
-        plan: Box<dyn PlanNode>,
-        collection: &CollectionVersion,
-    ) -> Box<dyn PlanNode> {
-        let acp = match (&self.acp, &collection.policy) {
+    fn acp_read(&self, collection: &CollectionVersion) -> Option<crate::plan::AcpRead> {
+        match (&self.acp, &collection.policy) {
             (Some(acp), Some(policy)) => Some(crate::plan::AcpRead {
                 acp: acp.clone(),
                 identity: acp::Identity::from(self.identity_did.clone()),
@@ -238,13 +232,50 @@ impl Planner {
                 resource_name: policy.resource_name.clone(),
             }),
             _ => None,
-        };
-        let app = crate::access_hooks::AppReadCheck::bind(
+        }
+    }
+
+    fn app_read(
+        &self,
+        collection: &CollectionVersion,
+    ) -> Option<crate::access_hooks::AppReadCheck> {
+        crate::access_hooks::AppReadCheck::bind(
             self.read_validator.as_ref(),
             self.identity_did.clone(),
             collection,
         )
-        .map(|check| check.with_retry_inputs(self.retry_inputs.clone()));
+        .map(|check| check.with_retry_inputs(self.retry_inputs.clone()))
+    }
+
+    /// Wraps a plan in a permission filter when the collection has an ACP policy
+    /// or an app read validator, or is a `@chunk` collection.
+    pub(super) fn maybe_wrap_with_acp_filter(
+        &self,
+        plan: Box<dyn PlanNode>,
+        collection: &CollectionVersion,
+    ) -> Box<dyn PlanNode> {
+        if let Some(source) = &collection.chunk_of {
+            let parent = self.get_collection(&source.collection);
+            let gate = crate::plan::ChunkGate::new(
+                self.fetcher.clone(),
+                collection,
+                parent.as_deref(),
+                parent
+                    .as_deref()
+                    .and_then(|parent| self.acp_read(parent))
+                    .map(|read| {
+                        crate::plan::AcpReadCheck::from_read(
+                            read,
+                            self.acp_registration_projection.clone(),
+                            self.retry_inputs.clone(),
+                        )
+                    }),
+                parent.as_deref().and_then(|parent| self.app_read(parent)),
+            );
+            return Box::new(PermissionFilterNode::inherited(plan, gate));
+        }
+        let acp = self.acp_read(collection);
+        let app = self.app_read(collection);
         PermissionFilterNode::wrap_with_projection_and_inputs(
             plan,
             acp,
@@ -349,6 +380,7 @@ impl Planner {
             // prepare_filter removes computed aliases before classifying the filter.
             || select.filter.as_ref().is_some_and(|filter| filter.has_alias_filter())
             || (self.acp.is_some() && collection.policy.is_some())
+            || collection.chunk_of.is_some()
             || self.app_gates_reads(&collection);
 
         let mut warnings: Vec<GqlWarning> = Vec::new();

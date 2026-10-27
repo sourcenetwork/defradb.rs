@@ -406,16 +406,49 @@ async fn load_authorized_block_signature<S: Store>(
             .get_collection_by_version_id(collection_version_id)
             .map_err(|e| format!("failed to get collection: {}", e))?
         {
-            let collection = collection.schema();
+            let mut collection = collection.schema().clone();
+            // A `@chunk` collection has no policy. Its blocks are part of the parent's
+            // history, so the parent's policy decides, even for a deleted parent.
+            let mut owners_override = None;
+            if let Some(source) = collection.chunk_of.clone() {
+                let owners =
+                    crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
+                        .await
+                        .map_err(|e| format!("failed to resolve block owners: {}", e))?
+                        .unwrap_or_default();
+                let parents = crate::chunk::access::history_parents(database, &collection, &owners)
+                    .await
+                    .map_err(|e| format!("failed to resolve chunk parents: {}", e))?;
+                if parents.is_empty() {
+                    return Err("missing permission: the chunk's parent is not known here".into());
+                }
+                collection = database
+                    .get_collection(&source.collection)
+                    .map_err(|e| format!("failed to get collection: {}", e))?
+                    .ok_or_else(|| {
+                        format!(
+                            "missing permission: parent collection {} not found",
+                            source.collection
+                        )
+                    })?
+                    .schema()
+                    .clone();
+                owners_override = Some(parents);
+            }
+            let collection = &collection;
             if let Some(policy) = &collection.policy {
                 // Field blocks can be shared across documents, so allow if the
                 // caller can read any owner. An ownerless document block is
                 // denied; only non-document blocks use collection-level access.
-                let owning_doc_ids =
-                    crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
-                        .await
-                        .map_err(|e| format!("failed to resolve block owners: {}", e))?
-                        .ok_or_else(|| "missing permission".to_string())?;
+                let owning_doc_ids = match owners_override {
+                    Some(parents) => parents,
+                    None => {
+                        crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
+                            .await
+                            .map_err(|e| format!("failed to resolve block owners: {}", e))?
+                            .ok_or_else(|| "missing permission".to_string())?
+                    }
+                };
 
                 let checker = acp::read_access::DirectChecker {
                     acp: document_acp,

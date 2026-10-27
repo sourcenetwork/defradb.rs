@@ -4,6 +4,8 @@ pub mod aggregate;
 mod alldocs;
 mod bm25;
 mod cached_view_fetcher;
+pub(crate) mod chunk_gate;
+mod chunk_parent;
 mod cursor;
 pub mod groupby;
 mod index_scan;
@@ -30,6 +32,7 @@ pub use aggregate::{
 pub use alldocs::AllDocsNode;
 pub use bm25::BM25Node;
 pub use cached_view_fetcher::CachedViewFetcher;
+pub(crate) use chunk_gate::{live_parent_of, ChunkGate};
 pub use cursor::{CursorDirection, CursorNode, CursorPageInfo};
 pub use groupby::{ChildSelectMeta, DocumentGroup, GroupAlias, GroupByNode, InnerAggregateDef};
 pub use index_scan::IndexScanNode;
@@ -40,6 +43,7 @@ pub use mutation::{
 };
 pub use orderby::OrderByNode;
 pub use orphan::{new_shared_yielded_ids, OrphanNode, SharedYieldedIds};
+pub(crate) use permission_filter::AcpReadCheck;
 pub use permission_filter::{AcpRead, PermissionFilterNode};
 pub use scan::ScanNode;
 pub use se_filter::{SEFilterCondition, SEFilterNode};
