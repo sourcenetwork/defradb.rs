@@ -7,7 +7,9 @@
 \* the KMS), or the commit may lose a conflict and run again.
 \*
 \* The create and update pipelines compute every block first and store them
-\* only once the composite exists. A missing input ends the attempt; the input is
+\* only once the composite exists. A missing input is noted and the pass goes
+\* on through the other fields; once every field is made or noted, the attempt
+\* ends, so one wave asks for every missing input. The inputs are
 \* fetched after the attempt is over and kept in a memo; the next attempt
 \* reads it from the memo. The document keeps one storage identity (its short
 \* ID) for every attempt, so the memo, which is keyed by that identity, still
@@ -20,7 +22,8 @@
 \*
 \* What must never happen: a block stored before the composite is computed;
 \* a key minted while an attempt is running; one field's key minted twice; a
-\* commit that holds only part of the write.
+\* commit that holds only part of the write; an attempt that ends for inputs
+\* while it still has a missing key it has not asked for.
 \*
 \* Outside the model: a batch over a transaction the caller lent it has no
 \* memo and is never retried by the engine; it mints its keys directly
@@ -38,7 +41,7 @@
 \*   autocommit/batch.rs    BatchMutator::update_as (with a memo: keys asked of the memo)
 \*   doc.rs                 DbDocMutator::update_as
 \*   ../block/builder/compute.rs  compute_document_blocks_with_inputs (requires_kms_keys asks the memo)
-\*   ../block/builder/write.rs    build_document_blocks (builds an update, stores nothing)
+\*   ../block/builder/write.rs    build_document_blocks (builds an update, stores nothing; encrypt_with_new_key asks with get_or_want and the call sites note the miss and go on)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -46,13 +49,15 @@ CONSTANTS
   MaxAttempts,  \* how many attempts the model lets a write start
   StoreMode,    \* "AfterCompute" (store once the composite exists) | "AsComputed" (store each block as made)
   IdMode,       \* "Once" (one short ID for every attempt) | "PerAttempt" (a fresh one each attempt)
-  KeySource     \* "Memo" (a missing key ends the attempt) | "Direct" (minted on the spot)
+  KeySource,    \* "Memo" (a missing key is asked of the memo) | "Direct" (minted on the spot)
+  WaveMode      \* "All" (the pass notes every miss, then ends) | "First" (the first miss ends it)
 
 \* There is at least one field, and room for a rerun.
 ASSUME Fields # {} /\ MaxAttempts \in Nat /\ MaxAttempts >= 2
 ASSUME StoreMode \in {"AfterCompute", "AsComputed"}
 ASSUME IdMode \in {"Once", "PerAttempt"}
 ASSUME KeySource \in {"Memo", "Direct"}
+ASSUME WaveMode \in {"All", "First"}
 
 \* The composite block, named apart from the fields.
 Composite == "C"
@@ -69,7 +74,7 @@ VARIABLES
   id,         \* the document's short ID (0 before the first draw)
   computed,   \* blocks this attempt has computed, in memory
   staged,     \* blocks this attempt has written into its transaction
-  wanted,     \* keys an ended attempt asked for, as <<id, field>>
+  wanted,     \* keys an attempt asked for, as <<id, field>>
   memo,       \* keys fetched and kept, as <<id, field>>
   mints,      \* ghost: mints[f] counts the keys minted for field f
   minted_in,  \* ghost: a key was minted while an attempt was running
@@ -142,17 +147,31 @@ ComputeDirect(f) ==
   /\ Made(f)
   /\ UNCHANGED <<attempts, running, id, wanted, durable, done>>
 
-\* Field f's key is missing and KeySource is "Memo": the attempt ends, asking
-\* for the key, and its transaction is thrown away with whatever it staged.
+\* Field f's key is missing and KeySource is "Memo": the pass notes the key as
+\* wanted (get_or_want). With WaveMode "All" the pass goes on to the other
+\* fields; with "First" the attempt ends right here, throwing its transaction
+\* away with whatever it staged.
 NeedsInput(f) ==
   /\ running /\ f \in Fields \ computed
-  /\ <<id, f>> \notin memo
+  /\ <<id, f>> \notin memo \cup wanted
   /\ KeySource = "Memo"
-  /\ wanted' = {<<id, f>>}
+  /\ wanted' = wanted \cup {<<id, f>>}
+  /\ IF WaveMode = "First"
+       THEN /\ running' = FALSE
+            /\ computed' = {}
+            /\ staged' = {}
+       ELSE UNCHANGED <<running, computed, staged>>
+  /\ UNCHANGED <<attempts, id, memo, mints, minted_in, durable, done>>
+
+\* Every field is made or noted, and some key is wanted: the attempt ends
+\* (first_miss is returned as NeedsInput) and its transaction is thrown away.
+EndForInputs ==
+  /\ running /\ wanted # {}
+  /\ \A f \in Fields : f \in computed \/ <<id, f>> \in wanted
   /\ running' = FALSE
   /\ computed' = {}
   /\ staged' = {}
-  /\ UNCHANGED <<attempts, id, memo, mints, minted_in, durable, done>>
+  /\ UNCHANGED <<attempts, id, wanted, memo, mints, minted_in, durable, done>>
 
 \* Between attempts the resolver mints what was asked for and keeps it.
 Resolve ==
@@ -184,9 +203,10 @@ Commit ==
   /\ UNCHANGED <<attempts, id, computed, staged, wanted, memo, mints, minted_in>>
 
 \* The commit loses a conflict: the engine throws the attempt's transaction
-\* away and the write runs again. The memo survives.
+\* away and the write runs again. The memo survives. A conflict is found at
+\* commit, so it only strikes once everything is staged.
 Conflict ==
-  /\ running
+  /\ running /\ staged = Blocks
   /\ running' = FALSE
   /\ computed' = {}
   /\ staged' = {}
@@ -195,6 +215,7 @@ Conflict ==
 Next ==
   \/ Start
   \/ \E f \in Fields : ComputeKnown(f) \/ ComputeDirect(f) \/ NeedsInput(f)
+  \/ EndForInputs
   \/ Resolve
   \/ ComputeComposite
   \/ Persist
@@ -214,5 +235,10 @@ INV_OneKeyPerField == \A f \in Fields : mints[f] <= 1
 
 \* A committed write holds every block it adds.
 INV_CommittedWhole == done => durable = Blocks
+
+\* An attempt that ended asking for keys asked for every key it was missing,
+\* so one wave of fetches is enough.
+INV_OneWave ==
+  (~running /\ wanted # {}) => \A f \in Fields : <<id, f>> \in memo \cup wanted
 
 ====

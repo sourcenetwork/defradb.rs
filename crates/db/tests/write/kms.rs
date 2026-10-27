@@ -618,7 +618,7 @@ fn retried_batch_update_mints_kms_keys_between_attempts() {
             })
         });
         let (_, attempts) = run_retried(&fixture, &*mutator, &memo, operation).await;
-        assert!(attempts > 1);
+        assert_eq!(attempts, 3);
         assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 2);
 
         let docs = db::LensedAutoCommitFetcher::new(Arc::clone(&fixture.db))

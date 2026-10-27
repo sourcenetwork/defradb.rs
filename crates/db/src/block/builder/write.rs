@@ -209,7 +209,7 @@ async fn encrypt_with_new_key(
             let request = crate::write::prepare::kms_input_request(
                 crate::write::prepare::PreparedKmsOperation::Generate { doc_id, field },
             );
-            let Some(response) = inputs.get(&request) else {
+            let Some(response) = inputs.get_or_want(&request) else {
                 return Err(BuildError::NeedsInput(request));
             };
             let response: crate::write::prepare::PreparedKmsResponse =
@@ -490,7 +490,7 @@ pub(crate) async fn build_document_blocks(
                     None
                 };
 
-                let (encrypted, enc_cid) = encrypt_with_new_key(
+                let (encrypted, enc_cid) = match encrypt_with_new_key(
                     &mut blockstore_entries,
                     kms,
                     &doc_ref_bytes,
@@ -500,7 +500,15 @@ pub(crate) async fn build_document_blocks(
                     doc.write_preparation().map(AsRef::as_ref),
                     prepared_inputs,
                 )
-                .await?;
+                .await
+                {
+                    Ok(sealed) => sealed,
+                    Err(BuildError::NeedsInput(request)) => {
+                        first_miss.get_or_insert(request);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else if let Some((key, enc_cid)) =
@@ -519,7 +527,7 @@ pub(crate) async fn build_document_blocks(
                 // The document is encrypted as a whole but this field has no
                 // history of its own to inherit from, so mint it a key under
                 // the document-level policy rather than dropping to plaintext.
-                let (encrypted, enc_cid) = encrypt_with_new_key(
+                let (encrypted, enc_cid) = match encrypt_with_new_key(
                     &mut blockstore_entries,
                     kms,
                     &doc_ref_bytes,
@@ -529,7 +537,15 @@ pub(crate) async fn build_document_blocks(
                     doc.write_preparation().map(AsRef::as_ref),
                     prepared_inputs,
                 )
-                .await?;
+                .await
+                {
+                    Ok(sealed) => sealed,
+                    Err(BuildError::NeedsInput(request)) => {
+                        first_miss.get_or_insert(request);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else {
