@@ -37,6 +37,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "DiskANN resident code table",
     "DiskANN walk cutoff",
     "PQ distance four sums",
+    "DiskANN pending cache",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",
@@ -53,6 +54,9 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Iroh service records",
     "Iroh solicited replies",
     "Reply-driven DAG fetch",
+    "Text CRDT convergence",
+    "JSON CRDT per-path merge",
+    "Custom CRDT types",
     "Document create pipeline",
 ];
 
