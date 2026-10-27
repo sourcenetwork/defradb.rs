@@ -1,9 +1,10 @@
 //! Collection version definitions
 
 use crate::{
-    CollectionSetDescription, CollectionSource, EncryptedIndexDescription, FieldDescription,
-    FieldKind, FullTextIndexDescription, IndexDescription, PolicyDescription, QuerySource, Result,
-    SchemaError, VectorEmbeddingDescription,
+    ChunkSource, ChunkedField, CollectionSetDescription, CollectionSource,
+    EncryptedIndexDescription, FieldDescription, FieldKind, FullTextIndexDescription,
+    IndexDescription, PolicyDescription, QuerySource, Result, SchemaError,
+    VectorEmbeddingDescription,
 };
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -197,6 +198,20 @@ pub struct CollectionVersion {
     )]
     pub vector_embeddings: Vec<VectorEmbeddingDescription>,
 
+    /// The `@chunk` fields of this collection and their settings.
+    #[serde(
+        rename = "ChunkedFields",
+        default,
+        deserialize_with = "deserialize_null_as_empty_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub chunked_fields: Vec<ChunkedField>,
+
+    /// Set on a `@chunk` collection to the parent field it is made from. Only the
+    /// parent's writes change it, and readers see only what the parent allows.
+    #[serde(rename = "ChunkOf", default, skip_serializing_if = "Option::is_none")]
+    pub chunk_of: Option<ChunkSource>,
+
     /// Sequential short ID for storage prefixes (matches Go's monotonic counter).
     ///
     /// Not serialized — stored separately in system store at /collection/shortID/{collection_id}.
@@ -253,8 +268,25 @@ impl CollectionVersion {
             is_embedded_only: false,
             is_placeholder: false,
             vector_embeddings: Vec::new(),
+            chunked_fields: Vec::new(),
+            chunk_of: None,
             root_id: 0,
         }
+    }
+
+    /// Whether this is a `@chunk` collection, written only through its parent.
+    pub fn is_generated(&self) -> bool {
+        self.chunk_of.is_some()
+    }
+
+    /// Whether reads need an access check, from a policy or a `@chunk` parent's policy.
+    pub fn reads_are_gated(&self) -> bool {
+        self.policy.is_some() || self.chunk_of.is_some()
+    }
+
+    /// The `@chunk` settings of `field`, if it has any.
+    pub fn chunked_field(&self, field: &str) -> Option<&ChunkedField> {
+        self.chunked_fields.iter().find(|c| c.field_name == field)
     }
 
     /// Set the previous version source (for migrations).

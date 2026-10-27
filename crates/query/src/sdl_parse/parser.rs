@@ -8,6 +8,7 @@ use graphql_parser::schema::{Definition, Document, InterfaceType, ObjectType, Ty
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 
+use super::chunk::attach_chunk_settings;
 use super::directives::ParsedDirectives;
 use super::helpers::{detect_missing_field_types, preprocess_empty_types};
 use super::warnings::{ParseOutput, ParseWarning};
@@ -165,11 +166,16 @@ impl<'a> SdlParser<'a> {
             return Err(QueryError::parse(self.errors.join("\n")));
         }
 
+        // Add `@chunk` collections and list fields now, so the passes below build
+        // them like any other type.
+        let chunk_specs = self.synthesize_chunk_types()?;
+
         // Second pass: validate parsed types before building
         self.validate_types()?;
 
         // Third pass: resolve relations and build CollectionVersions
-        let collections = self.build_collections()?;
+        let mut collections = self.build_collections()?;
+        attach_chunk_settings(&mut collections, &chunk_specs);
 
         Ok(ParseOutput {
             collections,

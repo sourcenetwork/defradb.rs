@@ -3,10 +3,12 @@
 //! This module mirrors Go DefraDB's `definition_validation.go`, running the same
 //! set of validators after every patch to ensure old vs new state consistency.
 
+mod chunk_validators;
 mod global_validators;
 mod helpers;
 mod update_validators;
 
+use chunk_validators::*;
 use global_validators::*;
 use update_validators::*;
 
@@ -91,6 +93,7 @@ const UPDATE_VALIDATORS: &[Validator] = &[
     validate_sources_not_redefined,
     validate_source_belongs_to_host,
     validate_branchable_not_mutated,
+    validate_chunks_not_modified,
 ];
 
 /// Validators that run on both create and update.

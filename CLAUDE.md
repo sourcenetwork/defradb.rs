@@ -54,6 +54,7 @@ No `ROADMAP.md`, `DEVELOPMENT.md`, `docs/` directories, or planning documents.
 crates/
 ├── acp/                # Access Control Policy
 ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
+├── chunk-split/        # @chunk splitter and the parent's chunk list
 ├── blockstore/         # IPLD block storage
 ├── cli/                # Command-line interface
 ├── crdt/               # CRDT implementations
@@ -439,6 +440,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | NAC | `--test nac` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
 | P2P | `--test p2p` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
 | FTS | `--test fts` | basic, edge_cases, lifecycle, relation_paths, scoring |
+| Chunk | `--test chunk` | declaration |
 | Vector | `--test vector` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `--test encryption` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `--test identity` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |

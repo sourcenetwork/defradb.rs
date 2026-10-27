@@ -3,6 +3,7 @@
 mod common;
 
 mod list;
+mod schema;
 mod split;
 mod split_props;
 mod window;
