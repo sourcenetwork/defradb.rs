@@ -37,7 +37,6 @@ mod node_acp;
 mod on_pool_tests;
 #[cfg(feature = "p2p")]
 mod p2p_runtime;
-pub mod search_chunks;
 mod signed_query;
 mod transaction;
 pub mod version;

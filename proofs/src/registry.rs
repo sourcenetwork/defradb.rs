@@ -1181,4 +1181,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Text chunking",
+        name: "covers / bounded / deterministic / local_edit",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs fence_before; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+    },
 ];
