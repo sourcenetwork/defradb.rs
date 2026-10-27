@@ -701,7 +701,7 @@ async fn handle_dial(
 
     // Send over the connection we just opened instead of dialling a second one
     // on the first message.
-    remember_connection(&ctx.resources.connection_cache, peer_id, &connection)?;
+    remember_connection(&ctx.resources.connection_cache, &connection);
 
     let is_new = ctx.resources.peer_map.increment_connections(
         endpoint_id,

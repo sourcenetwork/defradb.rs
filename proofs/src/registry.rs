@@ -240,6 +240,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "Peer connection observation",
+        name: "Accepted replacement serves reverse RPC without stale selection or revoked borrowing",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
+        model_ref: "MC_SharedRpcConnection_Green.cfg / MC_SharedRpcConnection_Red_*.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "SharedRpc replacement identity, peer isolation, revoked refusal and stable-id eviction",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; endpoint_streams.rs handle_incoming",
+        model_ref: "PeerConnection.SharedRpc",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Schema publication completion",
         name: "VisibleBeforeReply — committed schemas are published before their callers resume",
         axis: Tla,

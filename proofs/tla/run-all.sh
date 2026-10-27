@@ -94,6 +94,13 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
+  "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
+  "MC_SharedRpcConnection_Red_NoAdoption.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_NoPostCheck.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_NoOutboundCheck.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry

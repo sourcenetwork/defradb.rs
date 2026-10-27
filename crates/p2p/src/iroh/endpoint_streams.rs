@@ -88,13 +88,11 @@ pub(super) async fn handle_incoming(
         resources
             .peer_map
             .increment_connections(remote_id, remote_addr, connection.clone());
+    super::endpoint_rpc::remember_connection(&resources.connection_cache, &connection);
 
-    // Re-check AFTER registering, not only before. A revoke that ran between
-    // the check above and this registration scanned `peer_map` while this
-    // connection was still absent from it, so it closed nothing. Publishing
-    // the handle first and re-checking second means one of the two always
-    // sees the other. The stream task is still spawned below on the refused
-    // path, so its cleanup decrements the count this registration added.
+    // Publish both peer-map and RPC-cache handles before rechecking. A revoke
+    // either closes the published handles or is observed here after a late
+    // publication. The stream task also cleans up a refused registration.
     let admitted = resources.admission.admits_inbound(&remote_id);
     if !admitted {
         warn!(
@@ -132,6 +130,7 @@ pub(super) async fn handle_incoming(
 pub(super) struct ConnectionStreamContext {
     event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     peer_map: Arc<SharedPeerMap>,
+    connection_cache: super::endpoint_rpc::ConnectionCache,
     node_identity: Option<Arc<identity::RawIdentity>>,
     spawned_tasks: SpawnedTasks,
     inbound_budget: Arc<InboundBudget>,
@@ -149,6 +148,7 @@ impl ConnectionStreamContext {
         Self {
             event_tx,
             peer_map: Arc::clone(&resources.peer_map),
+            connection_cache: Arc::clone(&resources.connection_cache),
             node_identity: resources.node_identity.clone(),
             spawned_tasks: Arc::clone(&resources.spawned_tasks),
             inbound_budget: Arc::clone(&resources.inbound_budget),
@@ -226,6 +226,7 @@ pub(super) async fn handle_connection_streams(
         });
     }
 
+    super::endpoint_rpc::evict_if_closed(&context.connection_cache, &peer_id, &connection);
     let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
 

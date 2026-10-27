@@ -237,16 +237,18 @@ fn cached_connection(
     }
 }
 
-/// Adopt `connection` as the peer's shared connection, so an explicit dial does
-/// not leave the first send to open a second one.
+/// Share the authenticated current-mux handle with every outbound RPC. Legacy
+/// mux replies arrive on another stream, so those handles cannot satisfy the
+/// current RPC reader. The cache key comes from QUIC, never a caller's label.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
-    peer_id: &PeerId,
     connection: &iroh::endpoint::Connection,
-) -> crate::error::Result<()> {
-    let endpoint_id = parse_endpoint_id(peer_id)?;
-    cache.connections.insert(endpoint_id, connection.clone());
-    Ok(())
+) {
+    if connection.alpn() == protocols::ALPN_MUX {
+        cache
+            .connections
+            .insert(connection.remote_id(), connection.clone());
+    }
 }
 
 /// Drop the cached entry for `endpoint_id` only while it is still `connection`;
@@ -266,7 +268,7 @@ fn evict_connection(
 /// Drop a peer's shared connection, but only once QUIC has actually closed it:
 /// a stream-level failure must not evict the transport every other protocol is
 /// still using. The `stable_id` check avoids racing a concurrent dial.
-fn evict_if_closed(
+pub(super) fn evict_if_closed(
     cache: &ConnectionCache,
     peer_id: &PeerId,
     connection: &iroh::endpoint::Connection,
@@ -386,7 +388,7 @@ async fn connect_with_cache(
             return Err(error);
         }
     };
-    remember_connection(cache, peer_id, &connection)?;
+    remember_connection(cache, &connection);
 
     // Re-check AFTER caching, not only before the dial. The dial above can run
     // for many seconds, and a revoke landing inside that window looked at the
@@ -1390,7 +1392,7 @@ mod tests {
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
+        remember_connection(&cache, &connection);
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         admission.revoke(accept_ep.id());
@@ -1457,7 +1459,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_timeout_closes_and_evicts_the_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/timeout".to_vec()]).await;
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
         let dial_ep = localhost_endpoint(vec![]).await;
         let accept_task = n0_future::task::spawn({
             let ep = accept_ep.clone();
@@ -1472,12 +1474,13 @@ mod tests {
         });
 
         let connection = dial_ep
-            .connect(accept_ep.addr(), b"test/timeout")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
+        remember_connection(&cache, &connection);
+        assert!(cached_connection(&cache, &peer).unwrap().is_some());
 
         retire_timed_out_connection(&cache, &peer, &connection);
 
@@ -1497,7 +1500,7 @@ mod tests {
 
     #[tokio::test]
     async fn late_timeout_does_not_evict_a_newer_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/old".to_vec(), b"test/new".to_vec()]).await;
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
         let dial_ep = localhost_endpoint(vec![]).await;
         let accept_task = n0_future::task::spawn({
             let ep = accept_ep.clone();
@@ -1512,17 +1515,18 @@ mod tests {
         });
 
         let old = dial_ep
-            .connect(accept_ep.addr(), b"test/old")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect old");
         let newer = dial_ep
-            .connect(accept_ep.addr(), b"test/new")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &old).expect("cache old");
-        remember_connection(&cache, &peer, &newer).expect("cache new");
+        assert_ne!(old.stable_id(), newer.stable_id());
+        remember_connection(&cache, &old);
+        remember_connection(&cache, &newer);
 
         retire_timed_out_connection(&cache, &peer, &old);
 
@@ -1600,3 +1604,7 @@ mod tests {
         accept_task.abort();
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/iroh/shared_connection.rs"]
+mod shared_connection_tests;
