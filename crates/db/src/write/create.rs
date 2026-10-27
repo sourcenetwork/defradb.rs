@@ -246,6 +246,7 @@ where
         docs.into_iter()
             .map(|(doc, identity)| {
                 let blocks = compute_document_blocks_with_inputs(
+                    collection.crdts(),
                     &doc,
                     collection.schema(),
                     identity,

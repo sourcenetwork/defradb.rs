@@ -92,6 +92,8 @@ pub(crate) fn compute_document_blocks_with_inputs(
         }
 
         let crdt = field_crdt_of(crdts, doc, field_name)?;
+        crdt.op(field_value.value().clone(), true)
+            .map_err(|error| error.to_string())?;
         let Some(value_bytes) = crdt
             .block_data(field_value.value(), doc.pending_op(field_name))
             .map_err(|error| error.to_string())?
