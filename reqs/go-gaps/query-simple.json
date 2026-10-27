@@ -1,0 +1,714 @@
+[
+  {
+    "id": "go.query.simple.select.fields",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
+      "tools/integration-test/tests/basic/regolith_crash_reopen.rs::rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes"
+    ],
+    "evidence": "cross_runtime_queries.rs:89-99 compares the whole ScalarCase response (incl. the 'nulls' doc with unset optional fields) byte-equal with Go; :116,131 plain QueryCase selection equal to Go (optionalRank unset -> null); smoke.rs:47-49 asserts selected name/age; regolith_crash_reopen.rs:134-147 asserts documents are returned after a restart",
+    "note": "Restart test restarts after a kill; it does not create new documents after the restart as the Go test description says."
+  },
+  {
+    "id": "go.query.simple.select.unknown-field",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/custom_crdt/main.rs::a_node_without_the_type_keeps_the_definition_and_hides_the_field"
+    ],
+    "evidence": "custom_crdt/main.rs:92-96 asserts '{ Score { best } }' errors with 'Cannot query field \"best\" on type \"Score\"'",
+    "note": "Root-level 'query { SIMILARITY }' error 'Cannot query field \"SIMILARITY\" on type \"Query\".' is not asserted by any test (only in crates/query/src/query_parse/parser.rs:106)."
+  },
+  {
+    "id": "go.query.simple.select.collection-isolation",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/multi_collection.rs::many_collections_field_ids_test"
+    ],
+    "evidence": "multi_collection.rs:125-132 asserts each of 12 collections returns exactly its own 1 document",
+    "note": "Unverified: deleted documents of another collection never appear (Go #3242); split SDL declaration and collections declared after the target (Go #2810 variants). Searched for 3242/2810/DummyTypes/showDeleted across tests."
+  },
+  {
+    "id": "go.query.simple.select.alias",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/join_order_1596.rs::sum_with_alias_order_test",
+      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
+      "crates/query/tests/query_parse_tests.rs::test_parse_query_with_alias"
+    ],
+    "evidence": "join_order_1596.rs:35-41 asserts result key 'totalRating' for an aliased aggregate; vector_post_scan_filters.rs:48-53 asserts key 'sim'; query_parse_tests.rs:143 asserts root alias output_name 'allUsers' (parse level only)",
+    "note": "No test asserts a scalar field alias ('username: Name') in results; root alias 'allUsers: Users' only checked at parse level, never in a response. limits.rs uses 'f1: title' aliases but only asserts success."
+  },
+  {
+    "id": "go.query.simple.select.typename",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched __typename across tools/, crates/*/tests and query runner/planner: only root '{ __typename }' introspection tests (crates/query/src/runner/introspection/mod.rs:415, http unversioned_api_mount). Nothing selects __typename on a collection, under an alias, on groupBy rows or inside GROUP."
+  },
+  {
+    "id": "go.query.simple.select.show-deleted",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/point_read_query_path.rs::deleted_rows_remain_visible_with_indexed_filters_and_ordering",
+      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+    ],
+    "evidence": "point_read_query_path.rs:122-140 asserts showDeleted:true returns the deleted row with _deleted:true and the live one with _deleted:false; :83-92 docID + showDeleted returns the deleted doc",
+    "note": "Querying with the CID of the delete commit plus showDeleted (TestQuerySimple_WithCidAfterDeleteOperation_ShouldReturnUser) is not tested. Rows are on indexed fields, but filter-less showDeleted query at :143-150 also checks membership."
+  },
+  {
+    "id": "go.query.simple.graphql.fragments",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/relation_rendering_1597.rs::duplicate_selection_via_fragment_spread_test",
+      "tools/integration-test/tests/query/relation_rendering_1597.rs::duplicate_selection_via_inline_fragment_test",
+      "crates/query/tests/query_parse_error_tests.rs::test_parse_undefined_fragment_returns_error",
+      "crates/query/tests/query_parse_error_tests.rs::test_parse_nested_fragment_works"
+    ],
+    "evidence": "relation_rendering_1597.rs:205,219 assert results of a named fragment spread (alone and mixed with plain fields) and :242 an inline fragment; query_parse_error_tests.rs:102 asserts 'Unknown fragment'; :120 nested spread expands (parse level)",
+    "note": "Unverified: fragment selecting an undefined field ('Cannot query field \"Score\" on type \"Users\".'), 'fragment X on Query { COUNT(Users: {}) }', fragment with variables, nested spreads in a real response; exact 'Unknown fragment \"UserInfo\".' text only substring-checked at parse level."
+  },
+  {
+    "id": "go.query.simple.graphql.operation-name",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "'Must provide operation name if query contains multiple operations.' appears only in crates/query/src/query_parse/parser.rs:459; no test sends a multi-operation document with or without operationName (searched operation_name/operationName in tests: only None in crates/cli/tests/http_client_tests.rs)."
+  },
+  {
+    "id": "go.query.simple.graphql.variables",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/query_parse/variable_tests.rs::test_variable_in_filter",
+      "crates/query/src/query_parse/variable_tests.rs::test_variable_in_order_direction",
+      "crates/query/src/query_parse/variable_tests.rs::test_variable_default_value_used_when_not_provided",
+      "crates/query/src/query_parse/variable_tests.rs::test_variable_provided_value_overrides_default",
+      "crates/query/src/query_parse/variable_tests.rs::test_no_variables_provided_error"
+    ],
+    "evidence": "variable_tests.rs:24 filter substitution, :295 order direction, :339-345 default applied, :366-372 default overridden, :152 missing variable 'was not provided' (all parse level)",
+    "note": "Parse-level only, no query result asserted. Unverified: 'Ordering!' and '[UsersOrderArg]' list variables, 'Users__CountSelector' in COUNT(Users: $v), and the exact 'Variable \"$age\" of required type \"Int!\" was not provided.' message."
+  },
+  {
+    "id": "go.query.simple.filter.equality.eq",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/float_precision.rs::filter_round_trip_test",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_int_eq_float_coercion"
+    ],
+    "evidence": "cross_runtime_queries.rs:119,131 String _eq equals Go; float_precision.rs:42 Float _eq returns the matching doc; go_behavioral_compatibility_tests.rs:341 evaluator Int==Float",
+    "note": "Unverified end to end: Int, DateTime and Blob hex _eq; that documents with the field unset never match; no-match returns []; filtering on an unselected field (QueryCase docs all have names)."
+  },
+  {
+    "id": "go.query.simple.filter.equality.eq-null",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_null_field_comparison"
+    ],
+    "evidence": "cross_runtime_queries.rs:125,131 Int 'optionalRank: {_eq: null}' equals Go; filter_tests.rs:481 evaluator null==null",
+    "note": "Float, String and DateTime '_eq: null' not tested end to end."
+  },
+  {
+    "id": "go.query.simple.filter.equality.neq",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_null_ne_value"
+    ],
+    "evidence": "cross_runtime_queries.rs:120,131 String _neq equals Go; go_behavioral_compatibility_tests.rs:400 evaluator 'null _ne 25' is true",
+    "note": "Int, Float, DateTime and Boolean _neq untested end to end; inclusion of unset-field documents only checked in the evaluator (Verified: {_neq: true} returning false+unset not tested)."
+  },
+  {
+    "id": "go.query.simple.filter.equality.neq-null",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched '_neq: null' / '_ne\": null' in tests: only an index-selection planner test (crates/query/src/planner/builder/tests.rs:1043) that checks scan choice, not results. No test asserts which documents '_neq: null' returns, nor Boolean false counting as a value."
+  },
+  {
+    "id": "go.query.simple.filter.range.gt",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_float_gt_int_coercion",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_null_field_gt_comparison_returns_false"
+    ],
+    "evidence": "cross_runtime_queries.rs:121,131 Int _gt inside _and equals Go; datetime_index_range.rs:87-91 DateTime _gt (indexed field); go_behavioral_compatibility_tests.rs:320 evaluator Float field vs Int operand; filter_tests.rs:496 unset field does not match",
+    "note": "Float field with Int operand and unset-field exclusion only at evaluator level; DateTime across offsets and unindexed DateTime untested; zero/one/all-match cases only via the _and query."
+  },
+  {
+    "id": "go.query.simple.filter.range.geq",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "cross_runtime_queries.rs:121,131 Int _geq equals Go; cross_runtime_indexes.rs:181-190 Float '_geq: -10.5' equals Go and expected names (indexed)",
+    "note": "Equal-value inclusion on its own, Float with Int operand (2.0999999999999 case), DateTime _geq and unset-field exclusion not asserted end to end (evaluator test_p0_null_gte_comparison_returns_false only)."
+  },
+  {
+    "id": "go.query.simple.filter.range.lt",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_int_lt_float_boundary"
+    ],
+    "evidence": "cross_runtime_queries.rs:121,131 Int _lt equals Go; datetime_index_range.rs:99-103 DateTime _lt (indexed); go_behavioral_compatibility_tests.rs:365 evaluator Int vs Float operand",
+    "note": "Float field with Int operand and unset-field exclusion untested end to end."
+  },
+  {
+    "id": "go.query.simple.filter.range.leq",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_null_lte_comparison_returns_false"
+    ],
+    "evidence": "cross_runtime_queries.rs:121,131 Int _leq equals Go; go_behavioral_compatibility_tests.rs:243 evaluator unset field does not match",
+    "note": "Float (and Int operand on Float) and DateTime _leq untested; equal-value inclusion only via the combined _and query."
+  },
+  {
+    "id": "go.query.simple.filter.range.null-operand",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/mapper/filter/filter_tests.rs::test_value_gt_null_returns_true",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_value_ge_null_returns_true",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_null_ge_null_returns_true",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_value_lt_null_returns_false",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_null_le_null_returns_true",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_value_le_null_returns_false"
+    ],
+    "evidence": "filter_tests.rs:508,519,535,546,562,573 assert the null-sorts-lowest semantics for _gt/_ge/_lt/_le with a null operand",
+    "note": "Evaluator level only (Filter::matches), with an Int field; no GraphQL query asserts these results, and Float/DateTime null operands are untested."
+  },
+  {
+    "id": "go.query.simple.filter.membership",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/json_missing_key.rs::json_missing_key_in_test",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_in_filter"
+    ],
+    "evidence": "cross_runtime_queries.rs:122,126,131 Int '_in: [1,3], _nin: [2]' and '_in: [null, 3]' (null matches unset) equal Go; json_missing_key.rs:39 _in with null on a JSON path",
+    "note": "Unverified: Int elements matching Float values (HeightM: {_in: [21, 21.2]}), Blob hex _in, and _nin with a null element returning only set values."
+  },
+  {
+    "id": "go.query.simple.filter.pattern.like",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_like_filter",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_like_prefix_suffix_pattern",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_ilike_filter_case_insensitive_contains",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_ilike_null_field_returns_false"
+    ],
+    "evidence": "cross_runtime_queries.rs:123,131 prefix '_like: \"alpha%\"' equals Go; filter_tests.rs:191-200,284-296 suffix and start-and-end, :220-236 _ilike, :307-315 unset field does not match (evaluator)",
+    "note": "End to end only the prefix _like is asserted. Contains/suffix/exact/start-and-end, _ilike, combination under _and/_or and Blob '_like: \"%FF99%\"' are evaluator-only or untested (Blob: no test)."
+  },
+  {
+    "id": "go.query.simple.filter.pattern.nlike",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_nilike_filter",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_nilike_null_field_returns_true"
+    ],
+    "evidence": "cross_runtime_queries.rs:124,131 '_nlike: \"%ha%\"' equals Go; filter_tests.rs:247-258 _nilike (evaluator)",
+    "note": "Only the contains _nlike is asserted end to end; prefix/suffix/exact/start-and-end, _nilike and _and/_or combinations are evaluator-only or untested."
+  },
+  {
+    "id": "go.query.simple.filter.logical.and-or",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_or_filter",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_all_filter_match",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_any_filter_match"
+    ],
+    "evidence": "cross_runtime_queries.rs:121,131 _and equals Go; cross_runtime_indexes.rs:276-285 '{values: {_any: {_eq: 5}}}' on an indexed [Int] equals Go; filter_tests.rs:108-128 _or, :1003,1059 _any/_all (evaluator)",
+    "note": "_or and _all on an [Int] field have no GraphQL-level assertion; _any only through an indexed array field."
+  },
+  {
+    "id": "go.query.simple.filter.logical.not",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/mapper/filter/filter_tests.rs::test_not_filter",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_nested_not_and_operators"
+    ],
+    "evidence": "filter_tests.rs:131-138 _not excludes matches, :611-635 nested _not with _and (evaluator)",
+    "note": "No GraphQL query uses _not (searched '_not:' in tools/, crates/*/tests, proofs/tests). '_not: {}' returning no documents (Go-Bug-Suspect) and _not over _or are untested."
+  },
+  {
+    "id": "go.query.simple.filter.alias",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_alias_null_filter_is_valid_and_matches_none",
+      "crates/query/src/mapper/filter/filter_tests.rs::test_alias_scalar_filter_is_valid_and_matches_none"
+    ],
+    "evidence": "vector_post_scan_filters.rs:48-53 'filter: {_alias: {sim: {_lt: 50}}}' filters by an aliased selection; filter_tests.rs:155-173 '_alias: null' and '_alias: 1' match nothing (same as Go's suspect behaviour)",
+    "note": "Unverified: _alias on an aliased scalar field (UserAge) or unaliased field name, _alias inside/around _and, '_alias: {}' not filtering, and 'field or alias not found. Name: UserAge' error."
+  },
+  {
+    "id": "go.query.simple.filter.null-input.arguments",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched 'filter: null', 'order: null', 'limit: null', 'offset: null', 'docID: null', 'cid: null', 'groupBy: null', 'showDeleted: null' in all Rust tests: none (only truncate_Users(filter: null) in mutation_tests.rs, a mutation)."
+  },
+  {
+    "id": "go.query.simple.filter.null-input.logical",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/mapper/filter/filter_tests.rs::test_null_logical_filters_are_valid_and_match_all"
+    ],
+    "evidence": "filter_tests.rs:140-152 '_and/_or/_not: null' validate and match every document (evaluator)",
+    "note": "Evaluator only; no GraphQL query. '_or: [null]' / '_and: [null]' failing with 'Expected \"UsersFilterArg!\", found null' is untested."
+  },
+  {
+    "id": "go.query.simple.filter.null-input.field",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched 'filter: {X: null}' style conditions and '\"field\", json!(null)' in filter tests: none. No test of a field condition given as null, inside _or/_and, or under _not."
+  },
+  {
+    "id": "go.query.simple.doc-id.argument",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+    ],
+    "evidence": "point_read_query_path.rs:52-53 'Note(docID: \"<id>\")' returns only that document; :76-82 docID of a deleted doc returns an empty list",
+    "note": "Unverified: docID given as a list (found subset, duplicates returned once, 'docID: []' empty) and a never-existing DocID returning [] without error. vector_index_query_path.rs:41 uses a docID list but compares two runs of the same list, not membership."
+  },
+  {
+    "id": "go.query.simple.doc-id.filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+    ],
+    "evidence": "point_read_query_path.rs:47,52-53 'filter: {_docID: {_eq: \"<id>\"}}' returns that document",
+    "note": "'_docID: {_in: [...]}' only appears in benchmark helpers (crates/defra-node/src/benchmark_support_tests.rs:680,734) that check row counts under a limit, not the returned IDs."
+  },
+  {
+    "id": "go.query.simple.order.single-field",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_index_spans_the_full_range",
+      "tools/integration-test/tests/query/limit_pushdown.rs::limit_offset_on_non_indexed_field_is_correct"
+    ],
+    "evidence": "cross_runtime_queries.rs:93,118,155 ASC on String/Int(nullable) equal Go, :199 Float ASC on Book; cross_runtime_indexes.rs:156-190,226-235 Int/Float/String/DateTime ASC (indexed); datetime_index_range.rs:53-65 DateTime ASC and DESC",
+    "note": "Unverified: Blob ordering, ordering by _docID alone, DESC on an unindexed Int/Float field, Float32 vs Float64 distinction, and 'order: {}' returning unsorted without error."
+  },
+  {
+    "id": "go.query.simple.order.multi-field",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/defra-node/tests/ordinary_indexes.rs::ordered_prefix_sorts_only_the_boundary_tie_group",
+      "crates/defra-node/tests/ordinary_indexes.rs::partial_index_order_keeps_residual_filter_and_page_offset"
+    ],
+    "evidence": "cross_runtime_queries.rs:117,131 '[{rank: ASC}, {name: DESC}]' equals Go; ordinary_indexes.rs:159-168 '[{seq: DESC|ASC}, {_docID: ASC}]'; :216-219 '[{seq: DESC}, {rank: ASC}]'",
+    "note": "DESC+DESC combination untested; two of the cases run on indexed fields."
+  },
+  {
+    "id": "go.query.simple.order.validation",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/tests/query_parse_tests.rs::test_parse_query_with_multiple_order_fields_returns_error",
+      "crates/query/tests/query_parse_error_tests.rs::test_parse_invalid_order_direction_returns_error"
+    ],
+    "evidence": "query_parse_tests.rs:53-56 '{name: ASC, age: DESC}' fails with 'each order argument can only define one field'; query_parse_error_tests.rs:260-263 'order: {name: INVALID}' contains 'has invalid value'",
+    "note": "Parse level only. The two-field object as a list element is untested, and the full 'Argument \"order\" has invalid value {Age: INVALID}' text is only substring-checked."
+  },
+  {
+    "id": "go.query.simple.order.alias",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/join_order_1596.rs::sum_with_alias_order_test",
+      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset"
+    ],
+    "evidence": "join_order_1596.rs:35-41 'order: {_alias: {totalRating: DESC}}' sorts by an aliased aggregate; vector_post_scan_filters.rs:48-53 by aliased SIMILARITY",
+    "note": "Unverified: _alias on an aliased scalar field or unaliased field name, list of _alias entries, '_alias: {}' / '_alias: null' no-op, and errors 'field or alias not found', 'invalid order direction', 'invalid order input'."
+  },
+  {
+    "id": "go.query.simple.order.aggregate-alias",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for per-document aggregates over sibling scalars ('AVG(HeightM: {}, Age: {})' pattern) in all tests: none. join_order_1596.rs orders by an aliased relation SUM, a different aggregate shape."
+  },
+  {
+    "id": "go.query.simple.limit-offset",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/limit_pushdown.rs::limit_offset_on_non_indexed_field_is_correct",
+      "tools/integration-test/tests/query/limit_pushdown.rs::limit_query_returns_exact_page_from_large_collection"
+    ],
+    "evidence": "cross_runtime_queries.rs:127,131 'limit: 2, offset: 1' equals Go; limit_pushdown.rs:98-108 limit+offset page equals the expected slice; :53 limit returns exactly n",
+    "note": "Unverified: 'limit: 0' meaning no limit, 'offset: 0', and limit/offset beyond the document count (searched 'limit: 0'/'offset: 0' in tests: none)."
+  },
+  {
+    "id": "go.query.simple.aggregate.validation",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "'aggregate must be provided with a property to aggregate' and the 'Expected \"UsersNumericFieldsArg!\", found null' message appear only in sources (query_parse/aggregates.rs, runner/plan_validation.rs); no test sends a bare AVG/COUNT/SUM/MIN/MAX or AVG(Users: {})."
+  },
+  {
+    "id": "go.query.simple.aggregate.count",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/defra-node/tests/aggregate_filters.rs::indexed_aggregate_filters_match_the_documents",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_count_empty_returns_zero"
+    ],
+    "evidence": "cross_runtime_queries.rs:128-131 'count: COUNT(QueryCase: {})' and a filter matching nothing (0) equal Go; aggregate_filters.rs:55-73 COUNT with filter returns 2/0/1",
+    "note": "COUNT with a DateTime filter is untested; an empty collection is only approximated by a filter that matches nothing."
+  },
+  {
+    "id": "go.query.simple.aggregate.count-group-by",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_single_field_test",
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_multiple_fields_test",
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::all_same_group_value_test",
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::group_by_and_filter_test",
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_empty_collection_test"
+    ],
+    "evidence": "aggregate_groupby_1595.rs:53 (2 groups), :70 (3 tuples), :86 (1 group), :103 (filter before grouping, 2), :171 (empty collection, 0)",
+    "note": ""
+  },
+  {
+    "id": "go.query.simple.aggregate.sum",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/defra-node/tests/aggregate_filters.rs::indexed_aggregate_filters_match_the_documents",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_sum_empty_returns_zero"
+    ],
+    "evidence": "cross_runtime_queries.rs:128-131 'SUM(QueryCase: {field: score})' and with a no-match filter equal Go; aggregate_filters.rs:63-73 SUM with filter == 3",
+    "note": "Empty collection approximated by a filter that matches nothing, plus the plan-node unit test."
+  },
+  {
+    "id": "go.query.simple.aggregate.average",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_avg_empty_set_returns_zero"
+    ],
+    "evidence": "cross_runtime_queries.rs:128-131 'avg: AVG(QueryCase: {field: score})' and with a no-match filter (0) equal Go; go_behavioral_compatibility_tests.rs:34-85 AVG of empty set is 0",
+    "note": "AVG with a DateTime filter is untested; empty collection only via a no-match filter and a plan-node unit test."
+  },
+  {
+    "id": "go.query.simple.aggregate.min-max",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched 'MIN(' / 'MAX(' in tests: only _commits aggregates (commits_aggregate.rs, continuous_rollup.rs, downsample*.rs) over delta, not collection-level MIN/MAX. Empty-collection null and filtered MIN/MAX untested."
+  },
+  {
+    "id": "go.query.simple.aggregate.int64-extreme",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No MAX over a collection is tested. cross_runtime_queries.rs:60,89-99 round-trips 9223372036854775807 through a plain selection, not an aggregate."
+  },
+  {
+    "id": "go.query.simple.aggregate.non-nillable",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No aggregate over an Int!/Float64!/Float32! field is asserted (ScalarCase in cross_runtime_queries.rs has non-null fields but is only selected, not aggregated)."
+  },
+  {
+    "id": "go.query.simple.group.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/relation_rendering_1597.rs::group_by_with_parent_relation_filter_test",
+      "crates/defra-node/tests/vector_post_scan_filters.rs::group_limit_is_not_used_as_a_document_candidate_limit"
+    ],
+    "evidence": "relation_rendering_1597.rs:158-174 'Book(groupBy: [rating]) { rating GROUP {...} }' returns one row per distinct Float with the grouped docs; vector_post_scan_filters.rs:75 groupBy [tag] yields one row per String",
+    "note": "Unverified: Int/Boolean/DateTime keys, multi-field value tuples, nested GROUP(groupBy: ...), and 'groupBy: []' putting everything in one group."
+  },
+  {
+    "id": "go.query.simple.group.unselected-key",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test selects only GROUP without the grouped field (searched 'GROUP' in tools/, crates/*/tests: only relation_rendering_1597.rs, which always renders the key or a relation)."
+  },
+  {
+    "id": "go.query.simple.group.undefined-value",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::grouped_count_plain_first_test"
+    ],
+    "evidence": "aggregate_groupby_1595.rs:233-236 counts 3 groups for four books where one has no name, i.e. the unset values form one group",
+    "note": "Only inferred through a relation COUNT(groupBy); no test returns a group row with key null (e.g. {\"Age\": null}) alongside set-value groups."
+  },
+  {
+    "id": "go.query.simple.group.validation",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "'cannot select a non-group-by field at group-level', 'group may only be referenced when within a groupBy request' and group-level bare aggregates appear only in sources (query_parse/parser.rs, runner/plan_validation.rs); plan_validation.rs:270 tests only the array-relation groupBy error."
+  },
+  {
+    "id": "go.query.simple.group.filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/relation_rendering_1597.rs::group_by_with_parent_relation_filter_test",
+      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::group_by_and_filter_test"
+    ],
+    "evidence": "relation_rendering_1597.rs:158-174 a root filter removes Voltaire's books so their rating groups disappear; aggregate_groupby_1595.rs:103 filter applies before grouping",
+    "note": "GROUP(filter: ...) filtering only within groups (empty GROUP kept), per-alias independence and nested levels are untested."
+  },
+  {
+    "id": "go.query.simple.group.order",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test orders group rows or uses GROUP(order: ...) (searched 'GROUP(' and groupBy queries with order in tests)."
+  },
+  {
+    "id": "go.query.simple.group.limit-offset",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test pages groups or GROUP(limit/offset). vector_post_scan_filters.rs:64-75 has 'groupBy: [tag]' with limit: 2 but only two groups exist, so paging is not observable."
+  },
+  {
+    "id": "go.query.simple.group.doc-id",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test uses GROUP(docID: ...) (searched 'GROUP(' in all Rust tests)."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.count",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises COUNT(GROUP: {}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.sum",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises SUM(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.average",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises AVG(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.min-max",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises MIN/MAX(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.multiple",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises several aggregates over one GROUP: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.of-same",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises aggregate-of-aggregate over inner groups: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.of-other",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises aggregate of a different inner-group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.filtered-average",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises AVG(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.filtered-count",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises COUNT(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.filtered-sum",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises SUM(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.filtered-min-max",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises MIN/MAX(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.limit-offset",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises limit/offset inside a GROUP aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.group.aggregate.alias-filter",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No Rust test exercises filter: {_alias: {...}} on a group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+  },
+  {
+    "id": "go.query.simple.cid.doc-version",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/gql_list_args.rs::gql_list_args_single_value_compat_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_for_same_doc_test",
+      "tools/integration-test/tests/query/commits_collection_id.rs::commits_and_versions_include_collection_id"
+    ],
+    "evidence": "gql_list_args.rs:184-191 'User(cid: \"<composite>\")' returns only that doc with its values; multi_cid_vectors.rs:206-210 the create CID still returns 'John' after an update; commits_collection_id.rs:129-143 '_version { collectionID }' under cid",
+    "note": "Unverified: middle CID of several updates, cid + matching docID on a non-branchable doc, _version cid/height as of the commit, and a shared field-level CID returning every owning document."
+  },
+  {
+    "id": "go.query.simple.cid.counter",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched files mentioning pncounter/pcounter for collection queries with 'cid:': none. No test reads a counter field at a past CID."
+  },
+  {
+    "id": "go.query.simple.cid.list",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query/gql_list_args.rs::gql_list_args_single_value_compat_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_duplicate_cids_for_same_doc_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_for_same_doc_test"
+    ],
+    "evidence": "gql_list_args.rs:184-191 list of one CID; multi_cid_vectors.rs:153 two docs -> ['John','Fred'], :177 duplicate CID -> ['John'] once, :206 two versions of one doc -> ['John','Johnnn']",
+    "note": ""
+  },
+  {
+    "id": "go.query.simple.cid.doc-id-match",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test combines a document cid with a docID list (correct, correct+incorrect, incorrect). The nearest is cid_scoping_1604.rs:101-118, a branchable collection CID with a single docID, covered under cid.branchable."
+  },
+  {
+    "id": "go.query.simple.cid.branchable",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cid_scoping_1604.rs::cid_of_branchable_collection_with_doc_id_test"
+    ],
+    "evidence": "cid_scoping_1604.rs:110-118 collection CID + docID returns Fred's value as of that collection commit",
+    "note": "Collection CID without docID (first/middle/last commit returning every document at that state) is untested."
+  },
+  {
+    "id": "go.query.simple.cid.errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cid_scoping_1604.rs::unknown_cid_errors_test",
+      "tools/integration-test/tests/query/cid_scoping_1604.rs::cid_from_another_collection_returns_empty_test"
+    ],
+    "evidence": "cid_scoping_1604.rs:131-134 unknown well-formed CID errors with 'failed to get block in blockstore: ipld: could not find' (same as Go, not a divergence); :75-79 a Users CID queried on Pets returns []",
+    "note": "Unverified: a non-CID string failing with 'invalid cid: selected encoding not supported', and unknown/invalid CID together with an invalid docID."
+  },
+  {
+    "id": "go.query.simple.version.latest-commit",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/commits_collection_id.rs::commits_and_versions_include_collection_id"
+    ],
+    "evidence": "commits_collection_id.rs:98-101 '_version { collectionID }' equals the collection ID",
+    "note": "Only the collection ID is asserted. cid, delta, docID, fieldName null, height (2 after an update), links sorted by child CID plus previous head, heads, and combination with order are untested."
+  },
+  {
+    "id": "go.query.simple.version.aliased",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test selects _version links/heads under aliases or with links(filter: ...) (searched '_version' in tools/, crates/*/tests)."
+  },
+  {
+    "id": "go.query.simple.similarity.validation",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "None of the four errors is asserted: 'Unknown argument \"...\" on field \"SIMILARITY\"' (only runner/query/select.rs:288), 'Expected type \"Int\", found 1.1.' (select.rs:317), 'similarity requires a target field argument' (not found anywhere in Rust), and 'source and vector must be of the same length' (plan/similarity.rs:115). vector_routing_hybrid.rs:136 checks a planner NotRouted::DimensionMismatch, not the query error."
+  },
+  {
+    "id": "go.query.simple.similarity.non-numeric-target",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "'similarity can only target a numeric array field' is not present in Rust sources or tests; no test targets a [String!] field with SIMILARITY (directly, in fragments, or in a mutation selection)."
+  },
+  {
+    "id": "go.query.simple.similarity.full-scan",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_unrouted_shapes_agree",
+      "crates/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
+      "crates/defra-core/tests/vector_metric.rs::cosine_matches_hand_computed_oracle"
+    ],
+    "evidence": "go_vector_parity.rs:186-190 an unrouted (full-scan) similarity query returns the same order as Go; vector_index_query_path.rs:991-1002 full scan returns every document ordered by sim; vector_metric.rs:73 cosine matches an oracle (unit)",
+    "note": "No test asserts the SIMILARITY values on an unindexed field, nor [Int!] or [Float64!] fields, JSON-created documents, or an empty collection returning []. vector_index_query_path.rs::a_field_without_a_vector_index_never_warns only asserts no warning."
+  },
+  {
+    "id": "go.query.simple.similarity.alias",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_similarity_ordering_matches"
+    ],
+    "evidence": "vector_post_scan_filters.rs:48-53 'filter: {_alias: {sim: {_lt: 50}}}' with 'order: {_alias: {sim: DESC}}, limit, offset' returns the expected rows; go_vector_parity.rs:145-149 order by alias with limit equals Go",
+    "note": "Two SIMILARITY selections with filtering on the second (or both) are untested; the Go-Bug-Suspect '_or' over two aliases case is untested."
+  },
+  {
+    "id": "go.query.simple.similarity.vector-index",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_index_query_path.rs::a_cosine_index_routes_and_agrees_with_the_exhaustive_scan",
+      "tools/integration-test/tests/vector.rs::rust_hnsw_vector_lifecycle",
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_similarity_ordering_matches",
+      "crates/defra-node/tests/vector_index_query_path.rs::doc_id_restrictions_fill_vector_pages_after_offset"
+    ],
+    "evidence": "vector_index_query_path.rs:471-482 routed k-nearest page equals the exhaustive page with explain index use; vector.rs:43,110-120 top-5 titles via the index, docFetches == 5, updated vector re-ranked, deleted doc excluded (:129); go_vector_parity.rs:145-149 matches Go; vector_index_query_path.rs:56 offset page",
+    "note": "Magnitude invariance ([10,0,0] and [1,0,0] both scoring 1) is not asserted directly; explain asserts indexFetches > 0, not exactly 1."
+  },
+  {
+    "id": "go.query.simple.similarity.vector-index-fallback",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_unrouted_shapes_agree"
+    ],
+    "evidence": "vector_index_query_path.rs:1027-1031 ASC order returns VECTOR_INDEX_UNUSED (reason notOrderedBySimilarityDesc); go_vector_parity.rs:186-190 ASC results equal Go",
+    "note": "Omitting the order entirely (Rust tests drop the limit instead) and the wrong-length query vector error 'source and vector must be of the same length' are untested."
+  }
+]

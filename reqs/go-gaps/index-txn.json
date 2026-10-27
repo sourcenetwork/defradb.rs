@@ -1,0 +1,772 @@
+[
+  {
+    "id": "go.index.definition.create",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test",
+      "crates/db/tests/index/manager.rs::test_create_duplicate_index_fails"
+    ],
+    "evidence": "index_management.rs:63-72 creates indexes on a populated collection and :136-140 still returns the one product; manager.rs:248 asserts a duplicate name errors with 'already exists'",
+    "note": "Invalid name ('!' -> 'index with invalid name') is validated in crates/db/src/index/manager/mod.rs:336 and http go_api.rs:156 but no test asserts it; query results are only checked by row count after a delete, not compared before/after NewIndex; duplicate-name check is at IndexManager level, not through the index API."
+  },
+  {
+    "id": "go.index.definition.list",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test",
+      "crates/db/tests/index/manager.rs::test_get_indexes"
+    ],
+    "evidence": "index_management.rs:79-97 asserts index_list(Some(\"Product\")) returns exactly the 3 created indexes; :111-113 Go-compatible HTTP list carries a non-empty Execution.CollectionID per index",
+    "note": "Empty list when no index exists is not asserted; no multi-collection listing or unscoped listing test, so 'only the given collection's indexes' and 'each result names its own collection in a multi-collection listing' are unverified."
+  },
+  {
+    "id": "go.index.definition.delete",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test",
+      "crates/db/tests/index/manager.rs::test_delete_index"
+    ],
+    "evidence": "index_management.rs:117-133 deletes idx_name and asserts it is gone from the listing; :136-140 query still returns the product",
+    "note": "Deleting an unknown name is not asserted to fail with 'index with name doesn't exists'; manager.rs:333 (test_delete_nonexistent_index) asserts IndexManager::delete_index returns Ok(false) instead (internal API; the FFI layer has the Go message at crates/ffi/src/index/manage.rs:134 but no test)."
+  },
+  {
+    "id": "go.index.definition.composite-directive",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_composite_index_with_default_direction",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_composite_index_override_default_direction",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_type_level_nested_ordered_configuration"
+    ],
+    "evidence": "parser_tests.rs:855 and :876-879 assert per-field Descending flags follow the default direction and per-field overrides for a type-level @index(includes: ...)",
+    "note": "Field-level @index(includes: [...]) that implicitly adds its own field first is not tested (rg ': \\w+ @index\\([^)]*includes' finds no such SDL); assertions are on parse_sdl output, not on ListIndexes; the generated index name (Go-bug-suspect 'User_name_ASC' for a DESC first field) is not asserted."
+  },
+  {
+    "id": "go.index.definition.request-config",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "The HTTP create-index request (crates/http/src/handlers/index/go_api.rs:32-36) has only Unique and Vector, no Ordered kind config, and no test covers Ordered{Unique}, both spellings agreeing, or the three disagreement errors. Searched rg for 'more than one kind config', 'disagrees with it', 'naming different fields' (no hits) and crates/http/tests/vector_index_api.rs (only round-trips Unique/Vector). SDL-level kind/legacy agreement is tested in crates/query/tests/vector_index_sdl.rs but that is the directive, not the index request."
+  },
+  {
+    "id": "go.index.definition.accumulated-crdt",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Rejection exists in crates/db/src/index/manager/mod.rs:360 and crates/schema/src/definition_validation/global_validators.rs:524 but no test asserts it: rg for 'accumulated CRDT', 'counter.*@index' and validate_index_fields_not_counter in test code finds nothing. crates/db/tests/write/doc_suite.rs:976 builds an indexed counter collection directly (bypassing validation), so it does not assert either outcome."
+  },
+  {
+    "id": "go.index.definition.patch-immutable",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "cross_runtime_schema_validation.rs:221-224 patch replacing /PatchIndexes/Indexes with [] is expected rejected by both Rust and Go (assert_outcome at :32-45)",
+    "note": "Only removal is tested and only accept/reject is compared, not the 'collection indexes cannot be mutated' message; adding or modifying a secondary index and changing a vector index metric via patch are not tested."
+  },
+  {
+    "id": "go.index.definition.status",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test",
+      "crates/db/tests/index/create.rs::ensure_ordinary_index_reports_existing_backfill_and_failure"
+    ],
+    "evidence": "index_management.rs:41-47 asserts every listed index via the Go-compatible HTTP list has Execution.Status 3 and empty Reason after NewIndex; :145-151 asserts /api/v0/actions is [] ; create.rs (ensure_ordinary_index_reports_existing_backfill_and_failure) asserts a failed backfill surfaces 'backfill failed'",
+    "note": "SDL-declared index reported ready is not asserted; a failed build showing its error status next to a ready index in the same collection's ListIndexes output is not tested (failure is only seen through ensure_ordinary_index's error)."
+  },
+  {
+    "id": "go.index.definition.one-to-one",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_secondary_relation_is_primary_false"
+    ],
+    "evidence": "parser_tests.rs:1975-1985 asserts the primary side of a one-to-one gets an auto-created unique index on _publishedID",
+    "note": "Not tested: the 'one-to-one relation must have a unique index' error for a user-declared non-unique index (only in crates/query/src/sdl_parse/builder.rs:713), named/composite unique index acceptance, composite with relation not first, one-to-many getting no index, multiple null links allowed, and linking two docs to the same related doc failing with the unique-index error."
+  },
+  {
+    "id": "go.index.definition.one-to-one-patch",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_relation_version_switching_preserves_go_canonical_versions"
+    ],
+    "evidence": "patch.rs:636-647 asserts after a one-to-one patch the index exists only on the active version (empty on v1, one index 'Author__publishedID_ASC' on v2)",
+    "note": "Uniqueness of the added index and its index IDs are not asserted; several one-to-one relations in one patch and a one-to-many patch adding no index are not tested."
+  },
+  {
+    "id": "go.index.backfill.async",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/create.rs::create_index_keeps_pace_with_concurrent_writers",
+      "crates/db/tests/index/create.rs::index_backfill_resumes_after_a_restart",
+      "crates/db/tests/collection/index_actions.rs::recaching_and_activation_preserve_pending_index_restrictions"
+    ],
+    "evidence": "create.rs:410-446 asserts documents created/updated/deleted during the backfill end up correctly in the index and the action is cleared; create.rs:859-866 asserts a backfill resumed after restart indexes all 300 docs; index_actions.rs:76-93 asserts an IN_PROGRESS index is hidden from the query collection provider",
+    "note": "No test lists the index as 'building' then 'ready' through ListIndexes, and none runs a filtered query while building to assert correct results with 0 index fetches; all tests are at the db crate level."
+  },
+  {
+    "id": "go.index.backfill.migration",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/migration_suite/paged_reindex.rs::a_rebuild_that_stops_part_way_stays_owed_and_resumes_after_its_last_page"
+    ],
+    "evidence": "paged_reindex.rs:57 asserts indexes answer no query mid-rebuild; :70-81 asserts the resume migrates only the remaining documents and every document is indexed exactly once at its migrated value",
+    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested."
+  },
+  {
+    "id": "go.index.backfill.txn",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test creates an index inside an explicit transaction: rg -i 'index' over crates/db/tests/txn, tools/integration-test/tests/basic/{transactions,rest_transactions}.rs and crates/defra-node/tests/transaction_guard.rs only finds a unique SDL in statement_savepoint.rs. Commit-time backfill and discard leaving no index are unverified."
+  },
+  {
+    "id": "go.index.backfill.large-docs",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/create.rs::create_index_backfills_more_documents_than_a_batch_holds"
+    ],
+    "evidence": "create.rs:216-224 asserts an index over more documents than one backfill batch indexes every document and finishes",
+    "note": "Values are small names; nothing tests ~50 KB indexed values against the transaction size limit, deleting such an index, or a filtered query served by it."
+  },
+  {
+    "id": "go.index.unique.backfill",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test",
+      "crates/db/tests/collection/index_actions.rs::recaching_and_activation_preserve_pending_index_restrictions"
+    ],
+    "evidence": "index_management.rs:67-68 creates a unique index on a populated collection and :111-113 asserts it lists as completed; index_actions.rs:76-93 asserts an ERRORED index is hidden from queries",
+    "note": "Creating a unique index over duplicate existing values is not tested: no assertion that NewIndex succeeds while the listing shows an errored status with 'can not index', that it can be deleted, or that a new unique index builds after the duplicate is fixed. Composite unique backfill and directions untested."
+  },
+  {
+    "id": "go.index.unique.write-conflict",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/write/conflict_reasons.rs::a_create_that_loses_a_unique_index_race_reports_the_violation",
+      "crates/db/tests/txn/statement_savepoint.rs::failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes",
+      "crates/storage/tests/index_tests.rs::test_composite_unique_enforced_on_non_null"
+    ],
+    "evidence": "conflict_reasons.rs:319-323 asserts a create repeating a unique value fails with UNIQUE_CONSTRAINT_VIOLATION_MESSAGE (\"can not index a doc's field(s) that violates unique index.\"); statement_savepoint.rs:378-380 asserts a GraphQL mutation adding a duplicate email errors; index_tests.rs:587-591 asserts the composite duplicate message at storage level",
+    "note": "DateTime duplicates are untested; the composite case is only at the storage UniqueIndex level, not a document add; updating a non-indexed field of a uniquely indexed doc (must succeed) is not tested."
+  },
+  {
+    "id": "go.index.unique.nil",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/manager.rs::test_unique_index_allows_multiple_nulls",
+      "crates/storage/tests/index_tests.rs::test_composite_unique_partial_null_second_field"
+    ],
+    "evidence": "manager.rs:1509-1512 asserts a second document with an absent value in a unique-indexed field is accepted; index_tests.rs:540-563 accepts repeated values when a composite field is null",
+    "note": "Only the case 'nulls written after the index exists' is tested, through IndexManager rather than a document write; nulls present before the unique index is created (backfill) are not tested."
+  },
+  {
+    "id": "go.index.unique.array",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "crates/db/tests/index/manager.rs::unique_typed_array_index_deduplicates_repeated_values"
+    ],
+    "evidence": "cross_runtime_indexes.rs:291-297 asserts creating a doc whose array element already exists in another doc fails on Rust and Go; :299-305 asserts _any _eq through the unique array index returns the right doc; :288-289 a repeated element within one doc is accepted",
+    "note": "The error text is not asserted; update-induced violations, deleting freeing values, nil elements with _any/_all/_none, and unique composite indexes with array fields are untested."
+  },
+  {
+    "id": "go.index.unique.json",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/manager.rs::unique_json_index_rejects_duplicate_array_values"
+    ],
+    "evidence": "manager.rs:152-157 asserts a JSON value with duplicate array elements ({numbers:[5,8,5]}) violates the unique index (UniqueConstraintViolation), matching one case of Go's TestJSONArrayUniqueIndex",
+    "note": "Cross-document repeats of a value at the same JSON path on create or update, and equality filters served by the index after updates, are untested; test is at IndexManager level."
+  },
+  {
+    "id": "go.index.query.single-operators",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
+      "crates/defra-node/tests/point_read_query_path.rs::deleted_rows_remain_visible_with_indexed_filters_and_ordering",
+      "tools/integration-test/tests/query/index_equal_key_order.rs::rust_equal_index_keys_in_filter_are_ordered_by_doc_id"
+    ],
+    "evidence": "cross_runtime_indexes.rs:134 asserts names for _gt (172), _geq on Float (184), _like (210) and :222 for _in on Boolean, with :120 asserting indexFetches>0 on Rust; datetime_index_range.rs:87,99 assert _gt/_lt results; point_read_query_path.rs:139 asserts _lte results; index_equal_key_order.rs:77 asserts _eq/_in return all matches",
+    "note": "No Rust test runs _ne, _nin or _nlike against a scalar indexed field, or _in on a Float index, and none checks the exact index-fetch counts Go asserts."
+  },
+  {
+    "id": "go.index.query.single-null",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched every test file that has an index (@index, index_create, IndexDescription) for _ne/_eq: null/_le: null/_ge: null filters. The only hits are planner unit tests: builder/tests.rs FK null on a relation, and index_selection/tests.rs:554 _le null on top-level JSON. No test checks that _ne returns null rows on indexed Int/Float/String/Boolean/DateTime fields, or how _le/_ge null behave with the index."
+  },
+  {
+    "id": "go.index.query.datetime",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
+      "crates/db/tests/read/index_string_timestamp.rs::a_range_of_rfc3339_text_uses_the_datetime_index",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "datetime_index_range.rs:87-103 asserts _gt/_lt results on an indexed DateTime; index_string_timestamp.rs:168-175 asserts _ge and _eq on a DateTime index; cross_runtime_indexes.rs:226-238 asserts _geq results plus index fetches",
+    "note": "No test covers _ne or _le on an indexed DateTime field. Index use is asserted only for _geq."
+  },
+  {
+    "id": "go.index.query.unique-single",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
+      "crates/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "mutation_input_variables.rs:41 asserts the _eq result on a unique String index; cross_runtime_indexes.rs:302 asserts _any/_eq on a unique array index, with index use at :306",
+    "note": "Only _eq is exercised on a unique scalar index. Untested: range ops, _in/_nin, _like/_nlike/_ilike/_nilike, _ne, DateTime unique, empty-result, _eq: 0 not matching nulls, _eq: null returning every null doc, _ne: null."
+  },
+  {
+    "id": "go.index.query.composite-prefix",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/ordinary_indexes.rs::reconcile_indexes_preserves_documents_and_uses_completed_composite",
+      "crates/db/tests/read/index_selectivity.rs::ordered_composite_page_streams_only_matching_documents",
+      "tools/integration-test/tests/query/index_equal_key_order.rs::rust_partial_in_over_composite_index_keeps_secondary_field_order",
+      "crates/query/src/planner/index_selection/tests.rs::test_select_best_index_composite"
+    ],
+    "evidence": "ordinary_indexes.rs:53-62 asserts the result of consecutive _eq on [node, session] and that explain names the composite index; index_selectivity.rs:405-409 asserts results and bounded reads for _eq,_eq,_lt on a 3-field composite; index_equal_key_order.rs:194 asserts _in on the first field",
+    "note": "No test checks that a composite index goes unused when its first field is missing from the filter, that a missing middle field is skipped, or that _in on the first field with _eq on the rest is served efficiently."
+  },
+  {
+    "id": "go.index.query.composite-operators",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::composite_index_rebuilt_after_lens_migration",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "tools/integration-test/tests/query/index_equal_key_order.rs::rust_partial_in_over_composite_index_keeps_secondary_field_order"
+    ],
+    "evidence": "lens_reindex_secondary_index_979.rs:152-159 asserts _eq on both composite fields; cross_runtime_indexes.rs:263-268 asserts _like on the composite's first field; index_equal_key_order.rs:194 asserts _in on the first field",
+    "note": "Untested: _ne, _gt/_ge/_lt/_le on the first or second field, _nin, _nlike, _like on the second field, and _eq: null on either field of a non-unique composite."
+  },
+  {
+    "id": "go.index.query.unique-composite-operators",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/read/index_selectivity.rs::ordered_composite_page_streams_only_matching_documents",
+      "crates/defra-node/tests/ordinary_indexes.rs::ordered_prefix_sorts_only_the_boundary_tie_group"
+    ],
+    "evidence": "index_selectivity.rs:405 asserts results of _eq,_eq,_lt on a unique 3-field composite; ordinary_indexes.rs:164 asserts _eq on the first field of a unique composite",
+    "note": "Only _eq on the leading fields and _lt on the last field are tested. Untested: _gt/_ge/_le on the first or second field, _in/_nin, _like/_nlike/_nilike, _ne."
+  },
+  {
+    "id": "go.index.query.unique-composite-nil",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/storage/tests/index_tests.rs::test_composite_unique_partial_null_first_field",
+      "crates/storage/tests/index_tests.rs::test_composite_unique_partial_null_second_field",
+      "crates/defra-node/tests/ordinary_indexes.rs::ordered_prefix_sorts_only_the_boundary_tie_group"
+    ],
+    "evidence": "index_tests.rs:533-534 and 559-560 save two entries with null in either field of a unique composite and the commit succeeds; ordinary_indexes.rs:144-145,157-169 create two docs with null seq in a unique composite, and ASC order returns them first",
+    "note": "No test runs an _eq: null filter on either field and checks that every null doc comes back, and none checks that docs updated from null are found by their new values."
+  },
+  {
+    "id": "go.index.query.combined",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/ordinary_indexes.rs::ordered_index_stream_stops_after_passing_residual_rows",
+      "crates/db/tests/read/index_selectivity.rs::equality_on_a_shared_field_does_not_outrank_a_selective_index",
+      "tools/integration-test/tests/query/planner_4656.rs::inverted_join_scalar_and_relation_filters_are_anded_test",
+      "crates/query/src/planner/builder/tests.rs::test_plan_no_index_for_non_indexed_field"
+    ],
+    "evidence": "ordinary_indexes.rs:114-119 asserts indexed scope plus non-indexed keep returns only matching docs; index_selectivity.rs:114-119 asserts two indexed fields return only the intersection; planner_4656.rs:74 asserts non-indexed scalars ANDed with an indexed relation field; builder/tests.rs:385 asserts a filter only on a non-indexed field uses no index",
+    "note": "No test combines several indexed fields with a regular one, and the case-insensitive variant is not exercised. Ignoring the index is checked only at planner level, not via explain fetch counts."
+  },
+  {
+    "id": "go.index.query.or",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for _or: [ in every test file that also has @index, index_create, IndexDescription or OrScan, and found none. OrScan has planner code (index_selection/filter_to_scan.rs, index_scan.rs) but no test. Neither serving same-field _or branches through the index, nor dedup, nor full-scan fallback for mixed, different-index or _any/_none branches is asserted."
+  },
+  {
+    "id": "go.index.query.performance",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/read/index_selectivity.rs::equality_on_a_shared_field_does_not_outrank_a_selective_index",
+      "crates/db/tests/read/index_selectivity.rs::a_range_on_a_selective_field_outranks_equality_on_a_shared_field"
+    ],
+    "evidence": "index_selectivity.rs:128-133 asserts that an indexed _eq matching a few docs does at most PER_HOUR*8 point reads, against about 12000 for a broad scan",
+    "note": "Rust bounds storage reads instead of timing. Untested: the Go comparison of indexed vs identical non-indexed collection (at least 2x faster), and any Float32-indexed case."
+  },
+  {
+    "id": "go.index.order.single-field",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_index_spans_the_full_range",
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "crates/defra-node/tests/point_read_query_path.rs::deleted_rows_remain_visible_with_indexed_filters_and_ordering"
+    ],
+    "evidence": "datetime_index_range.rs:53-65 asserts ASC and DESC order on an indexed field; cross_runtime_indexes.rs:156-180 asserts order ASC with and without a filter on the same field, with indexFetches>0 (:135); point_read_query_path.rs:139,155-162 asserts order on an indexed field with a filter on another field, and limit/offset",
+    "note": "Untested: an ascending order on a direction: DESC index (Go's reverse-order case), and index use for DESC order or with a filter on another field."
+  },
+  {
+    "id": "go.index.order.composite",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/ordinary_indexes.rs::partial_index_order_keeps_residual_filter_and_page_offset",
+      "crates/query/src/planner/index_selection/tests.rs::ordering_skips_only_equality_fixed_index_fields"
+    ],
+    "evidence": "ordinary_indexes.rs:211-214 asserts correct results for order [seq DESC, rank ASC], where rank is not in the [scope, seq] index; index_selection/tests.rs:697-708 asserts the planner rejects index ordering for a mismatched multi-field order",
+    "note": "Untested: the four ASC/DESC mismatch combinations against a composite index, a non-indexed field in the middle of the order, and 0 index fetches end to end."
+  },
+  {
+    "id": "go.index.order.relation",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/relation_order_panic_1594.rs::exhaustive_execution_test",
+      "tools/integration-test/tests/query/exhaustive_orphans_4454.rs::exhaustive_relation_order_includes_orphans_test"
+    ],
+    "evidence": "relation_order_panic_1594.rs:157-163 asserts Publisher (primary side) ordered by indexed book.rating; exhaustive_orphans_4454.rs:72-79 asserts Book ordered by indexed publisher.establishedYear (other side)",
+    "note": "No test orders by an indexed relation ID field (order: {_ownerID: ASC}), and none checks that the index is used for relation ordering."
+  },
+  {
+    "id": "go.index.order.descending-index",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for @index(direction: DESC) and descending: true in tests. The only hits are SDL parse tests (vector_index_sdl.rs), benchmark fixtures, manager.rs:1295 (prefix and exact lookups, no order check) and index_scan.rs cursor-seek unit tests. No test checks that an unordered filtered query on a DESC single-field index returns descending order."
+  },
+  {
+    "id": "go.index.order.composite-direction",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "crates/db/tests/read/index_composite_in_order.rs::partial_in_over_a_composite_index_keeps_secondary_field_order"
+    ],
+    "evidence": "cross_runtime_indexes.rs:263-268 asserts that an unordered _like on the first field of a [group ASC, rank DESC] index returns index order (Alan; then Alice by rank 38, 24, 22), with index fetches asserted; index_composite_in_order.rs:151 asserts default ASC/ASC composite order",
+    "note": "Untested: a DESC first field, case-insensitive direction keywords, the no-filter case, and exact-match cases."
+  },
+  {
+    "id": "go.index.order.composite-in",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_equal_key_order.rs::rust_partial_in_over_composite_index_keeps_secondary_field_order",
+      "crates/db/tests/read/index_composite_in_order.rs::partial_in_over_a_composite_index_keeps_secondary_field_order"
+    ],
+    "evidence": "index_equal_key_order.rs:194-198 asserts that _in on the first field of an ASC/ASC composite returns every matching doc in index order",
+    "note": "Untested: an index with a DESC field, and _in on the second field. The Go-bug-suspect ordering (#3780) is not exercised either way."
+  },
+  {
+    "id": "go.index.order.composite-range",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched composite-index tests (ordinary_indexes, index_selectivity, index_equal_key_order, cursor/composite_index, lens_reindex_979, cross_runtime_indexes, manager.rs) for a range filter on the first field of a composite index; none has one. Ranges appear only on trailing fields (index_selectivity seq _lt) or on single-field indexes."
+  },
+  {
+    "id": "go.index.relation.one-to-many-filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/planner_4684.rs::inverted_one_to_many_parent_filter_with_child_order_test",
+      "tools/integration-test/tests/query/planner_4656.rs::inverted_join_scalar_and_relation_filters_are_anded_test"
+    ],
+    "evidence": "planner_4684.rs:241 asserts Author(filter: {published: {rating: {_geq: 4.0}}}) with Book.rating @index returns both authors; planner_4656.rs:74 asserts Book filtered by indexed parent field author.name returns the matching book",
+    "note": "Unverified: results of _eq: null / _ne: null on an indexed relation ID (crates/query/src/planner/builder/tests.rs::test_plan_fk_filter_eq_null_uses_index and ::test_plan_fk_filter_ne_null_uses_index only assert the plan picks Device__ownerID_ASC, not results); filtering children by indexed relation ID; many-to-one chains via one-to-many; no explain indexFetches assertion on any relation filter."
+  },
+  {
+    "id": "go.index.relation.one-to-one-filter",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tools/ and crates/*/tests for filters on one-to-one related fields (rg 'filter: {publisher|book|address|contact|owner: {') and @index on one-to-one schemas: exhaustive_orphans_4454.rs and relation_order_panic_1594.rs index one-to-one fields but only test ordering; explain_nested.rs has no index and no filter. No test filters through a one-to-one index from either side or through a unique (composite) index on the related type."
+  },
+  {
+    "id": "go.index.relation.combined-filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/planner_4656.rs::inverted_join_scalar_and_relation_filters_are_anded_test"
+    ],
+    "evidence": "planner_4656.rs:74 asserts Book(filter: {genre, rating: {_gt}, author: {name: {_eq}}}) with Author.name @index returns only The Firm (scalar + relation ANDed)",
+    "note": "Unverified: _and/_or/_not over an indexed one-to-many relation (data and no-data cases), filters on two relations, groupBy with a filter on an indexed relation (relation_rendering_1597.rs::group_by_with_parent_relation_filter_test covers this shape but its schema has no @index), composite index over several indexed child fields. crates/query/src/planner/builder/tests.rs::test_plan_mixed_scalar_and_relation_filter_uses_index is plan-only."
+  },
+  {
+    "id": "go.index.relation.sub-filter",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test applies a child-selection filter (published(filter: ...)/devices(filter: ...)) where the child field is indexed. tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence runs published(filter: {rating: {_gt: 4}}, order, limit) Rust-vs-Go, but Book.rating has no @index there, so the index path and index-vs-no-index choice are not exercised."
+  },
+  {
+    "id": "go.index.relation.sub-order",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/planner_4684.rs::inverted_one_to_many_parent_filter_with_child_order_test"
+    ],
+    "evidence": "planner_4684.rs:241 asserts published(order: {rating: DESC}) with Book.rating @index orders each author's books independently under a parent filter on the relation",
+    "note": "Unverified: ASC child order, child order with limit, sub-filter then order on the same or another indexed field, index on the relation field."
+  },
+  {
+    "id": "go.index.relation.order-orphans-excluded",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/exhaustive_orphans_4454.rs::exhaustive_relation_order_includes_orphans_test",
+      "tools/integration-test/tests/query/relation_order_panic_1594.rs::exhaustive_execution_test"
+    ],
+    "evidence": "exhaustive_orphans_4454.rs:72 asserts Book(order: {publisher: {establishedYear: ASC}}) without @exhaustive omits OrphanBook (secondary-side parent); relation_order_panic_1594.rs:157 asserts Publisher(order: {book: {rating: ASC}}) omits OrphanPublisher (primary-side parent)",
+    "note": "Rust matches Go (orphans dropped), so no divergence despite the Go-Bug-Suspect. Unverified: nested ordering by a related field with limit (ASC/DESC) excluding orphans, and the explain showing the index-based inverted join at each level."
+  },
+  {
+    "id": "go.index.relation.order-orphans-exhaustive",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/exhaustive_orphans_4454.rs::exhaustive_relation_order_includes_orphans_test",
+      "tools/integration-test/tests/query/relation_order_panic_1594.rs::exhaustive_execution_test",
+      "tools/integration-test/tests/query/relation_order_panic_1594.rs::debug_explain_asc_test",
+      "tools/integration-test/tests/query/relation_order_panic_1594.rs::debug_explain_desc_test"
+    ],
+    "evidence": "exhaustive_orphans_4454.rs:92 (root ASC, orphan first) and :116 (nested ASC with limit 2, orphan first); relation_order_panic_1594.rs:174 (primary ASC orphan first), :192 (primary DESC orphan last), :84/:106 (debug explain orphanNode before/after typeJoinOne)",
+    "note": "Unverified: same-object scalar filters still applied to orphans (TestQueryWithIndex_ExhaustiveOrderByRelationWithScalarFilter*), secondary-side DESC, nested DESC with limit appending orphans last, many-orphan early termination with limit, TestQueryWithFilterOnNullRelation_SecondaryDocWithoutRelation."
+  },
+  {
+    "id": "go.index.array.types",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
+      "crates/db/tests/read/index_string_timestamp.rs::an_element_of_rfc3339_text_uses_the_datetime_array_index"
+    ],
+    "evidence": "cross_runtime_indexes.rs:278 asserts ArrayValue(filter: {values: {_any: {_eq: 5}}}) on [Int!] @index returns both docs and :285 asserts indexFetches > 0; index_string_timestamp.rs:184 asserts _any _eq on an indexed DateTime array returns the matching row",
+    "note": "Unverified: [Float], [Boolean], [String] and the nillable-element variants ([Int], [Float], [Boolean], [String])."
+  },
+  {
+    "id": "go.index.array.operators",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "cross_runtime_indexes.rs:278-286 asserts _any: {_eq: 5} results and index use on an indexed [Int!]",
+    "note": "Unverified: _all (with _eq/_in/_nin) using the index, _any with _in/_nin, _none results and that _none does not use the index. crates/query/src/planner/index_selection/tests.rs covers array operators only at plan level."
+  },
+  {
+    "id": "go.index.array.nil-elements",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for _any/_all/_none filters with _eq: null over indexed arrays with null elements (rg '_any: ?\\{|_all: ?\\{|_none: ?\\{' in tools/ and crates/*/tests): only cross_runtime_indexes.rs ([Int!], no nulls) and index_string_timestamp.rs hit."
+  },
+  {
+    "id": "go.index.array.update",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test updates an indexed array (add/remove/reorder elements) and then queries _any. crates/db/tests/index/manager.rs update tests (test_on_document_update_changes_index_entry, test_multi_index_update) use scalar fields; array tests there (unique_typed_array_index_deduplicates_repeated_values) cover creation only."
+  },
+  {
+    "id": "go.index.array.composite",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for composite @index(includes/fields) including an array field: cross_runtime_indexes.rs composite is on scalar group/rank; index_composite_in_order.rs and index_equal_key_order.rs composites are scalar. No composite array index test for _any/_all/_none, update or delete."
+  },
+  {
+    "id": "go.index.json.scalar-ops",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_fallback_4633.rs::unsupported_index_filters_fall_back_to_scan_test"
+    ],
+    "evidence": "index_fallback_4633.rs:97 asserts Users(filter: {custom: {_nlike: \"%Stormborn%\"}}) on a JSON @index field returns every other document (root-level scalar JSON values)",
+    "note": "Only top-level _nlike is asserted. Unverified: filters on a path inside the JSON (custom: {height: {_eq: ...}}) for numbers/strings/booleans with _eq, _ne, _gt, _ge, _lt, _le, _in (incl. mixed types), _nin, _like, _ilike, _nilike, _and; top-level _gt; JSON!; after-update index values; _not over _in not using the index; and any explain index-fetch check on JSON."
+  },
+  {
+    "id": "go.index.json.null",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No end-to-end test of _eq/_ne/_le/_ge null on an indexed JSON field or path. crates/query/src/planner/index_selection/tests.rs::test_filter_to_scan_top_level_json_lte_null_uses_index asserts only the scan choice, not results."
+  },
+  {
+    "id": "go.index.json.object-values",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "index_fallback_4633.rs seeds object/array JSON values but only queries _nlike on them; the _eq: [true, false] there is on a [Boolean] typed array, not JSON. No test filters an indexed JSON path with an object or nested-array value via _eq/_ne/_in/_nin, nor checks 0 index fetches."
+  },
+  {
+    "id": "go.index.json.array",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No end-to-end _any/_all/_none filter over JSON array elements in an indexed JSON field. crates/db/tests/index/manager.rs::unique_json_index_rejects_duplicate_array_values exercises JSON array element indexing for uniqueness only (out of this leaf's scope)."
+  },
+  {
+    "id": "go.index.json.composite",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for composite indexes including a JSON field (rg 'JSON.*@index' and @index(includes) in tests): none."
+  },
+  {
+    "id": "go.index.maintenance.delete-with-filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/manager.rs::test_on_document_delete_removes_index_entries",
+      "crates/db/tests/index/manager.rs::recreate_after_delete_frees_the_unique_slot"
+    ],
+    "evidence": "manager.rs:791 asserts the index entry is gone after on_document_delete; manager.rs:1969 asserts a new doc with the same unique value is accepted after delete+tombstone",
+    "note": "Verified only at the IndexManager level, per document. No test runs delete_<Type>(filter: ...) over several indexed documents and then re-adds docs with the same unique or non-unique values; crates/http/tests/filtered_document_delete.rs uses a mock store with no index."
+  },
+  {
+    "id": "go.index.maintenance.p2p",
+    "verdict": "diverges",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/index.rs::peer_created_doc_listener_indexes",
+      "tools/integration-test/tests/p2p_iroh/schema/index.rs::peer_updated_doc_listener_updates_index",
+      "tools/integration-test/tests/p2p_iroh/schema/index.rs::peer_deleted_doc_listener_deletes_index",
+      "tools/integration-test/tests/p2p_iroh/schema/index.rs::unique_conflict_from_peer_converges_instead_of_wedging"
+    ],
+    "evidence": "index.rs:83-88 replicated create found by indexed filter; :153 and :163 old value gone/new value found after replicated update; :232 replicated delete gone from indexed filter; :308-316 unique conflict merges both docs and the smallest docID wins the unique slot",
+    "note": "Create/update/delete replication into the peer's index is covered. The unique-conflict part diverges: Go keeps the rejected document in the retry queue without blocking others; Rust (#1111) merges both documents and assigns the unique slot to the smallest docID on every replica. Caveat: setup_indexed_cluster only eprintln!s if index_create fails, and no test asserts the filter actually used the index."
+  },
+  {
+    "id": "go.index.vector.create",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/manager.rs::a_unique_vector_request_is_refused",
+      "crates/query/tests/vector_index_sdl.rs::competing_kind_selectors_are_refused",
+      "crates/db/tests/vector/vector_engine.rs::out_of_range_parameters_are_refused",
+      "crates/cli/tests/index_vector_args.rs::omitted_hnsw_params_default",
+      "crates/query/tests/vector_index_sdl.rs::a_partial_hnsw_config_keeps_the_other_defaults",
+      "crates/query/tests/vector_index_sdl.rs::a_field_takes_more_than_one_index"
+    ],
+    "evidence": "manager.rs:2242 asserts a unique vector request is refused (error contains 'unique'); vector_index_sdl.rs:106 refuses `@index(vector: {...}, direction: DESC)`; vector_engine.rs:947 refuses m/efConstruction/efSearch above their caps (unit Params::validate); index_vector_args.rs:54 fills omitted HNSW params with defaults; vector_index_sdl.rs:332 accepts two vector indexes with different metrics on one field",
+    "note": "Unverified: creating a vector index through the index API (HTTP/CLI NewIndex) on a populated collection and then routing a similarity query to it (Rust routing tests all declare the index in SDL); the out-of-range rejection only at Params::validate level, not through index creation, and no check of the 'vector index parameter is out of range' message; drop-then-recreate with a new metric. Divergence: Go rejects a second vector index on a field with another metric ('field already has a vector index with a different distance metric'), Rust accepts it and routes by named metric (vector_index_sdl.rs:323 a_field_takes_more_than_one_index; vector_index_query_path.rs a_named_metric_reaches_its_own_index_among_several)."
+  },
+  {
+    "id": "go.index.vector.scoring",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_index_query_path.rs::every_combination_agrees_with_an_exhaustive_scan",
+      "crates/defra-node/tests/vector_index_query_path.rs::a_cosine_index_routes_and_agrees_with_the_exhaustive_scan",
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_similarity_ordering_matches"
+    ],
+    "evidence": "vector_index_query_path.rs:604 asserts every algorithm x metric (COSINE, EUCLIDEAN, DOT) routes and :666 asserts the routed scores equal the exhaustive scan's top-k; :484 routed cosine page equals the exhaustive page; go_vector_parity.rs:144 Rust and Go return the same routed page",
+    "note": "Unverified: vectors whose squared distance or dot product exceeds float32 range being scored in float64 and ordered correctly (no large-magnitude vector test; searched f32::MAX/overflow in crates/db/tests/vector and defra-node tests)."
+  },
+  {
+    "id": "go.index.vector.backfill",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/backfill.rs::creating_a_vector_index_backfills_every_document"
+    ],
+    "evidence": "backfill.rs:101 asserts every pre-existing document is a node in the built graph after creating the vector index and bulk-indexing",
+    "note": "Manager-level only. Unverified: the build being asynchronous, similarity queries full-scanning with correct results while the index builds, and routing (index fetches > 0) once ready; no test creates a vector index on a populated collection through a node and queries during/after the build."
+  },
+  {
+    "id": "go.index.vector.fallback-warning",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
+      "crates/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
+      "crates/defra-node/tests/vector_index_query_path.rs::a_routed_similarity_query_has_no_extensions",
+      "crates/defra-node/tests/vector_index_query_path.rs::a_field_without_a_vector_index_never_warns",
+      "crates/defra-node/tests/vector_index_query_path.rs::a_filtered_similarity_query_returns_a_full_page",
+      "crates/query/tests/vector_index_warnings.rs::every_not_routed_variant_maps_to_its_reason_string",
+      "crates/query/tests/vector_routing.rs::zero_or_several_similarities_do_not_route",
+      "crates/query/tests/vector_routing.rs::a_filter_is_not_a_reason_to_refuse"
+    ],
+    "evidence": "vector_index_query_path.rs:987 reason noLimit with code VECTOR_INDEX_UNUSED and correct full result; :1029 reason notOrderedBySimilarityDesc; :955 routed query has no extensions; :1147 field without a vector index never warns; :420 selective filter returns only matching docs (and routes); vector_index_warnings.rs maps NotOneSimilarity to 'multipleSimilarityFields'",
+    "note": "multipleSimilarityFields is only checked at the planner/reason-string unit level, not as an end-to-end warning. Divergence: Go warns with reason 'filter' for a filtered similarity query; Rust routes filtered queries through the index and never emits that reason (vector_routing.rs a_filter_is_not_a_reason_to_refuse; vector_index_query_path.rs:415 assert_routes on the filtered query)."
+  },
+  {
+    "id": "go.index.vector.replication",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/index/backfill.rs::merged_documents_are_indexed"
+    ],
+    "evidence": "backfill.rs:223 asserts every document arriving through on_document_create_merge is a live node of the vector index",
+    "note": "IndexManager merge path only. Unverified end to end: a document written on one peer, synced over P2P, and returned by a SIMILARITY query on the replica (searched p2p/p2p_iroh integration tests and defra-node p2p_tests for SIMILARITY; none)."
+  },
+  {
+    "id": "go.txn.docs.commit-visible",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::transactions_test",
+      "tools/integration-test/tests/basic/transactions.rs::txn_schema_add_and_mutate",
+      "tools/integration-test/tests/basic/transactions.rs::update_with_filter_sees_txn_scoped_state"
+    ],
+    "evidence": "transactions.rs:340 two accounts visible after commit of a doc created by a GraphQL mutation in the txn; :69 collection and its document added in one txn both visible after commit; :252 update-by-filter in txn visible after commit",
+    "note": "Unverified after commit: update by document ID, DeleteDoc, and Truncate inside a transaction (rest_transactions.rs updates and deletes by ID but then discards; no test truncates inside an explicit txn)."
+  },
+  {
+    "id": "go.txn.docs.uncommitted-invisible",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::transactions_test",
+      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation"
+    ],
+    "evidence": "transactions.rs:307 only the pre-existing doc is visible outside while a mutation-created doc is uncommitted; rest_transactions.rs:146 a PATCH by ID inside the txn is not visible outside (still 'one'); rest_transactions.rs:97 a doc added in the txn is 404 outside before commit",
+    "note": "Unverified: update-with-filter not visible before commit; a delete inside an open txn still visible outside (rest_transactions.rs only checks the restored doc after discard at :178)."
+  },
+  {
+    "id": "go.txn.docs.read-own-writes",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::update_with_filter_sees_txn_scoped_state"
+    ],
+    "evidence": "transactions.rs:244 update-with-filter inside the txn updates a doc created earlier in the same txn, and :252 the result is visible after commit",
+    "note": "Unverified: UpdateDoc by ID and DeleteDoc on a document created earlier in the same transaction (rest_transactions.rs patches/deletes a doc committed in an earlier txn)."
+  },
+  {
+    "id": "go.txn.definitions.commit-visible",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::txn_schema_add_and_mutate",
+      "crates/db/tests/definition/committed_lenses.rs::a_lens_added_in_a_transaction_is_durable_with_its_commit",
+      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_promotes_transform_on_commit"
+    ],
+    "evidence": "transactions.rs:69 collection added in a txn is queryable after commit; committed_lenses.rs:206 lens config added in a txn is in the system store after commit; registry_suite.rs:412 a migration set in a txn is in the global lens store after commit",
+    "note": "Unverified: PatchCollection, SetActiveCollectionVersion, AddView and RefreshView inside a transaction taking effect after commit (no test runs them under x-defradb-tx or the txn registry)."
+  },
+  {
+    "id": "go.txn.definitions.uncommitted-invisible",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::txn_schema_add_and_mutate",
+      "tools/integration-test/tests/basic/transactions.rs::txn_collection_listing_via_header_is_scoped",
+      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_is_only_visible_inside_transaction"
+    ],
+    "evidence": "transactions.rs:55 querying a collection added in an open txn fails outside it; transactions.rs:172 the collection is not listed outside the txn; registry_suite.rs:373 an uncommitted migration is not in the global lens list",
+    "note": "Unverified: an uncommitted patch ('Cannot query field \"name\"'), an unswitched active version, an uncommitted view ('Cannot query field \"UserView\" on type \"Query\"'), an uncommitted lens failing with 'lens CID not found', and the migrated field reading null when the migration was not committed (registry test checks the lens list, not query results)."
+  },
+  {
+    "id": "go.txn.definitions.same-txn-visibility",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::txn_collection_listing_via_header_is_scoped",
+      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_is_only_visible_inside_transaction"
+    ],
+    "evidence": "transactions.rs:160 GET /collections with the txn header lists the collection added in it and :172 without it does not; registry_suite.rs:379 list_lenses_in_txn returns the lens set in that txn and :373 the global list does not",
+    "note": "The 'other' reader is the non-transactional path rather than a second explicit transaction; same visibility rule."
+  },
+  {
+    "id": "go.txn.indexes.commit-visible",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched crates/db/tests/txn, crates/http (index handlers take no txn header: rg txn in crates/http/src/handlers/index found nothing), tools/integration-test basic/query txn tests, defra-node tests for index create/delete/list or encrypted index ops inside an explicit transaction; none."
+  },
+  {
+    "id": "go.txn.indexes.uncommitted-invisible",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Same search as go.txn.indexes.commit-visible: no test creates or deletes a plain or encrypted index inside an open transaction and lists indexes outside it."
+  },
+  {
+    "id": "go.txn.indexes.read-own-writes",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test runs NewIndex/DeleteIndex/ListIndexes or encrypted-index add/list inside one transaction on a collection or documents added in it (searched x-defradb-tx, query_with_tx, *_in_txn and registry tests)."
+  },
+  {
+    "id": "go.txn.verify-signature",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/transaction_signing_test.rs::embedded_transaction_mutation_uses_node_signer"
+    ],
+    "evidence": "transaction_signing_test.rs:88 verifying the signature of a block created in the open transaction, inside that transaction, returns the signer DID",
+    "note": "Unverified: verifying the same block outside the transaction before commit fails (Go: 'ipld: could not find')."
+  },
+  {
+    "id": "go.txn.ttl",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/txn/registry_suite.rs::test_periodic_cleanup_task_removes_idle_transactions",
+      "crates/db/tests/txn/registry_suite.rs::test_get_returns_not_found_after_commit",
+      "crates/db/tests/txn/registry_suite.rs::test_get_returns_not_found_after_discard",
+      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation"
+    ],
+    "evidence": "registry_suite.rs:1080 an idle transaction is removed by the periodic cleanup task; :336 and :351 a committed or discarded txn is no longer found; rest_transactions.rs:186 a write with a discarded txn ID returns 404",
+    "note": "Registry level only for idle expiry. Unverified: HTTP/CLI requests (GraphQL or GetCollections) on an expired txn ID failing with 'transaction not found' (non-GraphQL error for collection calls), the expired txn's writes being lost, and activity extending the TTL."
+  },
+  {
+    "id": "go.subscription.document-events",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/planner_4684.rs::subscription_with_indexed_filter_test",
+      "tools/integration-test/tests/query/subscription_docid.rs::subscription_no_filter_test",
+      "tools/integration-test/tests/query/subscription_docid.rs::subscription_delete_event_scoped_by_cid_test"
+    ],
+    "evidence": "planner_4684.rs:168 a create event carries the document's state (name John, age 27); subscription_docid.rs:289/293 update events arrive for each updated doc; subscription_docid.rs:336 a delete emits an event with _deleted: true",
+    "note": "Unverified: update events carrying the updated field values (only docIDs checked), one event per document for an update of all documents, and counter CRDT fields reporting the accumulated value (no subscription test uses a counter)."
+  },
+  {
+    "id": "go.subscription.filtering",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query/planner_4684.rs::subscription_with_indexed_filter_test",
+      "tools/integration-test/tests/query/subscription_docid.rs::subscription_docid_filter_test"
+    ],
+    "evidence": "planner_4684.rs:154 a filtered subscription receives exactly one event when one add matches and one falls outside the filter; subscription_docid.rs:143 every event of a docID subscription carries only that docID",
+    "note": ""
+  },
+  {
+    "id": "go.subscription.close",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/events/tests/channel_bus_tests.rs::test_channel_bus_close"
+    ],
+    "evidence": "channel_bus_tests.rs:124 closing the bus ends open subscriptions (recv returns None) instead of blocking",
+    "note": "Event-bus level only. Unverified: closing a node while a GraphQL subscription is open returns without blocking."
+  },
+  {
+    "id": "go.subscription.commits",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/subscription_docid.rs::commit_subscription_docid_filter_test"
+    ],
+    "evidence": "subscription_docid.rs:214 every _commits subscription event with docID carries only that document's docID",
+    "note": "Unverified: one event per mutation carrying the composite commit with its field links (cid, fieldName) and heads."
+  },
+  {
+    "id": "go.version.platform",
+    "verdict": "not-applicable",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go test-harness release downloader (asset naming per platform); no node behaviour. Rust's harness builds or fetches the pinned Go binary separately and has no user-facing equivalent."
+  },
+  {
+    "id": "go.version.cache",
+    "verdict": "not-applicable",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go test-harness binary cache for cross-version tests; not node behaviour."
+  },
+  {
+    "id": "go.version.download",
+    "verdict": "not-applicable",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go test-harness HTTP release download; not node behaviour."
+  },
+  {
+    "id": "go.issues.pncounter-overflow-divergence",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go-Bug-Suspect: Rust should converge. No Rust test applies +MaxFloat64 and -MaxFloat64 to a Float pncounter on two peers in different orders and checks the replicas agree (searched f64::MAX/infinity/overflow in crdt, db write/merge and integration tests; only an Int wrap-on-overflow test exists, crates/crdt/tests/field_contract.rs::an_integer_counter_wraps_on_overflow)."
+  },
+  {
+    "id": "go.issues.pncounter-overflow-serialization",
+    "verdict": "diverges",
+    "rust_tests": [
+      "crates/query/src/json_convert.rs::test_float64_to_json_infinity_returns_error",
+      "crates/query/src/json_convert.rs::test_float64_to_json_neg_infinity_returns_error"
+    ],
+    "evidence": "json_convert.rs:340 serializing +Inf (and -Inf, next test) returns a 'non-finite' error rather than an empty body",
+    "note": "Go fails reads with 'unexpected end of JSON input' / empty Get body (bug #2569). Rust's serializer returns an explicit non-finite error; asserted only at unit level, with no test that overflows a Float pncounter over P2P and reads it via HTTP/CLI."
+  },
+  {
+    "id": "go.node.identity",
+    "verdict": "covered",
+    "rust_tests": [
+      "crates/cli/tests/node_identity_tests.rs::explicit_identity_overrides_the_generation_default"
+    ],
+    "evidence": "node_identity_tests.rs:242 GET /api/v0/node/identity returns the DID of the --identity key the node was started with",
+    "note": "Single node; tools/integration-test/tests/identity/node_identity.rs only checks the response is non-empty."
+  }
+]
