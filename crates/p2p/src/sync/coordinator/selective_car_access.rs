@@ -238,6 +238,8 @@ pub struct HeadHintCarAuthority {
 impl Default for HeadHintCarAuthority {
     fn default() -> Self {
         Self {
+            // WASM readers are thread-local; keep the coordinator's shared API.
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
             access: Arc::new(SelectiveCarAccess::default()),
         }
     }

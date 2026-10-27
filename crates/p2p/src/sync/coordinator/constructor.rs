@@ -185,6 +185,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
         let broadcast_coalescer =
             Arc::new(crate::sync::broadcast_coalescer::BroadcastCoalescer::default());
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
         let selective_car_access =
             Arc::new(super::selective_car_access::SelectiveCarAccess::default());
         let rate_limit_burst = config.rate_limit_burst;
