@@ -20,6 +20,10 @@ struct ConflictOnce {
 
 #[async_trait]
 impl DocMutator for ConflictOnce {
+    fn crdts(&self) -> storage::Crdts {
+        self.inner.crdts()
+    }
+
     fn requires_write_preparation(&self) -> bool {
         true
     }
@@ -112,7 +116,7 @@ fn retried_update_reuses_prepared_kms_keys() {
     let created = inner
         .create(
             "Secrets",
-            Document::from_json_str(r#"{"left":"one","right":"two"}"#).unwrap(),
+            Document::from_json_str(r#"{"left":"one","right":"two"}"#, super::kms::secrets_collection()).unwrap(),
         )
         .await
         .unwrap();
@@ -269,7 +273,7 @@ fn prepared_delete_and_upsert_recheck_their_filters() {
         let created = mutator
             .create(
                 "Secrets",
-                Document::from_json_str(r#"{"left":"one"}"#).unwrap(),
+                Document::from_json_str(r#"{"left":"one"}"#, super::kms::secrets_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -281,7 +285,7 @@ fn prepared_delete_and_upsert_recheck_their_filters() {
         let request = QueryRequest::new(mutation);
         let prepared = runner.prepare_request(&request).await.unwrap();
         let mut doc = created.document;
-        doc.set("left", "two");
+        doc.set("left", "two").unwrap();
         mutator
             .update("Secrets", doc, ["left".to_string()].into_iter().collect())
             .await
@@ -322,7 +326,7 @@ fn preparation_does_not_project_an_update_skipped_by_its_filter() {
     let created = mutator
         .create(
             "Secrets",
-            Document::from_json_str(r#"{"left":"one"}"#).unwrap(),
+            Document::from_json_str(r#"{"left":"one"}"#, super::kms::secrets_collection()).unwrap(),
         )
         .await
         .unwrap();

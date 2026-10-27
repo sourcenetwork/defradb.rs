@@ -62,7 +62,7 @@ impl QueryExecutor for FailingMockExecutor {
         ))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
@@ -157,7 +157,7 @@ impl QueryExecutor for MockQueryExecutor {
         Ok(())
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

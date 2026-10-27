@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crdt::stored::StoredDocument;
 use db::definition::migration::document_parts::{CURRENT_DOCUMENT_FORMAT, DOCUMENT_FORMAT_KEY};
 use db::{AutoCommitMutator, DB};
-use document::stored::StoredDocument;
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use storage::corekv::{
@@ -82,12 +82,16 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         .await
         .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
     let mut ids = Vec::new();
     for i in 0..DOCUMENTS {
-        let doc = Document::from_json_str(&format!(
-            r#"{{"name": "user {i}", "age": {i}, "bio": "{}", "tags": ["t{i}", "x"]}}"#,
-            "b".repeat(8 << 10)
-        ))
+        let doc = Document::from_json_str(
+            &format!(
+                r#"{{"name": "user {i}", "age": {i}, "bio": "{}", "tags": ["t{i}", "x"]}}"#,
+                "b".repeat(8 << 10)
+            ),
+            users.clone(),
+        )
         .unwrap();
         ids.push(mutator.create("Users", doc).await.unwrap().doc_id);
     }
@@ -100,7 +104,9 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         txn.delete(&key).await.unwrap();
     }
     for (key, value) in raw(&store, b"d/d/").await {
-        let doc = Document::from_storage_cbor(&value).unwrap();
+        let doc =
+            crdt::stored::document_from_storage(&value, users.clone(), &crdt::Crdts::default())
+                .unwrap();
         txn.set(&key, &doc.to_cbor().unwrap()).await.unwrap();
     }
     txn.delete(&[b"s", DOCUMENT_FORMAT_KEY].concat())
@@ -167,6 +173,10 @@ impl Sealed for CutAfter {}
 
 #[async_trait]
 impl Store for CutAfter {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -266,8 +276,19 @@ fn a_document_that_would_read_differently_stays_whole() {
         let (ids, _) = legacy_store(dir.path()).await;
         let store = RegolithStore::open(dir.path()).unwrap();
         let (key, value) = raw(&store, b"d/d/").await.remove(0);
-        let mut doc = Document::from_storage_cbor(&value).unwrap();
-        doc.set("retired", NormalValue::String("kept".into()));
+        let scratch = DB::open(RegolithStore::in_memory().unwrap()).await.unwrap();
+        scratch
+            .create_collections_atomic(query::parse_sdl(SDL).unwrap())
+            .await
+            .unwrap();
+        let users = scratch
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let mut doc =
+            crdt::stored::document_from_storage(&value, users, &crdt::Crdts::default()).unwrap();
+        doc.set_unchecked("retired".to_string(), NormalValue::String("kept".into()));
         let whole = doc.to_cbor().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
         txn.set(&key, &whole).await.unwrap();

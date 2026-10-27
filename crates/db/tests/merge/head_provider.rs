@@ -37,9 +37,14 @@ fn batch_create_docs_expose_composite_heads() {
             "v1",
             "col-transcript",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
-                FieldDescription::new("3", "idx", FieldKind::int()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
             ],
         ))
         .await
@@ -47,9 +52,9 @@ fn batch_create_docs_expose_composite_heads() {
 
         let mutator = AutoCommitMutator::new(db.clone());
         let docs = vec![
-            make_transcript("first", 1),
-            make_transcript("second", 2),
-            make_transcript("third", 3),
+            make_transcript(&db, "first", 1),
+            make_transcript(&db, "second", 2),
+            make_transcript(&db, "third", 3),
         ];
         let results = mutator.create_many("Transcript", docs).await.unwrap();
         assert_eq!(results.len(), 3);
@@ -78,9 +83,14 @@ fn falls_back_to_priority_index_when_composite_head_entry_is_missing() {
             "v1",
             "col-transcript",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
-                FieldDescription::new("3", "idx", FieldKind::int()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
             ],
         ))
         .await
@@ -88,7 +98,7 @@ fn falls_back_to_priority_index_when_composite_head_entry_is_missing() {
 
         let mutator = AutoCommitMutator::new(db.clone());
         let result = mutator
-            .create_many("Transcript", vec![make_transcript("first", 1)])
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
             .await
             .unwrap()
             .pop()
@@ -118,9 +128,14 @@ fn falls_back_to_blockstore_scan_when_head_indexes_are_missing() {
             "v1",
             "col-transcript",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
-                FieldDescription::new("3", "idx", FieldKind::int()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
             ],
         ))
         .await
@@ -128,7 +143,7 @@ fn falls_back_to_blockstore_scan_when_head_indexes_are_missing() {
 
         let mutator = AutoCommitMutator::new(db.clone());
         let result = mutator
-            .create_many("Transcript", vec![make_transcript("first", 1)])
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
             .await
             .unwrap()
             .pop()
@@ -166,7 +181,7 @@ fn falls_back_to_ownership_index_when_head_indexes_are_missing() {
 
         let block = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 7,
                 status: 1,
             }),
@@ -214,9 +229,14 @@ async fn doc_short_id_for(db: &Arc<DB<RegolithStore>>, doc_id: &str) -> u64 {
         .doc_short_id
 }
 
-fn make_transcript(body: &str, idx: i64) -> Document {
-    let mut doc = Document::new();
-    doc.set("body", body.to_string());
-    doc.set("idx", idx);
+fn make_transcript(db: &Arc<DB<RegolithStore>>, body: &str, idx: i64) -> Document {
+    let transcript = db
+        .get_collection("Transcript")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    let mut doc = Document::new(transcript);
+    doc.set("body", body.to_string()).unwrap();
+    doc.set("idx", idx).unwrap();
     doc
 }

@@ -26,15 +26,15 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use axum::extract::{MatchedPath, Request};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tower::{Layer, Service, ServiceExt};
 
+use crate::error::pool_failure;
+
 /// The route prefixes, under each API prefix (`go_paths::API_PREFIXES`),
 /// whose requests run on the pool.
-pub const ON_POOL: [&str; 10] = [
+pub const ON_POOL: [&str; 9] = [
     "/collections",
-    "/index",
     "/backup",
     "/views",
     "/view",
@@ -162,14 +162,7 @@ where
         Box::pin(async move {
             match workers::run_on(Some(&pool), target, move || inner.oneshot(request)).await {
                 Ok(response) => response,
-                Err(error) => {
-                    tracing::warn!(route = %path, %error, "a request did not run on the worker pool");
-                    Ok((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "the node is shutting down; try again",
-                    )
-                        .into_response())
-                }
+                Err(error) => Ok(pool_failure(&path, error).into_response()),
             }
         })
     }
@@ -184,7 +177,7 @@ mod tests {
         for path in [
             "/api/v0/collections",
             "/api/v0/collections/{name}/document/{docID}",
-            "/api/v0/index",
+            "/api/v0/collections/{name}/indexes",
             "/api/v0/backup/export",
             "/api/v0/view/refresh",
             "/api/v0/acp/node/status",

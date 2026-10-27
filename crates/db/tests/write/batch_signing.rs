@@ -16,8 +16,8 @@ fn create_many_collects_field_and_composite_cids_for_both_documents() {
             .create_many(
                 "TestDoc",
                 vec![
-                    Document::from_json_str(r#"{"x":1}"#).unwrap(),
-                    Document::from_json_str(r#"{"x":2}"#).unwrap(),
+                    Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
+                    Document::from_json_str(r#"{"x":2}"#, test_collection()).unwrap(),
                 ],
             )
             .await;
@@ -53,18 +53,18 @@ where
 }
 
 #[test]
-fn create_many_rollback_collects_no_cids() {
+fn create_many_discard_collects_no_cids() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
         db.create_collection(test_collection()).await.unwrap();
         let mutator = AutoCommitMutator::new(db);
-        let collected = collect_failed_write("create-many-rollback", || async {
+        let collected = collect_failed_write("create-many-discard", || async {
             mutator
                 .create_many(
                     "TestDoc",
                     vec![
-                        Document::from_json_str(r#"{"x":1}"#).unwrap(),
-                        Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                        Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
+                        Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
                     ],
                 )
                 .await
@@ -77,14 +77,14 @@ fn create_many_rollback_collects_no_cids() {
 }
 
 #[test]
-fn create_rollback_collects_no_cids() {
+fn create_discard_collects_no_cids() {
     workers::block_on(async {
         let (db, _) = make_test_db_with_bus().await;
         db.create_collection(test_collection()).await.unwrap();
         let mutator = AutoCommitMutator::new(db);
-        let doc = || Document::from_json_str(r#"{"x":1}"#).unwrap();
+        let doc = || Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap();
         mutator.create("TestDoc", doc()).await.unwrap();
-        let collected = collect_failed_write("create-rollback", || async {
+        let collected = collect_failed_write("create-discard", || async {
             mutator.create("TestDoc", doc()).await.is_err()
         })
         .await;

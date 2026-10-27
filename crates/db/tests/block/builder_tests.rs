@@ -22,16 +22,18 @@ fn make_test_blockstore() -> Arc<DefraBlockstore<RegolithStore>> {
 #[test]
 fn test_build_blocks_creates_proper_structure() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
-        doc.set("age", NormalValue::Int(30));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
 
         let blockstore = make_test_blockstore();
-        let schema_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
+        let collection_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
-            &crate::common::schema::version(schema_version_id),
+            &crate::common::schema::version(collection_version_id),
             &blockstore,
         )
         .await
@@ -57,11 +59,13 @@ fn test_build_blocks_creates_proper_structure() {
 #[test]
 fn test_build_blocks_derives_doc_id_from_genesis_cid() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Dana".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Dana".to_string()))
+            .unwrap();
         let blockstore = make_test_blockstore();
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("schema-v1"),
             &blockstore,
@@ -77,15 +81,17 @@ fn test_build_blocks_derives_doc_id_from_genesis_cid() {
 #[test]
 fn test_field_block_contains_lww_delta() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Bob".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
 
         let blockstore = make_test_blockstore();
-        let schema_version_id = "schema-v1";
+        let collection_version_id = "schema-v1";
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
-            &crate::common::schema::version(schema_version_id),
+            &crate::common::schema::version(collection_version_id),
             &blockstore,
         )
         .await
@@ -100,7 +106,7 @@ fn test_field_block_contains_lww_delta() {
         match &field_block.delta {
             CrdtDelta::Lww(payload) => {
                 assert_eq!(payload.field_name, "name");
-                assert_eq!(payload.schema_version_id, schema_version_id);
+                assert_eq!(payload.collection_version_id, collection_version_id);
                 assert_eq!(payload.priority, 1);
             }
             _ => panic!("Expected LWW delta"),
@@ -112,13 +118,15 @@ fn test_field_block_contains_lww_delta() {
 #[test]
 fn test_composite_block_has_field_links() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Charlie".to_string()));
-        doc.set("age", NormalValue::Int(25));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        doc.set("name", NormalValue::String("Charlie".to_string()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(25)).unwrap();
 
         let blockstore = make_test_blockstore();
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("schema-v1"),
             &blockstore,
@@ -153,8 +161,9 @@ fn test_composite_block_has_field_links() {
 
 #[test]
 fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries() {
-    let mut doc = Document::new();
-    doc.set("secret", NormalValue::String("classified".to_string()));
+    let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+    doc.set("secret", NormalValue::String("classified".to_string()))
+        .unwrap();
 
     let enc = EncryptionConfig {
         encrypt_doc: false,
@@ -162,9 +171,10 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
     };
 
     let computed = compute_document_blocks(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version("schema-v1"),
-        DocStorageIdentity::new(1, 1),
+        DocRef::new(1, 1),
         Some(&enc),
         None,
     )
@@ -199,7 +209,7 @@ fn test_compute_signature_rejects_local_secp256r1_block_signing() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
+            collection_version_id: "schema-v1".to_string(),
             status: 1,
             priority: 1,
         }),
@@ -248,7 +258,7 @@ fn test_compute_signature_refuses_remote_secp256r1_without_the_gate() {
 
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 status: 1,
                 priority: 1,
             }),
@@ -287,7 +297,7 @@ fn test_compute_signature_signs_remote_secp256r1_once_the_gate_is_open() {
 
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 status: 1,
                 priority: 1,
             }),
@@ -361,7 +371,7 @@ fn test_compute_signature_passes_signing_authorization_to_remote_signer() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
+            collection_version_id: "schema-v1".to_string(),
             status: 1,
             priority: 1,
         }),

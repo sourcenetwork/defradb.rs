@@ -236,10 +236,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Apply groupBy if present - this changes how we process commits
         // Each entry is (representative_commit, all_commits_in_group)
-        let grouped: Option<Vec<(document::Document, Vec<document::Document>)>> =
+        let grouped: Option<Vec<(document::CommitRow, Vec<document::CommitRow>)>> =
             if let Some(ref group_by) = select.group_by {
                 if !group_by.fields.is_empty() {
-                    let mut groups: Vec<(String, document::Document, Vec<document::Document>)> =
+                    let mut groups: Vec<(String, document::CommitRow, Vec<document::CommitRow>)> =
                         Vec::new();
                     let mut group_map: RapidHashMap<String, usize> = RapidHashMap::new();
 
@@ -268,7 +268,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             };
 
         // Get the list of commits to process (either grouped representatives or all commits)
-        let mut work_items: Vec<(document::Document, Option<Vec<document::Document>>)> =
+        let mut work_items: Vec<(document::CommitRow, Option<Vec<document::CommitRow>>)> =
             if let Some(grouped) = grouped {
                 grouped
                     .into_iter()
@@ -311,9 +311,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         if select.group_by.is_none() && is_commit_aggregate_only_selection(select) {
-            let aggregate_docs: Vec<document::Document> =
+            let aggregate_docs: Vec<document::CommitRow> =
                 work_items.into_iter().map(|(commit, _)| commit).collect();
-            work_items = vec![(document::Document::new(), Some(aggregate_docs))];
+            work_items = vec![(document::CommitRow::default(), Some(aggregate_docs))];
         }
 
         // Build results
@@ -359,7 +359,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 // Build array of group documents with requested fields
                                 let group_array: Vec<JsonValue> = docs
                                     .iter()
-                                    .map(|doc: &document::Document| {
+                                    .map(|doc: &document::CommitRow| {
                                         let mut nested_obj = serde_json::Map::new();
                                         for nested_field in &nested.fields {
                                             if let Requestable::Field(nf) = nested_field {

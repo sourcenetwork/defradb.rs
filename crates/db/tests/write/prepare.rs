@@ -28,7 +28,7 @@ fn a_signed_create_without_a_kms_commits_the_blocks_prepared_for_it() {
         let prepared = mutator
             .prepare_write(
                 "TestDoc",
-                Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
                 None,
                 None,
             )

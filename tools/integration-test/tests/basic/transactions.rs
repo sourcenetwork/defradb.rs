@@ -12,7 +12,8 @@ async fn txn_schema_add_and_mutate(cluster: TestCluster) {
     // 2. Add a schema within the transaction via HTTP
     let http_client = reqwest::Client::new();
     let resp = http_client
-        .post(format!("{}/api/v0/tx/{}/schema", api_url, tx_id))
+        .post(format!("{}/api/v0/collections", api_url))
+        .header("x-defradb-tx", tx_id.to_string())
         .body("type Widget { name: String  weight: Int }")
         .send()
         .await
@@ -209,7 +210,8 @@ async fn update_with_filter_sees_txn_scoped_state(cluster: TestCluster) {
 
     let http_client = reqwest::Client::new();
     let resp = http_client
-        .post(format!("{}/api/v0/tx/{}/schema", api_url, tx_id))
+        .post(format!("{}/api/v0/collections", api_url))
+        .header("x-defradb-tx", tx_id.to_string())
         .body("type TxnFilterUser { name: String  age: Int }")
         .send()
         .await

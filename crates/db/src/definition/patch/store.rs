@@ -300,8 +300,8 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let committed_migration = if let Some(mut config) = migration {
-            config.source_schema_version_id = old_version_id.to_string();
-            config.destination_schema_version_id = new_version_id.clone();
+            config.source_collection_version_id = old_version_id.to_string();
+            config.destination_collection_version_id = new_version_id.clone();
 
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
             let transform_id = txn_lens_store.add(config.clone()).await?;

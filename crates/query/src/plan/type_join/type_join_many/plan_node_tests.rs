@@ -198,9 +198,19 @@ fn make_parent_collection() -> CollectionVersion {
         "v1",
         "users-v1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "posts", FieldKind::relation("posts", true))
-                .with_relation_name("author_posts"),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "posts",
+                FieldKind::relation("posts", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts"),
         ],
     )
 }
@@ -211,14 +221,34 @@ fn make_child_collection() -> CollectionVersion {
         "v1",
         "posts-v1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
-            FieldDescription::new("3", "author", FieldKind::relation("users", false))
-                .with_relation_name("author_posts")
-                .as_primary(),
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("users", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
         ],
     )
 }
@@ -258,10 +288,9 @@ fn make_child_doc(doc_id: &str, title: &str, parent_id: &str) -> Doc {
 }
 
 fn make_child_storage_doc(doc_id: &str, title: &str, parent_id: &str) -> Document {
-    Document::from_json_str(&format!(
+    crate::test_utils::doc_from_json(&format!(
         r#"{{"_docID":"{doc_id}","title":"{title}","_authorID":"{parent_id}"}}"#
     ))
-    .unwrap()
 }
 
 async fn build_join(parent_scoped: bool) -> TypeJoinMany {

@@ -60,16 +60,40 @@ impl PooledDocPusher {
             call(inner)
         })
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "a P2P storage call did not run on the worker pool");
-            P2PError::internal("the node is shutting down; try again")
-        })?
+        .map_err(|error| P2PError::internal(error.report("P2P storage call")))?
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl TransportDocPusher for PooledDocPusher {
+    async fn prepare_replicator_install(
+        &self,
+        request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        let request = request.clone();
+        self.on_pool(move |inner| async move { inner.prepare_replicator_install(&request).await })
+            .await
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        plan: &crate::ReplicatorInstall,
+        error: Option<String>,
+        bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        let plan = plan.clone();
+        self.on_pool(move |inner| async move {
+            inner.finish_replicator_install(&plan, error, bus).await
+        })
+        .await
+    }
+
+    async fn recover_replicator_installs(&self) -> P2PResult<()> {
+        self.on_pool(|inner| async move { inner.recover_replicator_installs().await })
+            .await
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         self.on_pool(|inner| async move { inner.push_retry_marker_stats().await })
             .await

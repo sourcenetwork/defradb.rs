@@ -10,16 +10,20 @@ use crate::DB;
 use storage::RegolithStore;
 
 fn users(version_id: &str) -> Collection {
-    Collection::new(schema::CollectionVersion::new(
-        "Users",
-        version_id,
-        "users-collection",
-        vec![schema::FieldDescription::new(
-            "1",
-            "name",
-            schema::FieldKind::string(),
-        )],
-    ))
+    Collection::new(
+        schema::CollectionVersion::new(
+            "Users",
+            version_id,
+            "users-collection",
+            vec![schema::FieldDescription::new(
+                "1",
+                "name",
+                schema::FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 fn fetcher() -> (

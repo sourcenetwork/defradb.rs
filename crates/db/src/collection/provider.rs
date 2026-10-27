@@ -127,8 +127,12 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
                             .await
                             .map_err(|e| QueryError::execution(e.to_string()))?;
                         return Ok(Some(
-                            collection::Collection::with_index_actions(schema, &statuses)
-                                .schema_for_queries(),
+                            collection::Collection::with_index_actions(
+                                schema,
+                                &statuses,
+                                systemstore.crdts().clone(),
+                            )
+                            .schema_for_queries(),
                         ));
                     }
                 };
@@ -148,8 +152,12 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
                         .await
                         .map_err(|e| QueryError::execution(e.to_string()))?;
                     return Ok(Some(
-                        collection::Collection::with_index_actions(schema, &statuses)
-                            .schema_for_queries(),
+                        collection::Collection::with_index_actions(
+                            schema,
+                            &statuses,
+                            systemstore.crdts().clone(),
+                        )
+                        .schema_for_queries(),
                     ));
                 }
             }

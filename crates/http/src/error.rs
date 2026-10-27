@@ -40,6 +40,9 @@ pub enum HttpError {
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    #[error("storage full: {0}")]
+    StorageFull(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 
@@ -57,6 +60,8 @@ pub enum HttpError {
 #[derive(Debug, Clone, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<&'static str>,
 }
 
 impl IntoResponse for HttpError {
@@ -72,13 +77,23 @@ impl IntoResponse for HttpError {
             HttpError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             HttpError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             HttpError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
+            HttpError::StorageFull(msg) => (StatusCode::INSUFFICIENT_STORAGE, msg.clone()),
             HttpError::NotAcceptable(msg) => (StatusCode::NOT_ACCEPTABLE, msg.clone()),
             HttpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             HttpError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
             HttpError::QueryExecution(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
-        (status, Json(ErrorResponse { error: message })).into_response()
+        let code = matches!(self, Self::StorageFull(_))
+            .then_some(query::executor::STORAGE_FULL_ERROR_CODE);
+        (
+            status,
+            Json(ErrorResponse {
+                error: message,
+                code,
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -216,6 +231,7 @@ fn http_error_from_query_error(err: &QueryError) -> HttpError {
             HttpError::NotFound(message)
         }
         QueryError::Storage(source) if source.is_not_found() => HttpError::NotFound(message),
+        QueryError::Storage(source) if source.is_storage_full() => HttpError::StorageFull(message),
         QueryError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
         QueryError::Storage(source) if source.is_unique_constraint_violation() => {
             HttpError::Conflict(message)
@@ -239,6 +255,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::DocumentNotFound(_)
         | DbError::TransactionNotFound(_) => HttpError::NotFound(message),
         DbError::Storage(source) if source.is_not_found() => HttpError::NotFound(message),
+        error if error.is_storage_full() => HttpError::StorageFull(message),
         DbError::CollectionAlreadyExists(_) => HttpError::Conflict(message),
         DbError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
         DbError::Storage(source) if source.is_unique_constraint_violation() => {
@@ -268,6 +285,16 @@ pub(crate) fn http_error_from_backend_message(message: String) -> HttpError {
     }
 }
 
+/// The answer to a request whose work on the worker pool did not finish: a
+/// retry while the pool shuts down, an internal error otherwise (a panic).
+pub(crate) fn pool_failure(route: &str, error: workers::Error) -> HttpError {
+    let message = error.report(route).into();
+    match error {
+        workers::Error::ShutDown => HttpError::ServiceUnavailable(message),
+        _ => HttpError::Internal(message),
+    }
+}
+
 impl From<DbError> for HttpError {
     fn from(err: DbError) -> Self {
         http_status_from_db_error(&err)
@@ -282,6 +309,10 @@ impl From<TransactionError> for HttpError {
             TransactionError::NotFound(_) => HttpError::NotFound(message),
             TransactionError::AlreadyFinalized(_) => HttpError::Conflict(message),
             TransactionError::Execution(message) => http_error_from_backend_message(message),
+            TransactionError::Storage(cause) if cause.is_storage_full() => {
+                HttpError::StorageFull(message)
+            }
+            TransactionError::Storage(_) => HttpError::Internal(message),
             TransactionError::Conflict(_) => HttpError::TransactionConflict,
             TransactionError::LockPoisoned(_) => HttpError::Internal(message),
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
@@ -460,5 +491,46 @@ mod tests {
         for (error, expected) in cases {
             assert_eq!(status(HttpError::from(error)), expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_failure_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_storage_full_is_structured_and_not_a_conflict() {
+        workers::block_on(async {
+            let cause = storage::Error::from(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "localized failure",
+            ));
+            let response = HttpError::from(TransactionError::Storage(cause)).into_response();
+            assert_eq!(response.status(), StatusCode::INSUFFICIENT_STORAGE);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], query::executor::STORAGE_FULL_ERROR_CODE);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn other_http_errors_keep_the_existing_wire_shape() {
+        let response = ErrorResponse {
+            error: "failed".into(),
+            code: None,
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({"error": "failed"})
+        );
+        assert!(matches!(
+            HttpError::from(TransactionError::Storage(storage::Error::Backend(
+                "No space left on device".into()
+            ))),
+            HttpError::Internal(_)
+        ));
     }
 }

@@ -332,8 +332,8 @@ pub trait MutationBatchController: MaybeSendSync {
                 Ok(value)
             }
             Err(error) => {
-                if let Err(rollback_error) = self.rollback().await {
-                    tracing::warn!(error = %rollback_error, "Failed to rollback implicit mutation batch");
+                if let Err(discard_error) = self.discard().await {
+                    tracing::warn!(error = %discard_error, "Failed to discard implicit mutation batch");
                 }
                 Err(error)
             }
@@ -344,7 +344,7 @@ pub trait MutationBatchController: MaybeSendSync {
     async fn commit(&self) -> Result<()>;
 
     /// Roll back the shared transaction backing this batch.
-    async fn rollback(&self) -> Result<()>;
+    async fn discard(&self) -> Result<()>;
 }
 
 /// One execution of the parsed mutation sequence with an attempt-local mutator
@@ -423,8 +423,8 @@ impl MutationBatch {
     }
 
     /// Roll back the batch transaction.
-    pub async fn rollback(&self) -> Result<()> {
-        self.controller.rollback().await
+    pub async fn discard(&self) -> Result<()> {
+        self.controller.discard().await
     }
 }
 
@@ -466,6 +466,10 @@ impl MutationBatch {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocMutator: MaybeSendSync {
+    /// The CRDT types of the node whose documents this mutator writes: each
+    /// field's write goes through its type.
+    fn crdts(&self) -> crdt::Crdts;
+
     /// Whether conflicts from mutation batches returned by this mutator are
     /// retried by the storage attempt driver.
     fn engine_retries_batches(&self) -> bool {

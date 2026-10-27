@@ -20,7 +20,7 @@ pub use collection::write_collection_block;
 pub(crate) use collection::write_collection_block_with_inputs;
 pub(crate) use compute::compute_document_blocks_with_inputs;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};
-pub(crate) use write::inherited_encryption_policy;
+pub(crate) use write::{fresh_nonce, inherited_encryption_policy};
 pub use write::{write_delete_block, write_document_blocks};
 pub(crate) use write::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 
@@ -35,9 +35,8 @@ use cid::Cid;
 use crypto::PrivateKey;
 use datastore::NamespaceView;
 use defra_core::block::{
-    generate_cid_from_bytes, Block, CollectionDeltaPayload, CompositeDeltaPayload,
-    CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, LwwDeltaPayload, Signature,
-    SignatureHeader,
+    generate_cid_from_bytes, Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta,
+    DAGLink, Encryption, Signature, SignatureHeader,
 };
 use defra_core::cid_encoding::cid_bytes;
 use defra_core::encryption::EncryptionConfig;
@@ -45,7 +44,7 @@ use defra_core::signing::SigningConfig;
 use document::{DocID, Document, NormalValue};
 use schema::CollectionVersion;
 use storage::corekv::Key;
-use storage::keys::doc_id_index::DocRef;
+pub use storage::keys::doc_id_index::DocRef;
 use storage::keys::headstore::HeadstorePriorityKey;
 
 #[derive(Debug, thiserror::Error)]
@@ -89,31 +88,6 @@ impl BuildError {
                 query::error::QueryError::execution(format!("{context}: {message}"))
             }
         }
-    }
-}
-
-/// Node-local storage identity of a document.
-///
-/// Storage keys are built from the doc short ID; the public DocID exists
-/// only after the genesis composite block CID is known.
-#[derive(Debug, Clone, Copy)]
-pub struct DocStorageIdentity {
-    pub collection_short_id: u32,
-    pub doc_short_id: u64,
-}
-
-impl DocStorageIdentity {
-    pub fn new(collection_short_id: u32, doc_short_id: u64) -> Self {
-        Self {
-            collection_short_id,
-            doc_short_id,
-        }
-    }
-
-    /// Encoded DocRef, used as the encryption key derivation identity
-    /// (mirrors Go's `EncodeDocRef` encryptor cache key).
-    pub fn doc_ref_bytes(&self) -> Vec<u8> {
-        DocRef::new(self.collection_short_id, self.doc_short_id).encode()
     }
 }
 
@@ -196,7 +170,7 @@ pub fn compute_signature(
     // Only sign first field blocks (priority <= 1) and composite blocks.
     // Higher-priority field blocks are not signed: their integrity is
     // guaranteed by the signature on the parent composite block.
-    let is_field = matches!(&block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_));
+    let is_field = block.delta.field().is_some();
     if is_field && block.delta.priority() > 1 {
         return Ok(None);
     }
@@ -294,7 +268,7 @@ fn compute_signature_prepared(
     if signer.remote_signer.is_none() || inputs.is_none() {
         return compute_signature(block, signer).map_err(BuildError::Message);
     }
-    let is_field = matches!(&block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_));
+    let is_field = block.delta.field().is_some();
     if is_field && block.delta.priority() > 1 {
         return Ok(None);
     }
@@ -383,6 +357,20 @@ pub struct BlockResult {
     /// CIDs of all Encryption blocks created (mapped to the owning DocID
     /// alongside composite + field blocks, mirroring Go's save()).
     pub encryption_cids: Vec<Cid>,
+}
+
+/// The CRDT type of a document field, which decides what its block carries.
+pub(crate) fn field_crdt_of<'crdts>(
+    crdts: &'crdts crdt::Crdts,
+    doc: &Document,
+    field_name: &str,
+) -> Result<crdt::CrdtRef<'crdts>, String> {
+    let ctype = doc
+        .crdt_type(field_name)
+        .ok_or_else(|| format!("field {field_name} is not in the collection definition"))?;
+    crdts
+        .field(ctype)
+        .ok_or_else(|| format!("field {field_name} has no CRDT type that writes blocks ({ctype})"))
 }
 
 /// Encode a NormalValue as CBOR bytes.
@@ -506,7 +494,7 @@ mod prepared_signature_tests {
 
     fn block(parent: Option<Cid>) -> Block {
         let payload = CompositeDeltaPayload {
-            schema_version_id: "schema-v1".into(),
+            collection_version_id: "schema-v1".into(),
             priority: 2,
             status: 0,
         };
@@ -572,9 +560,9 @@ mod prepared_signature_tests {
 
     #[test]
     fn changed_kms_encryption_scope_requests_a_fresh_key() {
-        let identity = DocStorageIdentity::new(1, 2);
-        let mut doc = Document::new();
-        doc.set("secret", "value");
+        let identity = DocRef::new(1, 2);
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", "value").unwrap();
         let mut prepared = document::WritePreparation::new(1, 2);
         prepared.set_requires_kms_keys(true);
         prepared.insert_scoped_key("secret".into(), Cid::default(), [7; 32], None);
@@ -589,6 +577,7 @@ mod prepared_signature_tests {
         let memo = query::prepared::PreparedInputMemo::default();
         let schema = CollectionVersion::new("Users", "schema-v1", "users", vec![]);
         let error = compute_document_blocks_with_inputs(
+            &crdt::Crdts::default(),
             &doc,
             &schema,
             identity,
@@ -607,7 +596,7 @@ mod prepared_signature_tests {
             crate::write::prepare::PreparedKmsOperation::Generate {
                 doc_id,
                 field: Some(field),
-            } if doc_id == hex::encode(identity.doc_ref_bytes()) && field == "secret"
+            } if doc_id == hex::encode(identity.encode()) && field == "secret"
         ));
     }
 }

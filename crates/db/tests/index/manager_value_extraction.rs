@@ -31,6 +31,7 @@ fn collection() -> CollectionVersion {
             "1",
             "created_at",
             FieldKind::datetime(),
+            schema::CType::LwwRegister,
         )],
     );
     c.indexes = vec![datetime_index()];
@@ -48,11 +49,12 @@ fn datetime_field_stored_as_string_is_indexed_as_time() {
     let idx = datetime_index();
     let mgr = IndexManager::from_collection(1, &schema).unwrap();
 
-    let mut doc = Document::new();
+    let mut doc = Document::new(schema.clone());
     doc.set(
         "created_at",
         NormalValue::String("2026-05-29T13:06:28Z".to_string()),
-    );
+    )
+    .unwrap();
 
     let rows = mgr.extract_index_values(&doc, &idx, &schema).unwrap();
     assert_eq!(rows.len(), 1);
@@ -70,7 +72,12 @@ fn string_field_with_date_like_value_is_left_as_string() {
         "CodingSession",
         "v1",
         "coll_cs",
-        vec![FieldDescription::new("1", "label", FieldKind::string())],
+        vec![FieldDescription::new(
+            "1",
+            "label",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        )],
     );
     let idx = IndexDescription {
         name: "idx_label".to_string(),
@@ -86,11 +93,12 @@ fn string_field_with_date_like_value_is_left_as_string() {
     schema.indexes = vec![idx.clone()];
     let mgr = IndexManager::from_collection(1, &schema).unwrap();
 
-    let mut doc = Document::new();
+    let mut doc = Document::new(schema.clone());
     doc.set(
         "label",
         NormalValue::String("2026-05-29T13:06:28Z".to_string()),
-    );
+    )
+    .unwrap();
 
     let rows = mgr.extract_index_values(&doc, &idx, &schema).unwrap();
     assert!(

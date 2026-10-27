@@ -32,6 +32,7 @@
 //! top `K` next to the store, so a query process never holds the corpus and
 //! its RSS is the index's.
 
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -129,7 +130,14 @@ fn truth(vectors: &[Vec<f32>], queries: &[Vec<f32>]) -> Vec<Vec<u64>> {
     })
 }
 
-async fn write(store: &RegolithStore, index: u32, nodes: &[Node], aux: &Aux, meta: Option<Meta>) {
+async fn write(
+    store: &RegolithStore,
+    index: u32,
+    nodes: &[Node],
+    aux: &Aux,
+    log: &[Vec<u8>],
+    meta: Option<Meta>,
+) {
     for batch in nodes.chunks(5_000) {
         let mut txn = store.new_txn(false).await.unwrap();
         let mut kv = KvNodeStore::new(&mut txn, COLLECTION, index, 0);
@@ -146,6 +154,14 @@ async fn write(store: &RegolithStore, index: u32, nodes: &[Node], aux: &Aux, met
         }
         txn.commit().await.unwrap();
     }
+    for batch in log.chunks(5_000) {
+        let mut txn = store.new_txn(false).await.unwrap();
+        let mut kv = KvNodeStore::new(&mut txn, COLLECTION, index, 0);
+        for entry in batch {
+            kv.append_pending_log(entry).await.unwrap();
+        }
+        txn.commit().await.unwrap();
+    }
     if let Some(meta) = meta {
         let mut txn = store.new_txn(false).await.unwrap();
         let mut kv = KvNodeStore::new(&mut txn, COLLECTION, index, 0);
@@ -154,8 +170,9 @@ async fn write(store: &RegolithStore, index: u32, nodes: &[Node], aux: &Aux, met
     }
 }
 
-/// Every node, every aux entry and the meta of an index built in memory.
-async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Option<Meta>) {
+/// Every node, every aux entry, the pending log in order, and the meta of an
+/// index built in memory.
+async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Vec<Vec<u8>>, Option<Meta>) {
     let mut nodes = Vec::new();
     mem.iterate_nodes(|node| {
         nodes.push(node);
@@ -172,7 +189,14 @@ async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Option<Meta>) {
         .await
         .unwrap();
     }
-    (nodes, aux, mem.get_meta().await.unwrap())
+    let mut log = Vec::new();
+    mem.iterate_pending_log(|_, entry| {
+        log.push(entry.to_vec());
+        Ok(ControlFlow::Continue(()))
+    })
+    .await
+    .unwrap();
+    (nodes, aux, log, mem.get_meta().await.unwrap())
 }
 
 /// Writes the graph in both layouts: records that carry their neighbours'
@@ -215,7 +239,7 @@ async fn build_diskann(
         start.elapsed()
     );
 
-    let (nodes, aux, _) = snapshot(engine.store()).await;
+    let (nodes, aux, log, _) = snapshot(engine.store()).await;
     drop(engine);
     let (records, shared): (Aux, Aux) = aux
         .into_iter()
@@ -246,8 +270,8 @@ async fn build_diskann(
 
     let mut with_codes = shared;
     with_codes.extend(records);
-    write(store, RECORDS, &nodes, &with_codes, None).await;
-    write(resident_store, RESIDENT, &nodes, &resident, None).await;
+    write(store, RECORDS, &nodes, &with_codes, &log, None).await;
+    write(resident_store, RESIDENT, &nodes, &resident, &log, None).await;
 }
 
 async fn build_hnsw(vectors: &[Vec<f32>], store: &RegolithStore) {
@@ -262,8 +286,8 @@ async fn build_hnsw(vectors: &[Vec<f32>], store: &RegolithStore) {
         engine.insert(NodeId(i as u64 + 1), v).await.unwrap();
     }
     eprintln!("BUILD hnsw in {:.1?}", start.elapsed());
-    let (nodes, aux, meta) = snapshot(engine.store()).await;
-    write(store, HNSW, &nodes, &aux, meta).await;
+    let (nodes, aux, log, meta) = snapshot(engine.store()).await;
+    write(store, HNSW, &nodes, &aux, &log, meta).await;
 }
 
 async fn build_ivfpq(vectors: &[Vec<f32>], store: &RegolithStore) {
@@ -280,8 +304,8 @@ async fn build_ivfpq(vectors: &[Vec<f32>], store: &RegolithStore) {
     }
     engine.build().await.unwrap();
     eprintln!("BUILD ivfpq in {:.1?}", start.elapsed());
-    let (nodes, aux, meta) = snapshot(engine.store()).await;
-    write(store, IVFPQ, &nodes, &aux, meta).await;
+    let (nodes, aux, log, meta) = snapshot(engine.store()).await;
+    write(store, IVFPQ, &nodes, &aux, &log, meta).await;
 }
 
 async fn build(n: usize, q: usize, dims: usize, dir: &Path) {

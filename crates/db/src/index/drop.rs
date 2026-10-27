@@ -103,6 +103,10 @@ where
                 })
             }
         };
+        self.evict_index_caches(
+            dropped.progress.collection_short_id,
+            dropped.progress.index.id,
+        );
         self.publish_started_action(&dropped.lease);
         let (done, outcome) = oneshot::channel();
         let db = Arc::clone(self);
@@ -332,7 +336,11 @@ where
             let io = retry.begin_attempt_io()?;
             let txn = self
                 .db
-                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(io, 0));
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.db.crdts().clone(),
+                ));
             let dropped = self
                 .db
                 .stage_index_drop(&txn, &self.collection_name, &self.index_name)

@@ -57,6 +57,10 @@ impl storage::corekv::private::Sealed for RacingStore {}
 
 #[async_trait]
 impl Store for RacingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }

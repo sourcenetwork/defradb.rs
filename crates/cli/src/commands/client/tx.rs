@@ -21,7 +21,7 @@ pub enum TxCommand {
     New(TxNewArgs),
     /// Commit a transaction
     Commit(TxCommitArgs),
-    /// Discard (rollback) a transaction
+    /// Discard a transaction
     Discard(TxDiscardArgs),
 }
 
@@ -92,7 +92,7 @@ impl TxDiscardArgs {
         let client = HttpClient::new(&ctx.url)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
-        client.tx_rollback(&self.txn_id).await?;
+        client.tx_discard(&self.txn_id).await?;
         Ok(())
     }
 }

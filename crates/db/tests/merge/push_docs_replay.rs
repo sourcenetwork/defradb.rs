@@ -431,3 +431,336 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
     })
     .unwrap()
 }
+
+#[derive(Clone)]
+pub(super) struct ConnectedPeerTransport {
+    local: PeerId,
+    remote: PeerId,
+    replies: Option<(bool, regolith::sync::BoundedSender<p2p::PushLogRequest>)>,
+    remove_on_reply: Option<Arc<storage::stores::Peerstore<storage::RegolithStore>>>,
+    require_selected_authority: Option<Arc<storage::stores::Peerstore<storage::RegolithStore>>>,
+    before_reply:
+        Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
+    retry_after_ms: Option<u64>,
+}
+
+impl ConnectedPeerTransport {
+    pub(super) fn new(local: &str, remote: &str) -> Self {
+        Self {
+            local: PeerId::new(local.to_string()),
+            remote: PeerId::new(remote.to_string()),
+            replies: None,
+            remove_on_reply: None,
+            require_selected_authority: None,
+            before_reply: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub(super) fn with_replies(
+        mut self,
+        acknowledged: bool,
+        requests: regolith::sync::BoundedSender<p2p::PushLogRequest>,
+    ) -> Self {
+        self.replies = Some((acknowledged, requests));
+        self
+    }
+
+    pub(super) fn removing_subscription_on_reply(
+        mut self,
+        store: Arc<storage::stores::Peerstore<storage::RegolithStore>>,
+    ) -> Self {
+        self.remove_on_reply = Some(store);
+        self
+    }
+
+    pub(super) fn requiring_selected_authority(
+        mut self,
+        store: Arc<storage::stores::Peerstore<storage::RegolithStore>>,
+    ) -> Self {
+        self.require_selected_authority = Some(store);
+        self
+    }
+
+    pub(super) fn with_reply_hook(
+        mut self,
+        hook: Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
+    ) -> Self {
+        self.before_reply = Some(hook);
+        self
+    }
+
+    pub(super) fn with_retry_after(mut self, millis: u64) -> Self {
+        self.retry_after_ms = Some(millis);
+        self
+    }
+}
+
+fn unreachable_transport() -> p2p::Error {
+    p2p::Error::Transport("not reached before the replicator guard in this test".to_string())
+}
+
+#[async_trait::async_trait]
+impl p2p::P2PTransport for ConnectedPeerTransport {
+    type ResponseToken = ();
+
+    fn local_peer_id(&self) -> &PeerId {
+        &self.local
+    }
+
+    fn local_public_key_proto(&self) -> &[u8] {
+        &[]
+    }
+
+    fn sign(&self, _data: &[u8]) -> p2p::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+
+    async fn dial(
+        &self,
+        _peer_id: &PeerId,
+        _addrs: Vec<p2p::transport::PeerAddr>,
+    ) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn disconnect(&self, _peer_id: &PeerId) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn listen(&self, _addr: p2p::transport::PeerAddr) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn connected_peers(&self) -> p2p::Result<Vec<PeerId>> {
+        Ok(vec![self.remote.clone()])
+    }
+
+    async fn listen_addresses(&self) -> p2p::Result<Vec<p2p::transport::PeerAddr>> {
+        Ok(Vec::new())
+    }
+
+    async fn poll_until_connected(&self, _peer_id: &PeerId, _timeout: Duration) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn peer_addresses(&self) -> p2p::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn subscribe(&self, _topic: p2p::DefraTopic) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn unsubscribe(&self, _topic: p2p::DefraTopic) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn publish(
+        &self,
+        _topic: p2p::DefraTopic,
+        _msg: p2p::PushLogBroadcast,
+    ) -> p2p::Result<p2p::transport::MessageId> {
+        Err(unreachable_transport())
+    }
+
+    async fn topic_peers(&self, _topic: p2p::DefraTopic) -> p2p::Result<Vec<PeerId>> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_pushlog_response(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: PushLogReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_two_stream_request(
+        &self,
+        _peer_id: &PeerId,
+        req: p2p::PushLogRequest,
+    ) -> p2p::Result<PushLogReply> {
+        let Some((acknowledged, requests)) = &self.replies else {
+            return Err(unreachable_transport());
+        };
+        if let Some(store) = &self.require_selected_authority {
+            assert!(store
+                .selected_car_root_allowed(self.remote.as_str(), &req.cid)
+                .await
+                .unwrap());
+        }
+        let doc_id = req.doc_id.clone();
+        requests
+            .try_send(req)
+            .expect("bounded test request capture");
+        if let Some(hook) = &self.before_reply {
+            hook(doc_id).await;
+        }
+        if let Some(store) = &self.remove_on_reply {
+            store.delete_replicator(self.remote.as_str()).await.unwrap();
+        }
+        let mut reply = if *acknowledged {
+            PushLogReply::success("selected-transfer")
+        } else {
+            PushLogReply::error("selected-transfer", "receiver refused the head")
+        };
+        reply.retry_after_ms = self.retry_after_ms;
+        Ok(reply)
+    }
+
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: PushLogReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::DocSyncRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: p2p::message::DocSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::BranchableSyncRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: p2p::message::BranchableSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: cid::Cid) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _car_data: Vec<u8>,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: p2p::message::DocSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: p2p::message::BranchableSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_se_artifacts(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::PushSEArtifactsRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn sync_blocks(
+        &self,
+        _root: cid::Cid,
+        _providers: Vec<PeerId>,
+        _missing: Vec<cid::Cid>,
+    ) -> p2p::Result<p2p::QueryId> {
+        Err(unreachable_transport())
+    }
+
+    async fn cancel_sync(&self, _query_id: p2p::QueryId) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn create_replicator(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn delete_replicator(&self, _peer_id: &PeerId) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn list_replicators(&self) -> p2p::Result<Vec<p2p::ReplicatorInfo>> {
+        Err(unreachable_transport())
+    }
+
+    async fn get_replicator(&self, _peer_id: &PeerId) -> p2p::Result<Option<p2p::ReplicatorInfo>> {
+        Err(unreachable_transport())
+    }
+
+    async fn remove_replicator_collections(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn shutdown(&self) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+}
+
+#[test]
+fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
+    workers::block_on(async {
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let db = Arc::new(db::DB::from_arc(store).unwrap());
+        let transport = ConnectedPeerTransport::new("local", "peer-gone");
+        let peer = PeerId::new("peer-gone".to_string());
+
+        let error = db::merge::push_existing_docs(
+            &transport,
+            &db,
+            None,
+            &peer,
+            &["Collection".to_string()],
+            &p2p::ReplicationFilters::new(),
+            db::merge::PushExistingDocsSeOptions::default(),
+            &p2p::EqOnlyFilterMatcher,
+            &p2p::sync::HeadHintCarAuthority::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.contains("removed before existing-document replay"),
+            "unexpected error: {error}"
+        );
+    })
+    .unwrap()
+}

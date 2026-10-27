@@ -15,6 +15,11 @@ use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
 };
 
+enum PushOwnership {
+    Replicator,
+    Selected(RapidHashSet<(String, String)>),
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PushExistingDocsSeOptions<'a> {
     pub encryption_key: Option<&'a [u8]>,
@@ -23,12 +28,12 @@ pub struct PushExistingDocsSeOptions<'a> {
 
 async fn document_matches_filter<R: Reader + ?Sized>(
     datastore: &R,
-    collection_id: &str,
+    collection: &crate::collection::Collection,
     doc_short_id: u64,
     filter: &p2p::ReplicationFilter,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
 ) -> Result<bool, String> {
-    let mut doc_key = format!("/d/{}/", collection_id).into_bytes();
+    let mut doc_key = format!("/d/{}/", collection.collection_id()).into_bytes();
     doc_key.extend_from_slice(&storage::keys::doc_id_index::encode_doc_short_id(
         doc_short_id,
     ));
@@ -40,8 +45,9 @@ async fn document_matches_filter<R: Reader + ?Sized>(
         return Ok(false);
     };
 
-    let doc = document::Document::from_storage_cbor(&doc_data)
-        .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
+    let doc =
+        crdt::stored::document_from_storage(&doc_data, collection.schema_arc(), collection.crdts())
+            .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
     let document_json = serde_json::Value::Object(
         doc.to_map()
             .map_err(|e| format!("failed to encode document for replication filter: {}", e))?
@@ -120,9 +126,10 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
     .await
 }
 
-/// Push an explicit `(collection_name, doc_id)` set through the existing
-/// replay path (connection wait, retry guard, ACP creator resolution,
-/// bounded PushLog, marker registration).
+/// Push an explicit `(collection_name, doc_id)` set without adding a subscription.
+/// Success requires acknowledgements for every selected document's unchanged
+/// heads, independently of continuous replication to the same peer.
+/// Subscription filters and retry deadlines do not apply to explicit selections.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -207,6 +214,21 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let peerstore = db
         .peerstore()
         .with_retry_schedule(replay_config.retry_schedule.clone());
+    let mut ownership = if let Some(docs) = allowlist {
+        PushOwnership::Selected(docs.iter().cloned().collect())
+    } else {
+        if peerstore
+            .get_replicator(peer_id.as_str())
+            .await
+            .map_err(|error| format!("failed to load replicator: {error}"))?
+            .is_none()
+        {
+            return Err(format!(
+                "replicator {peer_id} removed before existing-document replay"
+            ));
+        }
+        PushOwnership::Replicator
+    };
     let txn = db
         .new_txn(true)
         .await
@@ -225,270 +247,383 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         .systemstore()
         .map_err(|e| format!("failed to get systemstore: {}", e))?;
 
+    car_authority.bind_peerstore(db.peerstore());
+    let selected = matches!(&ownership, PushOwnership::Selected(_));
+    let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
-    for col_name in collections {
-        if let Some(ref allowed) = allowlist_by_collection {
-            if !allowed.contains_key(col_name.as_str()) {
-                continue;
-            }
-        }
-
-        let collection = match db
-            .get_collection(col_name)
-            .map_err(|e| format!("failed to get collection: {}", e))?
-        {
-            Some(c) => c,
-            None => continue,
-        };
-
-        let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-        let doc_prefix_len = col_prefix.len();
-        let opts = IterOptions::new()
-            .with_prefix(col_prefix)
-            .with_keys_only(true);
-        let mut doc_iter = datastore
-            .iterator(opts)
-            .await
-            .map_err(|e| format!("failed to iterate datastore: {}", e))?;
-
-        let mut doc_short_ids = Vec::new();
-        while let Some(pair) = doc_iter
-            .next()
-            .await
-            .map_err(|e| format!("datastore iteration error: {}", e))?
-        {
-            if let Ok(short_id) =
-                storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-            {
-                doc_short_ids.push(short_id);
-            }
-        }
-        doc_iter
-            .close()
-            .await
-            .map_err(|e| format!("datastore close error: {}", e))?;
-
-        let mut doc_ids = Vec::new();
-        for short_id in doc_short_ids {
-            match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                Ok(Some(doc_id)) => doc_ids.push((short_id, doc_id)),
-                Ok(None) => {}
-                Err(e) => return Err(format!("doc-ID mapping lookup failed: {}", e)),
-            }
-        }
-
-        'documents: for (doc_short_id, doc_id) in &doc_ids {
-            if !document_is_allowlisted(col_name, doc_id, allowlist_by_collection.as_ref()) {
-                continue;
-            }
-
-            if let Some(filter) = filters.get(collection.collection_id()) {
-                if !document_matches_filter(
-                    &datastore,
-                    collection.collection_id(),
-                    *doc_short_id,
-                    filter,
-                    matcher,
-                )
-                .await?
-                {
+    let preparation: Result<(), String> = async {
+        for col_name in collections {
+            if let Some(ref allowed) = allowlist_by_collection {
+                if !allowed.contains_key(col_name.as_str()) {
                     continue;
                 }
             }
 
-            let creator =
-                resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
-            let mut doc_blocks = Vec::new();
-            for head_cid in
-                load_latest_composite_head_cids(&headstore, &blockstore_view, *doc_short_id).await
+            let collection = match db
+                .get_collection(col_name)
+                .map_err(|e| format!("failed to get collection: {}", e))?
             {
-                let block_key = head_cid.to_bytes();
-                let block_data = match blockstore_view.get(&block_key).await {
-                    Ok(Some(data)) => data,
-                    _ => continue,
-                };
-
-                doc_blocks.push((head_cid, block_data));
-            }
-
-            let mut replay_head_cids: Vec<_> = doc_blocks.iter().map(|(cid, _)| *cid).collect();
-            replay_head_cids.sort_unstable();
-
-            if doc_blocks.is_empty() {
-                continue;
-            }
-
-            // Conservation comes before the fallible serving capability. If
-            // the bounded selective-CAR table is full (or signing fails), the
-            // durable marker keeps this document and every later document in
-            // the replay eligible for the shared retry clock.
-            let Some(marker_generation) = peerstore
-                .observe_push_head_with_generation(
-                    peer_id.as_str(),
-                    doc_id,
-                    collection.collection_id(),
-                )
-                .await
-                .map_err(|error| format!("failed to register replay marker: {error}"))?
-            else {
-                return Ok(());
+                Some(c) => c,
+                None => {
+                    if let Some(allowed) = &allowlist_by_collection {
+                        for doc in allowed.get(col_name.as_str()).into_iter().flatten() {
+                            failures.insert(
+                                (col_name.clone(), (*doc).to_owned()),
+                                "collection not found".into(),
+                            );
+                        }
+                    }
+                    continue;
+                }
             };
 
-            let mut requests = Vec::new();
-            for (block_cid, block_data) in doc_blocks {
-                let Some(grant) = car_authority.register(peer_id.clone(), block_cid) else {
-                    tracing::warn!(
-                        %peer_id,
-                        %doc_id,
-                        %block_cid,
-                        "Selective CAR authority full; retaining replay marker"
-                    );
-                    continue 'documents;
-                };
-                let mut request = PushLogRequest::new(
-                    doc_id.clone(),
-                    Bytes::from(block_cid.to_bytes()),
-                    collection.collection_id().to_string(),
-                    creator.clone(),
-                    block_data,
-                );
-                if let Err(e) = p2p::signing::sign_with_transport(transport, &mut request) {
-                    tracing::warn!(error = %e, "Failed to sign PushLog request");
-                    continue;
+            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
+            let doc_prefix_len = col_prefix.len();
+            let opts = IterOptions::new()
+                .with_prefix(col_prefix)
+                .with_keys_only(true);
+            let mut doc_iter = datastore
+                .iterator(opts)
+                .await
+                .map_err(|e| format!("failed to iterate datastore: {}", e))?;
+
+            let mut doc_short_ids = Vec::new();
+            while let Some(pair) = doc_iter
+                .next()
+                .await
+                .map_err(|e| format!("datastore iteration error: {}", e))?
+            {
+                if let Ok(short_id) =
+                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
+                {
+                    doc_short_ids.push(short_id);
                 }
-                requests.push((grant, request));
+            }
+            doc_iter
+                .close()
+                .await
+                .map_err(|e| format!("datastore close error: {}", e))?;
+
+            let mut doc_ids = Vec::new();
+            for short_id in doc_short_ids {
+                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
+                    Ok(Some(doc_id)) => doc_ids.push((short_id, doc_id)),
+                    Ok(None) => {}
+                    Err(e) => return Err(format!("doc-ID mapping lookup failed: {}", e)),
+                }
             }
 
-            if !requests.is_empty() {
-                let t = transport.clone();
-                let pid = peer_id.clone();
-                let gate = replay_gate.clone();
-                let peer_key = pid.clone();
-                let retry_store = db.peerstore();
-                let replay_doc_id = doc_id.clone();
-                let replay_collection_id = collection.collection_id().to_string();
-                let total_blocks = requests.len();
-                let permit = replay_gate
-                    .acquire_document_task()
-                    .await
-                    .map_err(|e| format!("replay gate closed before scheduling push: {e}"))?;
-                push_handles.push((
-                    replay_doc_id,
-                    replay_collection_id,
-                    *doc_short_id,
-                    replay_head_cids,
-                    marker_generation,
-                    network.run(async move {
-                        let _permit = permit;
-                        let mut completed_blocks = 0usize;
-                        for (_car_grant, req) in requests {
-                            let cid = req.cid.clone();
-                            match gate
-                                .send_pushlog_with_admission(
-                                    &peer_key,
-                                    super::push_docs_replay::check_retry_admission(&retry_store, &pid),
-                                    t.send_two_stream_request(&pid, req),
-                                )
-                                .await
-                            {
-                                Ok(reply) if reply.err_message.is_some() => {
-                                    if let Err(error) = super::push_docs_replay::persist_retry_after(
-                                        &retry_store, &pid, &reply,
-                                    ).await {
-                                        tracing::warn!(%error, "Failed to persist replay admission deadline");
-                                    }
-                                    tracing::warn!(
-                                        peer_id = %pid,
-                                        completed_blocks,
-                                        total_blocks,
-                                        cid_len = cid.len(),
-                                        error = %reply.err_message.as_deref().unwrap_or("unknown pushlog error"),
-                                        "Existing document replay PushLog was rejected; deferring document to persisted retry"
-                                    );
-                                    return false;
-                                }
-                                Ok(_) => {
-                                    completed_blocks += 1;
-                                }
-                                Err(e) => {
-                                    if e.is_connection_like() {
-                                        tracing::debug!(
-                                            peer_id = %pid,
-                                            completed_blocks,
-                                            total_blocks,
-                                            cid_len = cid.len(),
-                                            error = %e,
-                                            "Existing document replay stopped because the connection became unavailable"
-                                        );
-                                    } else {
+            'documents: for (doc_short_id, doc_id) in &doc_ids {
+                if !document_is_allowlisted(col_name, doc_id, allowlist_by_collection.as_ref()) {
+                    continue;
+                }
+
+                if let Some(filter) = filters.get(collection.collection_id()).filter(|_| !selected) {
+                    if !document_matches_filter(
+                        &datastore,
+                        &collection,
+                        *doc_short_id,
+                        filter,
+                        matcher,
+                    )
+                    .await?
+                    {
+                        continue;
+                    }
+                }
+
+                let creator =
+                    resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
+                let mut doc_blocks = Vec::new();
+                for head_cid in
+                    load_latest_composite_head_cids(&headstore, &blockstore_view, *doc_short_id).await
+                {
+                    let block_key = head_cid.to_bytes();
+                    let block_data = match blockstore_view.get(&block_key).await {
+                        Ok(Some(data)) => data,
+                        _ => continue,
+                    };
+
+                    doc_blocks.push((head_cid, block_data));
+                }
+
+                let mut replay_head_cids: Vec<_> = doc_blocks.iter().map(|(cid, _)| *cid).collect();
+                replay_head_cids.sort_unstable();
+
+                if doc_blocks.is_empty() {
+                    failures.insert(
+                        (col_name.clone(), doc_id.clone()),
+                        "no readable composite heads".into(),
+                    );
+                    continue;
+                }
+
+                // Tracked replay registers before the fallible serving capability,
+                // so a refused grant or signature leaves its durable retry owner intact.
+                let marker_generation = if matches!(&ownership, PushOwnership::Replicator) {
+                    let Some(generation) = peerstore
+                        .observe_push_head_with_generation(
+                            peer_id.as_str(),
+                            doc_id,
+                            collection.collection_id(),
+                        )
+                        .await
+                        .map_err(|error| format!("failed to register replay marker: {error}"))?
+                    else {
+                        let error = format!("replicator {peer_id} removed during existing-document replay");
+                        return Err(error);
+                    };
+                    Some(generation)
+                } else {
+                    None
+                };
+
+                let mut requests = Vec::new();
+                for (block_cid, block_data) in doc_blocks {
+                    let grant = if selected {
+                        peerstore
+                            .grant_selected_car_root(peer_id.as_str(), &block_cid.to_bytes())
+                            .await
+                            .map_err(|error| format!(
+                                "selected document {col_name}/{doc_id}: failed to persist CAR authority: {error}"
+                            ))?;
+                        None
+                    } else {
+                        let Some(grant) = car_authority.register(peer_id.clone(), block_cid) else {
+                            tracing::warn!(%peer_id, %doc_id, %block_cid, "Selective CAR authority full");
+                            failures.insert(
+                                (col_name.clone(), doc_id.clone()),
+                                "CAR authority capacity reached".into(),
+                            );
+                            continue 'documents;
+                        };
+                        Some(grant)
+                    };
+                    let mut request = PushLogRequest::new(
+                        doc_id.clone(),
+                        Bytes::from(block_cid.to_bytes()),
+                        collection.collection_id().to_string(),
+                        creator.clone(),
+                        block_data,
+                    );
+                    if let Err(e) = p2p::signing::sign_with_transport(transport, &mut request) {
+                        failures.insert(
+                            (col_name.clone(), doc_id.clone()),
+                            format!("failed to sign head {block_cid}: {e}"),
+                        );
+                        tracing::warn!(error = %e, "Failed to sign PushLog request");
+                        continue 'documents;
+                    }
+                    requests.push((grant, request));
+                }
+
+                if !requests.is_empty() {
+                    let t = transport.clone();
+                    let pid = peer_id.clone();
+                    let gate = replay_gate.clone();
+                    let peer_key = pid.clone();
+                    let retry_store = db.peerstore();
+                    let replay_doc_id = doc_id.clone();
+                    let replay_collection_id = collection.collection_id().to_string();
+                    let total_blocks = requests.len();
+                    let permit = replay_gate
+                        .acquire_document_task()
+                        .await
+                        .map_err(|e| format!("replay gate closed before scheduling push: {e}"))?;
+                    push_handles.push((
+                        col_name.clone(),
+                        replay_doc_id,
+                        replay_collection_id,
+                        *doc_short_id,
+                        replay_head_cids,
+                        marker_generation,
+                        network.run(async move {
+                            let _permit = permit;
+                            let mut completed_blocks = 0usize;
+                            for (_car_grant, req) in requests {
+                                let cid = req.cid.clone();
+                                match gate
+                                    .send_pushlog_with_admission(
+                                        &peer_key,
+                                        async {
+                                            if selected {
+                                                Ok(())
+                                            } else {
+                                                super::push_docs_replay::check_retry_admission(
+                                                    &retry_store, &pid,
+                                                ).await
+                                            }
+                                        },
+                                        t.send_two_stream_request(&pid, req),
+                                    )
+                                    .await
+                                {
+                                    Ok(reply) if reply.err_message.is_some() => {
+                                        if !selected {
+                                            if let Err(error) = super::push_docs_replay::persist_retry_after(
+                                                &retry_store, &pid, &reply,
+                                            ).await {
+                                                tracing::warn!(%error, "Failed to persist replay admission deadline");
+                                            }
+                                        }
                                         tracing::warn!(
                                             peer_id = %pid,
                                             completed_blocks,
                                             total_blocks,
                                             cid_len = cid.len(),
-                                            error = %e,
-                                            "Existing document replay PushLog failed; deferring document to persisted retry"
+                                            error = %reply.err_message.as_deref().unwrap_or("unknown pushlog error"),
+                                            "Existing document PushLog was rejected"
                                         );
+                                        return Err(format!(
+                                            "peer rejected head: {}; retry_after_ms={:?}",
+                                            reply.err_message.as_deref().unwrap_or("unknown error"),
+                                            reply.retry_after_ms,
+                                        ));
                                     }
-                                    return false;
+                                    Ok(_) => {
+                                        completed_blocks += 1;
+                                    }
+                                    Err(e) => {
+                                        if e.is_connection_like() {
+                                            tracing::debug!(
+                                                peer_id = %pid,
+                                                completed_blocks,
+                                                total_blocks,
+                                                cid_len = cid.len(),
+                                                error = %e,
+                                                "Existing document replay stopped because the connection became unavailable"
+                                            );
+                                        } else {
+                                            tracing::warn!(
+                                                peer_id = %pid,
+                                                completed_blocks,
+                                                total_blocks,
+                                                cid_len = cid.len(),
+                                                error = %e,
+                                                "Existing document PushLog failed"
+                                            );
+                                        }
+                                        return Err(e.to_string());
+                                    }
                                 }
                             }
-                        }
-                        true
-                    }),
-                ));
+                            Ok(())
+                        }),
+                    ));
+                }
             }
         }
+
+        Ok(())
     }
+    .await;
 
     tracing::debug!(task_count = push_handles.len(), "awaiting push tasks");
     let mut replay_failures = Vec::new();
-    for (doc_id, collection_id, doc_short_id, attempted_heads, marker_generation, jh) in
-        push_handles
+    let mut completion_error = None;
+    for (
+        collection_name,
+        doc_id,
+        collection_id,
+        doc_short_id,
+        attempted_heads,
+        marker_generation,
+        jh,
+    ) in push_handles
     {
         match jh.await {
-            Some(true) => {
-                let verify_txn = db
-                    .new_txn(true)
-                    .await
-                    .map_err(|error| format!("replay head verification transaction: {error}"))?;
-                let verify_heads = verify_txn.headstore().map_err(|error| error.to_string())?;
-                let verify_blocks = verify_txn.blockstore().map_err(|error| error.to_string())?;
-                let mut current_heads =
-                    load_latest_composite_head_cids(&verify_heads, &verify_blocks, doc_short_id)
-                        .await;
-                current_heads.sort_unstable();
-                if current_heads != attempted_heads {
-                    tracing::debug!(%doc_id, "Document changed during replay; retaining dirty marker");
-                    replay_failures.push(ReplayDocumentFailure {
-                        doc_id,
-                        collection_id,
-                    });
-                    continue;
-                }
-                peerstore
-                    .complete_retry_scope(
-                        peer_id.as_str(),
-                        &doc_id,
-                        &collection_id,
-                        false,
-                        marker_generation,
-                        &current_heads
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>(),
+            Some(Ok(())) => {
+                let acknowledged: Result<bool, String> = async {
+                    let verify_txn = db.new_txn(true).await.map_err(|error| {
+                        format!("replay head verification transaction: {error}")
+                    })?;
+                    let verify_heads = verify_txn.headstore().map_err(|error| error.to_string())?;
+                    let verify_blocks =
+                        verify_txn.blockstore().map_err(|error| error.to_string())?;
+                    let mut current_heads = load_latest_composite_head_cids(
+                        &verify_heads,
+                        &verify_blocks,
+                        doc_short_id,
                     )
-                    .await
-                    .map_err(|error| format!("failed to clear replay marker: {error}"))?;
+                    .await;
+                    current_heads.sort_unstable();
+                    if current_heads != attempted_heads {
+                        return Ok(false);
+                    }
+                    let acknowledged_heads = current_heads
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
+                    if let Some(marker_generation) = marker_generation {
+                        peerstore
+                            .complete_retry_scope(
+                                peer_id.as_str(),
+                                &doc_id,
+                                &collection_id,
+                                false,
+                                marker_generation,
+                                &acknowledged_heads,
+                            )
+                            .await
+                            .map_err(|error| format!("failed to clear replay marker: {error}"))?;
+                    } else {
+                        peerstore
+                            .record_acknowledged_heads(
+                                peer_id.as_str(),
+                                &doc_id,
+                                &collection_id,
+                                false,
+                                &acknowledged_heads,
+                            )
+                            .await
+                            .map_err(|error| format!("failed to record selected heads: {error}"))?;
+                    }
+                    Ok(true)
+                }
+                .await;
+                match acknowledged {
+                    Ok(true) => {
+                        if let PushOwnership::Selected(pending) = &mut ownership {
+                            pending.remove(&(collection_name, doc_id));
+                        }
+                    }
+                    Ok(false) => {
+                        failures.insert(
+                            (collection_name, doc_id.clone()),
+                            "document heads changed during transfer".into(),
+                        );
+                        replay_failures.push(ReplayDocumentFailure {
+                            doc_id,
+                            collection_id,
+                        });
+                    }
+                    Err(error) => {
+                        completion_error.get_or_insert_with(|| {
+                            format!("document {collection_name}/{doc_id}: {error}")
+                        });
+                        failures.insert((collection_name, doc_id.clone()), error);
+                        replay_failures.push(ReplayDocumentFailure {
+                            doc_id,
+                            collection_id,
+                        });
+                    }
+                }
             }
-            Some(false) => replay_failures.push(ReplayDocumentFailure {
-                doc_id,
-                collection_id,
-            }),
+            Some(Err(error)) => {
+                failures.insert((collection_name, doc_id.clone()), error);
+                replay_failures.push(ReplayDocumentFailure {
+                    doc_id,
+                    collection_id,
+                });
+            }
             None => {
+                failures.insert(
+                    (collection_name, doc_id.clone()),
+                    "push task panicked or was cancelled".into(),
+                );
                 tracing::error!(%doc_id, "Replay push task panicked or was cancelled");
                 replay_failures.push(ReplayDocumentFailure {
                     doc_id,
@@ -498,7 +633,40 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         }
     }
     tracing::debug!("all push tasks completed");
-    persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+    match &ownership {
+        PushOwnership::Replicator => {
+            persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+        }
+        PushOwnership::Selected(pending) if !pending.is_empty() => {
+            let mut reasons: Vec<_> = pending
+                .iter()
+                .map(|scope| {
+                    let reason = failures.get(scope).map(String::as_str).unwrap_or(
+                        if preparation.is_err() {
+                            "not sent because preparation failed"
+                        } else {
+                            "document not found in collection"
+                        },
+                    );
+                    format!("{}/{}: {reason}", scope.0, scope.1)
+                })
+                .collect();
+            reasons.sort_unstable();
+            if let Err(error) = preparation {
+                reasons.push(error);
+            }
+            return Err(format!(
+                "selected document push incomplete: {}",
+                reasons.join("; ")
+            ));
+        }
+        PushOwnership::Selected(_) => {}
+    }
+
+    preparation?;
+    if let Some(error) = completion_error {
+        return Err(error);
+    }
 
     if let Some(se_key) = se_options.encryption_key {
         let coordinator = match se_options.identity_pubkey {
@@ -570,10 +738,13 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     continue;
                 }
 
-                if let Some(filter) = filters.get(collection.collection_id()) {
+                if let Some(filter) = filters
+                    .get(collection.collection_id())
+                    .filter(|_| !selected)
+                {
                     if !document_matches_filter(
                         &datastore,
-                        collection.collection_id(),
+                        &collection,
                         *doc_short_id,
                         filter,
                         matcher,
@@ -590,7 +761,11 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     _ => continue,
                 };
 
-                let doc = match document::Document::from_storage_cbor(&doc_data) {
+                let doc = match crdt::stored::document_from_storage(
+                    &doc_data,
+                    collection.schema_arc(),
+                    collection.crdts(),
+                ) {
                     Ok(d) => d,
                     Err(e) => {
                         tracing::warn!(doc_id = %doc_id, error = %e, "SE: failed to deserialize document");
@@ -717,9 +892,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let datastore = txn
             .datastore()
             .map_err(|e| format!("failed to get datastore: {}", e))?;
-        if !document_matches_filter(&datastore, collection_id, doc_short_id, filter, matcher)
-            .await?
-        {
+        if !document_matches_filter(&datastore, &collection, doc_short_id, filter, matcher).await? {
             peerstore
                 .complete_retry_scope(
                     peer_id.as_str(),

@@ -265,7 +265,7 @@ fn for_each_parallel<T: Send>(slots: &mut [T], work: impl Fn(usize, &mut T) + Sy
 
 /// Independent accumulators, so the compiler can keep several SIMD lanes busy
 /// without reassociating one float sum.
-const LANES: usize = 16;
+pub(super) const LANES: usize = 16;
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let ((x, x_tail), (y, y_tail)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());

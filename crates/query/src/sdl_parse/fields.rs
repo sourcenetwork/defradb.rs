@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use graphql_parser::schema::{Directive, Field};
-use schema::CType;
+use schema::{CType, CrdtName};
 
 use crate::error::{QueryError, Result};
 
@@ -407,14 +407,33 @@ impl<'a> SdlParser<'a> {
         Ok(result)
     }
 
+    /// `@crdt(type: "<native>")`, or `@crdt(custom: "<name>")` for a type
+    /// registered on the node by name. A custom type has its own argument, so a
+    /// misspelt native type is still refused rather than read as a custom one.
     pub(super) fn parse_crdt_directive(&self, directive: &Directive<'_, String>) -> Result<CType> {
-        let type_name = get_directive_string(directive, "type")
-            .ok_or_else(|| QueryError::parse("@crdt directive requires 'type' argument"))?;
+        let custom = get_directive_string(directive, "custom");
+        let type_name = get_directive_string(directive, "type");
+        let type_name = match (type_name, custom) {
+            (Some(_), Some(_)) => {
+                return Err(QueryError::parse(
+                    "@crdt takes either 'type' or 'custom', not both",
+                ))
+            }
+            (None, Some(name)) => {
+                return CrdtName::new(&name)
+                    .map(CType::Custom)
+                    .map_err(|error| QueryError::parse(error.to_string()))
+            }
+            (type_name, None) => type_name,
+        }
+        .ok_or_else(|| QueryError::parse("@crdt directive requires 'type' argument"))?;
 
         match type_name.to_lowercase().as_str() {
             "lwwregister" | "lww" | "lww_register" => Ok(CType::LwwRegister),
             "pncounter" | "counter" | "pn_counter" => Ok(CType::PnCounter),
             "pcounter" | "p_counter" => Ok(CType::PCounter),
+            "text" => Ok(CType::Text),
+            "json" => Ok(CType::Json),
             other => Err(QueryError::parse(format!(
                 "Argument \"type\" has invalid value \"{}\"",
                 other

@@ -16,13 +16,6 @@ use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::router::{AppState, NacStatusInfo, NodePermission};
 
-/// Request body for adding/removing admin (Rust format).
-#[derive(Debug, serde::Deserialize)]
-pub struct AdminRequest {
-    /// The target DID to add/remove as admin.
-    pub target: String,
-}
-
 /// Request body for Go-compatible NAC relationship operations.
 /// Go DefraDB uses: `{"Relation": "admin", "TargetActor": "did:key:..."}`
 #[derive(Debug, serde::Deserialize)]
@@ -78,15 +71,6 @@ pub struct EnableNacRequest {
     pub owner_did: String,
 }
 
-/// Response for admin operations.
-#[derive(Debug, serde::Serialize)]
-pub struct AdminResponse {
-    /// Whether the operation was successful.
-    pub success: bool,
-    /// A message describing the result.
-    pub message: String,
-}
-
 /// POST /api/v0/acp/node/enable
 ///
 /// Enable NAC with the given owner identity.
@@ -128,7 +112,7 @@ pub async fn enable(
     Ok(axum::http::StatusCode::OK.into_response())
 }
 
-/// GET /api/v0/nac/status
+/// GET /api/v0/acp/node/status
 ///
 /// Get the current NAC status including whether it's enabled and who the owner is.
 ///
@@ -156,97 +140,8 @@ pub async fn get_status(
     }
 }
 
-/// POST /api/v0/nac/admin
-///
-/// Add a new admin. The requestor must be an existing admin.
-///
-/// Requires `NacRelationAdd` permission when NAC is enabled.
-pub async fn add_admin(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-    Json(body): Json<AdminRequest>,
-) -> Result<impl IntoResponse, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacRelationAdd).await?;
-
-    // Require NAC to be available
-    let nac = state.require_nac()?;
-
-    // Require authenticated identity
-    let requestor = identity
-        .did()
-        .cloned()
-        .ok_or_else(|| HttpError::Forbidden("authentication required to add admin".into()))?;
-
-    // Parse target DID
-    let target = identity::Did::new(&body.target)
-        .map_err(|e| HttpError::BadRequest(format!("invalid target DID: {}", e)))?;
-
-    // Add admin
-    let added = nac.add_admin(&requestor, &target).await.map_err(|e| {
-        // Log the actual error for debugging, but return generic message to prevent information leakage
-        tracing::warn!(error = %e, "NAC add_admin operation failed");
-        HttpError::Forbidden("not authorized to add admin".into())
-    })?;
-
-    let message = if added {
-        format!("admin added: {}", target)
-    } else {
-        format!("identity is already an admin: {}", target)
-    };
-
-    Ok(Json(AdminResponse {
-        success: true,
-        message,
-    }))
-}
-
-/// DELETE /api/v0/nac/admin
-///
-/// Remove an admin. The requestor must be an existing admin.
-/// The owner cannot be removed.
-///
-/// Requires `NacRelationDelete` permission when NAC is enabled.
-pub async fn remove_admin(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-    Json(body): Json<AdminRequest>,
-) -> Result<impl IntoResponse, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacRelationDelete).await?;
-
-    // Require NAC to be available
-    let nac = state.require_nac()?;
-
-    // Require authenticated identity
-    let requestor = identity
-        .did()
-        .cloned()
-        .ok_or_else(|| HttpError::Forbidden("authentication required to remove admin".into()))?;
-
-    // Parse target DID
-    let target = identity::Did::new(&body.target)
-        .map_err(|e| HttpError::BadRequest(format!("invalid target DID: {}", e)))?;
-
-    // Remove admin
-    let removed = nac.remove_admin(&requestor, &target).await.map_err(|e| {
-        // Log the actual error for debugging, but return generic message to prevent information leakage
-        tracing::warn!(error = %e, "NAC remove_admin operation failed");
-        HttpError::Forbidden("not authorized to remove admin".into())
-    })?;
-
-    let message = if removed {
-        format!("admin removed: {}", target)
-    } else {
-        format!("identity is not an admin: {}", target)
-    };
-
-    Ok(Json(AdminResponse {
-        success: true,
-        message,
-    }))
-}
-
 // ============================================================================
-// Go-compatible NAC endpoints (aliased as /acp/node/*)
+// NAC relationship endpoints
 // ============================================================================
 
 /// POST /api/v0/acp/node/relationship (Go-compatible)

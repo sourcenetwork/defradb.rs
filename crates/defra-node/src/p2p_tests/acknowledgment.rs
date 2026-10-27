@@ -38,8 +38,8 @@ async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: 
         .build()
         .await
         .expect("build node1");
-    node0.add_schema(schema).await.expect("schema on node0");
-    node1.add_schema(schema).await.expect("schema on node1");
+    node0.add_collection(schema).await.expect("schema on node0");
+    node1.add_collection(schema).await.expect("schema on node1");
     install_one_way_replicator(&node0, &node1, &[collection]).await;
     let peer1 = node1
         .p2p()
@@ -117,6 +117,72 @@ fn replicator_acknowledges_current_document_heads() {
 }
 
 #[test]
+fn filtered_replicator_acknowledges_branchable_document_heads() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
+            let schema = "type AgentDoc @branchable { agent_did: String @immutable  body: String }";
+            let node0 = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node0");
+            let node1 = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node1");
+            node0.add_collection(schema).await.expect("schema on node0");
+            node1.add_collection(schema).await.expect("schema on node1");
+            install_filtered_one_way_replicator(
+                &node0,
+                &node1,
+                &["AgentDoc"],
+                agent_did_in_filter(&["did:key:alice"]),
+            )
+            .await;
+            let peer1 = node1
+                .p2p()
+                .expect("node1 p2p")
+                .local_peer_id()
+                .await
+                .expect("node1 peer id");
+
+            let mut doc_ids = Vec::new();
+            for agent_did in ["did:key:alice", "did:key:bob"] {
+                let response = node0
+                    .execute(&format!(
+                        r#"mutation {{ add_AgentDoc(input: {{agent_did: "{agent_did}", body: "first"}}) {{ _docID }} }}"#
+                    ))
+                    .await;
+                assert!(response.errors.is_empty(), "{:?}", response.errors);
+                doc_ids.push(
+                    response.data.expect("data")["add_AgentDoc"][0]["_docID"]
+                        .as_str()
+                        .expect("doc id")
+                        .to_string(),
+                );
+            }
+            wait_for_acknowledged(&node0, &peer1, "AgentDoc", &doc_ids[0]).await;
+            let filtered_out = node0
+                .p2p()
+                .expect("node0 p2p")
+                .replication_acknowledged(&peer1, "AgentDoc", std::slice::from_ref(&doc_ids[1]))
+                .await
+                .expect("query filtered-out document");
+            assert_eq!(
+                filtered_out,
+                [false],
+                "the peer never received this document"
+            );
+
+            node0.shutdown().await;
+            node1.shutdown().await;
+        })
+        .unwrap()
+}
+
+#[test]
 fn replicator_acknowledges_current_branchable_collection_heads() {
     edge::testing::edge()
         .block_on(async {
@@ -146,7 +212,7 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
                 .await
                 .unwrap();
             for node in [&node0, &node1] {
-                node.add_schema(
+                node.add_collection(
                     "type Control { value: String } type Note @branchable { body: String }",
                 )
                 .await

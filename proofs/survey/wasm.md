@@ -7,9 +7,10 @@ substantive behavior is delegated to underlying crates (`db`, `query`, `document
 
 ## Modules
 - `client.rs` — `DefraClient`: wraps `Arc<DB<LevelDbStore>>` + `QueryRunner`. Delegates
-  `add_schema` / `query` / `mutate` / `get_collections` / `persist` / `close`.
+  `addCollection` / `execRequest` / `getCollections` / `persist` / `close` (the JS names; the Rust
+  methods stay snake_case).
 - `verification.rs` — standalone re-exports of `crypto`/`document` fns: ed25519/secp256k1
-  signature verify, sha256, `compute_document_cid`, keypair generation.
+  signature verify, sha256, `computeDocumentCID`, keypair generation.
 - `bindings.rs` — serde <-> `JsValue` conversion, config/info structs.
 - `error.rs` — `WasmError` -> `JsValue` mapping.
 

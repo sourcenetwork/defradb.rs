@@ -17,9 +17,10 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         .find_collection_by_id("col-users")
         .unwrap()
         .unwrap();
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("initial".to_string()));
-    doc.set_schema_version_id("v1");
+    let mut doc = Document::new(collection.schema_arc());
+    doc.set("name", NormalValue::String("initial".to_string()))
+        .unwrap();
+    doc.set_collection_version_id("v1");
     let (doc_id, _, initial) = create_doc_locally(&handler, &collection, &mut doc).await;
     let mut field_heads = initial.field_cids;
     let mut composite_heads = vec![initial.cid];
@@ -30,7 +31,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority,
                 data,
             }),
@@ -44,7 +45,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
             .unwrap();
         let composite = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority,
                 status: 1,
             }),
@@ -95,8 +96,8 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
     assert_eq!(batch.changes.len(), 1);
     assert_eq!(batch.changes[0].doc_id, doc_id.to_string());
     assert_eq!(
-        batch.updates, 257,
-        "one state notification for the entire committed history"
+        batch.updates, 256,
+        "one state notification for new revisions, excluding the already committed genesis"
     );
     assert!(!batch.resync_required);
     let mut raw_count = 0;
@@ -104,8 +105,8 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         raw_count += 1;
     }
     assert_eq!(
-        raw_count, 257,
-        "revision subscribers still receive every update"
+        raw_count, 256,
+        "revision subscribers receive each newly applied update"
     );
     assert_eq!(raw.dropped_count(), 0);
     let txn = handler.db().new_txn(true).await.unwrap();

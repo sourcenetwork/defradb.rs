@@ -208,7 +208,7 @@ async fn unchanged_decision_fields(
     };
     let mut decided = source_doc.clone();
     for name in &fields {
-        decided.set(
+        decided.set_unchecked(
             name.clone(),
             stored.get(name).cloned().unwrap_or(NormalValue::Null),
         );

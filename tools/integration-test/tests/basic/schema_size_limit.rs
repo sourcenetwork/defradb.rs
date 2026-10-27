@@ -27,7 +27,7 @@ fn oversized_schema() -> String {
 
 async fn post_schema(url: &str, sdl: String) -> reqwest::StatusCode {
     reqwest::Client::new()
-        .post(format!("{url}/api/v1/schema"))
+        .post(format!("{url}/api/v1/collections"))
         .header("content-type", "application/json")
         .body(sdl)
         .send()

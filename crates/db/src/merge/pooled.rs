@@ -27,12 +27,17 @@ use defra_core::merge::{
 pub struct PooledMergeHandler<H> {
     inner: Arc<H>,
     pool: Option<workers::Pool>,
+    admission: regolith::sync::Semaphore,
 }
 
 impl<H> PooledMergeHandler<H> {
     /// Runs `inner`'s merges on `pool`; where they are called without one.
     pub fn new(inner: Arc<H>, pool: Option<workers::Pool>) -> Self {
-        Self { inner, pool }
+        Self {
+            inner,
+            pool,
+            admission: regolith::sync::Semaphore::new(64),
+        }
     }
 }
 
@@ -84,7 +89,7 @@ impl OwnedMetadata {
 /// are known.
 fn document_target(collection_id: Option<&str>, doc_id: Option<&str>) -> workers::Target {
     match (collection_id, doc_id) {
-        (Some(collection), Some(doc)) => {
+        (Some(collection), Some(doc)) if !collection.is_empty() && !doc.is_empty() => {
             workers::Target::Key(query::pooled::document_key(collection, doc))
         }
         _ => workers::Target::LeastLoaded,
@@ -155,6 +160,7 @@ where
         let Some(pool) = self.off_the_pool() else {
             return self.inner.handle_block(cid, block_data, metadata).await;
         };
+        let _admission = self.admission.acquire(1).await;
         let target = document_target(metadata.collection_id, metadata.doc_id);
         let (cid, data, metadata) = (
             *cid,
@@ -212,6 +218,7 @@ where
         let Some(pool) = self.off_the_pool() else {
             return self.inner.handle_block_batch(blocks).await;
         };
+        let _admission = self.admission.acquire(1).await;
         let documents = by_document(blocks);
         if documents.len() < 2 {
             let (count, blocks) = (blocks.len(), blocks.to_vec());

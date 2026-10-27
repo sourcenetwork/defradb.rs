@@ -68,7 +68,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
             match fetcher
                 .get_documents_at_cid(
-                    collection.resolved_root_id(),
+                    &collection,
                     cid,
                     expected_doc_id.map(|s| s.as_str()),
                     reader.as_ref(),

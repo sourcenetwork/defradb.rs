@@ -39,7 +39,8 @@ async fn node() -> (
 ) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    let mut did = FieldDescription::new("2", "did", FieldKind::string());
+    let mut did =
+        FieldDescription::new("2", "did", FieldKind::string(), schema::CType::LwwRegister);
     did.immutable = true;
     db.create_collection(
         CollectionVersion::new(
@@ -47,7 +48,12 @@ async fn node() -> (
             "col-agent",
             "col-agent",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
                 did,
             ],
         )
@@ -180,7 +186,7 @@ fn document(collection_version: &str, value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>)
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "did".to_string(),
             priority: 1,
-            schema_version_id: collection_version.to_string(),
+            collection_version_id: collection_version.to_string(),
             data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
                 .unwrap(),
         }),
@@ -190,7 +196,7 @@ fn document(collection_version: &str, value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>)
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: collection_version.to_string(),
+            collection_version_id: collection_version.to_string(),
             priority: 1,
             status: 1,
         }),
@@ -357,7 +363,12 @@ fn a_patched_definition_does_not_unmake_a_view() {
             "Tally",
             "col-tally",
             "col-tally",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
         );
         view.query = Some(schema::QuerySource::new(serde_json::json!({})));
         view.is_materialized = false;

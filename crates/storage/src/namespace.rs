@@ -135,6 +135,10 @@ impl<S: Store> crate::corekv::private::Sealed for NamespacedStore<S> {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store> Store for NamespacedStore<S> {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.store
             .allocate(&self.namespace.prefix_key(key), count)
@@ -324,6 +328,20 @@ impl Writer for NamespacedRetryAttemptIO {
             .await
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.inner().truncate_log_shared(&log, positions).await
+    }
+
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.inner().appended(&log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let key = self.namespace.prefix_key(key);
         self.inner().set_shared(&key, value).await
@@ -402,6 +420,20 @@ impl Writer for NamespacedTxn {
         self.txn
             .append_shared(&log, entry, once_key.as_deref())
             .await
+    }
+
+    async fn truncate_log_shared(
+        &self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.txn.truncate_log_shared(&log, positions).await
+    }
+
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.txn.appended(&log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {

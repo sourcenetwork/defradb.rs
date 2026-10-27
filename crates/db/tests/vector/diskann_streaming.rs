@@ -2,7 +2,9 @@
 //! and a merge folds pending inserts and tombstones into the graph in the
 //! paper's three phases (FreshDiskANN's StreamingMerge).
 
-use crate::diskann_engine::{all, built, corpus, count, params, recall, CORPUS, DIMENSIONS, K};
+use crate::diskann_engine::{
+    all, built, corpus, count, params, pending, recall, CORPUS, DIMENSIONS, K,
+};
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::diskann::codec;
 use db::index::vector::index::VectorIndex;
@@ -33,7 +35,7 @@ fn an_insert_after_training_only_joins_the_pending_set() {
         index.insert(id, &vector).await.unwrap();
 
         assert_eq!(count(&index, codec::GRAPH).await, records, "no graph write");
-        assert_eq!(count(&index, codec::PENDING).await, 1);
+        assert_eq!(pending(&index).await, 1);
         assert_eq!(
             index.state().await.unwrap().unwrap(),
             state,
@@ -57,7 +59,7 @@ fn a_merge_folds_pending_inserts_into_the_graph() {
                 .await
                 .unwrap();
         }
-        assert_eq!(count(&index, codec::PENDING).await, extra.len());
+        assert_eq!(pending(&index).await, extra.len());
         assert!(
             index.should_build().await.unwrap(),
             "pending inserts are due"
@@ -69,7 +71,7 @@ fn a_merge_folds_pending_inserts_into_the_graph() {
 
         let before = recall(&index, &vectors, &all(CORPUS), &queries).await;
         index.build().await.unwrap();
-        assert_eq!(count(&index, codec::PENDING).await, 0);
+        assert_eq!(pending(&index).await, 0);
         assert_eq!(count(&index, codec::GRAPH).await, CORPUS);
         assert_eq!(index.state().await.unwrap().unwrap().live, CORPUS as u64);
         assert!(!index.should_build().await.unwrap());
@@ -132,7 +134,11 @@ fn a_pending_delete_never_reaches_the_graph() {
         index.insert(id, &vector).await.unwrap();
         assert!(index.delete(id).await.unwrap());
 
-        assert_eq!(count(&index, codec::PENDING).await, 0);
+        assert_eq!(
+            pending(&index).await,
+            1,
+            "its insert stays logged until a merge"
+        );
         let hits = index.search(vector.as_slice(), K, None).await.unwrap();
         assert!(hits.iter().all(|hit| hit.id != id));
 
@@ -303,7 +309,7 @@ fn a_plan_applies_like_a_build() {
         assert!(!plan.is_empty());
 
         index.merge(plan).await.unwrap();
-        assert_eq!(count(&index, codec::PENDING).await, 0);
+        assert_eq!(pending(&index).await, 0);
         assert_eq!(count(&index, codec::DELETED).await, 0);
         let live: rapidhash::RapidHashSet<u64> = (131..=CORPUS as u64).collect();
         let recall = recall(&index, &vectors, &live, &queries).await;
@@ -321,7 +327,7 @@ fn a_plan_applies_like_a_build() {
 const COLLECTION: u32 = 31;
 const INDEX_ID: u32 = 3;
 
-fn description() -> IndexDescription {
+pub(crate) fn description() -> IndexDescription {
     IndexDescription {
         name: "by_embedding".to_string(),
         id: INDEX_ID,
@@ -351,7 +357,7 @@ fn description() -> IndexDescription {
     })
 }
 
-fn value(vector: &[f32]) -> Vec<NormalValue> {
+pub(crate) fn value(vector: &[f32]) -> Vec<NormalValue> {
     vec![NormalValue::Float32Array(vector.to_vec())]
 }
 
@@ -373,7 +379,7 @@ async fn saved_store() -> (RegolithStore, VectorIndex) {
 }
 
 /// Plans on a snapshot and merges on a write, the way the sweep does.
-async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
+pub(crate) async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
     let mut snapshot = store.new_txn(true).await.unwrap();
     let plan = index.merge_plan(&mut snapshot).await.unwrap();
     snapshot.discard();
@@ -387,7 +393,7 @@ async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
 }
 
 /// A trained index on regolith with nothing pending.
-async fn trained_store() -> (RegolithStore, VectorIndex) {
+pub(crate) async fn trained_store() -> (RegolithStore, VectorIndex) {
     let (store, index) = saved_store().await;
     assert!(merge_due(&store, &index).await);
     assert!(

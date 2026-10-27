@@ -6,18 +6,26 @@ use db::{Cached, CollectionMap};
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 
 fn version(name: &str, collection_id: &str, version_id: &str) -> Collection {
-    Collection::new(CollectionVersion::new(
-        name,
-        version_id,
-        collection_id,
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
-    ))
+    Collection::new(
+        CollectionVersion::new(
+            name,
+            version_id,
+            collection_id,
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 fn placeholder(name: &str, collection_id: &str, version_id: &str) -> Collection {
     let mut schema = version(name, collection_id, version_id).schema().clone();
     schema.is_placeholder = true;
-    Collection::new(schema)
+    Collection::new(schema, crdt::Crdts::default())
 }
 
 /// Every lookup the cache offers reaches `collection_id`, and nothing else does.

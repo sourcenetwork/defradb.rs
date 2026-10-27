@@ -16,15 +16,19 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing;
 
+mod selected_car;
+
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
-fn encode_retry_marker_generation(generation: u64) -> Vec<u8> {
+/// Encode the shared peer-incarnation and retry-generation value format.
+pub fn encode_retry_marker_generation(generation: u64) -> Vec<u8> {
     let mut bytes = RETRY_MARKER_GENERATION_MAGIC.to_vec();
     bytes.extend_from_slice(&generation.to_be_bytes());
     bytes
 }
 
-fn decode_retry_marker_generation(bytes: &[u8]) -> Option<u64> {
+/// Decode a peer incarnation or retry generation, rejecting malformed values.
+pub fn decode_retry_marker_generation(bytes: &[u8]) -> Option<u64> {
     let generation_bytes = bytes.strip_prefix(RETRY_MARKER_GENERATION_MAGIC)?;
     let generation_bytes: [u8; 8] = generation_bytes.try_into().ok()?;
     Some(u64::from_be_bytes(generation_bytes))
@@ -705,9 +709,17 @@ impl<S: Store> Peerstore<S> {
     ///
     /// Returns None if the replicator doesn't exist.
     pub async fn get_replicator(&self, peer_id: &str) -> Result<Option<Bytes>> {
-        let key = ReplicatorKey::new(peer_id);
         let txn = self.store.new_txn(true).await?;
-        txn.get(&key.bytes()).await
+        Self::replicator_in(&txn, peer_id).await
+    }
+
+    /// [`get_replicator`](Self::get_replicator) through `reader`, a view of
+    /// the peerstore namespace, so a caller reads it at its own snapshot.
+    pub async fn replicator_in<R>(reader: &R, peer_id: &str) -> Result<Option<Bytes>>
+    where
+        R: Reader,
+    {
+        reader.get(&ReplicatorKey::new(peer_id).bytes()).await
     }
 
     /// Delete a replicator and all of its persisted push-retry state.
@@ -1403,16 +1415,31 @@ impl<S: Store> Peerstore<S> {
         scope_id: &str,
         is_collection: bool,
     ) -> Result<Option<Vec<String>>> {
+        let txn = self.store.new_txn(true).await?;
+        Self::acknowledged_heads_in(&txn, peer_id, scope_id, is_collection).await
+    }
+
+    /// [`acknowledged_heads`](Self::acknowledged_heads) through `reader`, a
+    /// view of the peerstore namespace, so a caller reads it at its own
+    /// snapshot.
+    pub async fn acknowledged_heads_in<R>(
+        reader: &R,
+        peer_id: &str,
+        scope_id: &str,
+        is_collection: bool,
+    ) -> Result<Option<Vec<String>>>
+    where
+        R: Reader,
+    {
         let marker = if is_collection {
             ReplicatorRetryCollectionKey::new(peer_id, scope_id).bytes()
         } else {
             ReplicatorRetryDocIDKey::new(peer_id, scope_id).bytes()
         };
-        let txn = self.store.new_txn(true).await?;
-        if txn.get(&marker).await?.is_some() {
+        if reader.get(&marker).await?.is_some() {
             return Ok(None);
         }
-        let acked = txn
+        let acked = reader
             .get(&ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes())
             .await?;
         Ok(acked.map(|bytes| {
@@ -1543,6 +1570,10 @@ impl<S: Store> crate::corekv::private::Sealed for Peerstore<S> {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store> Store for Peerstore<S> {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.store.allocate(key, count).await
     }

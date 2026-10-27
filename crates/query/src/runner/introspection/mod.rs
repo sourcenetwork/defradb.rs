@@ -187,6 +187,37 @@ pub fn build_introspection_schema(
         .argument(InputValue::new("docID", TypeRef::named_nn_list("ID"))),
     );
 
+    let json_conflict = Object::new("JsonConflict")
+        .field(Field::new(
+            "path",
+            TypeRef::named_nn_list_nn("String"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
+        ))
+        .field(Field::new("cid", TypeRef::named("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("height", TypeRef::named_nn("Int"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("value", TypeRef::named("JSON"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("deleted", TypeRef::named_nn("Boolean"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }));
+    schema_builder = schema_builder.register(json_conflict);
+    query_type = query_type.field(
+        Field::new(
+            "_jsonConflicts",
+            TypeRef::named_nn_list_nn("JsonConflict"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
+        )
+        .description("Lists, for each path of a document's Json field, the concurrent edits its winner beat.")
+        .argument(InputValue::new("collection", TypeRef::named_nn("String")))
+        .argument(InputValue::new("docID", TypeRef::named_nn("ID")))
+        .argument(InputValue::new("field", TypeRef::named_nn("String"))),
+    );
+
     // Register Commit type and supporting types
     schema_builder = schema_builder
         .register(build_commit_type())
@@ -430,6 +461,7 @@ mod tests {
                     "1",
                     "tags",
                     FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                    schema::CType::LwwRegister,
                 )],
             );
             let result = execute_introspection(
@@ -486,12 +518,14 @@ mod tests {
                     FieldDescription::new(
                         "1",
                         "name",
-                        FieldKind::Scalar(schema::ScalarKind::NonNillableString),
+                        FieldKind::Scalar(schema::ScalarKind::String),
+                        schema::CType::LwwRegister,
                     ),
                     FieldDescription::new(
                         "2",
                         "tags",
                         FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
                     ),
                 ],
             );
@@ -543,12 +577,14 @@ mod tests {
                     FieldDescription::new(
                         "1",
                         "name",
-                        FieldKind::Scalar(schema::ScalarKind::String),
+                        FieldKind::Scalar(schema::ScalarKind::NillableString),
+                        schema::CType::LwwRegister,
                     ),
                     FieldDescription::new(
                         "2",
                         "tags",
                         FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
                     ),
                 ],
             );

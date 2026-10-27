@@ -67,6 +67,10 @@ impl storage::corekv::private::Sealed for PausingStore {}
 
 #[async_trait]
 impl Store for PausingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -153,8 +157,13 @@ async fn node(indexed: bool) -> Node {
         "sample-v1",
         "col-sample",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
         ],
     ))
     .await
@@ -405,9 +414,13 @@ fn an_update_builds_on_heads_that_landed_before_its_transaction() {
                 Some(crate::common::worker_io::pool()),
                 "test",
                 move || async move {
-                    let mut doc = document::Document::new();
-                    doc.set_id(document::DocID::from_string(&id).unwrap());
-                    doc.set("left".to_string(), NormalValue::String("aaa".to_string()));
+                    let collection = db.get_collection("Sample").unwrap().unwrap();
+                    let mut doc = document::Document::with_id(
+                        document::DocID::from_string(&id).unwrap(),
+                        collection.schema_arc(),
+                    );
+                    doc.set("left".to_string(), NormalValue::String("aaa".to_string()))
+                        .unwrap();
                     AutoCommitMutator::new(db)
                         .update("Sample", doc, ["left".to_string()].into_iter().collect())
                         .await

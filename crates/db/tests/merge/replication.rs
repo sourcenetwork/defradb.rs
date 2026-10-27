@@ -19,9 +19,14 @@ fn load_document_head_blocks_returns_current_composite_block() {
             "v1",
             "col-transcript",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
-                FieldDescription::new("3", "idx", FieldKind::int()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
             ],
         ))
         .await
@@ -29,7 +34,7 @@ fn load_document_head_blocks_returns_current_composite_block() {
 
         let mutator = AutoCommitMutator::new(db.clone());
         let result = mutator
-            .create_many("Transcript", vec![make_transcript("first", 1)])
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
             .await
             .unwrap()
             .pop()
@@ -46,9 +51,14 @@ fn load_document_head_blocks_returns_current_composite_block() {
     .unwrap()
 }
 
-fn make_transcript(body: &str, idx: i64) -> Document {
-    let mut doc = Document::new();
-    doc.set("body", body.to_string());
-    doc.set("idx", idx);
+fn make_transcript(db: &Arc<DB<RegolithStore>>, body: &str, idx: i64) -> Document {
+    let transcript = db
+        .get_collection("Transcript")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    let mut doc = Document::new(transcript);
+    doc.set("body", body.to_string()).unwrap();
+    doc.set("idx", idx).unwrap();
     doc
 }

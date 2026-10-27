@@ -6,7 +6,7 @@ use serde_json::json;
 
 async fn node() -> EmbeddedNode {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Users { name: String @index  age: Int }")
+    node.add_collection("type Users { name: String @index  age: Int }")
         .await
         .unwrap();
     let response = node

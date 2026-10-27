@@ -30,8 +30,12 @@ mod executor;
 mod explain;
 mod fetcher;
 pub(crate) mod introspection;
+mod json_conflicts;
+#[cfg(test)]
+mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
+mod owners;
 mod plan;
 mod plan_aggregates;
 mod plan_drive;
@@ -773,3 +777,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod owners_tests;

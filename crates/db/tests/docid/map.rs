@@ -15,7 +15,10 @@ use storage::RegolithStore;
 async fn systemstore() -> NamespaceView {
     let store = RegolithStore::in_memory().unwrap();
     let txn = store.new_txn(false).await.unwrap();
-    NamespaceView::new(SharedTxn::new(txn), Namespace::Systemstore)
+    NamespaceView::new(
+        SharedTxn::new(txn, storage::Crdts::default()),
+        Namespace::Systemstore,
+    )
 }
 
 async fn persisted_sequence(store: Arc<RegolithStore>) -> u64 {
@@ -262,7 +265,7 @@ fn ownerless_document_blocks_are_not_authorizable() {
         let field_block = defra_core::Block::new(
             defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -279,7 +282,7 @@ fn ownerless_document_blocks_are_not_authorizable() {
 
         let genesis = defra_core::Block::new(
             defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 status: 1,
             }),

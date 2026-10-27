@@ -29,6 +29,10 @@ impl Sealed for PauseAfterSetStore {}
 
 #[async_trait]
 impl Store for PauseAfterSetStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> StorageResult<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }

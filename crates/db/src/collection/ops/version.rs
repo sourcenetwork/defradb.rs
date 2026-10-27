@@ -206,7 +206,7 @@ impl<S: Store> crate::database::DB<S> {
         Ok(all_versions
             .into_iter()
             .find(|v| v.version_id == version_id)
-            .map(Collection::new))
+            .map(|schema| Collection::new(schema, self.crdts().clone())))
     }
 
     /// Get the active collection versions, from the in-memory cache.
@@ -419,6 +419,8 @@ impl<S: Store> crate::database::DB<S> {
         // 5. Remove from in-memory cache if active (ordered callback above).
         if is_deleting_last_local_version {
             self.forbid_collection_id(&collection_id)?;
+            self.vector_codes
+                .evict_collection(target_schema.resolved_root_id());
         }
 
         tracing::info!(

@@ -19,7 +19,7 @@ use acp::nac::NodePermission::*;
 ///   `create_collections_atomic`/`delete_collection`/`delete_collections`/
 ///   `delete_collection_version`/`delete_collection_versions_batch`/
 ///   `set_active_collection_version`/`patch_collection` in `collection_ops/` +
-///   `patch/mod.rs`); `add_schema_in_txn` also gates on the registry.
+///   `patch/mod.rs`); `add_collection_in_txn` also gates on the registry.
 /// - `CollectionTruncate`: `truncate_collection` (`collection_ops/delete.rs`).
 /// - `ActionList`: `list_actions` (`action.rs`).
 /// - `MigrationSet`: raw `set_migration` (`migration/set_migration.rs`) +

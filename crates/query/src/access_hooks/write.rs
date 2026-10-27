@@ -5,7 +5,7 @@ use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 
-use crate::mapper::MutationType;
+use crate::mapper::{InputOp, MutationType};
 
 /// A mutation a client of this node asks to run, before any block is built.
 pub struct WriteRequest<'a> {
@@ -17,6 +17,8 @@ pub struct WriteRequest<'a> {
     pub doc_ids: &'a [String],
     pub create_input: &'a [RapidHashMap<String, JsonValue>],
     pub update_input: &'a RapidHashMap<String, JsonValue>,
+    /// Explicit CRDT ops of an update, keyed by field.
+    pub update_ops: &'a RapidHashMap<String, InputOp>,
 }
 
 /// Refuses local mutations early, so a node does not author blocks its own
@@ -44,6 +46,7 @@ pub(crate) struct WriteValidationInput {
     pub doc_ids: Vec<String>,
     pub create_input: Vec<RapidHashMap<String, JsonValue>>,
     pub update_input: RapidHashMap<String, JsonValue>,
+    pub update_ops: RapidHashMap<String, InputOp>,
 }
 
 impl WriteValidationInput {
@@ -76,6 +79,7 @@ mod retry_tests {
             doc_ids: vec!["doc-1".to_string()],
             create_input: vec![],
             update_input: RapidHashMap::default(),
+            update_ops: RapidHashMap::default(),
         };
         first.collection.root_id = 42;
         let first_key = first.prepared_request().unwrap();

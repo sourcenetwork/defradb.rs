@@ -37,7 +37,7 @@ use crate::{BackfillSource, DB};
 
 type History = RapidHashMap<String, TargetedHistoryLink>;
 
-/// Documents per backfill transaction at most ([`PAGE_ITEMS`]).
+/// Documents per backfill transaction at most (`PAGE_ITEMS`).
 pub const BACKFILL_BATCH_DOCS: usize = PAGE_ITEMS;
 
 /// What a backfill needs to know to run or resume.
@@ -142,6 +142,7 @@ impl<S: Store> DB<S> {
         let attempt = FailBackfillAttempt {
             plan: plan.clone(),
             reason: reason.to_string(),
+            crdts: self.crdts().clone(),
         };
         match self
             .store()
@@ -310,7 +311,8 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
     ) -> storage::corekv::RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+            let txn =
+                datastore::BasicTxn::from_retry_attempt_io(io, 0, self.collection.crdts().clone());
             let datastore = txn.datastore();
             let systemstore = txn.systemstore();
             let built: Result<()> = async move {
@@ -341,6 +343,7 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
 struct FailBackfillAttempt {
     plan: BackfillPlan,
     reason: String,
+    crdts: storage::Crdts,
 }
 
 impl storage::corekv::RetryAttemptFn for FailBackfillAttempt {
@@ -350,7 +353,7 @@ impl storage::corekv::RetryAttemptFn for FailBackfillAttempt {
     ) -> storage::corekv::RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.crdts.clone());
             let systemstore = txn.systemstore();
             let recorded: Result<bool> = async {
                 let collection = crate::collection::loader::load_collection_from_systemstore(

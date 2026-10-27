@@ -73,7 +73,8 @@ pub(crate) async fn set_embedding_with(
     let mut generated = Vec::with_capacity(fields.len());
     for (field, vector) in fields.into_iter().zip(vectors) {
         let vector = vector.map_err(crate::remote_inputs::embedding_error)?;
-        doc.set(&field, NormalValue::Float64Array(vector.to_vec()));
+        doc.set(&field, NormalValue::Float64Array(vector.to_vec()))
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         generated.push(field);
     }
     Ok(generated)
@@ -220,7 +221,8 @@ pub(crate) fn set_embedding_from_inputs(
         let vector: Vec<f64> = serde_json::from_slice(&response).map_err(|error| {
             query::error::QueryError::execution(format!("invalid prepared embedding: {error}"))
         })?;
-        doc.set(&embedding.field_name, NormalValue::Float64Array(vector));
+        doc.set(&embedding.field_name, NormalValue::Float64Array(vector))
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         generated.push(embedding.field_name.clone());
     }
     match first_miss {
@@ -723,8 +725,8 @@ mod prepared_input_tests {
                 .with_url(server.url())
                 .with_model("test-model");
             let memo = query::prepared::PreparedInputMemo::default();
-            let mut doc = Document::new();
-            doc.set("text", "source A");
+            let mut doc = Document::new(crate::common::schema::open_collection(&["text"]));
+            doc.set("text", "source A").unwrap();
             let first = prepared_embedding_request(&description, &doc, &config).unwrap();
 
             for _ in 0..2 {
@@ -735,7 +737,7 @@ mod prepared_input_tests {
             }
             assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
 
-            doc.set("text", "source B");
+            doc.set("text", "source B").unwrap();
             let changed = prepared_embedding_request(&description, &doc, &config).unwrap();
             assert!(memo.get(&changed).is_none());
             let bytes = on_edge(changed.exact_request()).await;

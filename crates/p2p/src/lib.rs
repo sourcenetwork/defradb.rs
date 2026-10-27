@@ -53,6 +53,7 @@
 //! - Protocol ID: `/defra/0.0.1` (multicodec 961)
 //! - Messages: CBOR encoded using serde
 
+pub mod ack_scope;
 #[cfg(feature = "libp2p-transport")]
 pub mod address;
 #[cfg(feature = "libp2p-transport")]
@@ -162,6 +163,8 @@ pub use bitswap::{AccessMode, ReplicatorRegistry};
 /// This is a simple wrapper that allows correlating sync requests with completions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryId(pub u64);
+
+pub use ack_scope::AckScope;
 
 // Re-export replicator types
 pub use replicator::{

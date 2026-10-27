@@ -15,15 +15,17 @@ fn concurrent_downsample_series_claims_have_one_winner() {
                 "1",
                 "source_doc_id",
                 FieldKind::string(),
+                schema::CType::LwwRegister,
             )],
         );
         definition.root_id = 1;
         definition.downsample_source = Some(QuerySource::new(serde_json::json!({})));
-        let collection = Collection::new(definition);
+        let collection = Collection::new(definition, crdt::Crdts::default());
         let make_doc = |seed: &str| {
-            let mut doc = Document::new();
+            let mut doc = Document::new(crate::common::schema::open_collection(&["source_doc_id"]));
             doc.set_id(DocID::new_v0_from_seed(seed));
-            doc.set("source_doc_id", NormalValue::String("shared-series".into()));
+            doc.set("source_doc_id", NormalValue::String("shared-series".into()))
+                .unwrap();
             doc
         };
         let first = BasicTxn::new(&store, 1, false).await.unwrap();

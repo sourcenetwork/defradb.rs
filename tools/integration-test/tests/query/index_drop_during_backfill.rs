@@ -48,7 +48,7 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
                 .expect("create index status")
         }
     });
-    while actions(&api).await == json!([]) {
+    while actions(api).await == json!([]) {
         assert!(
             !create.is_finished(),
             "the backfill finished before the drop could race it"
@@ -64,7 +64,7 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
         .expect("drop index status");
     create.await.expect("create index task");
 
-    assert_eq!(actions(&api).await, json!([]));
+    assert_eq!(actions(api).await, json!([]));
     let indexes = node.index_list(Some("User")).expect("index_list User");
     assert!(
         indexes.as_array().is_some_and(|list| list.is_empty())

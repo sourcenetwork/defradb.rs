@@ -108,7 +108,7 @@ fn query_both(rust: &DefraClient, go: &DefraClient, query: &str) -> (Value, Valu
     )
 }
 
-fn create_document(
+fn add_document(
     rust: &DefraClient,
     go: &DefraClient,
     collection: &str,
@@ -230,14 +230,14 @@ async fn go_lens_migration_http_parity() {
         go.schema_add(&schema)
             .unwrap_or_else(|error| panic!("add Go {} schema: {error}", case.collection));
 
-        let filled_id = create_document(
+        let filled_id = add_document(
             &rust,
             &go,
             case.collection,
             case.required,
             Some(case.optional),
         );
-        let null_id = create_document(&rust, &go, case.collection, case.other_required, None);
+        let null_id = add_document(&rust, &go, case.collection, case.other_required, None);
         let doc_ids = vec![filled_id.clone(), null_id.clone()];
         assert_cids_match(&rust, &go, &doc_ids);
 

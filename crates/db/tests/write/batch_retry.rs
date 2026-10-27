@@ -285,6 +285,10 @@ impl storage::corekv::private::Sealed for ConflictStore {}
 
 #[async_trait]
 impl Store for ConflictStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -458,7 +462,7 @@ fn implicit_single_update_is_prepared_for_engine_owned_retry() {
         let created = db::write::autocommit::AutoCommitMutator::new(store_db.clone())
             .create(
                 "TestDoc",
-                document::Document::from_json_str(r#"{"x": 1}"#).unwrap(),
+                document::Document::from_json_str(r#"{"x": 1}"#, test_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -474,7 +478,7 @@ fn implicit_single_update_is_prepared_for_engine_owned_retry() {
                     .await
                     .map_err(|error| storage::Error::Other(error.to_string()))?
                     .ok_or_else(|| storage::Error::Other("test document disappeared".into()))?;
-                doc.set("x", 3_i64);
+                doc.set("x", 3_i64).unwrap();
                 mutator
                     .update(
                         "TestDoc",
@@ -623,7 +627,7 @@ fn single_create_replays_after_engine_conflict_with_consistent_identity_and_cid(
         let result = db::write::autocommit::AutoCommitMutator::new(db.clone())
             .create(
                 "TestDoc",
-                document::Document::from_json_str(r#"{"x":7}"#).unwrap(),
+                document::Document::from_json_str(r#"{"x":7}"#, test_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -665,16 +669,14 @@ fn transactional_acp_revoke_conflicts_and_denies_batch_update() {
             race_operation: Arc::new(Mutex::new(None)),
         };
         let db = Arc::new(DB::new(store.clone()).unwrap());
-        db.create_collection(
-            test_collection().with_policy(schema::PolicyDescription::new("policy", "test-docs")),
-        )
-        .await
-        .unwrap();
+        let collection =
+            test_collection().with_policy(schema::PolicyDescription::new("policy", "test-docs"));
+        db.create_collection(collection.clone()).await.unwrap();
 
         let original = db::write::autocommit::AutoCommitMutator::new(db.clone())
             .create(
                 "TestDoc",
-                document::Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                document::Document::from_json_str(r#"{"x":1}"#, collection.clone()).unwrap(),
             )
             .await
             .unwrap();
@@ -751,11 +753,9 @@ fn remote_acp_batch_replays_with_attempt_local_registration_projection() {
         db.set_event_bus(bus);
         let owner =
             identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
-        db.create_collection(
-            test_collection().with_policy(schema::PolicyDescription::new("policy1", "test-docs")),
-        )
-        .await
-        .unwrap();
+        let collection =
+            test_collection().with_policy(schema::PolicyDescription::new("policy1", "test-docs"));
+        db.create_collection(collection.clone()).await.unwrap();
         let acp = Arc::new(RemoteRegistrationAcp {
             inner: Arc::new(acp::LocalDocumentACP::new(Arc::new(
                 acp::MemoryAcpStore::new(),

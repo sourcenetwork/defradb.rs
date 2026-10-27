@@ -5,7 +5,7 @@ use std::sync::Arc;
 use defra_p2p_adapter::{P2PError, P2POperations, ReplicationFilters};
 use wasm_bindgen::prelude::*;
 
-use crate::bindings::{from_js, to_js};
+use crate::bindings::{config_from_js, from_js, to_js};
 use crate::client::DefraClient;
 use crate::error::{Result, WasmError};
 use crate::p2p::{P2PConfig, P2PRuntime};
@@ -14,8 +14,8 @@ use crate::p2p::{P2PConfig, P2PRuntime};
 impl DefraClient {
     /// Join the network as a peer, reaching others through a relay.
     ///
-    /// `config` is `{ relay_urls, secret_key_hex, discovery }`, all optional.
-    /// With an identity set and no `secret_key_hex`, the endpoint key is
+    /// `config` is `{ relayUrls, secretKeyHex, discovery }`, all optional.
+    /// With an identity set and no `secretKeyHex`, the endpoint key is
     /// derived from the identity, so the endpoint id survives a reload.
     /// Returns the endpoint id, which is what a peer dials back.
     ///
@@ -24,17 +24,17 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// const id = await client.start_p2p({ relay_urls: ['https://relay.example.com'] });
-    /// await client.connect_peer(`${nodeId}@https://relay.example.com`);
-    /// await client.add_replicator(`${nodeId}@https://relay.example.com`, ['User']);
+    /// const id = await client.startP2P({ relayUrls: ['https://relay.example.com'] });
+    /// await client.connectPeer(`${nodeId}@https://relay.example.com`);
+    /// await client.addReplicator(`${nodeId}@https://relay.example.com`, ['User']);
     /// ```
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = startP2P)]
     pub async fn start_p2p(&mut self, config: JsValue) -> std::result::Result<String, JsValue> {
         self.start_p2p_impl(config).await.map_err(Into::into)
     }
 
     /// Leave the network. Local reads and writes keep working.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = stopP2P)]
     pub async fn stop_p2p(&mut self) -> std::result::Result<(), JsValue> {
         self.ensure_open()?;
         self.stop_p2p_impl().await;
@@ -42,7 +42,7 @@ impl DefraClient {
     }
 
     /// `{ id, addresses }` for this peer.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = peerInfo)]
     pub async fn peer_info(&self) -> std::result::Result<JsValue, JsValue> {
         let ops = self.p2p_ops()?;
         let id = ops.local_peer_id().await.map_err(p2p_error)?;
@@ -53,7 +53,7 @@ impl DefraClient {
     }
 
     /// Dial a peer by ticket or `<endpoint-id>@<relay-url>`.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = connectPeer)]
     pub async fn connect_peer(&self, address: &str) -> std::result::Result<(), JsValue> {
         Ok(self
             .p2p_ops()?
@@ -63,14 +63,14 @@ impl DefraClient {
     }
 
     /// Endpoint ids currently holding a live connection.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = connectedPeers)]
     pub async fn connected_peers(&self) -> std::result::Result<JsValue, JsValue> {
         let peers = self.p2p_ops()?.connected_peers().await.map_err(p2p_error)?;
         Ok(to_js(&peers)?)
     }
 
     /// Push these collections to the peer at `address`, now and on every write.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = addReplicator)]
     pub async fn add_replicator(
         &self,
         address: &str,
@@ -91,7 +91,7 @@ impl DefraClient {
     }
 
     /// Stop pushing these collections to the peer at `address`.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = deleteReplicator)]
     pub async fn delete_replicator(
         &self,
         address: &str,
@@ -113,7 +113,7 @@ impl DefraClient {
     }
 
     /// Follow writes other peers announce on these collections.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = subscribeCollections)]
     pub async fn subscribe_collections(
         &self,
         collections: JsValue,
@@ -127,7 +127,7 @@ impl DefraClient {
     }
 
     /// Stop following these collections.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = unsubscribeCollections)]
     pub async fn unsubscribe_collections(
         &self,
         collections: JsValue,
@@ -150,7 +150,7 @@ impl DefraClient {
         let config: P2PConfig = if config.is_undefined() || config.is_null() {
             P2PConfig::default()
         } else {
-            from_js(config)?
+            config_from_js(config)?
         };
 
         let runtime = P2PRuntime::start(
@@ -179,7 +179,7 @@ impl DefraClient {
         self.p2p
             .as_ref()
             .map(|runtime| &runtime.ops)
-            .ok_or_else(|| WasmError::P2P("P2P is not running; call start_p2p first".into()))
+            .ok_or_else(|| WasmError::P2P("P2P is not running; call startP2P first".into()))
     }
 }
 
@@ -218,7 +218,7 @@ mod tests {
     }
 
     fn no_relays() -> JsValue {
-        js_sys::JSON::parse(r#"{"relay_urls":["http://127.0.0.1:9"]}"#).unwrap()
+        js_sys::JSON::parse(r#"{"relayUrls":["http://127.0.0.1:9"]}"#).unwrap()
     }
 
     #[wasm_bindgen_test]
@@ -290,7 +290,7 @@ mod tests {
     async fn writes_work_before_during_and_after_p2p() {
         let mut client = client("p2p_writes", None).await;
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
         let create = |text: &str| {

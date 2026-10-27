@@ -3,8 +3,8 @@ mod unit_tests {
     use document::NormalValue;
     use storage::RegolithStore;
 
-    fn commit(doc_id: &str, field_name: &str) -> Document {
-        let mut commit = Document::new();
+    fn commit(doc_id: &str, field_name: &str) -> document::CommitRow {
+        let mut commit = document::CommitRow::default();
         commit.set("docID", NormalValue::String(doc_id.to_string()));
         commit.set("fieldName", NormalValue::String(field_name.to_string()));
         commit
@@ -98,7 +98,7 @@ mod shared_owner_tests {
         Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
                 data,
             }),
@@ -170,7 +170,7 @@ mod shared_owner_tests {
             let block = Block::new(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority: 1,
                     data,
                 }),
@@ -217,7 +217,12 @@ mod shared_owner_tests {
 
             let version_txn = db.new_txn(true).await.unwrap();
             let documents = VersionedFetcher::new(Arc::new(version_txn))
-                .get_documents_at_cid(&cid.to_string(), None, None)
+                .get_documents_at_cid(
+                    &cid.to_string(),
+                    None,
+                    None,
+                    Arc::new(crate::common::schema::test_schema()),
+                )
                 .await
                 .unwrap();
             let document_owners: RapidHashSet<_> = documents
@@ -243,7 +248,7 @@ mod shared_owner_tests {
             let block = Block::new_with_options(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority: 1,
                     data,
                 }),

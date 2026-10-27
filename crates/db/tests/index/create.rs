@@ -30,8 +30,13 @@ pub(super) fn users_schema(name: &str, version_id: &str, collection_id: &str) ->
         version_id,
         collection_id,
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -67,8 +72,9 @@ pub(super) async fn create_user<S>(
 where
     S: Store + 'static,
 {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_owned()));
+    let mut doc = Document::new(users_schema(collection, "v1", "col-users"));
+    doc.set("name", NormalValue::String(name.to_owned()))
+        .unwrap();
     mutator.create(collection, doc).await.unwrap().doc_id
 }
 
@@ -274,12 +280,14 @@ fn autocommit_writes_refresh_index_state_from_the_attempt_snapshot() {
             .unwrap();
 
         create_user(&mutator, "Racing", "created-after-index").await;
-        let mut update = Document::new();
+        let mut update = Document::new(users_schema("Racing", "v1", "col-racing"));
         update.set_id(updated_id);
-        update.set(
-            "name",
-            NormalValue::String("updated-after-index".to_string()),
-        );
+        update
+            .set(
+                "name",
+                NormalValue::String("updated-after-index".to_string()),
+            )
+            .unwrap();
         mutator
             .update(
                 "Racing",
@@ -340,9 +348,10 @@ fn create_index_keeps_pace_with_concurrent_writers() {
                 move || async move {
                     for i in updated {
                         retrying(|| async {
-                            let mut doc = Document::new();
+                            let mut doc = Document::new(users_schema("Racing", "v1", "col-racing"));
                             doc.set_id(ids[i].clone());
-                            doc.set("name", NormalValue::String(format!("upd-{i}")));
+                            doc.set("name", NormalValue::String(format!("upd-{i}")))
+                                .unwrap();
                             mutator
                                 .update(
                                     "Racing",
@@ -381,8 +390,9 @@ fn create_index_keeps_pace_with_concurrent_writers() {
                 move || async move {
                     for i in created {
                         retrying(|| async {
-                            let mut doc = Document::new();
-                            doc.set("name", NormalValue::String(format!("new-{i}")));
+                            let mut doc = Document::new(users_schema("Racing", "v1", "col-racing"));
+                            doc.set("name", NormalValue::String(format!("new-{i}")))
+                                .unwrap();
                             mutator.create("Racing", doc).await
                         })
                         .await;
@@ -536,6 +546,10 @@ impl storage::corekv::private::Sealed for PauseDefinitionCommitStore {}
 
 #[async_trait]
 impl Store for PauseDefinitionCommitStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> StorageResult<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -712,9 +726,10 @@ fn backfill_batch_aborts_when_a_document_it_read_changes() {
             assert!(batch.exhausted);
         }
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(users_schema("Observed", "v1", "col-observed"));
         doc.set_id(ids[1].clone());
-        doc.set("name", NormalValue::String("grace-hopper".to_string()));
+        doc.set("name", NormalValue::String("grace-hopper".to_string()))
+            .unwrap();
         mutator
             .update(
                 "Observed",
@@ -811,7 +826,7 @@ fn index_backfill_resumes_after_a_restart() {
         )
         .bytes();
 
-        let indexed = Collection::new(schema.clone());
+        let indexed = Collection::new(schema.clone(), crdt::Crdts::default());
         let manager = IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
         let txn = db.new_txn(false).await.unwrap();
         {

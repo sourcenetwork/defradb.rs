@@ -44,7 +44,7 @@ fn backfill_indexes_a_shared_cid_for_each_document() {
         let block = Block::new(
             defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),
@@ -98,10 +98,12 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                 let headstore = write_txn.headstore().unwrap();
                 let systemstore = write_txn.systemstore().unwrap();
 
-                let identity = db::block::builder::DocStorageIdentity::new(1, 1);
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String("Alice".to_string()));
-                doc.set("age", NormalValue::Int(30));
+                let identity = db::block::builder::DocRef::new(1, 1);
+                let mut doc =
+                    Document::new(crate::common::schema::open_collection(&["name", "age"]));
+                doc.set("name", NormalValue::String("Alice".to_string()))
+                    .unwrap();
+                doc.set("age", NormalValue::Int(30)).unwrap();
 
                 let result = write_document_blocks(
                     &blockstore,
@@ -122,7 +124,7 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                     .await
                     .unwrap();
 
-                doc.set("age", NormalValue::Int(31));
+                doc.set("age", NormalValue::Int(31)).unwrap();
                 let age_only = std::iter::once("age".to_string()).collect();
                 write_document_blocks(
                     &blockstore,
@@ -138,7 +140,8 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                 .await
                 .unwrap();
 
-                doc.set("name", NormalValue::String("Alicia".to_string()));
+                doc.set("name", NormalValue::String("Alicia".to_string()))
+                    .unwrap();
                 let name_only = std::iter::once("name".to_string()).collect();
                 write_document_blocks(
                     &blockstore,
@@ -251,10 +254,12 @@ fn test_backfill_commit_priority_index_repairs_partial_index_without_marker() {
                 let blockstore = write_txn.blockstore().unwrap();
                 let headstore = write_txn.headstore().unwrap();
 
-                let identity = db::block::builder::DocStorageIdentity::new(1, 1);
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String("Alice".to_string()));
-                doc.set("age", NormalValue::Int(30));
+                let identity = db::block::builder::DocRef::new(1, 1);
+                let mut doc =
+                    Document::new(crate::common::schema::open_collection(&["name", "age"]));
+                doc.set("name", NormalValue::String("Alice".to_string()))
+                    .unwrap();
+                doc.set("age", NormalValue::Int(30)).unwrap();
 
                 let result = write_document_blocks(
                     &blockstore,
@@ -271,7 +276,7 @@ fn test_backfill_commit_priority_index_repairs_partial_index_without_marker() {
                 .unwrap();
                 doc.set_id(document::DocID::from_string(&result.doc_id).unwrap());
 
-                doc.set("age", NormalValue::Int(31));
+                doc.set("age", NormalValue::Int(31)).unwrap();
                 let age_only = std::iter::once("age".to_string()).collect();
                 write_document_blocks(
                     &blockstore,

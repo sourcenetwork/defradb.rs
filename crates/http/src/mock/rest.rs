@@ -152,7 +152,7 @@ impl RestOperations for MockRestOperations {
         }))
     }
 
-    async fn create_document(
+    async fn add_document(
         &self,
         collection: &str,
         data: JsonValue,
@@ -174,7 +174,7 @@ impl RestOperations for MockRestOperations {
         Ok(result)
     }
 
-    async fn create_documents(
+    async fn add_many_documents(
         &self,
         collection: &str,
         data: Vec<JsonValue>,
@@ -182,7 +182,7 @@ impl RestOperations for MockRestOperations {
     ) -> RestResult<Vec<JsonValue>> {
         let mut results = Vec::with_capacity(data.len());
         for item in data {
-            let result = self.create_document(collection, item, identity).await?;
+            let result = self.add_document(collection, item, identity).await?;
             results.push(result);
         }
         Ok(results)
@@ -342,7 +342,7 @@ impl RestOperations for FailingMockRestOperations {
         Err(self.error.clone())
     }
 
-    async fn create_document(
+    async fn add_document(
         &self,
         _collection: &str,
         _data: JsonValue,
@@ -351,7 +351,7 @@ impl RestOperations for FailingMockRestOperations {
         Err(self.error.clone())
     }
 
-    async fn create_documents(
+    async fn add_many_documents(
         &self,
         _collection: &str,
         _data: Vec<JsonValue>,

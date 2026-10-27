@@ -9,7 +9,7 @@ async fn data(node: &EmbeddedNode, query: &str) -> Value {
 
 async fn fixture() -> EmbeddedNode {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema(
+    node.add_collection(
         "type Note { tag: String embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
     ).await.unwrap();
     for (tag, score) in [

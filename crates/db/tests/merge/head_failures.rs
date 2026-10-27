@@ -67,6 +67,10 @@ impl Sealed for FailingHeadStore {}
 
 #[async_trait]
 impl Store for FailingHeadStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -293,7 +297,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 2,
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             data: db::block::builder::encode_value_as_cbor(&document::NormalValue::String(
                 "Bob".to_string(),
             ))
@@ -308,7 +312,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
     blocks.put(&name, &field).await.unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         }),

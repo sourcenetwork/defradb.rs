@@ -33,8 +33,13 @@ fn branchable_collection() -> CollectionVersion {
         "branchable-v1",
         "col-branchable",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "x", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .as_branchable()
@@ -79,7 +84,7 @@ fn branchable_create_rolls_back_when_collection_block_fails() {
         let result = mutator
             .create(
                 "Branchable",
-                Document::from_json_str(r#"{"x": 1}"#).unwrap(),
+                Document::from_json_str(r#"{"x": 1}"#, branchable_collection()).unwrap(),
             )
             .await;
         defra_core::signing::set_signing_config(None);
@@ -104,7 +109,7 @@ fn branchable_update_rolls_back_when_collection_block_fails() {
         let created = mutator
             .create(
                 "Branchable",
-                Document::from_json_str(r#"{"x": 1}"#).unwrap(),
+                Document::from_json_str(r#"{"x": 1}"#, branchable_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -113,7 +118,7 @@ fn branchable_update_rolls_back_when_collection_block_fails() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("x", NormalValue::Int(2));
+        doc.set("x", NormalValue::Int(2)).unwrap();
 
         defra_core::signing::set_signing_config(Some(failing_collection_signing_config()));
         let result = mutator
@@ -146,8 +151,14 @@ fn counter_collection() -> CollectionVersion {
         "cv1",
         "col-counters",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "count", FieldKind::int()).with_crdt_type(CType::PnCounter),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
         ],
     )
 }
@@ -158,9 +169,19 @@ fn float32_counter_collection() -> CollectionVersion {
         "fcv1",
         "col-float-counters",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "points", FieldKind::float32())
-                .with_crdt_type(CType::PnCounter),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "points",
+                FieldKind::float32(),
+                schema::CType::LwwRegister,
+            )
+            .with_crdt_type(CType::PnCounter),
         ],
     )
 }
@@ -187,8 +208,8 @@ fn auto_commit_float32_counter_accumulates_with_float32_precision() {
             .unwrap();
         let mutator = db::AutoCommitMutator::new(Arc::clone(&db));
 
-        let mut doc = Document::new();
-        doc.set("points", NormalValue::Float32(0.0));
+        let mut doc = Document::new(float32_counter_collection());
+        doc.set("points", NormalValue::Float32(0.0)).unwrap();
         let doc_id = mutator.create("FloatCounters", doc).await.unwrap().doc_id;
 
         for (value, delta) in [(10.1f32, 10.1f32), (10.1f32 + 10.2f32, 10.2f32)] {
@@ -197,8 +218,12 @@ fn auto_commit_float32_counter_accumulates_with_float32_precision() {
                 .await
                 .unwrap()
                 .unwrap();
-            doc.set("points", NormalValue::Float32(value));
-            doc.set_counter_delta("points".into(), NormalValue::Float32(delta));
+            doc.set("points", NormalValue::Float32(value)).unwrap();
+            doc.edit(
+                "points",
+                document::FieldOp::Increment(NormalValue::Float32(delta)),
+            )
+            .unwrap();
             mutator
                 .update(
                     "FloatCounters",
@@ -229,8 +254,8 @@ fn alias_reads_and_mutations_use_the_canonical_doc_id() {
         let (db, _bus) = make_test_db_with_bus().await;
         db.create_collection(test_collection()).await.unwrap();
         let mutator = db::AutoCommitMutator::new(db.clone());
-        let mut doc = Document::new();
-        doc.set("x", NormalValue::Int(1));
+        let mut doc = Document::new(test_collection());
+        doc.set("x", NormalValue::Int(1)).unwrap();
         let created = mutator.create("TestDoc", doc).await.unwrap();
         let canonical_doc_id = created.doc_id;
         let alias =
@@ -261,7 +286,7 @@ fn alias_reads_and_mutations_use_the_canonical_doc_id() {
             .unwrap();
         assert_eq!(fetched.id(), Some(&canonical_doc_id));
         fetched.set_id(alias.clone());
-        fetched.set("x", NormalValue::Int(2));
+        fetched.set("x", NormalValue::Int(2)).unwrap();
         let updated = mutator
             .update(
                 "TestDoc",
@@ -305,7 +330,8 @@ fn explicit_txn_counter_increment_advances_the_counter() {
         let doc_id = in_txn(&registry, &handle, move |ctx| {
             Box::pin(async move {
                 let mutator = ctx.doc_mutator().expect("mutator");
-                let create_doc = Document::from_json_str(r#"{"count": 5}"#).expect("doc");
+                let create_doc =
+                    Document::from_json_str(r#"{"count": 5}"#, counter_collection()).expect("doc");
                 let created = mutator
                     .create("Counters", create_doc)
                     .await
@@ -329,10 +355,16 @@ fn explicit_txn_counter_increment_advances_the_counter() {
             move |ctx| {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
-                    let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
+                    let mut update_doc =
+                        Document::from_json_str(r#"{"count": 8}"#, counter_collection())
+                            .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -362,8 +394,14 @@ fn pcounter_collection() -> CollectionVersion {
         "pcv1",
         "col-pcounters",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "count", FieldKind::int()).with_crdt_type(CType::PCounter),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PCounter),
         ],
     )
 }
@@ -385,7 +423,8 @@ fn explicit_txn_pcounter_increment_no_double_apply() {
         let doc_id = in_txn(&registry, &handle, move |ctx| {
             Box::pin(async move {
                 let mutator = ctx.doc_mutator().expect("mutator");
-                let create_doc = Document::from_json_str(r#"{"count": 5}"#).expect("doc");
+                let create_doc =
+                    Document::from_json_str(r#"{"count": 5}"#, pcounter_collection()).expect("doc");
                 let created = mutator
                     .create("PCounters", create_doc)
                     .await
@@ -409,10 +448,16 @@ fn explicit_txn_pcounter_increment_no_double_apply() {
             move |ctx| {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
-                    let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
+                    let mut update_doc =
+                        Document::from_json_str(r#"{"count": 8}"#, pcounter_collection())
+                            .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -453,7 +498,7 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                 let doc_a = mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"count": 10}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 10}"#, counter_collection()).unwrap(),
                     )
                     .await
                     .expect("create a")
@@ -462,7 +507,7 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                 let doc_b = mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"count": 20}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 20}"#, counter_collection()).unwrap(),
                     )
                     .await
                     .expect("create b")
@@ -483,9 +528,14 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
 
-                    let mut up_a = Document::from_json_str(r#"{"count": 11}"#).unwrap();
+                    let mut up_a =
+                        Document::from_json_str(r#"{"count": 11}"#, counter_collection()).unwrap();
                     up_a.set_id(document::DocID::from_string(&doc_a).unwrap());
-                    up_a.set_counter_delta("count".to_string(), document::NormalValue::Int(1));
+                    up_a.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(1)),
+                    )
+                    .unwrap();
                     let mut mod_a = rapidhash::RapidHashSet::new();
                     mod_a.insert("count".to_string());
                     mutator
@@ -493,9 +543,14 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                         .await
                         .expect("update a");
 
-                    let mut up_b = Document::from_json_str(r#"{"count": 25}"#).unwrap();
+                    let mut up_b =
+                        Document::from_json_str(r#"{"count": 25}"#, counter_collection()).unwrap();
                     up_b.set_id(document::DocID::from_string(&doc_b).unwrap());
-                    up_b.set_counter_delta("count".to_string(), document::NormalValue::Int(5));
+                    up_b.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(5)),
+                    )
+                    .unwrap();
                     let mut mod_b = rapidhash::RapidHashSet::new();
                     mod_b.insert("count".to_string());
                     mutator
@@ -576,15 +631,21 @@ fn explicit_txn_pcounter_create_then_update_same_txn() {
                 let created = mutator
                     .create(
                         "PCounters",
-                        Document::from_json_str(r#"{"count": 5}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 5}"#, pcounter_collection()).unwrap(),
                     )
                     .await
                     .expect("create");
                 let doc_id = created.doc_id.to_string();
 
-                let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
+                let mut update_doc =
+                    Document::from_json_str(r#"{"count": 8}"#, pcounter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(3)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -627,7 +688,8 @@ fn an_increment_lands_on_a_directly_written_counter_value() {
             IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
                 .expect("index manager");
 
-        let mut setup_doc = Document::from_json_str(r#"{"count": 5}"#).expect("doc");
+        let mut setup_doc =
+            Document::from_json_str(r#"{"count": 5}"#, counter_collection()).expect("doc");
         setup_doc.set_id(document::DocID::new_v0_from_seed("legacy-counter-doc"));
         let doc_id = setup_doc.id().expect("doc id").to_string();
 
@@ -670,10 +732,16 @@ fn an_increment_lands_on_a_directly_written_counter_value() {
             move |ctx| {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
-                    let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
+                    let mut update_doc =
+                        Document::from_json_str(r#"{"count": 8}"#, counter_collection())
+                            .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -715,15 +783,21 @@ fn explicit_txn_pncounter_create_then_decrement_same_txn() {
                 let created = mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"count": 3}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 3}"#, counter_collection()).unwrap(),
                     )
                     .await
                     .expect("create");
                 let doc_id = created.doc_id.to_string();
 
-                let mut update_doc = Document::from_json_str(r#"{"count": -2}"#).unwrap();
+                let mut update_doc =
+                    Document::from_json_str(r#"{"count": -2}"#, counter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(-5));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(-5)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -765,15 +839,21 @@ fn explicit_txn_discard_drops_pending_counter_ops() {
                 let created = mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"count": 7}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 7}"#, counter_collection()).unwrap(),
                     )
                     .await
                     .expect("create");
                 let doc_id = created.doc_id.to_string();
 
-                let mut update_doc = Document::from_json_str(r#"{"count": 9}"#).unwrap();
+                let mut update_doc =
+                    Document::from_json_str(r#"{"count": 9}"#, counter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(2)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -784,7 +864,7 @@ fn explicit_txn_discard_drops_pending_counter_ops() {
             })
         })
         .await;
-        registry.rollback(&handle).await.expect("rollback");
+        registry.discard(&handle).await.expect("discard");
 
         assert_eq!(
             read_counter_store_opt(&db, "Counters", &doc_id, "count").await,
@@ -819,7 +899,7 @@ fn explicit_txn_multiple_updates_same_field_sum_once() {
                 let created = mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"count": 0}"#).unwrap(),
+                        Document::from_json_str(r#"{"count": 0}"#, counter_collection()).unwrap(),
                     )
                     .await
                     .expect("create");
@@ -837,16 +917,26 @@ fn explicit_txn_multiple_updates_same_field_sum_once() {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
 
-                    let mut up1 = Document::from_json_str(r#"{"count": 3}"#).unwrap();
+                    let mut up1 =
+                        Document::from_json_str(r#"{"count": 3}"#, counter_collection()).unwrap();
                     up1.set_id(document::DocID::from_string(&doc_id).unwrap());
-                    up1.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                    up1.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(3)),
+                    )
+                    .unwrap();
                     let mut m1 = rapidhash::RapidHashSet::new();
                     m1.insert("count".to_string());
                     mutator.update("Counters", up1, m1).await.expect("update 1");
 
-                    let mut up2 = Document::from_json_str(r#"{"count": 5}"#).unwrap();
+                    let mut up2 =
+                        Document::from_json_str(r#"{"count": 5}"#, counter_collection()).unwrap();
                     up2.set_id(document::DocID::from_string(&doc_id).unwrap());
-                    up2.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
+                    up2.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(2)),
+                    )
+                    .unwrap();
                     let mut m2 = rapidhash::RapidHashSet::new();
                     m2.insert("count".to_string());
                     mutator.update("Counters", up2, m2).await.expect("update 2");
@@ -889,8 +979,14 @@ fn indexed_counter_collection() -> CollectionVersion {
         "icv1",
         "col-idx-counters",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "count", FieldKind::int()).with_crdt_type(CType::PnCounter),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
         ],
     );
     col.indexes = vec![schema::IndexDescription::new("idx_count").with_field("count", false)];
@@ -906,23 +1002,29 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
         let col_version = indexed_counter_collection();
-        db.create_collection(col_version).await.expect("schema");
+        db.create_collection(col_version.clone())
+            .await
+            .expect("schema");
         let registry = DbTransactionRegistry::new(Arc::clone(&db));
 
         // Create at 5, commit.
         let handle = registry.begin(false).await.expect("begin");
-        let doc_id = in_txn(&registry, &handle, move |ctx| {
-            Box::pin(async move {
-                let mutator = ctx.doc_mutator().expect("mutator");
-                let created = mutator
-                    .create(
-                        "IdxCounters",
-                        Document::from_json_str(r#"{"count": 5}"#).unwrap(),
-                    )
-                    .await
-                    .expect("create");
-                created.doc_id.to_string()
-            })
+        let doc_id = in_txn(&registry, &handle, {
+            let col_version = col_version.clone();
+            move |ctx| {
+                Box::pin(async move {
+                    let mutator = ctx.doc_mutator().expect("mutator");
+                    let created = mutator
+                        .create(
+                            "IdxCounters",
+                            Document::from_json_str(r#"{"count": 5}"#, col_version.clone())
+                                .unwrap(),
+                        )
+                        .await
+                        .expect("create");
+                    created.doc_id.to_string()
+                })
+            }
         })
         .await;
         registry.commit(&handle).await.expect("commit create");
@@ -934,10 +1036,15 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
             move |ctx| {
                 Box::pin(async move {
                     let mutator = ctx.doc_mutator().expect("mutator");
-                    let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
+                    let mut update_doc =
+                        Document::from_json_str(r#"{"count": 8}"#, col_version.clone()).unwrap();
                     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -1008,7 +1115,7 @@ fn create_in_tx_publishes_event_on_commit() {
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = DbDocMutator::new(Arc::clone(&db), txn);
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         let result = mutator.create("TestDoc", doc).await.expect("create");
 
         // Before commit: no event should have fired
@@ -1062,7 +1169,7 @@ fn auto_commit_create_registers_acp_before_publishing_update() {
                     Some(owner.to_string()),
                     mutator.create(
                         "TestDoc",
-                        Document::from_json_str(r#"{"x": 1}"#).expect("doc"),
+                        Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc"),
                     ),
                 )
                 .await
@@ -1102,7 +1209,7 @@ fn create_in_tx_publishes_no_event_on_discard() {
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = DbDocMutator::new(Arc::clone(&db), txn);
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         mutator.create("TestDoc", doc).await.expect("create");
 
         let txn = mutator.take_txn().await.expect("take txn");
@@ -1225,7 +1332,7 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
         let first_doc = first
             .create(
                 "TestDoc",
-                Document::from_json_str(r#"{"x": 1}"#).expect("doc"),
+                Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc"),
             )
             .await
             .expect("first create");
@@ -1248,7 +1355,7 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
         let second_doc = second
             .create(
                 "TestDoc",
-                Document::from_json_str(r#"{"x": 2}"#).expect("doc"),
+                Document::from_json_str(r#"{"x": 2}"#, test_collection()).expect("doc"),
             )
             .await
             .expect("second create");
@@ -1311,7 +1418,7 @@ fn create_in_tx_forwards_to_broadcaster_on_commit() {
             Some(broadcaster),
         );
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         let result = mutator.create("TestDoc", doc).await.expect("create");
 
         // Broadcaster must NOT see anything before commit
@@ -1365,7 +1472,7 @@ fn create_in_tx_does_not_broadcast_on_discard() {
             Some(broadcaster),
         );
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         mutator.create("TestDoc", doc).await.expect("create");
 
         let txn = mutator.take_txn().await.expect("take txn");

@@ -334,7 +334,11 @@ where
             let io = retry.begin_attempt_io()?;
             let txn = self
                 .db
-                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(io, 0));
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.db.crdts().clone(),
+                ));
             let definition = self
                 .db
                 .reconcile_ordinary_index(

@@ -475,7 +475,12 @@ mod tests {
         let idx = make_index("idx_score", vec![("score", false)], true);
 
         // Build a collection whose "score" field is Float32.
-        let float32_field = FieldDescription::new("1", "score", FieldKind::float32());
+        let float32_field = FieldDescription::new(
+            "1",
+            "score",
+            FieldKind::float32(),
+            schema::CType::LwwRegister,
+        );
         let mut coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![float32_field]);
         coll.indexes = vec![idx.clone()];
 
@@ -511,7 +516,12 @@ mod tests {
 
         let idx = make_index("idx_stamp", vec![("stamp", false)], true);
 
-        let stamp_field = FieldDescription::new("1", "stamp", FieldKind::string());
+        let stamp_field = FieldDescription::new(
+            "1",
+            "stamp",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        );
         let mut coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![stamp_field]);
         coll.indexes = vec![idx.clone()];
 
@@ -561,7 +571,12 @@ mod tests {
 
         let idx = make_index("idx_stamp", vec![("stamp", false)], true);
 
-        let stamp_field = FieldDescription::new("1", "stamp", FieldKind::datetime());
+        let stamp_field = FieldDescription::new(
+            "1",
+            "stamp",
+            FieldKind::datetime(),
+            schema::CType::LwwRegister,
+        );
         let mut coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![stamp_field]);
         coll.indexes = vec![idx.clone()];
 
@@ -605,7 +620,12 @@ mod tests {
 
         let idx = make_index("idx_stamp", vec![("stamp", false)], true);
 
-        let stamp_field = FieldDescription::new("1", "stamp", FieldKind::string());
+        let stamp_field = FieldDescription::new(
+            "1",
+            "stamp",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        );
         let mut coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![stamp_field]);
         coll.indexes = vec![idx.clone()];
 

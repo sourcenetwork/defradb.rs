@@ -149,6 +149,26 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         ))
     }
 
+    /// [`truncate_log`](Self::truncate_log) through a shared reference.
+    async fn truncate_log_shared(
+        &self,
+        _log: &super::types::AppendLog,
+        _positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        Err(super::errors::Error::Other(
+            "commit-ordered log truncate is unsupported by this store".into(),
+        ))
+    }
+
+    /// The entries this transaction appended to `log` and has not committed,
+    /// oldest first. They have no position yet, so no read of the log shows
+    /// them. A read-only transaction has none.
+    async fn appended(&self, _log: &super::types::AppendLog) -> Result<Vec<Vec<u8>>> {
+        Err(super::errors::Error::Other(
+            "commit-ordered append is unsupported by this store".into(),
+        ))
+    }
+
     /// [`set`](Self::set) through a shared reference.
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()>;
 
@@ -168,6 +188,16 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         self.append_shared(log, entry, once_key).await
+    }
+
+    /// Drops the log's entries at `positions` when the transaction commits;
+    /// the head stays, so positions keep counting. Never a conflict.
+    async fn truncate_log(
+        &mut self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.truncate_log_shared(log, positions).await
     }
 
     /// Store a key-value pair.
@@ -228,6 +258,11 @@ pub trait Store: MaybeSendSync + private::Sealed {
     /// Store wrappers must forward this capability; database schema and document
     /// creation depend on it, so omission must fail at compile time.
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>>;
+
+    /// The CRDT types of the node the store belongs to, which its merge
+    /// operator folds document parts by. Store wrappers must forward it, so a
+    /// node's reads and its store's merges never disagree on a type.
+    fn crdts(&self) -> &crdt::Crdts;
 
     /// Transaction diagnostics for stores that keep them.
     fn transaction_stats_handle(&self) -> Option<crate::backends::TransactionStatsHandle> {
@@ -483,6 +518,18 @@ impl Writer for Box<dyn Txn> {
         (**self).append_shared(log, entry, once_key).await
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        (**self).truncate_log_shared(log, positions).await
+    }
+
+    async fn appended(&self, log: &super::types::AppendLog) -> Result<Vec<Vec<u8>>> {
+        (**self).appended(log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         (**self).set_shared(key, value).await
     }
@@ -504,6 +551,14 @@ impl Writer for Box<dyn Txn> {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         (**self).append(log, entry, once_key).await
+    }
+
+    async fn truncate_log(
+        &mut self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        (**self).truncate_log(log, positions).await
     }
 
     async fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {

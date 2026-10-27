@@ -20,9 +20,14 @@ fn make_test_collection() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -33,9 +38,14 @@ fn make_test_collection_with_index() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(IndexDescription {
@@ -68,10 +78,20 @@ fn make_users_collection() -> CollectionVersion {
         "v1",
         "coll-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "posts", FieldKind::relation("posts", true))
-                .with_relation_name("author_posts"),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "posts",
+                FieldKind::relation("posts", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts"),
         ],
     )
 }
@@ -82,14 +102,34 @@ fn make_posts_collection() -> CollectionVersion {
         "v1",
         "coll-posts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
-            FieldDescription::new("3", "author", FieldKind::relation("users", false))
-                .with_relation_name("author_posts")
-                .as_primary(),
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("users", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
         ],
     )
 }

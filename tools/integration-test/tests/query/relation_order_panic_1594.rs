@@ -4,7 +4,7 @@ use serde_json::Value;
 /// Mirrors the Go fixture from TestDebugExplainRequestWithOrderByRelationFieldWithIndex:
 /// `Publisher` is the primary side, so it holds the `_bookID` foreign key, and the
 /// ordering field lives on the child `Book`.
-fn add_schema(node: &DefraClient) {
+fn add_collection(node: &DefraClient) {
     node.schema_add(
         r#"
         type Book {
@@ -69,7 +69,7 @@ fn assert_join_one_shape(explain: &Value) {
 
 async fn debug_explain_asc_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let explain = node
         .query(
@@ -91,7 +91,7 @@ async fn debug_explain_asc_test(cluster: TestCluster) {
 
 async fn debug_explain_desc_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let explain = node
         .query(
@@ -113,7 +113,7 @@ async fn debug_explain_desc_test(cluster: TestCluster) {
 
 async fn exhaustive_execution_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let add_book = |title: &str, rating: i64| {
         let result = node

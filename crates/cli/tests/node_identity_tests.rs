@@ -151,7 +151,7 @@ async fn generated_identity_signs_commits_unless_signing_is_disabled() {
         let (key_type, public_bytes) = crypto::parse_did_key(did).unwrap();
         let public_key = crypto::public_key_from_bytes(key_type, &public_bytes).unwrap();
         node.client
-            .post(format!("{}/api/v0/schema", node.url))
+            .post(format!("{}/api/v0/collections", node.url))
             .body("type Users { name: String }")
             .send()
             .await

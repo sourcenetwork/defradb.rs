@@ -25,7 +25,7 @@ pub struct LwwDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// The value data (empty = deletion/tombstone)
     #[serde(with = "serde_bytes")]
@@ -49,7 +49,7 @@ pub struct ImmutableDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Field name to CBOR-encoded value, as an LWW delta's `data`
     pub fields: BTreeMap<String, serde_bytes::ByteBuf>,
@@ -63,10 +63,90 @@ impl ImmutableDeltaPayload {
             .map(|(field_name, data)| LwwDeltaPayload {
                 field_name: field_name.clone(),
                 priority: self.priority,
-                schema_version_id: self.schema_version_id.clone(),
+                collection_version_id: self.collection_version_id.clone(),
                 data: data.to_vec(),
             })
     }
+}
+
+/// Text delta payload for block embedding: edits to a Text field.
+///
+/// Shaped as an LWW delta, so a field's encryption treats both alike; `data`
+/// is the CBOR of the block's [`TextOp`](crate::text_op::TextOp)s. The ops
+/// count positions in the block's parent version, the text its `heads`
+/// produce. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextDeltaPayload {
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub collection_version_id: String,
+
+    /// The encoded ops
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+/// JSON delta payload for block embedding: edits at paths of a JSON field.
+///
+/// Shaped as an LWW delta, so a field's encryption treats both alike; `data`
+/// is the CBOR of the block's [`JsonOp`](crate::json_crdt::JsonOp)s, one per
+/// path. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JsonDeltaPayload {
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub collection_version_id: String,
+
+    /// The encoded ops
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+/// Custom delta payload for block embedding: a field block written by a CRDT
+/// type registered on the node by name.
+///
+/// Shaped as an LWW delta, so a field's encryption treats it alike; `data` is
+/// whatever the type encodes. `crdt` names the type, so a node that does not
+/// have it can refuse the block by name. `nonce` keeps two equal operations
+/// distinct blocks, for a type that replicates operations; a state type leaves
+/// it out. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomDeltaPayload {
+    /// The custom CRDT type's name
+    pub crdt: String,
+
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Nonce for idempotency, for a type that replicates operations
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<i64>,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub collection_version_id: String,
+
+    /// The encoded value or operation
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
 }
 
 /// Counter delta payload for block embedding
@@ -86,7 +166,7 @@ pub struct CounterDeltaPayload {
 
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Increment/decrement value (encoded)
     #[serde(with = "serde_bytes")]
@@ -100,7 +180,7 @@ pub struct CounterDeltaPayload {
 pub struct CompositeDeltaPayload {
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Priority
     pub priority: u64,
@@ -133,7 +213,7 @@ where
 pub struct CollectionDeltaPayload {
     /// Collection version identifier
     #[serde(rename = "collectionVersionID")]
-    pub schema_version_id: String,
+    pub collection_version_id: String,
 
     /// Priority
     pub priority: u64,
@@ -155,6 +235,16 @@ pub struct FieldDefinitionDeltaPayload {
     /// CRDT type for this field
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crdt: Option<u8>,
+
+    /// The custom CRDT type's name, beside `crdt`'s custom code. Skipped when
+    /// absent, so a native field's delta serialises to the bytes it did
+    /// before custom types existed.
+    #[serde(
+        rename = "customCrdt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub custom_crdt: Option<String>,
 
     /// Scalar kind (for scalar fields)
     #[serde(
@@ -201,6 +291,7 @@ impl FieldDefinitionDeltaPayload {
             priority,
             name: None,
             crdt: None,
+            custom_crdt: None,
             scalar_kind: None,
             collection_id: None,
             relative_id: None,
@@ -217,6 +308,12 @@ impl FieldDefinitionDeltaPayload {
     /// Set the CRDT type
     pub fn with_crdt(mut self, crdt: u8) -> Self {
         self.crdt = Some(crdt);
+        self
+    }
+
+    /// Set the custom CRDT type's name
+    pub fn with_custom_crdt(mut self, name: impl Into<String>) -> Self {
+        self.custom_crdt = Some(name.into());
         self
     }
 

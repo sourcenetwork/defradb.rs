@@ -22,8 +22,13 @@ fn branchable_schema(version_id: &str, collection_id: &str) -> CollectionVersion
         version_id,
         collection_id,
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
     .as_branchable()
@@ -43,9 +48,15 @@ where
 
     let blockstore = Arc::new(DefraBlockstore::new(store.clone(), false));
     let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
-    let mut doc = Document::new();
-    doc.set("body", "hello".to_string());
+    let guard_race = db
+        .get_collection("GuardRace")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    let mut doc = Document::new(guard_race);
+    doc.set("body", "hello".to_string()).unwrap();
     let built = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version(version_id),
         &blockstore,

@@ -15,7 +15,7 @@ merge then resolves a re-walked ancestor delta against the stale `view`, the
 field can drop BELOW its committed priority — and the two replicas diverge. This
 is the bug found by the conformance harness
 (`proofs/tests/behavioral/partition.rs`) and fixed in
-`crates/db/src/merge/merge_handler/lww.rs` (`seed_lww_from_existing_doc`).
+`crates/db/src/merge/merge_handler/field_state.rs` (`reseed_from_document`).
 
 This models the fix: `reconcile` raises `view` to `committed` before merging, and
 we prove that the merge can then never drop the field below its committed
@@ -33,7 +33,7 @@ deriving DecidableEq, Repr
 
 /-- LWW merge against the current entry: a strictly-higher priority wins; on an
     equal priority the strictly-greater value wins; otherwise the current entry
-    is kept. Mirrors `crdt::lww::Lww::set_value`. -/
+    is kept. Mirrors `crdt::field::LwwField::merge`. -/
 def lwwMerge (cur d : Entry) : Entry :=
   if d.priority > cur.priority then d
   else if d.priority = cur.priority ∧ d.value > cur.value then d
@@ -52,7 +52,7 @@ theorem lwwMerge_priority_ge_cur (cur d : Entry) :
 
 /-- Reconcile the merge view against the committed state: raise the view to the
     committed entry when the committed priority is ahead (a local write that
-    bypassed the merge view). Mirrors `seed_lww_from_existing_doc`. -/
+    bypassed the merge view). Mirrors `reseed_from_document`. -/
 def reconcile (committed view : Entry) : Entry :=
   if committed.priority > view.priority then committed else view
 

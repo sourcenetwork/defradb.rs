@@ -4,7 +4,7 @@ use super::parse::*;
 use super::types::*;
 use crate::error::{Error, Result};
 use chrono::{DateTime, FixedOffset};
-use document::Document;
+use document::CommitRow;
 use rapidhash::RapidHashSet;
 use std::collections::BTreeMap;
 use storage::corekv::Store;
@@ -14,7 +14,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         &self,
         plan: &DownsamplePlan,
         measure_field: &str,
-        commits: Vec<Document>,
+        commits: Vec<CommitRow>,
     ) -> Result<Vec<SourceSample>> {
         let needed = RapidHashSet::from_iter([plan.time_field.as_str(), measure_field]);
         let grouped = group_commit_values_by_height(commits, &needed);
@@ -57,7 +57,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     pub(super) fn build_rollup_source_samples(
         &self,
         plan: &DownsamplePlan,
-        commits: Vec<Document>,
+        commits: Vec<CommitRow>,
     ) -> Result<Vec<SourceSample>> {
         let mut needed = RapidHashSet::from_iter([plan.time_field.as_str(), "window_end"]);
         for field in &plan.aggregate_fields {
@@ -191,7 +191,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     pub(super) fn build_source_samples(
         &self,
         plan: &DownsamplePlan,
-        commits: Vec<Document>,
+        commits: Vec<CommitRow>,
     ) -> Result<Vec<SourceSample>> {
         match &plan.source_kind {
             SourceKind::Raw { measure_field } => {

@@ -37,18 +37,26 @@ async fn database() -> Arc<DB<RegolithStore>> {
 
 async fn database_on(store: Arc<RegolithStore>) -> Arc<DB<RegolithStore>> {
     let db = Arc::new(DB::from_arc(store).unwrap());
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    db.create_collection(things_schema()).await.unwrap();
+    db
+}
+
+fn things_schema() -> CollectionVersion {
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for (index, name) in FIELDS.iter().enumerate() {
         fields.push(FieldDescription::new(
             (index + 2).to_string(),
             *name,
             FieldKind::string(),
+            schema::CType::LwwRegister,
         ));
     }
-    db.create_collection(CollectionVersion::new("Things", "v1", "col-things", fields))
-        .await
-        .unwrap();
-    db
+    CollectionVersion::new("Things", "v1", "col-things", fields)
 }
 
 /// A merge handler over one store, as a node has.
@@ -128,7 +136,7 @@ async fn encrypted_composite(
         let block = Block::new_with_options(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field.to_string(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
                 data: ciphertext,
             }),
@@ -147,7 +155,7 @@ async fn encrypted_composite(
     }
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 1,
             status: 1,
         }),
@@ -275,9 +283,9 @@ fn sign_with(signer: &Arc<WaveSigner>) {
 fn documents(count: usize) -> Vec<Document> {
     (0..count)
         .map(|index| {
-            let mut doc = Document::new();
+            let mut doc = Document::new(things_schema());
             for field in FIELDS {
-                doc.set(field, format!("{field} {index}"));
+                doc.set(field, format!("{field} {index}")).unwrap();
             }
             doc
         })
@@ -362,10 +370,20 @@ async fn embedded_database(url: &str) -> Arc<DB<RegolithStore>> {
         "texts-v1",
         "col-texts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "text", FieldKind::string()),
-            FieldDescription::new("3", "vector", FieldKind::float64_array()),
-            FieldDescription::new("4", "tag", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "vector",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("4", "tag", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
     collection
@@ -389,9 +407,9 @@ fn text_document(text: &str) -> Document {
 /// A document whose tag, which nothing embeds, tells it apart from another
 /// with the same text.
 fn tagged_document(text: &str, tag: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set("text", text);
-    doc.set("tag", tag);
+    let mut doc = Document::new(text_schema());
+    doc.set("text", text).unwrap();
+    doc.set("tag", tag).unwrap();
     doc
 }
 
@@ -478,7 +496,7 @@ fn an_update_and_a_delete_each_sign_in_one_wave() {
         sign_with(&signer);
 
         let mut changed = created.document.clone();
-        changed.set("a", "changed");
+        changed.set("a", "changed").unwrap();
         let updated = mutator
             .update("Things", changed, ["a".to_string()].into_iter().collect())
             .await;
@@ -516,6 +534,10 @@ impl storage::corekv::private::Sealed for WinnerDuringFirstAttempt {}
 
 #[async_trait]
 impl storage::corekv::Store for WinnerDuringFirstAttempt {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -574,17 +596,7 @@ fn a_retry_after_a_conflict_builds_on_the_winner() {
             winner: regolith::sync::SegQueue::new(),
         });
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
-        for (index, name) in FIELDS.iter().enumerate() {
-            fields.push(FieldDescription::new(
-                (index + 2).to_string(),
-                *name,
-                FieldKind::string(),
-            ));
-        }
-        db.create_collection(CollectionVersion::new("Things", "v1", "col-things", fields))
-            .await
-            .unwrap();
+        db.create_collection(things_schema()).await.unwrap();
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
         let created = mutator
             .create("Things", documents(1).remove(0))
@@ -601,14 +613,14 @@ fn a_retry_after_a_conflict_builds_on_the_winner() {
                 field.clone(),
             );
             let mut doc = created.document.clone();
-            doc.set("a", "winner");
+            doc.set("a", "winner").unwrap();
             store.winner.push(Box::pin(async move {
                 let result = mutator.update("Things", doc, field).await.unwrap();
                 let _ = winner.set(result);
             }));
         }
         let mut doc = created.document.clone();
-        doc.set("a", "loser");
+        doc.set("a", "loser").unwrap();
         let loser = mutator.update("Things", doc, field).await.unwrap();
         let winner = winner
             .get()
@@ -740,4 +752,22 @@ fn set_embedding_and_a_hybrid_query_embed_from_a_thread_without_a_runtime() {
         2,
         "one request for the document, one for the query"
     );
+}
+
+fn text_schema() -> CollectionVersion {
+    CollectionVersion::new(
+        "Texts",
+        "texts-v1",
+        "col-texts",
+        vec![
+            FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "vector",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("4", "tag", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    )
 }

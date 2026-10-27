@@ -1,12 +1,13 @@
 //! Mutation nodes for write operations
 
-mod create;
+mod add;
 mod create_conversions;
 mod delete;
 mod update;
+mod update_ops;
 mod upsert;
 
-pub use create::{CreateInput, CreateNode};
+pub use add::{AddInput, AddNode};
 pub use create_conversions::{
     json_to_normal_value, json_to_normal_value_with_kind, normal_value_to_json,
 };

@@ -47,11 +47,36 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
         "stamps-v1",
         "stamps-collection",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "owner", FieldKind::string()),
-            FieldDescription::new("3", "created_at", FieldKind::string()),
-            FieldDescription::new("4", "observed_at", FieldKind::datetime()),
-            FieldDescription::new("5", "seen_at", FieldKind::datetime_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "owner",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "created_at",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "4",
+                "observed_at",
+                FieldKind::datetime(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "5",
+                "seen_at",
+                FieldKind::datetime_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.is_materialized = true;
@@ -62,16 +87,19 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
         index(4, "seen_at"),
     ];
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(version).await.unwrap();
+    db.create_collection(version.clone()).await.unwrap();
     let docs = STAMPS
         .iter()
         .map(|stamp| {
-            let mut doc = Document::new();
-            doc.set("owner", NormalValue::String("alice".to_string()));
-            doc.set("created_at", NormalValue::String((*stamp).to_string()));
+            let mut doc = Document::new(version.clone());
+            doc.set("owner", NormalValue::String("alice".to_string()))
+                .unwrap();
+            doc.set("created_at", NormalValue::String((*stamp).to_string()))
+                .unwrap();
             let time = chrono::DateTime::parse_from_rfc3339(stamp).unwrap();
-            doc.set("observed_at", NormalValue::Time(time));
-            doc.set("seen_at", NormalValue::TimeArray(vec![time]));
+            doc.set("observed_at", NormalValue::Time(time)).unwrap();
+            doc.set("seen_at", NormalValue::TimeArray(vec![time]))
+                .unwrap();
             doc
         })
         .collect();

@@ -1,0 +1,40 @@
+flowchart TD
+    classDef q fill:#ffffff,stroke:#555555,color:#000
+    classDef ok fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef val fill:#fff3cd,stroke:#b8860b,color:#000
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+
+    START["defradb.rs needs to read"] --> Q1{"inside a write transaction?"}
+    Q1 -->|"no: a query, status, an arrival page"| SNAP["snapshot read or write-free transaction:<br/>one consistent snapshot, never validated, never conflicts"]
+    Q1 -->|"yes"| Q2{"what does the decision depend on?"}
+    Q2 -->|"the whole value"| ORD["get or get_for_update, Ordinary key:<br/>validated at commit,<br/>an identical rewrite is not a change"]
+    Q2 -->|"some parts of a document"| PARTS["get_parts(key, parts):<br/>validated only against writes that touch the parts;<br/>in full if it found nothing or the key is then put"]
+    Q2 -->|"nothing: traversal hints, HNSW neighbours"| UNV["get_parts(key, no parts):<br/>never validated"]
+    Q2 -->|"a content-addressed block"| CA["ContentAddressed read:<br/>found means validated only for removal,<br/>absent means validated in full"]
+    Q2 -->|"the arrival journal"| LOG["Log key read:<br/>never validated, a snapshot sees a dense prefix"]
+    Q2 -->|"a set of keys"| SCAN{"inside one CommutativePrefix?"}
+    SCAN -->|"yes: head sets"| SCP["stretch not recorded,<br/>writes inside it validated as blind writes"]
+    SCAN -->|"no"| SCN["yielded keys not validated: phantoms;<br/>a key it then writes is validated as a read"]
+    Q2 -->|"ACP tuples and owner prefixes behind a write"| ACP["validated point reads and scan_validated:<br/>a revocation, grant or new owner committed first aborts the write"]
+    Q2 -->|"what exists in a range: a claim queue"| VS["scan_validated:<br/>any newer write inside the range conflicts"]
+
+    SNAP --> PATH
+    ORD --> PATH
+    PARTS --> PATH
+    UNV --> PATH
+    CA --> PATH
+    LOG --> PATH
+    SCP --> PATH
+    SCN --> PATH
+    ACP --> PATH
+    VS --> PATH
+    PATH["regolith read path:<br/>own buffered puts, deletes and merges first, in operation order;<br/>then memtables, L0, deeper levels by binary search;<br/>zero copy, no lock"] --> MISS{"block-cache miss?"}
+    MISS -->|"no"| VALUE["value"]
+    MISS -->|"get: read the device on this thread"| VALUE
+    MISS -->|"CacheOnly handle: never touch the device"| WB["WouldBlock Io: read queued on this core's IoQueue,<br/>single-flight per block; the task awaits IoWait,<br/>completed by its own core's poll, then resumes"]
+    WB --> VALUE
+
+    class START,Q1,Q2,SCAN,MISS q
+    class SNAP,UNV,LOG,SCP,VALUE ok
+    class ORD,PARTS,CA,SCN,ACP,VS val
+    class PATH,WB rego

@@ -75,6 +75,22 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         result
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::read::json_conflicts::read(&txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
         self.get_all_impl(collection_name).await
     }
@@ -138,7 +154,7 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
     async fn get_commits(
         &self,
         options: &CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         self.get_commits_impl(options).await
     }
 
@@ -193,20 +209,21 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
-        self.get_document_at_cid_impl(cid, expected_doc_id, caller_identity)
+        self.get_document_at_cid_impl(cid, expected_doc_id, collection, caller_identity)
             .await
     }
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Vec<Document>> {
-        self.get_documents_at_cid_impl(collection_short_id, cid, expected_doc_id, caller_identity)
+        self.get_documents_at_cid_impl(collection, cid, expected_doc_id, caller_identity)
             .await
     }
 

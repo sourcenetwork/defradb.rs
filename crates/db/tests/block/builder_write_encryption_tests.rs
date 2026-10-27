@@ -20,7 +20,7 @@ use storage::RegolithStore;
 async fn stores() -> (NamespaceView, NamespaceView) {
     let store = RegolithStore::in_memory().unwrap();
     let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
+    let shared = SharedTxn::new(txn, storage::Crdts::default());
     (
         NamespaceView::new(shared.clone(), Namespace::Blockstore),
         NamespaceView::new(shared, Namespace::Headstore),
@@ -52,10 +52,11 @@ async fn field_block(blockstore: &NamespaceView, cid: &Cid) -> Block {
 fn update_without_config_inherits_encryption_from_previous_block() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(1, 1);
+        let identity = DocRef::new(1, 1);
 
-        let mut doc = Document::new();
-        doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: false,
@@ -85,7 +86,8 @@ fn update_without_config_inherits_encryption_from_previous_block() {
         doc.set(
             "secret",
             NormalValue::String("still classified".to_string()),
-        );
+        )
+        .unwrap();
         let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -119,10 +121,11 @@ fn update_without_config_inherits_encryption_from_previous_block() {
 fn update_without_config_inherits_composite_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(2, 2);
+        let identity = DocRef::new(2, 2);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: true,
@@ -149,7 +152,8 @@ fn update_without_config_inherits_composite_encryption() {
             .expect("created composite block must be encrypted");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-        doc.set("name", NormalValue::String("Alicia".to_string()));
+        doc.set("name", NormalValue::String("Alicia".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["name".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -182,10 +186,11 @@ fn update_without_config_inherits_composite_encryption() {
 fn inherited_encryption_writes_no_new_encryption_block() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(4, 4);
+        let identity = DocRef::new(4, 4);
 
-        let mut doc = Document::new();
-        doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: false,
@@ -215,7 +220,8 @@ fn inherited_encryption_writes_no_new_encryption_block() {
         doc.set(
             "secret",
             NormalValue::String("still classified".to_string()),
-        );
+        )
+        .unwrap();
         let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -246,10 +252,11 @@ fn inherited_encryption_writes_no_new_encryption_block() {
 fn explicit_config_on_update_overrides_inheritance() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(5, 5);
+        let identity = DocRef::new(5, 5);
 
-        let mut doc = Document::new();
-        doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: false,
@@ -278,7 +285,8 @@ fn explicit_config_on_update_overrides_inheritance() {
         doc.set(
             "secret",
             NormalValue::String("still classified".to_string()),
-        );
+        )
+        .unwrap();
         let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -318,11 +326,15 @@ fn explicit_config_on_update_overrides_inheritance() {
 fn inheritance_is_per_field() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(6, 6);
+        let identity = DocRef::new(6, 6);
 
-        let mut doc = Document::new();
-        doc.set("secret", NormalValue::String("classified".to_string()));
-        doc.set("public", NormalValue::String("open".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&[
+            "secret", "public",
+        ]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
+        doc.set("public", NormalValue::String("open".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: false,
@@ -347,8 +359,10 @@ fn inheritance_is_per_field() {
         doc.set(
             "secret",
             NormalValue::String("still classified".to_string()),
-        );
-        doc.set("public", NormalValue::String("still open".to_string()));
+        )
+        .unwrap();
+        doc.set("public", NormalValue::String("still open".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["secret".to_string(), "public".to_string()]
             .into_iter()
             .collect();
@@ -397,10 +411,11 @@ fn inheritance_is_per_field() {
 fn field_added_by_update_inherits_document_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(7, 7);
+        let identity = DocRef::new(7, 7);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "bio"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: true,
@@ -422,7 +437,8 @@ fn field_added_by_update_inherits_document_encryption() {
         .expect("create should succeed");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-        doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()));
+        doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -461,10 +477,11 @@ fn field_added_by_update_inherits_document_encryption() {
 fn update_of_unencrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(3, 3);
+        let identity = DocRef::new(3, 3);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Bob".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
 
         let created = write_document_blocks(
             &blockstore,
@@ -481,7 +498,8 @@ fn update_of_unencrypted_document_stays_plaintext() {
         .expect("create should succeed");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-        doc.set("name", NormalValue::String("Bobby".to_string()));
+        doc.set("name", NormalValue::String("Bobby".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["name".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -523,10 +541,11 @@ fn update_of_unencrypted_document_stays_plaintext() {
 fn delete_block_inherits_composite_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(8, 8);
+        let identity = DocRef::new(8, 8);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: true,
@@ -579,10 +598,11 @@ fn delete_block_inherits_composite_encryption() {
 fn field_added_to_field_encrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(9, 9);
+        let identity = DocRef::new(9, 9);
 
-        let mut doc = Document::new();
-        doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret", "bio"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
         let enc = EncryptionConfig {
             encrypt_doc: false,
@@ -604,7 +624,8 @@ fn field_added_to_field_encrypted_document_stays_plaintext() {
         .expect("create should succeed");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-        doc.set("bio", NormalValue::String("public".to_string()));
+        doc.set("bio", NormalValue::String("public".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -638,10 +659,11 @@ fn field_added_to_field_encrypted_document_stays_plaintext() {
 fn field_added_to_unencrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(10, 10);
+        let identity = DocRef::new(10, 10);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "bio"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
 
         let created = write_document_blocks(
             &blockstore,
@@ -658,7 +680,8 @@ fn field_added_to_unencrypted_document_stays_plaintext() {
         .expect("create should succeed");
 
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-        doc.set("bio", NormalValue::String("public".to_string()));
+        doc.set("bio", NormalValue::String("public".to_string()))
+            .unwrap();
         let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
         let updated = write_document_blocks(
@@ -694,11 +717,13 @@ fn field_added_to_unencrypted_document_stays_plaintext() {
 fn document_policy_covers_field_whose_history_predates_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(11, 11);
+        let identity = DocRef::new(11, 11);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
-        doc.set("bio", NormalValue::String("public".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "bio"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc.set("bio", NormalValue::String("public".to_string()))
+            .unwrap();
 
         let created = write_document_blocks(
             &blockstore,
@@ -717,7 +742,8 @@ fn document_policy_covers_field_whose_history_predates_encryption() {
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
 
         // Turn on whole-document encryption while touching only `bio`.
-        doc.set("bio", NormalValue::String("still public".to_string()));
+        doc.set("bio", NormalValue::String("still public".to_string()))
+            .unwrap();
         let enc = EncryptionConfig {
             encrypt_doc: true,
             encrypt_fields: vec![],
@@ -737,7 +763,8 @@ fn document_policy_covers_field_whose_history_predates_encryption() {
         .expect("encrypting update should succeed");
 
         // `name` still has only its unencrypted create block as a head.
-        doc.set("name", NormalValue::String("Bob".to_string()));
+        doc.set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
         let updated = write_document_blocks(
             &blockstore,
             &headstore,
@@ -773,9 +800,21 @@ fn immutable_schema() -> schema::CollectionVersion {
         "v1",
         "col-records",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "author", FieldKind::string()).as_immutable(),
-            FieldDescription::new("3", "kind", FieldKind::string()).as_immutable(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "author",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )
+            .as_immutable(),
+            FieldDescription::new("3", "kind", FieldKind::string(), schema::CType::LwwRegister)
+                .as_immutable(),
         ],
     )
 }
@@ -785,16 +824,18 @@ async fn create_immutable_record(
     enc: &EncryptionConfig,
 ) -> (NamespaceView, std::collections::BTreeMap<String, Cid>) {
     let (blockstore, headstore) = stores().await;
-    let mut doc = Document::new();
-    doc.set("author", NormalValue::String("did:key:alice".to_string()));
-    doc.set("kind", NormalValue::String("note".to_string()));
+    let mut doc = Document::new(crate::common::schema::open_collection(&["author", "kind"]));
+    doc.set("author", NormalValue::String("did:key:alice".to_string()))
+        .unwrap();
+    doc.set("kind", NormalValue::String("note".to_string()))
+        .unwrap();
 
     let created = write_document_blocks(
         &blockstore,
         &headstore,
         &doc,
         &immutable_schema(),
-        DocStorageIdentity::new(11, 11),
+        DocRef::new(11, 11),
         None,
         Some(enc),
         None,

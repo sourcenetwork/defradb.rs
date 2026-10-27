@@ -9,7 +9,17 @@ use storage::RegolithStore;
 
 struct Fixture {
     db: Arc<DB<RegolithStore>>,
+    collection: CollectionVersion,
     _server: HttpServer,
+}
+
+impl Fixture {
+    fn document(&self, text: &str) -> Document {
+        let mut doc = Document::new(self.collection.clone());
+        doc.set("text", text).unwrap();
+        doc.set("suffix", "old").unwrap();
+        doc
+    }
 }
 
 async fn fixture_with_counter(counter: bool) -> Fixture {
@@ -33,15 +43,30 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
         "texts-v1",
         "col-texts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
             if counter {
-                FieldDescription::new("2", "text", FieldKind::int())
+                FieldDescription::new("2", "text", FieldKind::int(), schema::CType::LwwRegister)
                     .with_crdt_type(schema::CType::PnCounter)
             } else {
-                FieldDescription::new("2", "text", FieldKind::string())
+                FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister)
             },
-            FieldDescription::new("3", "vector", FieldKind::float64_array()),
-            FieldDescription::new("4", "suffix", FieldKind::string()),
+            FieldDescription::new(
+                "3",
+                "vector",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "4",
+                "suffix",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     collection
@@ -54,18 +79,12 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
             template: String::new(),
             url: server.url(),
         });
-    db.create_collection(collection).await.unwrap();
+    db.create_collection(collection.clone()).await.unwrap();
     Fixture {
         db,
+        collection,
         _server: server,
     }
-}
-
-fn document(text: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set("text", text);
-    doc.set("suffix", "old");
-    doc
 }
 
 fn assert_vector(doc: &Document, values: Vec<f64>) {
@@ -77,11 +96,14 @@ fn update_regenerates_embedding_from_reloaded_document() {
     workers::block_on(async {
         let fixture = fixture_with_counter(false).await;
         let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
-        let created = mutator.create("Texts", document("first")).await.unwrap();
+        let created = mutator
+            .create("Texts", fixture.document("first"))
+            .await
+            .unwrap();
         let mut stale = created.document.clone();
-        stale.set("text", "second");
+        stale.set("text", "second").unwrap();
         let mut concurrent = created.document;
-        concurrent.set("suffix", "new");
+        concurrent.set("suffix", "new").unwrap();
         mutator
             .update(
                 "Texts",
@@ -114,13 +136,18 @@ fn update_embeds_the_applied_counter_value() {
     workers::block_on(async {
         let fixture = fixture_with_counter(true).await;
         let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
-        let mut doc = Document::new();
-        doc.set("text", 5_i64);
-        doc.set("suffix", "old");
+        let mut doc = Document::new(fixture.collection.clone());
+        doc.set("text", 5_i64).unwrap();
+        doc.set("suffix", "old").unwrap();
         let created = mutator.create("Texts", doc).await.unwrap();
         let mut concurrent = created.document.clone();
-        concurrent.set("text", 6_i64);
-        concurrent.set_counter_delta("text".to_string(), NormalValue::Int(1));
+        concurrent.set("text", 6_i64).unwrap();
+        concurrent
+            .edit(
+                "text".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(1)),
+            )
+            .unwrap();
         mutator
             .update(
                 "Texts",
@@ -130,8 +157,13 @@ fn update_embeds_the_applied_counter_value() {
             .await
             .unwrap();
         let mut stale = created.document;
-        stale.set("text", 7_i64);
-        stale.set_counter_delta("text".to_string(), NormalValue::Int(2));
+        stale.set("text", 7_i64).unwrap();
+        stale
+            .edit(
+                "text".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(2)),
+            )
+            .unwrap();
         let updated = mutator
             .update("Texts", stale, ["text".to_string()].into_iter().collect())
             .await

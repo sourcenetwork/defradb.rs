@@ -6,12 +6,20 @@ use schema::FieldDescription;
 use schema::FieldKind;
 
 fn test_collection() -> Collection {
-    Collection::new(CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
-    ))
+    Collection::new(
+        CollectionVersion::new(
+            "Users",
+            "v1",
+            "col-users",
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 #[test]
@@ -68,7 +76,10 @@ fn test_snapshot_names() {
     map.insert("Users".to_string(), test_collection());
     map.insert(
         "Posts".to_string(),
-        Collection::new(CollectionVersion::new("Posts", "v1", "col-posts", vec![])),
+        Collection::new(
+            CollectionVersion::new("Posts", "v1", "col-posts", vec![]),
+            crdt::Crdts::default(),
+        ),
     );
     let snapshot = CollectionSnapshot::new(map);
 

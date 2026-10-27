@@ -153,6 +153,20 @@ impl IndexManager {
         }
     }
 
+    /// Lets this manager's DiskANN indexes share their quantizers through
+    /// `caches`, so a write does not rebuild one per transaction.
+    pub fn with_vector_caches(
+        mut self,
+        caches: &crate::index::vector::engine::diskann::CodeCaches,
+    ) -> Self {
+        for index in self.indexes.values_mut() {
+            if let IndexType::Vector(vector) = index {
+                vector.share_quantizer(caches);
+            }
+        }
+        self
+    }
+
     /// Load indexes from a collection schema.
     ///
     /// # Errors

@@ -10,6 +10,7 @@ use crate::registry::{Property, Tier, PROPERTIES};
 /// self-contained; if the README grows a family, this list and `PROPERTIES`
 /// must both grow or the tests fail, and the README must list exactly these.
 pub const MODELED_FAMILIES: &[&str] = &[
+    "Storage failure classification",
     "B3 filtered replication",
     "DAG convergence (partition / eviction / restart)",
     "CRDT merge laws",
@@ -34,6 +35,12 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Concurrent collection-head transitions",
     "Vector index link maintenance",
     "DiskANN resident code table",
+    "DiskANN walk cutoff",
+    "PQ distance four sums",
+    "DiskANN pending cache",
+    "DiskANN shared quantizer",
+    "RobustPrune blocked covered checks",
+    "DiskANN back-edges in place",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",
@@ -51,6 +58,10 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Iroh solicited replies",
     "Reply-driven DAG fetch",
     "Index drop during backfill",
+    "Text CRDT convergence",
+    "JSON CRDT per-path merge",
+    "Custom CRDT types",
+    "Document create pipeline",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

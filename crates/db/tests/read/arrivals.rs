@@ -13,8 +13,8 @@ fn graphql_creation_cursor_pages_and_docid_lookup() {
     let mutator = AutoCommitMutator::new(db.clone());
     let mut ids = Vec::new();
     for name in ["one", "two", "three"] {
-        let mut doc = Document::new();
-        doc.set("name", name);
+        let mut doc = Document::new(users_schema());
+        doc.set("name", name).unwrap();
         ids.push(
             mutator
                 .create("Users", doc)
@@ -53,8 +53,8 @@ fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
         schema.policy = Some(schema::PolicyDescription::new("arrival-policy", "users"));
         schema.is_branchable = false;
         db.create_collection(schema).await.unwrap();
-        let mut doc = Document::new();
-        doc.set("name", "secret");
+        let mut doc = Document::new(users_schema());
+        doc.set("name", "secret").unwrap();
         let id = AutoCommitMutator::new(db.clone())
             .create("Users", doc)
             .await
@@ -100,8 +100,8 @@ fn explicit_transaction_arrival_is_invisible_and_rollback_discards_it() {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(users_schema()).await.unwrap();
         let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-        let mut doc = Document::new();
-        doc.set("name", "pending");
+        let mut doc = Document::new(users_schema());
+        doc.set("name", "pending").unwrap();
         let id = mutator.create("Users", doc).await.unwrap().doc_id;
         let reader = db::DbDocFetcher::new(mutator.take_txn().await.unwrap());
         let options = DocumentArrivalOptions {
@@ -142,8 +142,8 @@ fn concurrent_autocommit_arrivals_are_contiguous() {
                     Some(crate::common::worker_io::pool()),
                     "test",
                     move || async move {
-                        let mut doc = Document::new();
-                        doc.set("name", format!("arrival-{index}"));
+                        let mut doc = Document::new(users_schema());
+                        doc.set("name", format!("arrival-{index}")).unwrap();
                         AutoCommitMutator::new(db).create("Users", doc).await
                     },
                 )
@@ -183,10 +183,10 @@ fn overlapping_explicit_transaction_creates_both_commit() {
         db.create_collection(users_schema()).await.unwrap();
         let first = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
         let second = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-        let mut one = Document::new();
-        one.set("name", "first");
-        let mut two = Document::new();
-        two.set("name", "second");
+        let mut one = Document::new(users_schema());
+        one.set("name", "first").unwrap();
+        let mut two = Document::new(users_schema());
+        two.set("name", "second").unwrap();
         let first_id = first.create("Users", one).await.unwrap().doc_id.to_string();
         let second_id = second
             .create("Users", two)
@@ -220,8 +220,8 @@ fn explicit_transaction_arrival_gets_a_cursor_only_on_commit() {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(users_schema()).await.unwrap();
         let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-        let mut doc = Document::new();
-        doc.set("name", "pending");
+        let mut doc = Document::new(users_schema());
+        doc.set("name", "pending").unwrap();
         let id = mutator
             .create("Users", doc)
             .await

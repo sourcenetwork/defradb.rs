@@ -14,8 +14,9 @@ use rapidhash::RapidHashSet;
 use super::create::{by_name, create_user, entries_for, index_entries, open_with_collection};
 
 fn named(name: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_owned()));
+    let mut doc = Document::new(super::create::users_schema("Users", "v1", "col-users"));
+    doc.set("name", NormalValue::String(name.to_owned()))
+        .unwrap();
     doc
 }
 
@@ -70,7 +71,8 @@ fn an_explicit_update_spanning_index_creation_conflicts() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("name", NormalValue::String("after".to_owned()));
+        doc.set("name", NormalValue::String("after".to_owned()))
+            .unwrap();
         writer
             .update(
                 "SpanUpdate",

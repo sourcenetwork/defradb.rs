@@ -29,6 +29,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .execute_arrivals_query(select, fetcher, caller_identity)
                 .await;
         }
+        if select.collection_name == "_jsonConflicts" {
+            return self
+                .execute_json_conflicts_query(select, fetcher, caller_identity)
+                .await;
+        }
         // Handle encrypted search queries (encrypted_<Collection>)
         if select.is_encrypted {
             return self
@@ -266,9 +271,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         if let schema::FieldKind::ScalarArray(arr) = &f.kind {
                             let ek = arr.element_kind();
                             match ek {
-                                schema::ScalarKind::Int
-                                | schema::ScalarKind::Float32
-                                | schema::ScalarKind::Float64 => Some(ek),
+                                schema::ScalarKind::NillableInt
+                                | schema::ScalarKind::NillableFloat32
+                                | schema::ScalarKind::NillableFloat64 => Some(ek),
                                 _ => None,
                             }
                         } else {
@@ -287,7 +292,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     };
 
                     // For Int fields, validate that vector values are integers
-                    if element_kind == schema::ScalarKind::Int {
+                    if element_kind == schema::ScalarKind::NillableInt {
                         let non_int_values: Vec<String> = sim
                             .vector
                             .iter()

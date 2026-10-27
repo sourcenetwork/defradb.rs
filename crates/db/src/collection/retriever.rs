@@ -3,7 +3,7 @@
 //! Ports Go's `internal/db/collection_retriever.go::RetrieveCollectionFromDocID`.
 //! The headstore is keyed by doc_id (`HeadstorePriorityKey::document_prefix`),
 //! so finding the doc's first head block is O(1) — no scan over all
-//! collections. We then read `schema_version_id` off the block's delta and
+//! collections. We then read `collection_version_id` off the block's delta and
 //! resolve the collection via the systemstore.
 
 use std::sync::Arc;
@@ -35,8 +35,8 @@ pub struct DocCollectionInfo {
 /// Returns `Ok(None)` when:
 /// - The doc has no head blocks in the local headstore (unknown doc).
 /// - The doc's first head block is not in the local blockstore.
-/// - The block's delta has no schema_version_id (e.g. definition blocks).
-/// - The schema_version_id does not resolve to a collection in the systemstore.
+/// - The block's delta has no collection_version_id (e.g. definition blocks).
+/// - The collection_version_id does not resolve to a collection in the systemstore.
 /// - The collection has no policy configured (`collection.policy == None`).
 ///
 /// Mirrors Go's `RetrieveCollectionFromDocID` — same lookup chain via the
@@ -122,7 +122,7 @@ pub async fn resolve_collection_from_doc_id<S: Store>(
             return Err(Error::Serialization(format!("decode block: {e}")));
         }
     };
-    let schema_version_id = match block.delta.schema_version_id() {
+    let collection_version_id = match block.delta.collection_version_id() {
         Some(v) => v.to_string(),
         None => {
             let _ = txn.discard();
@@ -131,9 +131,11 @@ pub async fn resolve_collection_from_doc_id<S: Store>(
     };
 
     // Resolve collection via the systemstore.
-    let collection_res =
-        crate::definition::loader::get_collection_by_version_id(&systemstore, &schema_version_id)
-            .await;
+    let collection_res = crate::definition::loader::get_collection_by_version_id(
+        &systemstore,
+        &collection_version_id,
+    )
+    .await;
     let info = match collection_res {
         Ok(Some(collection)) => collection.policy.clone().map(|policy| DocCollectionInfo {
             collection_id: collection.collection_id.clone(),

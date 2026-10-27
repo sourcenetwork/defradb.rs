@@ -111,7 +111,7 @@ async fn half_backfilled(
         let datastore = txn.datastore().unwrap();
         let systemstore = txn.systemstore().unwrap();
         let mut source = BackfillSource::open_range(
-            Collection::new(schema.clone()),
+            Collection::new(schema.clone(), db.crdts().clone()),
             datastore.clone(),
             systemstore.clone(),
             None,

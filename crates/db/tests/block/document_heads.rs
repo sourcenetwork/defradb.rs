@@ -269,22 +269,31 @@ fn every_write_path_keeps_a_documents_stored_heads_to_its_live_heads() {
         use query::mutator::DocMutator;
         const WRITES: i64 = 24;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(schema::CollectionVersion::new(
+        let collection = schema::CollectionVersion::new(
             "Rewritten",
             "rewritten-v1",
             "col-rewritten",
             vec![
-                schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                schema::FieldDescription::new("2", "value", schema::FieldKind::int()),
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "value",
+                    schema::FieldKind::int(),
+                    schema::CType::LwwRegister,
+                ),
             ],
-        ))
-        .await
-        .unwrap();
+        );
+        db.create_collection(collection.clone()).await.unwrap();
         let autocommit = db::AutoCommitMutator::new(db.clone());
         let doc_id = autocommit
             .create(
                 "Rewritten",
-                document::Document::from_json_str(r#"{"value": 0}"#).unwrap(),
+                document::Document::from_json_str(r#"{"value": 0}"#, collection.clone()).unwrap(),
             )
             .await
             .unwrap()
@@ -296,7 +305,7 @@ fn every_write_path_keeps_a_documents_stored_heads_to_its_live_heads() {
                 .await
                 .unwrap()
                 .unwrap();
-            doc.set("value", document::NormalValue::Int(value));
+            doc.set("value", document::NormalValue::Int(value)).unwrap();
             autocommit
                 .update("Rewritten", doc, modified())
                 .await
@@ -312,7 +321,7 @@ fn every_write_path_keeps_a_documents_stored_heads_to_its_live_heads() {
                 .await
                 .unwrap()
                 .unwrap();
-            doc.set("value", document::NormalValue::Int(value));
+            doc.set("value", document::NormalValue::Int(value)).unwrap();
             explicit.update("Rewritten", doc, modified()).await.unwrap();
             explicit.take_txn().await.unwrap().commit().await.unwrap();
         }
@@ -329,22 +338,37 @@ fn concurrent_updates_of_one_document_both_commit() {
     workers::block_on(async {
         use query::mutator::DocMutator;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(schema::CollectionVersion::new(
+        let collection = schema::CollectionVersion::new(
             "Pair",
             "pair-v1",
             "col-pair",
             vec![
-                schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                schema::FieldDescription::new("2", "left", schema::FieldKind::int()),
-                schema::FieldDescription::new("3", "right", schema::FieldKind::int()),
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "left",
+                    schema::FieldKind::int(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "3",
+                    "right",
+                    schema::FieldKind::int(),
+                    schema::CType::LwwRegister,
+                ),
             ],
-        ))
-        .await
-        .unwrap();
+        );
+        db.create_collection(collection.clone()).await.unwrap();
         let doc_id = db::AutoCommitMutator::new(db.clone())
             .create(
                 "Pair",
-                document::Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+                document::Document::from_json_str(r#"{"left": 0, "right": 0}"#, collection.clone())
+                    .unwrap(),
             )
             .await
             .unwrap()
@@ -361,7 +385,7 @@ fn concurrent_updates_of_one_document_both_commit() {
         for (field, value) in [("left", 1), ("right", 2)] {
             let writer = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
             let mut doc = current.clone();
-            doc.set(field, document::NormalValue::Int(value));
+            doc.set(field, document::NormalValue::Int(value)).unwrap();
             writer
                 .update(
                     "Pair",
@@ -418,7 +442,7 @@ fn sorted(mut cids: Vec<Cid>) -> Vec<Cid> {
 async fn stored_block(db: &db::DB<RegolithStore>, seed: &str, priority: u64) -> Cid {
     let bytes = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: seed.to_string(),
+            collection_version_id: seed.to_string(),
             priority,
             status: 1,
         }),
@@ -595,22 +619,31 @@ fn no_write_path_stores_a_publication_guard() {
     workers::block_on(async {
         use query::mutator::DocMutator;
         let db = std::sync::Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(schema::CollectionVersion::new(
+        let collection = schema::CollectionVersion::new(
             "Guarded",
             "guarded-v1",
             "col-guarded",
             vec![
-                schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                schema::FieldDescription::new("2", "value", schema::FieldKind::int()),
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "value",
+                    schema::FieldKind::int(),
+                    schema::CType::LwwRegister,
+                ),
             ],
-        ))
-        .await
-        .unwrap();
+        );
+        db.create_collection(collection.clone()).await.unwrap();
         let autocommit = db::AutoCommitMutator::new(db.clone());
         let doc_id = autocommit
             .create(
                 "Guarded",
-                document::Document::from_json_str(r#"{"value": 0}"#).unwrap(),
+                document::Document::from_json_str(r#"{"value": 0}"#, collection.clone()).unwrap(),
             )
             .await
             .unwrap()
@@ -621,7 +654,7 @@ fn no_write_path_stores_a_publication_guard() {
                 .await
                 .unwrap()
                 .unwrap();
-            doc.set("value", document::NormalValue::Int(value));
+            doc.set("value", document::NormalValue::Int(value)).unwrap();
             autocommit
                 .update(
                     "Guarded",

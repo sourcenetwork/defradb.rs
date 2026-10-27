@@ -22,8 +22,9 @@ fn corpus(count: usize) -> Vec<(u64, Document)> {
     (0..count)
         .map(|i| {
             let angle = i as f64 * 0.41;
-            let mut doc = Document::new();
-            doc.set("title", NormalValue::String(format!("doc-{i}")));
+            let mut doc = Document::new(docs_schema());
+            doc.set("title", NormalValue::String(format!("doc-{i}")))
+                .unwrap();
             doc.set(
                 "embedding",
                 NormalValue::Float64Array(vec![
@@ -32,7 +33,8 @@ fn corpus(count: usize) -> Vec<(u64, Document)> {
                     (angle * 0.5).sin(),
                     (angle * 0.25).cos(),
                 ]),
-            );
+            )
+            .unwrap();
             (i as u64 + 1, doc)
         })
         .collect()
@@ -136,8 +138,10 @@ fn backfill_skips_documents_without_a_vector() {
                 .unwrap();
 
             let mut documents = corpus(3);
-            let mut titled_only = Document::new();
-            titled_only.set("title", NormalValue::String("no embedding".to_string()));
+            let mut titled_only = Document::new(schema.clone());
+            titled_only
+                .set("title", NormalValue::String("no embedding".to_string()))
+                .unwrap();
             documents.push((99, titled_only));
 
             let result = manager
@@ -222,10 +226,12 @@ fn merged_documents_are_indexed() {
             // A merged update replaces the vector; a merged delete tombstones it.
             let (_, mut replacement) = corpus(1).pop().unwrap();
             replacement.set_id(merge_doc_id(1));
-            replacement.set(
-                "embedding",
-                document::NormalValue::Float64Array(vec![9.0, 9.0, 9.0, 9.0]),
-            );
+            replacement
+                .set(
+                    "embedding",
+                    document::NormalValue::Float64Array(vec![9.0, 9.0, 9.0, 9.0]),
+                )
+                .unwrap();
             let (_, original) = corpus(1).pop().unwrap();
             manager
                 .on_document_update_merge(

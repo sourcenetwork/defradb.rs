@@ -8,6 +8,10 @@ mod feature_binaries;
 mod filtered_replication;
 #[path = "p2p/idempotent_replay.rs"]
 mod idempotent_replay;
+#[path = "p2p/json_crdt.rs"]
+mod json_crdt;
+#[path = "p2p/long_history.rs"]
+mod long_history;
 #[path = "p2p/manage_relay.rs"]
 mod manage_relay;
 #[path = "manage_relay_common.rs"]
@@ -28,6 +32,8 @@ mod replication_advanced;
 mod resilience;
 #[path = "p2p/sync.rs"]
 mod sync;
+#[path = "p2p/text_crdt.rs"]
+mod text_crdt;
 #[path = "p2p/transports.rs"]
 mod transports;
 #[path = "p2p/trust_boundary.rs"]

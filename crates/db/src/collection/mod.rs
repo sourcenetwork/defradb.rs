@@ -167,6 +167,9 @@ pub struct Collection {
     /// This version's decoded part-ID map, shared with every handle built
     /// from the same definition (see `parts`).
     part_id_snapshot: Arc<parts::PartIdSnapshot>,
+    /// The CRDT types of the node the collection belongs to: each field's
+    /// writes, merges and reads go through its type.
+    crdts: crdt::Crdts,
 }
 
 /// The indexes of `built_indexes` that answer queries.
@@ -179,15 +182,21 @@ fn queryable(built_indexes: &[IndexDescription], reindex_owed: bool) -> &[IndexD
 }
 
 /// `def` with the queryable index set substituted in.
+/// The definition queries see: its queryable indexes, and no field of a
+/// custom CRDT type the node lacks, so a query naming one fails as for any
+/// field the collection does not have.
 fn query_schema_of(
     def: &Arc<CollectionVersion>,
     queryable_indexes: &[IndexDescription],
+    crdts: &crdt::Crdts,
 ) -> Arc<CollectionVersion> {
-    if def.indexes == queryable_indexes {
+    let lacks = |field: &schema::FieldDescription| crdts.is_unregistered(field.crdt_type);
+    if def.indexes == queryable_indexes && !def.fields.iter().any(lacks) {
         return Arc::clone(def);
     }
     let mut schema = def.as_ref().clone();
     schema.indexes = queryable_indexes.to_vec();
+    schema.fields.retain(|field| !lacks(field));
     Arc::new(schema)
 }
 
@@ -201,15 +210,20 @@ impl Collection {
         systemstore: &datastore::NamespaceView,
     ) -> crate::error::Result<Self> {
         let statuses = IndexStatuses::load_for(systemstore, &def).await?;
-        Ok(Self::with_index_actions(def, &statuses))
+        Ok(Self::with_index_actions(
+            def,
+            &statuses,
+            systemstore.crdts().clone(),
+        ))
     }
 
-    /// Create a new collection with the given schema definition.
-    pub fn new(def: CollectionVersion) -> Self {
+    /// Create a new collection with the given schema definition, on a node
+    /// with `crdts`.
+    pub fn new(def: CollectionVersion, crdts: crdt::Crdts) -> Self {
         let def = Arc::new(def);
         let definition_wire = serialize_definition_hint(&def);
         let indexes = def.indexes.clone();
-        let query_schema = query_schema_of(&def, &indexes);
+        let query_schema = query_schema_of(&def, &indexes, &crdts);
         Self {
             def,
             definition_wire,
@@ -218,13 +232,18 @@ impl Collection {
             reindex_owed: false,
             query_schema,
             part_id_snapshot: Arc::default(),
+            crdts,
         }
     }
 
-    pub(crate) fn with_index_actions(def: CollectionVersion, statuses: &IndexStatuses) -> Self {
+    pub(crate) fn with_index_actions(
+        def: CollectionVersion,
+        statuses: &IndexStatuses,
+        crdts: crdt::Crdts,
+    ) -> Self {
         let def = Arc::new(def);
         let definition_wire = serialize_definition_hint(&def);
-        Self::with_index_actions_and_wire(def, definition_wire, Arc::default(), statuses)
+        Self::with_index_actions_and_wire(def, definition_wire, Arc::default(), statuses, crdts)
     }
 
     /// `def` with `statuses`, keeping no serialized definition: for a handle
@@ -232,8 +251,9 @@ impl Collection {
     pub(crate) fn with_index_actions_unwired(
         def: CollectionVersion,
         statuses: &IndexStatuses,
+        crdts: crdt::Crdts,
     ) -> Self {
-        Self::with_index_actions_and_wire(Arc::new(def), None, Arc::default(), statuses)
+        Self::with_index_actions_and_wire(Arc::new(def), None, Arc::default(), statuses, crdts)
     }
 
     /// `expected`'s definition with fresh index statuses. The definition is
@@ -247,6 +267,7 @@ impl Collection {
             expected.definition_wire.clone(),
             Arc::clone(&expected.part_id_snapshot),
             statuses,
+            expected.crdts.clone(),
         )
     }
 
@@ -255,6 +276,7 @@ impl Collection {
         definition_wire: Option<Arc<[u8]>>,
         part_id_snapshot: Arc<parts::PartIdSnapshot>,
         statuses: &IndexStatuses,
+        crdts: crdt::Crdts,
     ) -> Self {
         let write_indexes = def
             .indexes
@@ -269,7 +291,7 @@ impl Collection {
             .cloned()
             .collect();
         let reindex_owed = statuses.reindex_owed();
-        let query_schema = query_schema_of(&def, queryable(&built_indexes, reindex_owed));
+        let query_schema = query_schema_of(&def, queryable(&built_indexes, reindex_owed), &crdts);
         Self {
             def,
             definition_wire,
@@ -278,7 +300,13 @@ impl Collection {
             reindex_owed,
             query_schema,
             part_id_snapshot,
+            crdts,
         }
+    }
+
+    /// The CRDT types of the node the collection belongs to.
+    pub fn crdts(&self) -> &crdt::Crdts {
+        &self.crdts
     }
 
     /// This collection with a reindex owed or settled, as the cache publishes
@@ -286,7 +314,11 @@ impl Collection {
     pub(crate) fn with_reindex_owed(&self, reindex_owed: bool) -> Self {
         Self {
             reindex_owed,
-            query_schema: query_schema_of(&self.def, queryable(&self.built_indexes, reindex_owed)),
+            query_schema: query_schema_of(
+                &self.def,
+                queryable(&self.built_indexes, reindex_owed),
+                &self.crdts,
+            ),
             ..self.clone()
         }
     }
@@ -328,6 +360,11 @@ impl Collection {
         &self.def
     }
 
+    /// The collection definition, shared without copying.
+    pub fn schema_arc(&self) -> Arc<CollectionVersion> {
+        self.def.clone()
+    }
+
     pub(crate) fn definition_wire(&self) -> Option<&[u8]> {
         self.definition_wire.as_deref()
     }
@@ -357,6 +394,7 @@ impl Collection {
 
     /// The collection schema, shared: what a job computing on another worker
     /// is handed.
+    #[cfg(feature = "native")]
     pub(crate) fn shared_schema(&self) -> Arc<CollectionVersion> {
         Arc::clone(&self.def)
     }
@@ -569,7 +607,7 @@ mod tests {
         let mut index = IndexDescription::new("by_name");
         index.id = 1;
         schema.indexes.push(index);
-        let expected = Collection::new(schema);
+        let expected = Collection::new(schema, crdt::Crdts::default());
 
         let mut actions = RapidHashMap::new();
         actions.insert(1, ActionStatus::IN_PROGRESS);
@@ -589,7 +627,7 @@ mod tests {
         let mut index = IndexDescription::new("by_name");
         index.id = 1;
         schema.indexes.push(index);
-        let settled = Collection::new(schema);
+        let settled = Collection::new(schema, crdt::Crdts::default());
 
         let owed = settled.with_reindex_owed(true);
         assert!(owed.queryable_indexes().is_empty());

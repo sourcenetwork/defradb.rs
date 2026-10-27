@@ -250,7 +250,14 @@ impl DocFetcher for FetcherWrapper {
         self.get_fetcher().get_document_arrivals(options).await
     }
 
-    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    async fn get_json_conflicts(
+        &self,
+        options: &crate::fetcher::JsonConflictOptions,
+    ) -> Result<Vec<crate::fetcher::JsonConflict>> {
+        self.get_fetcher().get_json_conflicts(options).await
+    }
+
+    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<document::CommitRow>> {
         self.get_fetcher().get_commits(options).await
     }
 
@@ -258,22 +265,23 @@ impl DocFetcher for FetcherWrapper {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&identity::Did>,
     ) -> Result<Document> {
         self.get_fetcher()
-            .get_document_at_cid(cid, expected_doc_id, caller_identity)
+            .get_document_at_cid(cid, expected_doc_id, collection, caller_identity)
             .await
     }
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&identity::Did>,
     ) -> Result<Vec<Document>> {
         self.get_fetcher()
-            .get_documents_at_cid(collection_short_id, cid, expected_doc_id, caller_identity)
+            .get_documents_at_cid(collection, cid, expected_doc_id, caller_identity)
             .await
     }
 

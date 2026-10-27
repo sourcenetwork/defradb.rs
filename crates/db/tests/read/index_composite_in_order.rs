@@ -34,10 +34,20 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-products",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "category", FieldKind::string()),
-            FieldDescription::new("3", "rank", FieldKind::int()),
-            FieldDescription::new("4", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "category",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "rank", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
     version.indexes = vec![IndexDescription {
@@ -71,10 +81,12 @@ async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
     let mutator = DbDocMutator::new(db.clone(), txn);
     let mut seeded = Vec::new();
     for (name, rank) in SEED {
-        let mut doc = Document::new();
-        doc.set("category", NormalValue::String(CATEGORY.to_string()));
-        doc.set("rank", NormalValue::Int(rank));
-        doc.set("name", NormalValue::String(name.to_string()));
+        let mut doc = Document::new(schema());
+        doc.set("category", NormalValue::String(CATEGORY.to_string()))
+            .unwrap();
+        doc.set("rank", NormalValue::Int(rank)).unwrap();
+        doc.set("name", NormalValue::String(name.to_string()))
+            .unwrap();
         let created = mutator
             .create(COLLECTION, doc)
             .await

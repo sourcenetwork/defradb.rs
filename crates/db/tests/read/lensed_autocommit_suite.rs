@@ -9,16 +9,20 @@ fn unknown_document_version_passes_through() {
         let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
         let fetcher = LensedAutoCommitFetcher::new(db.clone());
 
-        let collection = db::Collection::new(schema::CollectionVersion::new(
-            "Users",
-            "v2",
-            "users-collection",
-            vec![schema::FieldDescription::new(
-                "1",
-                "name",
-                schema::FieldKind::string(),
-            )],
-        ));
+        let collection = db::Collection::new(
+            schema::CollectionVersion::new(
+                "Users",
+                "v2",
+                "users-collection",
+                vec![schema::FieldDescription::new(
+                    "1",
+                    "name",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                )],
+            ),
+            crdt::Crdts::default(),
+        );
         let history = Some(RapidHashMap::from_iter([
             (
                 "v1".to_string(),
@@ -32,9 +36,9 @@ fn unknown_document_version_passes_through() {
             ),
         ]));
 
-        let mut doc = document::Document::new();
-        doc.set("name", "Alice");
-        doc.set_schema_version_id("foreign-v3");
+        let mut doc = document::Document::new(collection.schema_arc());
+        doc.set("name", "Alice").unwrap();
+        doc.set_collection_version_id("foreign-v3");
 
         let returned = fetcher
             .process_document(doc, &collection, true, &history)
@@ -47,7 +51,10 @@ fn unknown_document_version_passes_through() {
                 .and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(returned.document.schema_version_id(), Some("foreign-v3"));
+        assert_eq!(
+            returned.document.collection_version_id(),
+            Some("foreign-v3")
+        );
         assert!(returned.source_document.is_none());
     })
     .unwrap()

@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 #[test]
 fn test_doc_to_lens_doc_conversion() {
-    let mut doc = Document::new();
-    doc.set("name", Value::String("Alice".to_string()));
-    doc.set("age", Value::Number(30.into()));
+    let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+    doc.set("name", Value::String("Alice".to_string())).unwrap();
+    doc.set("age", Value::Number(30.into())).unwrap();
 
     let lens_doc = LensedDocFetcher::<storage::RegolithStore>::doc_to_lens_doc(&doc).unwrap();
 
@@ -28,16 +28,20 @@ fn unknown_document_version_passes_through() {
         let datastore = txn.datastore().unwrap();
         let fetcher = LensedDocFetcher::new(db, txn, Arc::new(lens::MemoryTransformStore::new()));
 
-        let collection = db::Collection::new(schema::CollectionVersion::new(
-            "Users",
-            "v2",
-            "users-collection",
-            vec![schema::FieldDescription::new(
-                "1",
-                "name",
-                schema::FieldKind::string(),
-            )],
-        ));
+        let collection = db::Collection::new(
+            schema::CollectionVersion::new(
+                "Users",
+                "v2",
+                "users-collection",
+                vec![schema::FieldDescription::new(
+                    "1",
+                    "name",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                )],
+            ),
+            crdt::Crdts::default(),
+        );
         let history = RapidHashMap::from_iter([
             (
                 "v1".to_string(),
@@ -54,9 +58,9 @@ fn unknown_document_version_passes_through() {
             .insert_history("users-collection:v2".to_string(), history)
             .await;
 
-        let mut doc = Document::new();
-        doc.set("name", "Alice");
-        doc.set_schema_version_id("foreign-v3");
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", "Alice").unwrap();
+        doc.set_collection_version_id("foreign-v3");
 
         let returned = fetcher
             .process_document(doc, &collection, &datastore, true)
@@ -66,7 +70,7 @@ fn unknown_document_version_passes_through() {
             returned.get("name").and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(returned.schema_version_id(), Some("foreign-v3"));
+        assert_eq!(returned.collection_version_id(), Some("foreign-v3"));
 
         drop(datastore);
         fetcher.take_txn().await.unwrap().discard().unwrap();
@@ -146,12 +150,12 @@ fn schema_history_alias_cost_measurement() {
             for index in 1..versions {
                 db.patch_collection("AliasCost", &format!(r#"[{{"op":"add","path":"/AliasCost/Fields/-","value":{{"Name":"extra{index}","Kind":"String"}}}}]"#), None).await.unwrap();
             }
-            let mut doc = Document::new();
-            doc.set("ordinal", document::NormalValue::Int(1));
+            let mut doc = Document::new(db.get_collection("AliasCost").unwrap().unwrap().schema_arc());
+            doc.set("ordinal", document::NormalValue::Int(1)).unwrap();
             doc.set(
                 "payload",
                 document::NormalValue::String("x".repeat(payload_bytes)),
-            );
+            ).unwrap();
             db::AutoCommitMutator::new(db.clone())
                 .create_many("AliasCost", vec![doc])
                 .await
@@ -230,8 +234,11 @@ fn a_projected_read_by_id_reads_each_identity_and_version_once() {
             let created = mutator
                 .create(
                     "Probe",
-                    Document::from_json_str(&format!(r#"{{"left": {value}, "right": {value}}}"#))
-                        .unwrap(),
+                    Document::from_json_str(
+                        &format!(r#"{{"left": {value}, "right": {value}}}"#),
+                        db.get_collection("Probe").unwrap().unwrap().schema_arc(),
+                    )
+                    .unwrap(),
                 )
                 .await
                 .unwrap();

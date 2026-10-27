@@ -26,15 +26,21 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
 
 fn document(i: usize) -> Document {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(format!("doc-{i}")));
+    let mut doc = Document::new(schema());
+    doc.set("name", NormalValue::String(format!("doc-{i}")))
+        .unwrap();
     doc
 }
 

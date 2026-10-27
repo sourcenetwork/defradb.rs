@@ -2,7 +2,8 @@
 
 `crates/query/src/prepared.rs` keys resolved provider answers by the exact
 request context; `crates/db/src/write/autocommit/{create,update,delete}.rs`
-turns `NeedsInput` into an attempt abort, resolves it after the engine releases
+(with the create pipeline in `crates/db/src/write/create.rs`) turns
+`NeedsInput` into an attempt abort, resolves it after the engine releases
 the transaction, then re-enters. `Store::transact_retry` retries commit
 conflicts inside the attempt owner. The model checks that a conflict retains a
 matching memo and that a changed context requires a new answer. RED variants

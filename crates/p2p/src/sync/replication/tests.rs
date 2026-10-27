@@ -27,6 +27,9 @@ use std::time::Duration;
 use storage::RegolithStore;
 use tokio::sync::mpsc;
 
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
+
 fn test_cid() -> Cid {
     Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap()
 }
@@ -114,6 +117,7 @@ struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
+    sync_blocks_calls: Arc<AtomicUsize>,
     replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
     pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
@@ -124,6 +128,7 @@ impl NoopTransport {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
+            sync_blocks_calls: Arc::new(AtomicUsize::new(0)),
             replicators: Arc::new(kovan::Atom::new(Vec::new())),
             pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
@@ -799,6 +804,7 @@ impl P2PTransport for NoopTransport {
         _providers: Vec<PeerId>,
         _missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
+        self.sync_blocks_calls.fetch_add(1, Ordering::SeqCst);
         Ok(QueryId(0))
     }
 
@@ -841,6 +847,9 @@ impl P2PTransport for NoopTransport {
 
 struct RetryThenMergeHandler {
     call_count: AtomicUsize,
+    yielding_root: Option<Cid>,
+    yield_turns: usize,
+    yielded_calls: AtomicUsize,
 }
 
 struct ErrorThenMergeHandler {
@@ -861,6 +870,17 @@ impl RetryThenMergeHandler {
     fn new() -> Self {
         Self {
             call_count: AtomicUsize::new(0),
+            yielding_root: None,
+            yield_turns: 0,
+            yielded_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn yielding(root: Cid, turns: usize) -> Self {
+        Self {
+            yielding_root: Some(root),
+            yield_turns: turns,
+            ..Self::new()
         }
     }
 }
@@ -898,11 +918,20 @@ impl MergeHandler for RetryThenMergeHandler {
 
     async fn handle_block(
         &self,
-        _cid: &Cid,
+        cid: &Cid,
         _block_data: &[u8],
         _metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
         let attempt = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(root) = self.yielding_root {
+            return if *cid == root
+                && self.yielded_calls.fetch_add(1, Ordering::SeqCst) < self.yield_turns
+            {
+                Ok(MergeOutcome::Yielded)
+            } else {
+                Ok(MergeOutcome::Merged)
+            };
+        }
         if attempt == 0 {
             Ok(MergeOutcome::retryable_skip("pending ACP"))
         } else {
@@ -1925,7 +1954,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -1936,7 +1965,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2069,7 +2098,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -2079,7 +2108,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
     let child_cid = child_block.generate_cid().unwrap();
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2262,7 +2291,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_string(),
             priority: 1,
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             data: b"current".to_vec(),
         }),
         vec![],
@@ -2274,7 +2303,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2285,7 +2314,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let composite_cid = composite.generate_cid().unwrap();
     let root = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
         }),
         vec![],
@@ -3035,7 +3064,7 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
     let head = |priority| {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema".to_string(),
+                collection_version_id: "schema".to_string(),
                 priority,
                 status: 1,
             }),

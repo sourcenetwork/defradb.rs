@@ -57,8 +57,8 @@ pub unsafe extern "C" fn lens_add(
         // If the JSON contains version IDs, this is a full migration config — delegate to
         // set_migration on the database so the transform gets linked to schema versions.
         if let Ok(full_config) = serde_json::from_str::<LensConfig>(&lens_str) {
-            if !full_config.source_schema_version_id.is_empty()
-                && !full_config.destination_schema_version_id.is_empty()
+            if !full_config.source_collection_version_id.is_empty()
+                && !full_config.destination_collection_version_id.is_empty()
             {
                 let database = match NODES.get(node_ptr, |state| state.database.clone()) {
                     Some(db) => db,

@@ -8,8 +8,8 @@ the whole document from a stale snapshot that clobbers the other field.
 
 | Model element | Code / behavior |
 |---|---|
-| `name` | materialized LWW field value (`crates/crdt/src/lww.rs`) |
-| `views` | materialized counter field value (`crates/crdt/src/counter.rs`) |
+| `name` | materialized LWW field value (`crates/crdt/src/field/lww.rs`) |
+| `views` | materialized counter field value (`crates/crdt/src/field/counter.rs`) |
 | `RemoteSnap` | a merge reads the materialized document before applying one field delta |
 | `MergeMode = "WholeDoc"` | buggy design: commit the whole stale snapshot with one field changed |
 | `MergeMode = "Componentwise"` | required design: merge updates only the target field component, preserving the rest of the current document |

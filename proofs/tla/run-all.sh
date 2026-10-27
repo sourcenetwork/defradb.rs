@@ -7,6 +7,91 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
+  "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Port.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Defaults.cfg EndpointBind.tla RED"
+  "MC_SelectiveCarCapacity_Green.cfg SelectiveCarCapacity.tla GREEN"
+  "MC_SelectiveCarCapacity_Red_NoReclaim.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_ActiveEviction.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_NoPeerBound.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_NoGlobalBound.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_CrossPeer.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_CrossRoot.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_ExpiredAuthority.cfg SelectiveCarCapacity.tla RED"
+  "MC_SelectiveCarCapacity_Red_EarlyEviction.cfg SelectiveCarCapacity.tla RED"
+  "MC_RootedAuthorization_Green.cfg RootedAuthorization.tla GREEN"
+  "MC_RootedAuthorization_Red_DuplicateOwner.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_LostResume.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_StaleEviction.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_OverReserve.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_Slots.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_ActiveBudget.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_CancelNoWake.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_UnreachedGrant.cfg RootedAuthorization.tla RED"
+  "MC_HistoryDriver_Red_UnpacedRetry.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_TimerDelay.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Green.cfg HistoryDriver.tla GREEN"
+  "MC_HistoryDriver_Red_LocalLoop.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_SwallowedAbort.cfg HistoryDriver.tla RED"
+  "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
+  "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
+  "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
+  "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Fence.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Events.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Reclaim.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Blocks.cfg HistoryTurns.tla RED"
+  "MC_ReplicatorIncarnation_Green.cfg ReplicatorIncarnation.tla GREEN"
+  "MC_ReplicatorIncarnation_Red_Error.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_Rollback.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
+  "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Fence.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Duplicate.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Settle.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Durable.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Deadline.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Ordered.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Recovery.cfg ReplicatorInstall.tla RED"
+  "MC_DocumentPush_Green.cfg DocumentPush.tla GREEN"
+  "MC_SelectedCarAuthority_Green.cfg SelectedCarAuthority.tla GREEN"
+  "MC_SelectedCarAuthority_Red_send.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedCarAuthority_Red_durability.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedCarAuthority_Red_expiry.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedCarAuthority_Red_subscription.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedCarAuthority_Red_scope.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedCarAuthority_Red_revoke.cfg SelectedCarAuthority.tla RED"
+  "MC_SelectedPushIsolation_Green.cfg SelectedPushIsolation.tla GREEN"
+  "MC_SelectedPushIsolation_Red_filter.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_backoff.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_hint.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_drain.cfg SelectedPushIsolation.tla RED"
+  "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Fence.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Marker.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Acknowledgement.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Retained.cfg DocumentPush.tla RED"
+  "MC_StorageFailure_Green.cfg StorageFailure.tla GREEN"
+  "MC_StorageFailure_Red_LostCause.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Text.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Retry.cfg StorageFailure.tla RED"
+  "MC_OwnerObservation_Green.cfg OwnerObservation.tla GREEN"
+  "MC_OwnerObservation_Red_Actor.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Node.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_App.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Document.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Member.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Registered.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Bound.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Snapshot.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
@@ -53,6 +138,10 @@ RUNS=(
   "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
   "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
   "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
+  "MC_CreatePipeline_Green.cfg CreatePipeline.tla GREEN" # #1890: blocks stored once the composite exists, one short ID and one key mint per field across attempts
+  "MC_CreatePipeline_Red_AsComputed.cfg CreatePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
+  "MC_CreatePipeline_Red_PerAttempt.cfg CreatePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
+  "MC_CreatePipeline_Red_Direct.cfg CreatePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
@@ -104,6 +193,34 @@ RUNS=(
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
+  "MC_TextCrdt_Green.cfg TextCrdt.tla GREEN" # Text CRDT: same blocks same text, incremental equals replay, edits land at their position
+  "MC_TextCrdt_Red_ArrivalOrder.cfg TextCrdt.tla RED" # siblings ordered by arrival: peers with the same blocks differ (INV_Converge)
+  "MC_TextCrdt_Red_NoCausalBuffer.cfg TextCrdt.tla RED" # block merged before its parents: text differs from replay (INV_MatchesReplay)
+  "MC_TextCrdt_Red_CurrentText.cfg TextCrdt.tla RED" # position read in the receiver's text: character misplaced (INV_PlacedAsIntended)
+  "MC_TextCrdt_Red_NextNode.cfg TextCrdt.tla RED" # always left child of the next node: a concurrent run splits a typed run (INV_NoInterleave)
+  "MC_TextCrdt_Red_CommonAncestor.cfg TextCrdt.tla RED" # concurrent merge replayed from a block merely under every head: text differs from a full replay (INV_CriticalReplay)
+  "MC_TextCrdt_Red_NullLast.cfg TextCrdt.tla RED" # null flag taken from the block merged last: a peer reads null beside a concurrent insert (INV_NullMatchesReplay)
+  "MC_JsonCrdt_Green_FirstValueOrMap.cfg JsonCrdt.tla GREEN" # JSON CRDT, first block sets a value or {}: same blocks same JSON, incremental equals replay, update beats delete, LWW per path
+  "MC_JsonCrdt_Green_FirstListOrDelete.cfg JsonCrdt.tla GREEN" # JSON CRDT, first block sets [] or deletes: the other half of the same state space
+  "MC_JsonCrdt_Red_DeleteWins.cfg JsonCrdt.tla RED" # a delete beats a concurrent edit below it: the edit vanishes (INV_UpdateWins)
+  "MC_JsonCrdt_Red_NoCid.cfg JsonCrdt.tla RED" # priority ties kept by arrival: peers with the same blocks differ (INV_Converge)
+  "MC_JsonCrdt_Red_DeleteImpliesMap.cfg JsonCrdt.tla RED" # a delete below a path implies a map: the path comes back with no set behind it (INV_DeleteCreatesNothing)
+  "MC_JsonCrdt_Red_SharedId.cfg JsonCrdt.tla RED" # equal edits with no nonce share an ID: a delete that saw one wipes both on one peer only (INV_Converge)
+  "MC_JsonCrdt_Green_MultiPath.cfg JsonCrdt.tla GREEN" # JSON CRDT, blocks editing several paths: same blocks same JSON, incremental equals replay, a write lands as it reads
+  "MC_JsonCrdt_Red_NoAnchor.cfg JsonCrdt.tla RED" # a delete below a map only its sets hold goes out bare: the map vanishes (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_NoSettle.cfg JsonCrdt.tla RED" # a block goes out with a value above a set it carries: its own value wins (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_DeleteMakesParent.cfg JsonCrdt.tla RED" # the writer reads a delete through a missing path as making a map (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_MapKeepsBelow.cfg JsonCrdt.tla RED" # the writer reads {} over a map as keeping what is below (INV_WriteLandsAsRead)
+  "MC_UnknownCrdt_Green.cfg UnknownCrdt.tla GREEN" # #2183: a node without a custom type parks its blocks, merges the rest, and merges each parked block once when built with the type
+  "MC_UnknownCrdt_Red_DropDeferral.cfg UnknownCrdt.tla RED" # a custom block acked with no record: never merged after registering (INV_ConvergeWhenDone)
+  "MC_UnknownCrdt_Red_DoubleReplay.cfg UnknownCrdt.tla RED" # a parked record kept after its merge: merged again (INV_MergeOnce)
+  "MC_UnknownCrdt_Red_Lww.cfg UnknownCrdt.tla RED" # the unknown type taken as LWW: replicas differ for good (INV_ConvergeWhenDone)
+  "MC_UnknownCrdt_Red_RemoveStored.cfg UnknownCrdt.tla RED" # a node started without a type it stores: a rewrite loses the value for good (INV_ConvergeWhenDone)
+  "MC_UnknownCrdt_Red_NoDocument.cfg UnknownCrdt.tla RED" # no document for a block whose only part was parked: its replay writes nowhere (INV_ConvergeWhenDone)
+  "MC_UnknownCrdt_Red_FailStall.cfg UnknownCrdt.tla RED" # a store error or missing key sets a parked block aside for good (INV_ConvergeWhenDone)
+  "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
+  "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
+  "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)
@@ -117,7 +234,8 @@ RUNS=(
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
-  "MC_TwoStoreCounter_Green.cfg     TwoStoreCounter.tla           GREEN" # unified RMW + merged-set dedup -> exact (no loss, no double)
+  "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)
+  "MC_TwoStoreCounter_Green.cfg     TwoStoreCounter.tla           GREEN" # unified RMW + merged-set dedup + standalone deferral -> exact (no loss, no double)
   "MC_MixedFieldMaterialization_Red_WholeDoc.cfg MixedFieldMaterialization.tla RED" # stale whole-doc field merge clobbers another field
   "MC_MixedFieldMaterialization_Green.cfg MixedFieldMaterialization.tla GREEN" # componentwise field materialization preserves mixed product state
   "MC_IndexReconciliation_Red_SaveOnly.cfg IndexReconciliation.tla RED" # stale index key survives CRDT winner rematerialization
@@ -229,6 +347,18 @@ RUNS=(
   "MC_VectorLinks_Green.cfg VectorLinks.tla GREEN"
   "MC_VectorLinks_Red_Puts.cfg VectorLinks.tla RED"
   "MC_VectorLinks_Red_Prune.cfg VectorLinks.tla RED"
+  "MC_PendingCache_Green.cfg PendingCache.tla GREEN" # no search hides a pending vector its snapshot holds
+  "MC_PendingCache_Green_Evict.cfg PendingCache.tla GREEN" # forgetting the cache mid-search, as a drop does, breaks no promise
+  "MC_PendingCache_Red_NoGeneration.cfg PendingCache.tla RED" # a cache of another generation scores truncated entries or lacks what a merge linked
+  "MC_PendingCache_Red_TruncateThroughHead.cfg PendingCache.tla RED" # a merge truncating through the head drops vectors it never linked
+  "MC_PendingCache_Red_OwnWrites.cfg PendingCache.tla RED" # a search leaves out its own transaction's appends
+  "MC_PendingCache_Red_EveryVersion.cfg PendingCache.tla RED" # a search scores an obsolete entry of an updated vector
+  "MC_PendingCache_Red_FutureVersion.cfg PendingCache.tla RED" # a search scores an entry past its head from a cache ahead of it
+  "MC_PendingCache_Red_HeadBlindMarks.cfg PendingCache.tla RED" # a marker from a search's future hides the entry newest for it
+  "MC_PendingCache_Red_NoGapCheck.cfg PendingCache.tla RED" # a copy loaded across a missing entry numbers the rest wrong
+  "MC_SharedQuantizer_Green.cfg SharedQuantizer.tla GREEN" # a writer encodes only with its snapshot's codebooks
+  "MC_SharedQuantizer_Red_NoTagCheck.cfg SharedQuantizer.tla RED" # a shared quantizer used whatever its tag encodes with a rebuilt index's old codebooks
+  "MC_SharedQuantizer_Red_TagPerRequest.cfg SharedQuantizer.tla RED" # a tag drawn once per request names an aborted attempt's codebooks and the retry's
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)

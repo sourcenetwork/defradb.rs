@@ -25,6 +25,10 @@ struct Creates;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocMutator for Creates {
+    fn crdts(&self) -> crdt::Crdts {
+        crdt::Crdts::default()
+    }
+
     async fn create(&self, collection_name: &str, doc: Document) -> Result<CreateResult> {
         self.create_as(&RequestContext::ambient(), collection_name, doc)
             .await
@@ -73,8 +77,13 @@ fn users() -> CollectionVersion {
         "v1",
         "coll-user",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }

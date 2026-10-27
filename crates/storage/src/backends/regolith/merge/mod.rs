@@ -3,7 +3,7 @@
 //!
 //! A database has one operator, so [`DefraMergeOperator`] serves every
 //! operand kind: standalone counters and full-text statistics (sums), document
-//! values (part operands, `document::stored`), and HNSW nodes and metadata
+//! values (part operands, `crdt::stored`), and HNSW nodes and metadata
 //! (link additions and counts, [`vector`]), and head sets (per-name functions on
 //! a set of heads, each name one part, [`head_set`]). Each operand names its
 //! kind after a versioned magic, so the operator dispatches on the operand
@@ -11,6 +11,8 @@
 //! are never exposed as materialized values. The store installs it when it
 //! opens, and its contract is checked beside it with regolith's
 //! `check_merge_operator` and `check_touches`.
+use crdt::stored::{Part, StoredDocument, StoredField, ValueKind};
+use crdt::Crdts;
 use regolith::MergeOperator;
 
 const MAGIC: &[u8] = b"DM\x01";
@@ -61,17 +63,61 @@ pub fn stats_delta(documents: i128, field_length: i128) -> Vec<u8> {
 }
 
 /// Only the named fields are changed. The base must use the local value format.
-pub fn document_parts(parts: &document::stored::StoredDocument) -> Option<Vec<u8>> {
+pub fn document_parts(parts: &StoredDocument) -> Option<Vec<u8>> {
     parts.encode_after(&header(DOCUMENT))
 }
 
 /// [`document_parts`] of a document holding only `part`, at `id`, written
 /// without building that document.
-pub fn document_part(id: u32, part: document::stored::Part<'_>) -> Option<Vec<u8>> {
-    document::stored::encode_parts(&header(DOCUMENT), std::iter::once((id, part)))
+pub fn document_part(id: u32, part: Part<'_>) -> Option<Vec<u8>> {
+    crdt::stored::encode_parts(&header(DOCUMENT), std::iter::once((id, part)))
 }
 
-pub struct DefraMergeOperator;
+/// The part kind a standalone counter operand of `kind` adds as.
+fn legacy_counter(kind: u8) -> Option<ValueKind> {
+    Some(match kind {
+        INT64 => ValueKind::Int64,
+        FLOAT32 => ValueKind::Float32,
+        FLOAT64 => ValueKind::Float64,
+        _ => return None,
+    })
+}
+
+/// `value + delta` for a standalone counter, added as its part kind adds.
+fn add_legacy(kind: ValueKind, value: Vec<u8>, delta: &[u8]) -> Option<Vec<u8>> {
+    let state = |value| StoredField {
+        name: String::new(),
+        kind,
+        priority: 0,
+        value,
+    };
+    let mut sum = state(value);
+    // A standalone counter adds as a counter part of its kind, which may go down.
+    crdt::field::native(schema::CType::PnCounter)?.merge(&mut sum, state(delta.to_vec()))?;
+    Some(sum.value)
+}
+
+/// Whether every part of `left` and `right` folds exactly, so the two
+/// operands may merge into one before their base is known.
+fn fold_exactly(crdts: &Crdts, left: &StoredDocument, right: &StoredDocument) -> bool {
+    left.fields
+        .values()
+        .chain(right.fields.values())
+        .all(|field| crdts.part(field.kind).folds_exactly(field.part()))
+}
+
+/// The operator, with the CRDT types of the node whose store it folds: a
+/// document part merges by its kind's type.
+#[derive(Clone, Default)]
+pub struct DefraMergeOperator {
+    crdts: Crdts,
+}
+
+impl DefraMergeOperator {
+    pub fn new(crdts: Crdts) -> Self {
+        Self { crdts }
+    }
+}
 
 impl MergeOperator for DefraMergeOperator {
     fn name(&self) -> &'static str {
@@ -91,14 +137,14 @@ impl MergeOperator for DefraMergeOperator {
         }
         if kind == DOCUMENT {
             let mut document = match base {
-                Some(bytes) => document::stored::StoredDocument::decode(bytes)?,
-                None => document::stored::StoredDocument::default(),
+                Some(bytes) => StoredDocument::decode(bytes)?,
+                None => StoredDocument::default(),
             };
             for operand in operands {
                 let (DOCUMENT, bytes) = decode(operand)? else {
                     return None;
                 };
-                document.apply(document::stored::StoredDocument::decode(bytes)?)?;
+                document.apply(StoredDocument::decode(bytes)?, &self.crdts)?;
             }
             return document.encode();
         }
@@ -119,20 +165,9 @@ impl MergeOperator for DefraMergeOperator {
             if next_kind != kind {
                 return None;
             }
-            value = match kind {
-                INT64 => i64::from_be_bytes(value.as_slice().try_into().ok()?)
-                    .wrapping_add(i64::from_be_bytes(delta.try_into().ok()?))
-                    .to_be_bytes()
-                    .to_vec(),
-                FLOAT32 => (f32::from_be_bytes(value.as_slice().try_into().ok()?)
-                    + f32::from_be_bytes(delta.try_into().ok()?))
-                .to_be_bytes()
-                .to_vec(),
-                FLOAT64 => (f64::from_be_bytes(value.as_slice().try_into().ok()?)
-                    + f64::from_be_bytes(delta.try_into().ok()?))
-                .to_be_bytes()
-                .to_vec(),
-                STATS => {
+            value = match legacy_counter(kind) {
+                Some(counter) => add_legacy(counter, value, delta)?,
+                None if kind == STATS => {
                     if value.len() != 32 || delta.len() != 32 {
                         return None;
                     }
@@ -142,7 +177,7 @@ impl MergeOperator for DefraMergeOperator {
                         .checked_add(i128::from_be_bytes(delta[16..].try_into().ok()?))?;
                     [documents.to_be_bytes(), length.to_be_bytes()].concat()
                 }
-                _ => return None,
+                None => return None,
             };
         }
         Some(value)
@@ -158,7 +193,7 @@ impl MergeOperator for DefraMergeOperator {
         let Some((DOCUMENT, bytes)) = decode(operand) else {
             return true;
         };
-        let Some(document) = document::stored::StoredDocument::decode(bytes) else {
+        let Some(document) = StoredDocument::decode(bytes) else {
             return true;
         };
         document.fields.keys().any(|id| parts.contains(id))
@@ -172,25 +207,12 @@ impl MergeOperator for DefraMergeOperator {
             return vector::fold(left, right);
         }
         if let (Some((DOCUMENT, left)), Some((DOCUMENT, right))) = (decode(left), decode(right)) {
-            let mut left = document::stored::StoredDocument::decode(left)?;
-            let right = document::stored::StoredDocument::decode(right)?;
-            // A join of LWW fields is associative, including deletion markers,
-            // and wrapping integer counter sums are exact in any grouping.
-            // Floating-point counter sums are not, so they keep their order.
-            if left
-                .fields
-                .values()
-                .chain(right.fields.values())
-                .any(|field| {
-                    !matches!(
-                        field.kind,
-                        document::stored::ValueKind::Lww | document::stored::ValueKind::Int64
-                    )
-                })
-            {
+            let mut left = StoredDocument::decode(left)?;
+            let right = StoredDocument::decode(right)?;
+            if !fold_exactly(&self.crdts, &left, &right) {
                 return None;
             }
-            left.apply(right)?;
+            left.fold(right, &self.crdts)?;
             return document_parts(&left);
         }
         let (INT64, left) = decode(left)? else {
@@ -199,9 +221,9 @@ impl MergeOperator for DefraMergeOperator {
         let (INT64, right) = decode(right)? else {
             return None;
         };
-        Some(counter_i64(
-            i64::from_be_bytes(left.try_into().ok()?)
-                .wrapping_add(i64::from_be_bytes(right.try_into().ok()?)),
+        Some(encode(
+            INT64,
+            &add_legacy(ValueKind::Int64, left.to_vec(), right)?,
         ))
     }
     // Floats and checked i128 stats retain their operand order. Folding a pair

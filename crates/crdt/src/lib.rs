@@ -1,41 +1,17 @@
-//! CRDT (Conflict-free Replicated Data Types) implementation for DefraDB
+//! CRDT (Conflict-free Replicated Data Types) for DefraDB fields.
 //!
-//! This crate implements delta-state CRDTs with Merkle-DAG integration for
-//! distributed conflict resolution.
-//!
-//! ## CRDT Types
-//!
-//! - **LWW Register**: Last-Write-Wins register for field-level conflict resolution
-//! - **Counter**: PN-Counter for increment/decrement operations
-//! - **Composite**: Document-level CRDT composition
-//!
-//! ## Key Concepts
-//!
-//! - **Priority**: Timestamp-based ordering for deterministic conflict resolution
-//! - **Delta**: Incremental state changes for efficient synchronization
-//! - **Merge**: Conflict resolution algorithm for concurrent updates
+//! - [`field`]: one [`FieldCrdt`] per CRDT type, the single place that says
+//!   what a write, a block and a merge do to a field of that type.
+//! - [`fugue`]: the Fugue sequence the Text type replays its history with.
+//! - [`stored`]: the local document value, whose parts each hold one field's
+//!   CRDT state and merge through its type.
 
-pub mod composite;
-pub mod counter;
-pub mod lww;
-pub mod priority;
-pub mod traits;
+pub mod field;
+pub mod fugue;
+pub mod stored;
 
-pub use composite::{CompositeDAG, CompositeDelta, STATUS_ACTIVE, STATUS_DELETED};
-pub use counter::{Counter, CounterDelta, NumericKind};
-pub use lww::{Lww, LwwDelta};
-pub use priority::{decode_priority, encode_priority};
-pub use traits::{Delta, MergeResult, ReplicatedData};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_priority_roundtrip() {
-        let priority = 12345u64;
-        let encoded = encode_priority(priority);
-        let decoded = decode_priority(&encoded).unwrap();
-        assert_eq!(priority, decoded);
-    }
-}
+pub use field::{
+    history_op, CausalBlock, CausalCrdt, CrdtRef, Crdts, DeltaParts, FieldCrdt, FieldCrdtError,
+    FieldWrite, JsonField, MergeResult, PartCrdts, Registration, RegistryError, TaggedBlock,
+    TaggedCrdt,
+};

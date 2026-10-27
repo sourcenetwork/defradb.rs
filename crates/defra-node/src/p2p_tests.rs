@@ -1280,11 +1280,11 @@ fn live_replicator_pushes_post_config_writes() {
                 .expect("build node1");
 
             node0
-                .add_schema("type User { name: String age: Int }")
+                .add_collection("type User { name: String age: Int }")
                 .await
                 .expect("schema on node0");
             node1
-                .add_schema("type User { name: String age: Int }")
+                .add_collection("type User { name: String age: Int }")
                 .await
                 .expect("schema on node1");
 
@@ -1358,7 +1358,7 @@ fn p2p_document_subscriptions_survive_restart_and_delete() {
                 let node =
                     build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-                node.add_schema("type Note { text: String }")
+                node.add_collection("type Note { text: String }")
                     .await
                     .expect("add schema");
                 let response = node
@@ -1465,11 +1465,11 @@ fn p2p_replicator_survives_embedded_restart() {
                     build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
                 node0
-                    .add_schema("type User { name: String age: Int }")
+                    .add_collection("type User { name: String age: Int }")
                     .await
                     .expect("schema on node0");
                 node1
-                    .add_schema("type User { name: String age: Int }")
+                    .add_collection("type User { name: String age: Int }")
                     .await
                     .expect("schema on node1");
 
@@ -1547,11 +1547,11 @@ fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
         let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
         node0
-            .add_schema(AGENT_SCHEMA)
+            .add_collection(AGENT_SCHEMA)
             .await
             .expect("schema on node0");
         node1
-            .add_schema(AGENT_SCHEMA)
+            .add_collection(AGENT_SCHEMA)
             .await
             .expect("schema on node1");
 
@@ -1659,11 +1659,11 @@ fn live_replicator_same_session_followup_turn_converges() {
         .expect("build node1");
 
     node0
-        .add_schema(SESSION_TURN_SDL)
+        .add_collection(SESSION_TURN_SDL)
         .await
         .expect("schema on node0");
     node1
-        .add_schema(SESSION_TURN_SDL)
+        .add_collection(SESSION_TURN_SDL)
         .await
         .expect("schema on node1");
 
@@ -1783,11 +1783,11 @@ fn live_replicator_filtered_push_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -1854,11 +1854,11 @@ fn filtered_backfill_via_transport_pusher_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -2000,8 +2000,8 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
         .expect("build joiner");
 
     const SCHEMA: &str = "type BranchNote @branchable { name: String age: Int }";
-    source.add_schema(SCHEMA).await.expect("schema on source");
-    joiner.add_schema(SCHEMA).await.expect("schema on joiner");
+    source.add_collection(SCHEMA).await.expect("schema on source");
+    joiner.add_collection(SCHEMA).await.expect("schema on joiner");
 
     // Documents exist before the joiner ever connects: this is the
     // late-joiner catch-up path, not live replication.
@@ -2094,8 +2094,8 @@ fn encrypted_create_replicates_plaintext_to_replicator() {
         .expect("build replica");
 
     const SCHEMA: &str = "type SecretNote { name: String age: Int }";
-    writer.add_schema(SCHEMA).await.expect("schema on writer");
-    replica.add_schema(SCHEMA).await.expect("schema on replica");
+    writer.add_collection(SCHEMA).await.expect("schema on writer");
+    replica.add_collection(SCHEMA).await.expect("schema on replica");
 
     install_one_way_replicator(&writer, &replica, &["SecretNote"]).await;
 
@@ -2169,6 +2169,20 @@ fn encrypted_create_replicates_plaintext_to_replicator() {
     .unwrap()
 }
 
+/// The accept-side allowlist can close QUIC after the local handshake, so
+/// rejection can surface either before or during the adapter's connected wait.
+fn assert_refused_dial(result: defra_p2p_adapter::P2PResult<()>) {
+    if let Err(error) = result {
+        assert!(
+            matches!(&error, defra_p2p_adapter::P2PError::Transport(reason)
+                if reason.contains("timeout")
+                    || reason.contains("timed out")
+                    || reason.contains("not authorized")),
+            "refused dial failed before reaching the allowlist: {error}"
+        );
+    }
+}
+
 /// `EmbeddedNode::allow_p2p_peer` is the only reachable way to widen an
 /// already-running node's inbound allowlist: it must actually flow through
 /// `p2p-adapter` down to `IrohTransport::allow_peer`, not stop at the
@@ -2200,18 +2214,7 @@ fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
             let p2p_b = node_b.p2p().expect("node_b p2p");
             let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
 
-            // node_b's refusal closes the connection after the handshake, so
-            // the dial either completes or times out; any other error means it
-            // never reached node_b's allowlist.
-            if let Err(error) = p2p_a.connect_peer(&addr_b).await {
-                let message = error.to_string();
-                assert!(
-                    message.contains("timeout")
-                        || message.contains("timed out")
-                        || message.contains("not authorized"),
-                    "refused dial failed before reaching node_b: {message}"
-                );
-            }
+            assert_refused_dial(p2p_a.connect_peer(&addr_b).await);
 
             let deadline = Instant::now() + Duration::from_millis(500);
             while Instant::now() < deadline {
@@ -2306,10 +2309,7 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
 
             // And the next connection attempt is refused: reconnecting does not
             // slip back in.
-            p2p_a
-                .connect_peer(&addr_b)
-                .await
-                .expect("dial reaches node_b again");
+            assert_refused_dial(p2p_a.connect_peer(&addr_b).await);
             let deadline = Instant::now() + Duration::from_millis(500);
             while Instant::now() < deadline {
                 let connected = p2p_b
@@ -2336,6 +2336,21 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
                 "node_b must refuse to dial a peer it revoked, got {outbound:?}"
             );
             wait_for_no_connected_peer(&node_b).await;
+
+            p2p_a
+                .disconnect_peer(&addr_b)
+                .await
+                .expect("clear refused attempt");
+            node_b
+                .allow_p2p_peer(&peer_a)
+                .await
+                .expect("reauthorize node_a");
+            p2p_a
+                .connect_peer(&addr_b)
+                .await
+                .expect("connect after reauthorization");
+            wait_for_connected_peer(&node_a).await;
+            wait_for_connected_peer(&node_b).await;
 
             node_a.shutdown().await;
             node_b.shutdown().await;

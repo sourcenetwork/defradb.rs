@@ -3,7 +3,7 @@
 use acp::{DocumentPermission, Identity};
 use chrono::{DateTime, FixedOffset, Utc};
 use identity::Did;
-use rapidhash::RapidHashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::{Map, Value as JsonValue};
 use std::sync::Arc;
 use web_time::Instant;
@@ -11,7 +11,7 @@ use web_time::Instant;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Mutation, MutationType, Requestable};
 use crate::mutator::DocMutator;
-use crate::plan::{CreateNode, DeleteNode, UpdateNode, UpsertNode};
+use crate::plan::{AddNode, DeleteNode, UpdateNode, UpsertNode};
 use crate::planner::PlanNode;
 use crate::query_parse::parse_mutations_with_limits;
 use crate::txn::TransactionRegistry;
@@ -417,13 +417,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 .filter(|id| !projected_ids.is_some_and(|ids| ids.contains(*id)))
                 .cloned()
                 .collect();
+            let (update_input, update_ops) = if mutation.mutation_type == MutationType::Update {
+                mutation.split_update(&collection)?
+            } else {
+                (mutation.update_input.clone(), RapidHashMap::new())
+            };
             let request = crate::access_hooks::WriteRequest {
                 identity: caller_identity.as_ref(),
                 collection: &collection,
                 kind: mutation.mutation_type,
                 doc_ids: &validation_ids,
                 create_input: &mutation.create_input,
-                update_input: &mutation.update_input,
+                update_input: &update_input,
+                update_ops: &update_ops,
             };
             if strict_attempt {
                 let exact_request = serde_json::to_vec(&(
@@ -434,7 +440,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     mutation.mutation_type.as_prefix(),
                     &validation_ids,
                     &mutation.create_input,
-                    &mutation.update_input,
+                    &update_input,
+                    &update_ops,
                 ))
                 .map_err(|error| QueryError::execution(error.to_string()))?;
                 let prepared_request = crate::prepared::PreparedInputRequest::new(
@@ -572,7 +579,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         acp_filtered_doc_ids = Some(visible_doc_ids);
                     }
                 }
-                MutationType::Create => {
+                MutationType::Add => {
                     // CREATE permission is checked implicitly -- anyone can create
                     // but ownership is established via registration after the write.
                 }
@@ -678,7 +685,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             .into_owned()
             .with_encryption(mutation.encryption());
 
-        if matches!(mutation.mutation_type, MutationType::Create) {
+        if matches!(mutation.mutation_type, MutationType::Add) {
             match context.signing().cloned() {
                 Some(mut config) if config.remote_signer.is_some() => {
                     tracing::info!(
@@ -816,10 +823,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
 
         // Build and execute the appropriate mutation plan
         let mut plan: Box<dyn PlanNode> = match mutation.mutation_type {
-            MutationType::Create => {
+            MutationType::Add => {
                 let inputs = self.build_create_inputs(mutation, &collection)?;
                 Box::new(
-                    CreateNode::new(&mutation.collection_name, mutator.clone(), mapping.clone())
+                    AddNode::new(&mutation.collection_name, mutator.clone(), mapping.clone())
                         .with_context(context.clone())
                         .with_collection(collection.clone())
                         .with_request_time(request_time)
@@ -1006,7 +1013,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             && !mutator.manages_external_acp_hooks()
             && matches!(
                 mutation.mutation_type,
-                MutationType::Create | MutationType::Upsert
+                MutationType::Add | MutationType::Upsert
             )
         {
             if let (Some(policy), Some(identity_did), Some(projection)) = (
@@ -1064,7 +1071,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         mutator.register_ordered_async_hook(callback).await?;
                     }
                 }
-            } else if let (Some(policy), Some(identity_did), MutationType::Create) = (
+            } else if let (Some(policy), Some(identity_did), MutationType::Add) = (
                 collection.policy.as_ref(),
                 caller_identity.as_ref(),
                 &mutation.mutation_type,
@@ -1370,7 +1377,12 @@ mod tests {
                 "User",
                 "v1",
                 "coll-user",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             );
             let truncator = Arc::new(CapturingTruncator::default());
             let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
@@ -1398,7 +1410,12 @@ mod tests {
                 "User",
                 "v1",
                 "coll-user",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             );
             let mutator = Arc::new(CapturingMutator::new());
             let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
@@ -1437,6 +1454,10 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl crate::mutator::DocMutator for CapturingMutator {
+        fn crdts(&self) -> crdt::Crdts {
+            crdt::Crdts::default()
+        }
+
         async fn prepare_write(
             &self,
             _collection_name: &str,
@@ -1497,12 +1518,12 @@ mod tests {
             "v1",
             "coll-user",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         let fetcher = MockFetcher::new();
-        let mut existing = Document::from_json_str(r#"{"name":"before"}"#).unwrap();
+        let mut existing = crate::test_utils::doc_from_json(r#"{"name":"before"}"#);
         existing.set_id(DocID::new_v0_from_seed("preparation-existing"));
         let existing_id = existing.id().unwrap().to_string();
         let missing_id = "missing-before-preparation";
@@ -1535,8 +1556,18 @@ mod tests {
                 "v1",
                 "coll-user",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             );
             let mutator = Arc::new(CapturingMutator::new());
@@ -1642,10 +1673,25 @@ mod tests {
                 "v1",
                 "coll-company",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
-                    FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
-                        .with_relation_name("employee_company"),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "employees",
+                        FieldKind::relation("Employee", true),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company"),
                 ],
             );
 
@@ -1654,14 +1700,34 @@ mod tests {
                 "v1",
                 "coll-employee",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
-                    FieldDescription::new("3", "company", FieldKind::relation("Company", false))
-                        .with_relation_name("employee_company")
-                        .as_primary(),
-                    FieldDescription::new("4", "_companyID", FieldKind::doc_id())
-                        .with_relation_name("employee_company")
-                        .as_primary(),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "company",
+                        FieldKind::relation("Company", false),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company")
+                    .as_primary(),
+                    FieldDescription::new(
+                        "4",
+                        "_companyID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company")
+                    .as_primary(),
                 ],
             );
 

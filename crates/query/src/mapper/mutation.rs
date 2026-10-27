@@ -6,14 +6,20 @@
 use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
-use super::{Filter, Requestable};
+use super::{split_update_input, Filter, InputOp, Requestable};
 use crate::document::DocumentMapping;
+
+/// An update's implicitly set fields, then its explicit ops by field.
+pub type UpdateSplit = (
+    RapidHashMap<String, JsonValue>,
+    RapidHashMap<String, InputOp>,
+);
 
 /// Type of mutation operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MutationType {
-    /// Create new documents
-    Create,
+    /// Add new documents
+    Add,
     /// Update existing documents
     Update,
     /// Delete existing documents
@@ -30,13 +36,13 @@ impl MutationType {
     /// # Examples
     ///
     /// ```ignore
-    /// MutationType::from_prefix("add") // Some(Create)
+    /// MutationType::from_prefix("add") // Some(Add)
     /// MutationType::from_prefix("update") // Some(Update)
     /// MutationType::from_prefix("delete") // Some(Delete)
     /// ```
     pub fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix.to_lowercase().as_str() {
-            "add" | "create" => Some(Self::Create),
+            "add" | "create" => Some(Self::Add),
             "update" => Some(Self::Update),
             "delete" => Some(Self::Delete),
             "upsert" => Some(Self::Upsert),
@@ -48,7 +54,7 @@ impl MutationType {
     /// Get the operation prefix string.
     pub fn as_prefix(&self) -> &'static str {
         match self {
-            Self::Create => "add",
+            Self::Add => "add",
             Self::Update => "update",
             Self::Delete => "delete",
             Self::Upsert => "upsert",
@@ -70,7 +76,8 @@ pub struct Mutation {
     pub alias: Option<String>,
     /// For CREATE: Array of documents to create (each is a field-value map)
     pub create_input: Vec<RapidHashMap<String, JsonValue>>,
-    /// For UPDATE: Fields to update (patch)
+    /// For UPDATE: Fields to update (patch), and explicit CRDT ops keyed by
+    /// op name; [`Mutation::split_update`] tells them apart.
     pub update_input: RapidHashMap<String, JsonValue>,
     /// For UPDATE/DELETE: Specific document IDs to target
     pub doc_ids: Option<Vec<String>>,
@@ -100,7 +107,7 @@ impl Mutation {
     /// Create a new CREATE mutation.
     pub fn create(collection_name: impl Into<String>) -> Self {
         Self {
-            mutation_type: MutationType::Create,
+            mutation_type: MutationType::Add,
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
@@ -213,6 +220,26 @@ impl Mutation {
         self
     }
 
+    /// This update's implicitly set fields and its explicit ops. A key that
+    /// names a field of `collection` is that field, never an op.
+    pub fn split_update(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> crate::error::Result<UpdateSplit> {
+        split_update_input(&self.update_input, |key| {
+            collection.field_by_name(key).is_some()
+        })
+    }
+
+    /// Every field this update writes, through its input or an op.
+    pub fn update_fields(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> crate::error::Result<rapidhash::RapidHashSet<String>> {
+        let (fields, ops) = self.split_update(collection)?;
+        Ok(fields.into_keys().chain(ops.into_keys()).collect())
+    }
+
     /// Set document IDs to target.
     pub fn with_doc_ids(mut self, doc_ids: Vec<String>) -> Self {
         self.doc_ids = Some(doc_ids);
@@ -290,14 +317,8 @@ mod tests {
 
     #[test]
     fn test_mutation_type_from_prefix() {
-        assert_eq!(
-            MutationType::from_prefix("create"),
-            Some(MutationType::Create)
-        );
-        assert_eq!(
-            MutationType::from_prefix("CREATE"),
-            Some(MutationType::Create)
-        );
+        assert_eq!(MutationType::from_prefix("create"), Some(MutationType::Add));
+        assert_eq!(MutationType::from_prefix("CREATE"), Some(MutationType::Add));
         assert_eq!(
             MutationType::from_prefix("update"),
             Some(MutationType::Update)
@@ -320,12 +341,12 @@ mod tests {
     #[test]
     fn test_parse_mutation_name() {
         let (typ, name) = parse_mutation_name("add_Users").unwrap();
-        assert_eq!(typ, MutationType::Create);
+        assert_eq!(typ, MutationType::Add);
         assert_eq!(name, "Users");
 
         // "create_" still accepted as backward-compatible alias
         let (typ, name) = parse_mutation_name("create_Users").unwrap();
-        assert_eq!(typ, MutationType::Create);
+        assert_eq!(typ, MutationType::Add);
         assert_eq!(name, "Users");
 
         let (typ, name) = parse_mutation_name("update_my_collection").unwrap();
@@ -352,7 +373,7 @@ mod tests {
             m
         }]);
 
-        assert_eq!(create.mutation_type, MutationType::Create);
+        assert_eq!(create.mutation_type, MutationType::Add);
         assert_eq!(create.collection_name, "Users");
         assert_eq!(create.create_input.len(), 1);
 

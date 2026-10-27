@@ -21,7 +21,8 @@ use outcome::Result;
 use std::time::Instant;
 
 use support::{
-    add_policy, add_schema, grant_collection_reader, new_identity, users_as, wait_for_fred, Node,
+    add_collection, add_policy, grant_collection_reader, new_identity, users_as, wait_for_fred,
+    Node,
 };
 
 #[test]
@@ -101,8 +102,8 @@ async fn replicate_encrypted_doc(
     let sdl = format!(
         r#"type Users @branchable @policy(id: "{policy_id}", resource: "users") {{ name: String  age: Int }}"#
     );
-    add_schema(node0, &sdl, jack).await?;
-    add_schema(peer, &sdl, jack).await?;
+    add_collection(node0, &sdl, jack).await?;
+    add_collection(peer, &sdl, jack).await?;
 
     if let Some(grantee) = grantee {
         let collection_id = node0

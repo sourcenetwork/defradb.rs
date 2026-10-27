@@ -1,5 +1,6 @@
 //! PQ codes of a resident-codes index, kept in memory and shared by every
-//! search on the node.
+//! search on the node, beside the copy of its pending list that every DiskANN
+//! index keeps ([`PendingCache`]).
 //!
 //! Codes only order the walk; the final ranking reads full vectors inside the
 //! query's transaction. So a stale or missing code can cost recall but never
@@ -13,7 +14,9 @@ use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
+use super::pending_cache::PendingCache;
 use crate::index::error::{Error, Result};
+use crate::index::vector::quantize::ProductQuantizer;
 use crate::index::vector::store::NodeId;
 
 /// Codes loaded in one pass, back to back in one array with an index of where
@@ -58,12 +61,21 @@ impl Codes {
     }
 }
 
-/// A reload swaps the whole [`Loaded`] in one step, and misses fill a small
+/// A reload swaps the whole `Loaded` in one step, and misses fill a small
 /// map beside the loaded codes. A fill that races a reload can land in the
 /// map the reload just replaced; that code is read again on its next miss.
 #[derive(Debug, Default)]
 pub struct CodeCache {
     loaded: Atom<Arc<Loaded>>,
+    pub pending: PendingCache,
+    quantizer: Atom<Option<Arc<SharedQuantizer>>>,
+}
+
+/// A quantizer and the training whose codebooks it was built from.
+#[derive(Debug)]
+struct SharedQuantizer {
+    training: u128,
+    quantizer: Arc<ProductQuantizer>,
 }
 
 #[derive(Debug, Default)]
@@ -75,6 +87,26 @@ struct Loaded {
 }
 
 impl CodeCache {
+    /// The quantizer built from `training`'s codebooks, if one was shared.
+    ///
+    /// Codebooks are written once, by the training that names them, so a
+    /// match is the stored codebooks whatever snapshot the caller reads.
+    pub fn quantizer(&self, training: u128) -> Option<Arc<ProductQuantizer>> {
+        match &*self.quantizer.load() {
+            Some(shared) if shared.training == training => Some(shared.quantizer.clone()),
+            _ => None,
+        }
+    }
+
+    /// Shares `quantizer`, built from `training`'s codebooks. Whichever share
+    /// lands last stays; a caller with the other training builds its own.
+    pub fn share_quantizer(&self, training: u128, quantizer: Arc<ProductQuantizer>) {
+        self.quantizer.store(Some(Arc::new(SharedQuantizer {
+            training,
+            quantizer,
+        })));
+    }
+
     pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {
         let loaded = self.loaded.load();
         match loaded.codes.get(id) {
@@ -116,7 +148,7 @@ impl CodeCache {
     }
 }
 
-/// One [`CodeCache`] per resident-codes index, owned by the database.
+/// One [`CodeCache`] per DiskANN index, owned by the database.
 #[derive(Debug)]
 pub struct CodeCaches {
     by_index: HopscotchMap<(u32, u32), Arc<CodeCache>, RandomState>,
@@ -145,5 +177,33 @@ impl CodeCaches {
         self.by_index
             .get(&key)
             .unwrap_or_else(|| self.by_index.get_or_insert(key, Arc::default()))
+    }
+
+    /// Drops the caches of an index that no longer exists. Nothing rebuilds
+    /// them, since no search can name a dropped index; a search that began
+    /// before the drop and loads a copy afterwards leaves that copy behind.
+    pub fn evict(&self, collection_short_id: u32, index_id: u32) {
+        self.by_index.remove(&(collection_short_id, index_id));
+    }
+
+    /// [`evict`](Self::evict) for every index of a dropped collection.
+    pub fn evict_collection(&self, collection_short_id: u32) {
+        let dropped: Vec<_> = self
+            .by_index
+            .keys()
+            .filter(|(collection, _)| *collection == collection_short_id)
+            .collect();
+        for key in dropped {
+            self.by_index.remove(&key);
+        }
+    }
+
+    /// How many indexes have caches.
+    pub fn len(&self) -> usize {
+        self.by_index.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }

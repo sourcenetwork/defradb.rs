@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use datastore::{Namespace, NamespaceView, SharedTxn};
-use db::block::builder::{write_document_blocks, DocStorageIdentity};
+use db::block::builder::{write_document_blocks, DocRef};
 use document::{DocID, Document, NormalValue};
 use storage::{backends::RegolithStore, Store};
 
@@ -34,11 +34,26 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+fn wide_collection(width: usize) -> schema::CollectionVersion {
+    let fields = (0..width)
+        .map(|index| {
+            schema::FieldDescription::new(
+                (index + 1).to_string(),
+                format!("field_{index}"),
+                schema::FieldKind::Scalar(schema::ScalarKind::None),
+                schema::CType::LwwRegister,
+            )
+        })
+        .collect();
+    schema::CollectionVersion::new("Bench", SCHEMA_VERSION_ID, "col-bench", fields)
+}
+
 fn make_document(field_count: usize, value_size: usize) -> Document {
     let value = "x".repeat(value_size);
-    let mut doc = Document::new();
+    let mut doc = Document::new(wide_collection(field_count));
     for index in 0..field_count {
-        doc.set(format!("field_{index}"), NormalValue::String(value.clone()));
+        doc.set(format!("field_{index}"), NormalValue::String(value.clone()))
+            .unwrap();
     }
     doc
 }
@@ -55,7 +70,7 @@ async fn new_stores() -> (NamespaceView, NamespaceView) {
         .new_txn(false)
         .await
         .unwrap();
-    let shared = SharedTxn::new(txn);
+    let shared = SharedTxn::new(txn, storage::Crdts::default());
     (
         NamespaceView::new(shared.clone(), Namespace::Blockstore),
         NamespaceView::new(shared.clone(), Namespace::Headstore),
@@ -83,7 +98,7 @@ fn bench_write_create(c: &mut Criterion) {
                                     headstore,
                                     &doc,
                                     &COLLECTION,
-                                    DocStorageIdentity::new(1, 1),
+                                    DocRef::new(1, 1),
                                     None,
                                     None,
                                     None,
@@ -124,7 +139,7 @@ fn bench_write_update(c: &mut Criterion) {
                                 &headstore,
                                 &doc,
                                 &COLLECTION,
-                                DocStorageIdentity::new(1, 1),
+                                DocRef::new(1, 1),
                                 None,
                                 None,
                                 None,
@@ -149,7 +164,7 @@ fn bench_write_update(c: &mut Criterion) {
                                     headstore,
                                     updated,
                                     &COLLECTION,
-                                    DocStorageIdentity::new(1, 1),
+                                    DocRef::new(1, 1),
                                     Some(&fields),
                                     None,
                                     None,

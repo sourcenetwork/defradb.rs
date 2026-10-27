@@ -34,6 +34,46 @@ macro_rules! simd_kernels {
             dot = dot_f64,
             squared_euclidean = squared_euclidean_f64,
         );
+        simd_kernels!(@block vector = $vector, attrs = { $(#[$attr])* });
+    };
+
+    (@block vector = $vector:ty, attrs = { $(#[$attr:meta])* }) => {
+        /// Squared euclidean distance from `a` to each of `wide`, over their
+        /// shared prefix. Each `wide[k]` is an `f32` vector widened to `f64`,
+        /// which is exact, and each result is bit-equal to the `f32` kernel on
+        /// `a` and that vector: the same subtractions and the same running
+        /// sum, in the same order. A block loads and widens `a` once for all
+        /// of `wide`, and its sums are independent, so they overlap.
+        ///
+        /// # Safety
+        /// The running machine must have the features named by `FEATURES`;
+        /// check `is_available()` first.
+        $(#[$attr])*
+        pub(crate) unsafe fn squared_euclidean_f32_block<const B: usize>(
+            a: &[f32],
+            wide: [&[f64]; B],
+        ) -> [f64; B] {
+            let n = wide.iter().fold(a.len(), |n, w| n.min(w.len()));
+            let mut acc: [$vector; B] = [zero(); B];
+            let mut i = 0;
+            while i + LANES <= n {
+                let p = load_widened(a.as_ptr().add(i));
+                for (acc, w) in acc.iter_mut().zip(&wide) {
+                    let d = sub(p, load_direct(w.as_ptr().add(i)));
+                    *acc = fmadd(d, d, *acc);
+                }
+                i += LANES;
+            }
+            let mut total = [0.0; B];
+            for ((total, acc), w) in total.iter_mut().zip(acc).zip(&wide) {
+                *total = reduce(acc);
+                for j in i..n {
+                    let d = a[j].widen() - w[j];
+                    *total += d * d;
+                }
+            }
+            total
+        }
     };
 
     (@ops

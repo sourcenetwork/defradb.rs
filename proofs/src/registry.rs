@@ -49,6 +49,182 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Peer connection observation",
+        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model",
+        model_ref: "MC_EndpointBind_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases",
+        model_ref: "EndpointBind (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selective CAR capacity: observed completed grants yield to active sends; in-flight scope and quiescent limits are preserved",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
+        model_ref: "MC_SelectiveCarCapacity_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "admitted_bounded / warm_does_not_refuse / reclaim_preserves_active / authorized_scope / expired_completed_refused",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
+        model_ref: "SelectiveCarCapacity (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selected transfer owns its acknowledgements independently of subscriptions; replay stays fenced, scoped and grant-bound",
+        axis: Tla,
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        model_ref: "MC_DocumentPush_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selected exact peer/root authority survives cache loss, restart and time until explicit revocation",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/peerstore/selected_car.rs; crates/p2p/src/sync/coordinator/event_handler/car.rs",
+        model_ref: "MC_SelectedCarAuthority_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership and drain all started tasks",
+        axis: Tla,
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "revoked_denied / other_preserved / exact_scope",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/peerstore/selected_car.rs",
+        model_ref: "SelectedCarAuthority (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation",
+        axis: Lean,
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
+        model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Rooted authorization: one producer, exact grants, bounded optional retention, fenced eviction and cancellation wakeup",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car_authorization.rs walk_with_limits; car_authorization_registry.rs; crates/p2p/tests/unit/car_authorization_limits.rs",
+        model_ref: "MC_RootedAuthorization_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "reserve_bounded / release_restores / replacement_survives / grants_independent_of_retention",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car_authorization_budget.rs; car_authorization_registry.rs",
+        model_ref: "RootedAuthorization (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Replicator installs validate their row, settle before completion, and retain interrupted outcomes",
+        axis: Tla,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs; crates/p2p-adapter/src/replicator_installs.rs",
+        model_ref: "MC_ReplicatorInstall_{Green,Red_*}.cfg; MC_ReplicatorIncarnation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Install completion is identity-fenced and idempotent; stale allocations re-decide without regressing the incarnation",
+        axis: Lean,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
+        model_ref: "ReplicatorInstall (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Released — an early reconciliation return releases its queued continuation slot",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",
+        model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "owned_slot_released — dropping the continuation owner releases its slot",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs::claim_pending_dag_merge; crates/p2p/src/sync/replication/handlers.rs::process_one_event",
+        model_ref: "HistoryTurns.owned_slot_released (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Rejected-page cleanup compares the cursor incarnation before removing it",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs::reject_history; crates/db/tests/merge/history_cursor.rs",
+        model_ref: "MC_RetryMarkerGeneration_{Green,Red_StaleAck,Red_Readd}.cfg (incarnation-fenced retirement abstraction)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "History turns commit cursor and writes together; reclaim preserves publications",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs; history_registry.rs; dispatch.rs; crates/db/src/merge/replication.rs; crates/db/tests/merge/collection_history_control.rs",
+        model_ref: "MC_HistoryTurns_{Green,Red_*}.cfg; MC_HistoryDriver_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Ancestor publication is idempotent; cleanup and collection carriers preserve driver ownership",
+        axis: Lean,
+        anchor: "crates/db/src/merge/merge_handler/history.rs",
+        model_ref: "HistoryTurns (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Storage failure classification",
+        name: "ClassificationPreserved / NoReplayAuthority",
+        axis: Tla,
+        anchor: "crates/storage/src/corekv/errors.rs; crates/db/src/error/mod.rs; crates/query/src/runner/turn.rs; crates/query/src/executor.rs; crates/http/src/error.rs",
+        model_ref: "MC_StorageFailure_Green.cfg / MC_StorageFailure_Red_LostCause.cfg / MC_StorageFailure_Red_Text.cfg / MC_StorageFailure_Red_Retry.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Storage failure classification",
+        name: "StorageFailure.preserves / full_code / other_code / opaque_code",
+        axis: Lean,
+        anchor: "crates/storage/src/corekv/io_failure.rs; crates/storage/src/backends/regolith/transaction.rs map_txn_error; crates/query/src/executor.rs QueryResponseError::from_query_error; crates/query/tests/storage_failure.rs",
+        model_ref: "StorageFailure.lean",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Owner observations retain read gates and the transaction snapshot",
+        axis: Tla,
+        anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
+        model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Acp.OwnerObservation.exact_snapshot and denied-owner noninterference",
+        axis: Lean,
+        anchor: "crates/query/src/runner/owners.rs",
+        model_ref: "Acp.OwnerObservation",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
         name: "NoSpuriousDenial — queued lifecycle notification cannot hide a connected peer",
         axis: Tla,
         anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected; access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
@@ -77,6 +253,86 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/storage/src/corekv/callbacks.rs OnCommit::OrderedAndWait; crates/db/tests/collection/schema_publication.rs",
         model_ref: "SchemaPublication.lean",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "INV_NoHiddenPending — a search using the in-memory pending list never misses a vector its snapshot or its own transaction has pending",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert, delete; crates/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_NoGeneration.cfg / MC_PendingCache_Red_OwnWrites.cfg / MC_PendingCache_Red_TruncateThroughHead.cfg (RED)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "prefix_covered — a cache loaded once and caught up on every logged insert holds every vector a snapshot of its generation has pending, and a merge that cuts the log anywhere loses no live vector",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert; crates/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
+        model_ref: "PendingCache.Covers.prefix_covered / catch_up_in_steps / merge_keeps_every_vector / truncate_through_head_loses",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "INV_ScoresLatest — a search scores each pending vector by the newest entry its snapshot or its own transaction holds, never an obsolete one or one from a cache ahead of it",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates, snapshot_pending; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through, Copy::caught_up, Segment::push, Segment::supersede",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_EveryVersion.cfg / MC_PendingCache_Red_FutureVersion.cfg / MC_PendingCache_Red_HeadBlindMarks.cfg / MC_PendingCache_Red_NoGapCheck.cfg / MC_PendingCache_Red_NoGeneration.cfg (RED)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "scored_is_last — the code kept for a vector is that of its last entry visited, and a copy cut at a search's head scores as the search's own log does",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through",
+        model_ref: "PendingCache.Latest.scored_is_last / scored_append / cut_scores_snapshot / uncut_scores_future",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "kept_is_newest — a search that skips an entry only when its superseded marker is at or before the search's head keeps exactly each vector's newest entry in reach",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/pending_cache.rs Segment::push, Segment::supersede, Copy::for_each_latest_through",
+        model_ref: "PendingCache.Marks.kept_is_newest / newest_is_kept / one_kept_per_vector / next_decides / head_blind_marker_hides",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "Evict — forgetting the pending cache at any moment, as an index or collection drop does, keeps every search's candidates complete and scored by their newest entry",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/cache.rs CodeCaches::evict, evict_collection; crates/db/src/collection/ops/delete.rs delete_collection_as; crates/db/src/collection/ops/version.rs delete_collection_version_as",
+        model_ref: "MC_PendingCache_Green_Evict.cfg (GREEN)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN shared quantizer",
+        name: "INV_EncodesWithItsCodebooks — a write sharing the node's quantizer encodes only with its own snapshot's codebooks, across rebuilds and retried trainings",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/mod.rs DiskAnn::quantizer; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer; crates/db/src/index/vector/engine/diskann/build.rs train_and_build",
+        model_ref: "MC_SharedQuantizer_Green.cfg (GREEN) / MC_SharedQuantizer_Red_NoTagCheck.cfg / MC_SharedQuantizer_Red_TagPerRequest.cfg (RED)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN shared quantizer",
+        name: "decode_encode — the trained record reads back as written in both encodings, and the shared quantizer answers a tag only with that tag's codebooks",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/codec.rs encode_trained, decode_trained; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer",
+        model_ref: "SharedQuantizer.Tagged.decode_encode / lookup_is_books / share_keeps_consistent / reused_tag_serves_other_books",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "RobustPrune blocked covered checks",
+        name: "blocked_eq_sequential — checking candidates in blocks keeps exactly the edges the one-at-a-time walk keeps, for any cut into blocks",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/select/robust_prune.rs RobustPrune::select; crates/defra-core/src/vector/kernel/mod.rs squared_euclidean_block",
+        model_ref: "RobustPruneBlocks.blocked_eq_sequential / no_since_keeps_a_covered_edge",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN back-edges in place",
+        name: "in_place_eq_decoded — adding back-edges to an encoded record in place leaves the entries and count that decoding, adding and encoding would",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/codec.rs add_edges; crates/db/src/index/vector/engine/diskann/graph.rs add_back_edges",
+        model_ref: "BackEdgesInPlace.in_place_eq_decoded / stale_search_duplicates_an_edge",
         tiers: &[Contract],
     },
     Property {
@@ -139,7 +395,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Retry input and marker fencing",
         name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / INV_NewRegistrationSurvivesOldClear",
         axis: Tla,
-        anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
+        anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/db/src/write/create.rs NeedsInput waves; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -210,9 +466,17 @@ pub const PROPERTIES: &[Property] = &[
         // materialization hazard is checked by MixedFieldMaterialization.
         name: "CrdtField: comm+assoc => order-independent; PNCounter refines to signed Counter; mixed Counter×LWW inherits dedup",
         axis: Lean,
-        anchor: "crates/crdt/src/lww.rs set_value; crates/crdt/src/counter.rs; crates/crdt/src/composite.rs componentwise field merge",
+        anchor: "crates/crdt/src/field/lww.rs LwwField::merge; crates/crdt/src/field/counter.rs CounterField::merge; crates/crdt/src/stored.rs StoredDocument::apply componentwise field merge",
         model_ref: "DefraConvergence.MixedField (lake build); MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Contract, Behavioral],
+    },
+    Property {
+        family: "CRDT merge laws",
+        name: "PCounterGuard: the positive counter's op accepts only non-negative values, so its value never decreases under any run of accepted or refused writes whose sum stays inside i64 (an i64 sum wraps, as in Go)",
+        axis: Lean,
+        anchor: "crates/crdt/src/field/counter.rs CounterField::op; crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
+        model_ref: "DefraConvergence.PCounterGuard.run_ge (lake build)",
+        tiers: &[Contract],
     },
     Property {
         // Two behavioral legs: backfill (a write that pre-dates the replicator is
@@ -327,7 +591,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Encrypted LWW restart/replay",
         name: "INV_NoFilteredLoss / INV_LwwWinner — encrypted delivery remains complete and LWW-convergent",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs_transport.rs; crates/crdt/src/lww.rs",
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs_transport.rs; crates/crdt/src/field/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Behavioral],
     },
@@ -386,6 +650,103 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Peers that merged the same blocks show the same text, a peer's text
+        // built one block at a time equals a replay from scratch, every edit
+        // lands at its position in its own parent version, and a run typed at
+        // one spot is never split by a concurrent one; a write of null reads
+        // null exactly while every head writes null. The crdt tests check the
+        // same invariants on random DAGs; the db tests merge real blocks
+        // between two nodes.
+        family: "Text CRDT convergence",
+        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended / INV_NoInterleave / INV_CriticalReplay / INV_NullConverge / INV_NullMatchesReplay / INV_NullEmpty: Fugue text converges, keeps every edit where its author put it, never interleaves runs, replays a concurrent merge from its critical block, and reads null only when every head writes null",
+        axis: Tla,
+        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, replay, merge_text; crates/crdt/src/field/text.rs TextField (block_data, CausalCrdt diff, block_op, replay, merge_from, check_version, nil_heads); crates/db/src/merge/merge_handler/field_causal.rs merge_field_causal, critical_block, causal_history; crates/db/src/write/autocommit/helpers.rs apply_field_ops; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/crdt/src/fugue_tests.rs, crates/crdt/src/field/testing.rs check_causal, crates/db/tests/merge/text_merge.rs, crates/db/tests/definition/migration_suite/text_lens.rs",
+        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode,Red_CommonAncestor,Red_NullLast}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        // Fugue's rule puts an inserted character right after its left origin
+        // and moves nothing else; a delete hides only its character; two
+        // concurrent characters hung in either order give the same tree; a
+        // placeholder run kept as one span and cut where an edit lands is the
+        // same tree as its chain of characters.
+        family: "Text CRDT convergence",
+        name: "place_visible / delete_visible / attach_comm / split_run: intention preservation and arrival-order independence of the Fugue tree, and span cuts that change nothing",
+        axis: Lean,
+        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, Tree::traverse, Tree::split",
+        model_ref: "TextCrdt.{Fugue,Span} (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
+        // The JSON CRDT (#2129). Each path is a register: racing edits resolve
+        // by priority, then block ID; an edit wipes only what it had seen below
+        // it, so an update beats a concurrent delete; only a set below a path
+        // makes it a map, so a delete creates nothing; the conflicts query
+        // lists exactly the racers that lost. The defra-core tests check the
+        // same invariants on block DAGs; the integration tests merge real
+        // blocks between two nodes.
+        family: "JSON CRDT per-path merge",
+        name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers / INV_DeleteCreatesNothing / INV_WriteLandsAsRead: per-path JSON merge converges, keeps every edit nothing saw, never lets a delete create a path, keeps two signers' equal edits apart by their nonces, and lands every write, several paths at once included, as its writer reads it",
+        axis: Tla,
+        anchor: "crates/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/crdt/src/field/tagged.rs local_write, land; crates/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/defra-core/src/json_crdt_tests.rs, crates/crdt/tests/json_field.rs, crates/db/tests/merge/json_merge.rs, tools/integration-test/tests/p2p/json_crdt.rs",
+        model_ref: "MC_JsonCrdt_{Green_FirstValueOrMap,Green_FirstListOrDelete,Green_MultiPath,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap,Red_SharedId,Red_NoAnchor,Red_NoSettle,Red_DeleteMakesParent,Red_MapKeepsBelow}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        // A path's register keeps the same winner whatever order edits arrive
+        // in, or if one arrives twice; a path's key reads back as the path, and
+        // one key starts another only when its path is above the other's; the
+        // keys under a path are one stretch of the frontier's sorted entries.
+        family: "JSON CRDT per-path merge",
+        name: "join_comm / join_assoc / join_idem / decode_encode / encode_prefix / prefix_convex: order-free registers, nesting path keys, and one range per subtree",
+        axis: Lean,
+        anchor: "crates/defra-core/src/json_crdt.rs beats, encode_path, decode_path, Frontier::under, Frontier::at",
+        model_ref: "JsonCrdt.{Lww,Path} (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
+        // Custom CRDT types (#2183). A node without a registered type merges
+        // the rest of each block, keeps the custom block and a record of it,
+        // and acknowledges it; built again with the type, it merges each
+        // parked block once, removing its record in the same transaction. A
+        // block whose only part was parked still makes the document, and a
+        // replay that fails for now (a store error, a key this node does not
+        // hold) leaves its block parked. A node storing a value of a type
+        // refuses to start without it. The defra-node custom_crdt tests run
+        // the same story between real nodes.
+        family: "Custom CRDT types",
+        name: "INV_NoBlindMerge / INV_MergeOnce / INV_OtherFieldsExact / INV_ConvergeWhenDone / LIVE_Converge: an unregistered type is never merged, a parked block merges exactly once, other fields stay exact, and replicas converge once the type is registered",
+        axis: Tla,
+        anchor: "crates/crdt/src/field/registry.rs Crdts::delta, Crdts::field, Crdts::part; crates/db/src/merge/merge_handler/field.rs merge_field_delta_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/parked.rs park, replay_parked, replay_in_txn, DB::start_parked_replay; crates/db/src/merge/merge_handler/error.rs MergeError::fails_block, MergeError::needs_key; crates/db/src/merge/merge_handler/merge_keys.rs with_local_history_keys; crates/db/src/database/stored_crdts.rs record, DB::check_stored_crdts; crates/defra-node/tests/custom_crdt/replication.rs, crates/db/tests/merge/parked_errors.rs",
+        model_ref: "MC_UnknownCrdt_{Green,Red_DropDeferral,Red_DoubleReplay,Red_Lww,Red_RemoveStored,Red_NoDocument,Red_FailStall}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        // Every existing type keeps its definition bytes (code, no name), so
+        // definition CIDs do not move; a custom type is code 8 plus its name;
+        // reading back what a type writes gives that type. The defra-node
+        // definition_cids golden test pins the CIDs themselves.
+        family: "Custom CRDT types",
+        name: "native_unchanged / custom_not_native / decode_encode / encode_injective / old_codes_read_back: custom types leave native definitions byte-identical and round-trip",
+        axis: Lean,
+        anchor: "crates/schema/src/ctype.rs CType::to_u8, CType::custom_name, CType::from_definition; crates/schema/src/cid.rs field_to_delta_with_priority; crates/defra-core/src/block_delta.rs FieldDefinitionDeltaPayload; crates/defra-node/tests/definition_cids.rs",
+        model_ref: "CustomCrdtCode (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
+        // A write pushes each document's heads to every replicator that should
+        // get the document, and a `@branchable` collection's heads only to
+        // unfiltered replicators. The acknowledgement read compares at the
+        // same scope, through the same AckScope rule, so a filtered
+        // replicator's acknowledgements are read per document.
+        family: "B3 filtered replication",
+        name: "INV_AckedReadsAcked / INV_AckedIsHeld / INV_NeverPushedNeverAcked / INV_FilterRespected: replication acknowledgements are read at the scope they are pushed at",
+        axis: Tla,
+        anchor: "crates/p2p/src/ack_scope.rs AckScope::new; crates/p2p/src/replicator.rs ReplicatorInfo::ack_scope; crates/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs; crates/db/src/merge/replication_ack.rs replication_acknowledged",
+        model_ref: "MC_ReplicationAckScope_{Green,Red_MainRule,Red_PushToFiltered}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,
@@ -429,9 +790,23 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "INV_NoLoss / INV_NoDoubleApply under concurrent same-doc mutation",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/counter.rs; crates/db/src/write/doc.rs; crates/db/tests/merge/merge_handler_tests.rs; crates/db txn registry",
+        anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/write/doc.rs; crates/db/tests/merge/merge_handler_tests.rs; crates/db txn registry",
         model_ref: "MC_TxnRegistry_Green.cfg / MC_TwoStoreCounter_Green.cfg / MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Behavioral, Boundary],
+    },
+    Property {
+        // A counter block that arrives on its own before its document has a
+        // value on the block's schema version is a terminal skip: no applied
+        // key, no value, no merged mark. The composite that writes the value
+        // applies it once. The db merge tests
+        // `counter_merge_of_an_unmaterialized_document_waits_for_its_composite`
+        // and `counter_merge_marks_cid_merged` check both arrival orders.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_NoLoss: a standalone counter block that arrives before its document's value is applied once, by its composite",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/merge/merge_handler/batch.rs process_block_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs; crates/db/tests/merge/merge_handler_tests.rs",
+        model_ref: "MC_TwoStoreCounter_{Green,Red_LostDeferral}.cfg",
+        tiers: &[Contract],
     },
     Property {
         // A commit begins when it is handed to its transaction's owner, or,
@@ -538,7 +913,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Document materialization status convergence",
         name: "INV_DeletedMarkerAbsorbs — active rematerialization never clears a tombstone",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/crdt/src/composite.rs status",
+        anchor: "crates/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/defra-core/src/block_delta.rs CompositeDeltaPayload status",
         model_ref: "MC_DocumentMaterialization_Green.cfg; DefraConvergence.DocumentMaterialization.delete_active_age_converge",
         tiers: &[Behavioral],
     },
@@ -594,6 +969,22 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/cache.rs Codes::insert, Codes::get",
         model_ref: "DiskAnnCodes (lake build)",
         tiers: &[Boundary],
+    },
+    Property {
+        family: "DiskANN walk cutoff",
+        name: "cut_step_eq_step — skipping neighbours ranked after a full frontier's last place leaves the frontier the full step would",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs walk, each_edge, by_distance",
+        model_ref: "WalkCutoff.cut_step_eq_step / distance_only_cutoff_drops_a_tie",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "PQ distance four sums",
+        name: "four_eq_sum — four running sums over a code's lookups add up to the one running sum, in exact arithmetic",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/quantize/pq.rs ProductQuantizer::distance",
+        model_ref: "PqFourSums.four_eq_sum / dropped_tail_loses_lookups",
+        tiers: &[Contract],
     },
     Property {
         family: "Index-maintenance consistency",
@@ -711,6 +1102,14 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/db/src/index/manager/mod.rs index_id_floor; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
         model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Document create pipeline",
+        name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
+        axis: Tla,
+        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity",
+        model_ref: "MC_CreatePipeline_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {

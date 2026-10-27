@@ -14,8 +14,8 @@
 //! ```
 //!
 //! Each explicit transaction is owned by one worker of the registry's pool
-//! for its whole life ([`crate::txn::owner`]): its ID names the worker, every
-//! request, commit, rollback and abandon for it is a message to that worker,
+//! for its whole life (`crate::txn::owner`): its ID names the worker, every
+//! request, commit, discard and abandon for it is a message to that worker,
 //! and the worker runs them one at a time in the order they arrived. The
 //! registry is the workers' own tables, nothing shared besides.
 

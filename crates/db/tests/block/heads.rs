@@ -44,13 +44,19 @@ async fn publish_in(shared: &Arc<SharedTxn>, cid: Cid, priority: u64, parents: &
 }
 
 async fn publish(store: &RegolithStore, cid: Cid, priority: u64, parents: &[Cid]) {
-    let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+    let shared = SharedTxn::new(
+        store.new_txn(false).await.unwrap(),
+        storage::Crdts::default(),
+    );
     publish_in(&shared, cid, priority, parents).await;
     commit(shared).await;
 }
 
 async fn live(store: &RegolithStore) -> (Vec<Cid>, usize) {
-    let shared = SharedTxn::new(store.new_txn(true).await.unwrap());
+    let shared = SharedTxn::new(
+        store.new_txn(true).await.unwrap(),
+        storage::Crdts::default(),
+    );
     let view = headstore(&shared);
     let mut cids = live_collection_heads(&view, COLLECTION).await.unwrap().live;
     cids.sort_by_cached_key(Cid::to_string);
@@ -179,7 +185,10 @@ fn overlapping_appends_both_commit() {
 
         let mut appends = Vec::new();
         for name in [b"first".as_slice(), b"second"] {
-            let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+            let shared = SharedTxn::new(
+                store.new_txn(false).await.unwrap(),
+                storage::Crdts::default(),
+            );
             let found = live_collection_heads(&headstore(&shared), COLLECTION)
                 .await
                 .unwrap();
@@ -207,24 +216,31 @@ fn appends_through_the_db_store_only_the_live_head() {
         const APPENDS: usize = 64;
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(db::DB::from_arc(store.clone()).unwrap());
-        db.create_collection(
-            schema::CollectionVersion::new(
-                "Segment",
-                "v1",
-                "col-segment",
-                vec![
-                    schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                    schema::FieldDescription::new("2", "body", schema::FieldKind::string()),
-                ],
-            )
-            .as_branchable(),
+        let segment = schema::CollectionVersion::new(
+            "Segment",
+            "v1",
+            "col-segment",
+            vec![
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "body",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+            ],
         )
-        .await
-        .unwrap();
+        .as_branchable();
+        db.create_collection(segment.clone()).await.unwrap();
         let mutator = db::AutoCommitMutator::new(db.clone());
         for index in 0..APPENDS {
-            let mut doc = document::Document::new();
-            doc.set("body", format!("segment {index}"));
+            let mut doc = document::Document::new(segment.clone());
+            doc.set("body", format!("segment {index}")).unwrap();
             query::mutator::DocMutator::create(&mutator, "Segment", doc)
                 .await
                 .unwrap();
@@ -240,7 +256,10 @@ fn appends_through_the_db_store_only_the_live_head() {
             txn.discard().unwrap();
             id
         };
-        let shared = SharedTxn::new(store.new_txn(true).await.unwrap());
+        let shared = SharedTxn::new(
+            store.new_txn(true).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let set = collection_set(&headstore(&shared), collection_id)
             .await
             .unwrap();

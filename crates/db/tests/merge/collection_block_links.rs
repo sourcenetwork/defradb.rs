@@ -39,8 +39,13 @@ async fn node() -> (
             COLLECTION_ID,
             COLLECTION_ID,
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
         .as_branchable(),
@@ -58,7 +63,7 @@ fn document(value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "body".to_string(),
             priority: 1,
-            schema_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: COLLECTION_ID.to_string(),
             data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
                 .unwrap(),
         }),
@@ -68,7 +73,7 @@ fn document(value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: COLLECTION_ID.to_string(),
             priority: 1,
             status: 1,
         }),
@@ -94,7 +99,7 @@ fn collection_block(documents: &[Cid]) -> (Cid, Vec<u8>) {
 fn collection_block_over(documents: &[Cid], heads: &[Cid]) -> (Cid, Vec<u8>) {
     let block = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: COLLECTION_ID.to_string(),
+            collection_version_id: COLLECTION_ID.to_string(),
             priority: if heads.is_empty() { 1 } else { 2 },
         }),
         heads.to_vec(),

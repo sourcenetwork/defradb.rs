@@ -16,10 +16,17 @@ struct Fixture {
     db: Arc<DB<RegolithStore>>,
     /// Embedding requests the server has answered.
     calls: Arc<AtomicUsize>,
+    collection: CollectionVersion,
     _server: HttpServer,
 }
 
 impl Fixture {
+    fn document(&self, text: &str) -> Document {
+        let mut doc = Document::new(self.collection.clone());
+        doc.set("text", text).unwrap();
+        doc
+    }
+
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
@@ -45,9 +52,19 @@ async fn fixture() -> Fixture {
         "texts-v1",
         "col-texts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "text", FieldKind::string()),
-            FieldDescription::new("3", "vector", FieldKind::float64_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "vector",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     collection
@@ -60,18 +77,13 @@ async fn fixture() -> Fixture {
             template: String::new(),
             url: server.url(),
         });
-    db.create_collection(collection).await.unwrap();
+    db.create_collection(collection.clone()).await.unwrap();
     Fixture {
         db,
         calls,
+        collection,
         _server: server,
     }
-}
-
-fn document(text: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set("text", text);
-    doc
 }
 
 fn assert_vector(doc: &Document, values: Vec<f64>) {
@@ -83,7 +95,10 @@ fn autocommit_create_generates_embedding() {
     workers::block_on(async {
         let fixture = fixture().await;
         let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
-        let created = mutator.create("Texts", document("first")).await.unwrap();
+        let created = mutator
+            .create("Texts", fixture.document("first"))
+            .await
+            .unwrap();
         assert_vector(&created.document, vec![1.0, 2.0]);
         let stored = mutator
             .get_for_update("Texts", &created.doc_id)
@@ -105,7 +120,7 @@ fn explicit_txn_create_generates_embedding() {
         let txn = fixture.db.new_txn(false).await.unwrap();
         let mutator = DbDocMutator::new(Arc::clone(&fixture.db), txn);
         let error = mutator
-            .create("Texts", document("first"))
+            .create("Texts", fixture.document("first"))
             .await
             .unwrap_err();
         let query::error::QueryError::NeedsInput(request) = error else {
@@ -121,7 +136,7 @@ fn explicit_txn_create_generates_embedding() {
         let created = mutator
             .with_prepared_inputs(inputs)
             .unwrap()
-            .create("Texts", document("first"))
+            .create("Texts", fixture.document("first"))
             .await
             .unwrap();
         assert_eq!(fixture.calls(), 1);
@@ -145,7 +160,10 @@ fn explicit_txn_update_regenerates_embedding() {
     workers::block_on(async {
         let fixture = fixture().await;
         let autocommit = AutoCommitMutator::new(Arc::clone(&fixture.db));
-        let created = autocommit.create("Texts", document("first")).await.unwrap();
+        let created = autocommit
+            .create("Texts", fixture.document("first"))
+            .await
+            .unwrap();
         let txn = fixture.db.new_txn(false).await.unwrap();
         let mutator = DbDocMutator::new(Arc::clone(&fixture.db), txn);
         let mut doc = mutator
@@ -153,7 +171,7 @@ fn explicit_txn_update_regenerates_embedding() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("text", "second");
+        doc.set("text", "second").unwrap();
         let calls_before = fixture.calls();
         let fields: rapidhash::RapidHashSet<String> = ["text".to_string()].into_iter().collect();
         let error = mutator
@@ -201,7 +219,7 @@ fn explicit_txn_graphql_update_regenerates_embedding() {
     workers::block_on(async {
     let fixture = fixture().await;
     let created = AutoCommitMutator::new(Arc::clone(&fixture.db))
-        .create("Texts", document("first"))
+        .create("Texts", fixture.document("first"))
         .await
         .unwrap();
     let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&fixture.db)));

@@ -8,7 +8,7 @@ use query::TransactionError;
 fn losing_commit_reports_a_typed_conflict() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Users { name: String }")
+    node.add_collection("type Users { name: String }")
         .await
         .unwrap();
     let created = node

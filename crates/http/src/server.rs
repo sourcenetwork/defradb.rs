@@ -26,9 +26,9 @@ use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    SchemaOperations, TransactionOperations, ViewOperations,
+    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
+    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
+    P2POperations, TransactionOperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -104,7 +104,7 @@ pub struct Server {
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    schema: Option<Arc<dyn SchemaOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
     lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
@@ -230,8 +230,8 @@ impl Server {
     /// When P2P operations are configured, the server enables additional endpoints:
     /// - `GET /api/v0/p2p/info` - Get P2P node info (peer ID, addresses)
     /// - `GET /api/v0/p2p/shareable-address` - Get the single best shareable P2P address
-    /// - `GET /api/v0/p2p/peers` - List connected peers
-    /// - `POST /api/v0/p2p/peers` - Connect to a peer
+    /// - `GET /api/v0/p2p/active-peers` - List connected peers
+    /// - `POST /api/v0/p2p/connect` - Connect to peers
     /// - And other P2P management endpoints
     pub fn with_p2p<P: P2POperations + 'static>(mut self, p2p: P) -> Self {
         self.p2p = Some(Arc::new(p2p));
@@ -289,14 +289,14 @@ impl Server {
     /// Set schema operations for schema management endpoints.
     ///
     /// When schema operations are configured, the server enables:
-    /// - `POST /api/v0/schema` - Add schema from SDL
-    pub fn with_schema<S: SchemaOperations + 'static>(mut self, schema: S) -> Self {
+    /// - `POST /api/v0/collections` - Add schema from SDL
+    pub fn with_schema<S: CollectionOperations + 'static>(mut self, schema: S) -> Self {
         self.schema = Some(Arc::new(schema));
         self
     }
 
     /// Set schema operations from an Arc.
-    pub fn with_schema_arc(mut self, schema: Arc<dyn SchemaOperations>) -> Self {
+    pub fn with_schema_arc(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
         self
     }
@@ -304,7 +304,7 @@ impl Server {
     /// Set lens operations for schema migration endpoints.
     ///
     /// When lens operations are configured, the server enables:
-    /// - `POST /api/v0/lens/set` - Set a migration between schema versions
+    /// - `POST /api/v0/collections/migrations` - Set a migration between schema versions
     /// - `POST /api/v0/lens/reload` - Reload all lens modules
     pub fn with_lens<L: LensOperations + 'static>(mut self, lens: L) -> Self {
         self.lens = Some(Arc::new(lens));
