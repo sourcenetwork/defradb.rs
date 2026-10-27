@@ -190,6 +190,7 @@ pub(crate) fn compute(
         return Ok(prepared.computed.clone());
     }
     compute_document_blocks_with_inputs(
+        collection.crdts(),
         doc,
         collection.schema(),
         identity,
@@ -231,6 +232,7 @@ where
         };
         runs::compute_blocks(
             pool.as_ref(),
+            db.crdts(),
             docs,
             &collection.shared_schema(),
             context,
