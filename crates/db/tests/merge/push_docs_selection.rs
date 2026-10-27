@@ -102,6 +102,9 @@ async fn exercise(
     if remove_on_reply {
         transport = transport.removing_subscription_on_reply(Arc::new(db.peerstore()));
     }
+    if explicit {
+        transport = transport.requiring_selected_authority(Arc::new(db.peerstore()));
+    }
     let filters = p2p::ReplicationFilters::new();
     let authority = p2p::sync::HeadHintCarAuthority::default();
     let result = if explicit {

@@ -171,6 +171,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
         transport: T,
         car_authority: p2p::sync::HeadHintCarAuthority,
     ) -> Self {
+        car_authority.bind_peerstore(db.peerstore());
         let installs = Arc::new(crate::replicator_installs::ReplicatorInstalls::new(
             Arc::clone(db.replication_runtime()),
         ));
@@ -336,21 +337,13 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         peer_id: &PeerId,
         docs: &[(String, String)],
     ) -> P2PResult<()> {
-        let peer_id_str = peer_id.to_string();
-        let peerstore = self.db.peerstore();
-        let filters = match peerstore.get_replicator(&peer_id_str).await {
-            Ok(Some(bytes)) => p2p::ReplicatorInfo::from_bytes(&bytes)
-                .map(|info| info.filters)
-                .unwrap_or_default(),
-            _ => p2p::ReplicationFilters::new(),
-        };
         db::merge::push_existing_docs_by_id(
             &self.transport,
             &self.db,
             self.document_acp.get().map(|acp| acp.as_ref()),
             peer_id,
             docs,
-            &filters,
+            &p2p::ReplicationFilters::new(),
             db::merge::PushExistingDocsSeOptions::default(),
             db::merge::ReplayPushConfig {
                 retry_schedule: self.retry_schedule.clone(),

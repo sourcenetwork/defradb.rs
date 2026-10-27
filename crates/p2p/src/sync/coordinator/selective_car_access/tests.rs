@@ -6,6 +6,40 @@ fn cid(label: &[u8]) -> Cid {
     Cid::new_v1(0x71, Code::Sha2_256.digest(label))
 }
 
+#[tokio::test]
+async fn completed_cache_reclamation_cannot_remove_selected_authority() {
+    let access = Arc::new(SelectiveCarAccess::default());
+    let authority = HeadHintCarAuthority::new(access.clone());
+    let peers =
+        storage::stores::Peerstore::new(Arc::new(storage::RegolithStore::in_memory().unwrap()));
+    authority.bind_peerstore(peers.clone());
+    let peer = PeerId::new("selected".into());
+    let root = cid(b"selected");
+    peers
+        .grant_selected_car_root(peer.as_str(), &root.to_bytes())
+        .await
+        .unwrap();
+    seed_grants(
+        &access,
+        &peer,
+        root,
+        MAX_SELECTIVE_CAR_GRANTS_PER_PEER,
+        true,
+    );
+    let active_root = cid(b"new");
+    let _active = access.register(peer.clone(), active_root).unwrap();
+    let grants = access.grants.get(&peer).unwrap();
+    SelectiveCarAccess::reclaim_completed_while(&grants, || true);
+    assert!(access.allows_root(&peer, &active_root));
+    assert!(!access.allows_root(&peer, &root));
+    assert!(access.persisted_root_allowed(&peer, &root).await);
+    assert!(
+        !access
+            .persisted_root_allowed(&PeerId::new("other".into()), &root)
+            .await
+    );
+}
+
 #[test]
 fn completed_push_grants_post_ack_recovery_for_its_peer_and_root() {
     let access = Arc::new(SelectiveCarAccess::default());

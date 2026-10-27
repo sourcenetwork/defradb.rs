@@ -354,14 +354,23 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Re-derive the authority installed before a head hint after the sender
     /// has restarted or its in-memory grant cache has expired.
     ///
-    /// The DB-backed classifier binds the requested root to its collection and
-    /// document IDs. The authenticated CAR requester is checked against the
+    /// Explicit selections commit exact peer/root authority until revocation.
+    /// Otherwise the DB-backed classifier binds the root to its collection and
+    /// document IDs, and the authenticated CAR requester is checked against the
     /// same durable replicator/ACP policies as Go's Bitswap serving boundary.
     /// Filter predicates select which roots are announced; they are not a
     /// block-read security boundary. Consequently the exact requested root
-    /// reconstructs the rooted CAR capability without CID-valued sender
-    /// delivery state or an eventually observed gossip-neighbor event.
+    /// reconstructs replication authority without an eventually observed
+    /// gossip-neighbor event. Selected grants are separate from retry state.
     async fn has_restart_safe_root_authority(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
+        if self
+            .runtime
+            .selective_car_access
+            .persisted_root_allowed(peer_id, root_cid)
+            .await
+        {
+            return true;
+        }
         let Some(meta) = self.root_authorization_meta(root_cid).await else {
             return false;
         };

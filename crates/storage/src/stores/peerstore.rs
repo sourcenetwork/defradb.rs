@@ -16,6 +16,8 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing;
 
+mod selected_car;
+
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
 /// Encode the shared peer-incarnation and retry-generation value format.

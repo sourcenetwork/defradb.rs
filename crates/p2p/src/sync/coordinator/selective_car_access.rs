@@ -2,7 +2,8 @@
 //!
 //! The cache closes the pre-send race. Post-ack/restart recovery does not rely
 //! on its lifetime: the CAR serve path re-derives exact-root authority from the
-//! durable replicator configuration and DB-backed root classification.
+//! durable replicator configuration, selected-transfer authority and DB-backed
+//! root classification.
 
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,9 +11,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
+use async_trait::async_trait;
 use cid::Cid;
+use defra_core::thread_bounds::MaybeSendSync;
 use kovan::Atom;
 use kovan_map::HopscotchMap;
+use regolith::sync::OnceCell;
 
 use crate::transport::PeerId;
 
@@ -23,6 +27,26 @@ const MAX_SELECTIVE_CAR_GRANTS: usize = 65_536;
 const MAX_SELECTIVE_CAR_GRANTS_PER_PEER: usize = 4096;
 
 type PeerGrants = HopscotchMap<u64, Arc<PushGrant>, rapidhash::fast::RandomState>;
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+trait SelectedCarStore: MaybeSendSync {
+    async fn allows(&self, peer: &PeerId, root: &Cid) -> storage::corekv::Result<bool>;
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<S> SelectedCarStore for storage::stores::Peerstore<S>
+where
+    S: storage::corekv::Store + 'static,
+{
+    async fn allows(&self, peer: &PeerId, root: &Cid) -> storage::corekv::Result<bool> {
+        let peer = peer.as_str().to_owned();
+        let root = root.to_bytes();
+        self.run(move |store| async move { store.selected_car_root_allowed(&peer, &root).await })
+            .await
+    }
+}
 
 fn rapid_map<K, V>() -> HopscotchMap<K, V, rapidhash::fast::RandomState>
 where
@@ -47,6 +71,7 @@ impl PushGrant {
 }
 
 pub(in crate::sync) struct SelectiveCarAccess {
+    durable: OnceCell<Arc<dyn SelectedCarStore>>,
     next_id: AtomicU64,
     recovery_window: Duration,
     /// A peer's map is never removed once created: removing it races with a
@@ -64,6 +89,7 @@ impl Default for SelectiveCarAccess {
 impl SelectiveCarAccess {
     fn with_recovery_window(recovery_window: Duration) -> Self {
         Self {
+            durable: OnceCell::new(),
             next_id: AtomicU64::new(0),
             recovery_window,
             grants: rapid_map(),
@@ -163,6 +189,19 @@ impl SelectiveCarAccess {
         })
     }
 
+    pub(super) async fn persisted_root_allowed(&self, peer: &PeerId, root: &Cid) -> bool {
+        match self.durable.get() {
+            Some(store) => match store.allows(peer, root).await {
+                Ok(allowed) => allowed,
+                Err(error) => {
+                    tracing::debug!(%error, "Selected CAR authority unavailable; checking independent authority");
+                    false
+                }
+            },
+            None => false,
+        }
+    }
+
     fn finish_push(&self, peer_id: &PeerId, grant_id: u64) {
         let Some(grant) = self
             .grants
@@ -205,6 +244,16 @@ impl Default for HeadHintCarAuthority {
 }
 
 impl HeadHintCarAuthority {
+    /// Bind the coordinator to its database's durable selected-transfer authority.
+    /// The first binding owns this capability for its lifetime, including before
+    /// the first send after reopening the node.
+    pub fn bind_peerstore<S>(&self, store: storage::stores::Peerstore<S>)
+    where
+        S: storage::corekv::Store + 'static,
+    {
+        self.access.durable.get_or_init_racy(|| Arc::new(store));
+    }
+
     pub(super) fn new(access: Arc<SelectiveCarAccess>) -> Self {
         Self { access }
     }

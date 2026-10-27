@@ -6,6 +6,10 @@
 #[path = "../../../tests/unit/car_serving.rs"]
 mod car_serving;
 
+#[path = "../../../tests/unit/selected_car_authority.rs"]
+#[cfg(not(target_arch = "wasm32"))]
+mod selected_car_authority;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
