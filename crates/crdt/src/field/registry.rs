@@ -52,6 +52,8 @@ impl Registration {
 /// The CRDT types of one node. Cloning shares the same set.
 #[derive(Clone, Default)]
 pub struct Crdts {
+    // A plain map rather than a `HopscotchMap`: it is built once and never
+    // written again, so threads only ever read it through the shared `Arc`.
     custom: Arc<RapidHashMap<CrdtName, Arc<dyn FieldCrdt>>>,
 }
 
