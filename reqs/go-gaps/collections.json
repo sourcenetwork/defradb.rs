@@ -1,0 +1,923 @@
+[
+  {
+    "id": "go.collection_version.define.basic_types",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_simple_type",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test",
+      "crates/query/src/runner/introspection/mod.rs::aggregate_nullability_matches_go",
+      "crates/query/src/runner/introspection/mod.rs::collection_count_and_array_types_match_go"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:21 asserts _docID+declared fields; document_lifecycle.rs:33 asserts __type(name: \"Article\") exists; crates/query/src/runner/introspection/mod.rs:445-447 asserts COUNT/SUM/AVG on the collection type; crates/query/src/runner/introspection/mod.rs:503 asserts inline array field type",
+    "note": "Not asserted through introspection: the full default system field set (_docID, _version, _deleted, _group) on the generated type, empty types, several types in one SDL, and SDL with leading # comments incl. multi-byte chars (no comment test found)."
+  },
+  {
+    "id": "go.collection_version.define.scalar_kinds",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_all_scalar_types",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_float32_scalar_type"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:275-277 asserts Float and Float64 both map to FieldKind::float64, Float32 to float32, and Blob/JSON accepted",
+    "note": "Introspection output (Float/Float64 reported as Float64 scalar, Float32 as Float32) is not asserted by any test; only the definition-level kind mapping is."
+  },
+  {
+    "id": "go.collection_version.define.errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity",
+      "crates/db/tests/collection/validation.rs::atomic_creation_rejects_an_unknown_relation_target"
+    ],
+    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:190 asserts duplicate type in one SDL (validateCollectionNameUnique) is rejected by both Rust and Go; validation.rs:132 asserts 'no type found for given name. Field: author, Kind: Missing' at definition level",
+    "note": "Unverified: duplicate against an already-stored collection; the 'collection already exists. Name: X' message (only accept/reject compared); one-line-per-error multiple variants; 'NonNull variants for type are not supported' for [Dogs!]; 'field type not specified' for a missing type. No test found for these messages (rg over tests)."
+  },
+  {
+    "id": "go.collection_version.define.default_values",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_for_all_scalar_types",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_missing_value_returns_error",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_legacy_argument_returns_error",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_datetime_wrong_type_returns_error",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_uses_field_type_coercion"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:1611-1645 asserts recorded defaults per kind; crates/query/src/sdl_parse/parser_tests.rs:960 exact 'default value must specify one argument. Field: role'; crates/query/src/sdl_parse/parser_tests.rs:976 exact 'Unknown argument \"string\" on directive \"@default\"'; crates/query/src/sdl_parse/parser_tests.rs:1589 exact 'default value is invalid. Field: created, Expected: DateTime, Actual: Int, Value: 12345'",
+    "note": "Not asserted: 'default value is not allowed for this field type' on a relation field (Type: User) or a list field (Type: List); the only not-allowed test (test_default_directive_value_rejects_unsupported_field_type) uses an ID field. Boolean-with-enum-value case also untested."
+  },
+  {
+    "id": "go.collection_version.define.crdt_types",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_directive_variations",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_directive_unknown_type_returns_error",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_validation_fails_for_non_numeric",
+      "tools/integration-test/tests/basic/crdt_field_blocks.rs::create_and_update_blocks_are_pinned",
+      "crates/schema/src/error.rs::test_invalid_crdt_error"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:898 asserts 'Argument \"type\" has invalid value'; crates/query/src/sdl_parse/parser_tests.rs:715 asserts pncounter on String fails validation (is_err only); crdt_field_blocks.rs:23 (setup of create_and_update_blocks_are_pinned) expects schema add of Float pcounter / Float32 pncounter to succeed; error.rs test asserts the Display text 'CRDT type pncounter can't be assigned to field kind String'",
+    "note": "Unverified end to end: the wrong-kind error message from AddCollection (only is_err at validate level; message only checked on the error enum's Display); pcounter on String; Float64 counters at add time (only parse-level)."
+  },
+  {
+    "id": "go.collection_version.define.branchable",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_branchable_directive",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_branchable_directive_with_if_false",
+      "crates/defra-node/tests/branchable_sdl.rs::branchable_directive_survives_sdl_parsing"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:572 asserts @branchable sets is_branchable; crates/query/src/sdl_parse/parser_tests.rs:1119 asserts @branchable(if: false) leaves it false; branchable_sdl.rs:26 asserts is_branchable on the stored collection",
+    "note": "@branchable(if: true) is never asserted to set IsBranchable (test_unknown_argument_on_branchable_directive uses it but only checks warnings)."
+  },
+  {
+    "id": "go.collection_version.define.embeddings",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity"
+    ],
+    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:190 asserts Rust and Go both reject @embedding on a String field, a missing source field, and an unknown provider (accept/reject only)",
+    "note": "Unverified: error messages; Int/Float/Float64/nillable [Float32] kinds rejected; [Float32!] accepted; JSON source field rejected; missing model ('embedding Model cannot be empty'); self/another-embedding reference. Searched tests for each Go message: none found outside src."
+  },
+  {
+    "id": "go.collection_version.define.vector_index",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_index_sdl_is_accepted_by_both",
+      "tools/integration-test/tests/query/go_vector_parity.rs::go_and_rust_refuse_the_same_out_of_range_params",
+      "crates/defra-node/tests/vector_index_query_path.rs::dimensions_are_required_when_the_schema_is_written",
+      "crates/query/tests/vector_index_sdl.rs::unknown_or_mistyped_arguments_are_refused",
+      "crates/query/tests/vector_index_sdl.rs::competing_kind_selectors_are_refused",
+      "crates/query/tests/vector_index_sdl.rs::every_algorithm_block_carries_every_metric"
+    ],
+    "evidence": "go_vector_parity.rs:90 Rust accepts [Float32!] vector index and index list carries it; go_vector_parity.rs:252 absent/zero dimensions and MANHATTAN refused by both; vector_index_query_path.rs:699 error names dimensions; vector_index_sdl.rs:313 IVFFlat block refused; vector_index_sdl.rs:107 direction: DESC with vector refused; vector_index_sdl.rs:442 EUCLIDEAN/DOT parse",
+    "note": "Unverified: rejection of String, [Int!] and [Float64!] fields ('vector index requires a [Float32!] field'): no test, and Rust's own SDL tests put vector indexes on [Float!] (Float64), so Rust may accept what Go rejects; explicit ASC direction accepted; exact Go error messages."
+  },
+  {
+    "id": "go.collection_version.relations.one_one",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/schema/tests/validation_tests.rs::secondary_relation_requires_a_primary_counterpart",
+      "crates/schema/tests/validation_tests.rs::paired_relation_cannot_have_two_primary_fields",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity"
+    ],
+    "evidence": "validation_tests.rs:267 asserts 'relation missing field'; validation_tests.rs:295 asserts 'relation can only have a single field set as primary'; cross_runtime_schema_validation.rs:190 asserts self-type missing/double primary rejected and self one-one accepted by both runtimes",
+    "note": "Errors are checked at definition-validation level, not via SDL for a two-type one-one; the self one-one's introspection output is not asserted."
+  },
+  {
+    "id": "go.collection_version.relations.one_many",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields",
+      "crates/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields_skips_arrays",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_one_to_many_collection_ids_match_go"
+    ],
+    "evidence": "relation_id_fields_tests.rs:58 asserts _authorID added on the one side; relation_id_fields_tests.rs:99 asserts no _postsID on the many side",
+    "note": "Not asserted: self-referencing one-to-many with either field sorting first, and the introspected GraphQL type for self one-many declared with the type's own name."
+  },
+  {
+    "id": "go.collection_version.relations.relation_names",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/ffi/src/schema.rs::test_add_schema_duplicate_implicit_relation_name_errors",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_self_ref_complex_collection_id_matches_go"
+    ],
+    "evidence": "crates/ffi/src/schema.rs:375 asserts exact 'relation name is not unique within collection. Field: author, RelationName: book_person'; parser_tests.rs:819 parses a self primary/secondary pair sharing @relation(name: \"boss_minion\")",
+    "note": "Not asserted: that giving the two fields distinct @relation names succeeds."
+  },
+  {
+    "id": "go.collection_version.relations.self_ref_ids",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_self_reference",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_self_ref_collection_id_matches_go",
+      "tools/integration-test/tests/basic/self_ref_relations_4712.rs::multi_layer_self_ref_relations_test"
+    ],
+    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:221 asserts plain SelfRef kind; crates/query/src/sdl_parse/parser_tests.rs:801 asserts Go's CID for type User { boss: User }; self_ref_relations_4712.rs:58-62 asserts RelativeID index suffixes in a two-type cycle via GET /collections",
+    "note": "Not asserted: two types in a cycle share one base collection ID; separate cycles get different base IDs; cycles joined by a third cycle share one base ID; mixed one-one/one-many self relations through GetCollections."
+  },
+  {
+    "id": "go.collection_version.introspection.aggregate_inline_array",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched introspection tests (crates/query/src/runner/introspection/mod.rs tests, integration __type queries) for inline-array arguments on COUNT/SUM/AVG and element-kind filter blocks; collection_count_and_array_types_match_go checks only the CountSelector groupBy and the array field type."
+  },
+  {
+    "id": "go.collection_version.introspection.aggregate_fields",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/runner/introspection/mod.rs::aggregate_nullability_matches_go"
+    ],
+    "evidence": "crates/query/src/runner/introspection/mod.rs:445-447 asserts COUNT/SUM/AVG exist (non-null) on the collection type and on Query",
+    "note": "Not asserted: arguments naming related many-side fields on the collection's aggregates, or the top-level aggregates taking the collection as argument."
+  },
+  {
+    "id": "go.collection_version.introspection.filter_inputs",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test introspects <Name>FilterArg (rg 'FilterArg' over tests found only the builder in src)."
+  },
+  {
+    "id": "go.collection_version.introspection.group_order_inputs",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test introspects the collection's groupBy enum or <Name>OrderArg with relation fields (rg 'OrderArg|groupBy' in tests; the only groupBy check is on Users__CountSelector)."
+  },
+  {
+    "id": "go.collection_version.introspection.mutation_inputs",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/runner/introspection/mod.rs::mutation_input_fields_are_nullable",
+      "crates/query/src/runner/introspection/mod.rs::collection_count_and_array_types_match_go"
+    ],
+    "evidence": "crates/query/src/runner/introspection/mod.rs:549 asserts scalar fields of UsersMutationInputArg; crates/query/src/runner/introspection/mod.rs:495 asserts a UsersField enum is referenced",
+    "note": "Not asserted: one-one primary side input carrying the relation object and _<rel>ID, secondary side listing only scalars, or the <Name>Field enum values (encryptFields)."
+  },
+  {
+    "id": "go.collection_version.introspection.similarity",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "rg 'SIMILARITY|_similarity' over tests found no introspection of the similarity field, its arguments or descriptions."
+  },
+  {
+    "id": "go.collection_version.introspection.builtin_types",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "rg 'ExplainType|IntrospectionQuery|__schema' over tests: ExplainType only in query-parse tests, no full client introspection query run against a node."
+  },
+  {
+    "id": "go.collection_version.get",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/http/tests/collection_selectors.rs::a_name_selects_only_that_collection",
+      "crates/http/tests/collection_selectors.rs::an_unknown_name_selects_nothing",
+      "crates/http/tests/collection_selectors.rs::a_version_id_selects_that_version_even_when_inactive",
+      "crates/http/tests/collection_selectors.rs::a_collection_id_selects_its_active_version",
+      "crates/http/tests/collection_selectors.rs::get_inactive_widens_to_the_inactive_versions",
+      "crates/http/tests/collection_selectors.rs::an_unknown_version_id_is_a_404"
+    ],
+    "evidence": "collection_selectors.rs:149,155,162,168,175 assert name/collection-id/version-id filters, empty set for unknown name, inactive versions with get_inactive; :344 asserts unknown version id is a 404",
+    "note": "Tests run the HTTP router over a mock version store, not a full node. Unverified: field kinds rendered as readable strings and round-tripped back through AddCollection (Rust's schema tests assert kinds serialize as integers, crates/schema/tests/field_kind_tests.rs::test_go_compat_scalar_serializes_as_integer, which may diverge from Go's #4816 stringified describe output)."
+  },
+  {
+    "id": "go.collection_version.active_version",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original",
+      "crates/db/tests/definition/patch.rs::inactive_patch_keeps_the_active_version_in_cache",
+      "crates/db/tests/definition/patch.rs::patch_relation_version_switching_preserves_go_canonical_versions"
+    ],
+    "evidence": "issue_859_schema_migration.rs:210 asserts switching back to the original version; patch.rs:78 asserts a /IsActive false patch leaves the new version inactive; patch.rs:645 asserts switching to v2 serves v2",
+    "note": "Unverified: empty version ID error, unknown version 'collection not found', GraphQL field visibility after switching ('Cannot query field'), IsActive false removing the collection from Query and true restoring it, two active versions error (schema validator test asserts a different message, 'multiple versions of same collection cannot be active'), GetCollections in a txn seeing the activation."
+  },
+  {
+    "id": "go.collection_version.version_branches",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched crates/db/tests/definition, defra-node tests and integration tests for patching a non-active version / sibling version branches; set_active tests only switch along a linear history."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/collection_management.rs::collection_patch_test",
+      "tools/integration-test/tests/basic/patch_secondary_relation_4709.rs::patch_new_field_with_existing_secondary_relation_test",
+      "crates/db/tests/definition/patch.rs::inactive_patch_keeps_the_active_version_in_cache",
+      "crates/defra-node/tests/issue_859_schema_migration.rs::patch_collection_adds_field_and_bumps_version"
+    ],
+    "evidence": "collection_management.rs:24-33 queries the added `summary` field after patch; patch_secondary_relation_4709.rs:30 creates and reads back the added field; patch.rs:78-82 asserts an IsActive=false patch returns a new inactive version while the active version stays",
+    "note": "Unverified: several fields in one or successive patches being queryable together, filtering and `__type` introspection on added fields, `@constraints(size: 2)` on an added array (`array size mismatch`), and the `Cannot query field \"email\" on type \"Users\".` error plus GetCollections listing for a SetAsActiveVersion=false patch."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.atomicity",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched patch tests (crates/db/tests/definition/patch.rs, cross_runtime_schema_validation.rs, collection_management.rs, defra-node issue_859) for a multi-op patch where one op fails. Only single-op failing patches exist; patch.rs::patch_collection_rolls_back_when_migration_is_invalid checks rollback on an invalid migration, not on a failing patch op, and nothing checks the valid field stays unqueryable or GraphQL types unchanged."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.validation",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "cross_runtime_schema_validation.rs:327-331 (validateFieldNotDuplicated, accepted:false) checked by assert_outcome at :378 against Go",
+    "note": "Only rejection of a duplicate of an existing field is asserted, not the `duplicate field. Name: name` message; duplicates between two added fields and the empty-name error `Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"\" does not.` are untested."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.non_nillable",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_collection_rejects_new_non_nillable_field",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "patch.rs:267-270 asserts exact message `adding a non-nillable field to an existing collection is not supported` for Kind 23; cross_runtime_schema_validation.rs:275-279 same patch rejected on Rust and Go",
+    "note": "Only one non-nillable kind (23) is tested; Boolean, Int, Float64, Float32, DateTime, Blob and JSON non-nillable kinds are not."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.existing_docs",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/collection_management.rs::collection_patch_test",
+      "tools/integration-test/tests/basic/patch_secondary_relation_4709.rs::patch_new_field_with_existing_secondary_relation_test",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_update_new_field_older_version"
+    ],
+    "evidence": "collection_management.rs:31-34 asserts the new field is null for a pre-patch doc; patch_secondary_relation_4709.rs:30 creates a doc after the patch with an existing secondary one-to-one relation; schema_migration.rs:294-298 updates a pre-patch doc with the new field and reads it back",
+    "note": "Unverified: `_version` joins and `_commits` queries across the version change."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.by_name_path",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for add ops at `/<Col>/Fields/<name>` and for `the index used does not match the given name`; only crates/db/tests/definition/json.rs tests the path-parsing helper extract_field_name_from_path, no patch is applied by name and the mismatch error is never asserted."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.with_index",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/index_actions.rs::recaching_and_activation_preserve_pending_index_restrictions",
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::single_field_index_rebuilt_after_lens_migration"
+    ],
+    "evidence": "index_actions.rs:117 asserts the patched definition still carries its index (`patched.indexes.len() == 1`); lens_reindex_secondary_index_979.rs:66-73 indexed query returns a pre-patch doc after patch plus lens",
+    "note": "Index presence in ListIndexes after a plain patch and indexed queries returning documents created after the patch are not asserted; the 979 test always adds a lens migration."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.branchable",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for patches on @branchable collections: p2p_iroh/sync/branchable.rs::branched_versions_and_docs patches but only asserts node1 is non-empty and never writes the new field; merge/synced_definition_cache.rs and collection_predecessor.rs test synced definitions. No test creates or updates documents with a field added to a branchable collection."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.crdt.valid",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for `\"Typ\"` in patch values; the only hit is the rejected Boolean+Typ 4 case. No test adds a field with Typ 0, LWW, pcounter, pncounter or a string Typ name and queries it."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.crdt.invalid",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity",
+      "crates/schema/src/ctype.rs::test_unknown_string_matches_go_error"
+    ],
+    "evidence": "cross_runtime_schema_validation.rs:321-325 Boolean with Typ 4 (pncounter) rejected on Rust and Go (outcome only); ctype.rs:376 asserts `unknown crdt string representation` on deserializing an unknown string",
+    "note": "Unverified: `CRDT type not supported. Name: foo, CRDTType: composite|object|unknown` (no test hits that validator), the exact `CRDT type pcounter/pncounter can't be assigned to field kind Boolean` message, pcounter on Boolean, and the unknown-string error through a real patch."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.numeric",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Patches add `Kind: \"Int\"` in many tests (committed_lenses.rs, owed_reindex.rs, p2p_iroh/sync/version.rs) but none creates a document with an Int value and reads it back; Float, Float32 and numeric kind IDs for these are never added."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.other_scalars",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_create_new_field_updated_version",
+      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity"
+    ],
+    "evidence": "schema_migration.rs:228-233 creates a doc with patch-added String field `Email` and reads it back; lens_cross_runtime.rs:273 reads patch-added Boolean `migrated` (value set by lens)",
+    "note": "Only String (by name) is stored by a create after the patch; Boolean value comes from a lens, not a create; DateTime and ID kinds, and adding any of these by numeric kind ID, are untested."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.blob_json",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched patch values for Blob/JSON kinds (names and IDs) in all test dirs; none found."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.arrays",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_collection_accepts_numeric_go_kind",
+      "crates/db/tests/definition/patch.rs::patch_collection_accepts_numeric_kind_in_whole_fields_replacement"
+    ],
+    "evidence": "patch.rs:240-243 asserts numeric Kind 5 is added as FieldKind::ScalarArray(IntArray); patch.rs:451-459 same via whole-Fields replace",
+    "note": "Only [Int!] by kind ID is checked, at definition level; no query/storage of the array values, and [Boolean!], [Float!], [Float32!], [String!] and adding by name are untested."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.nillable_arrays",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched patch values for nillable array kinds (`[Int]`, `[String]` etc., and numeric IDs); the only `[...]` kind in a patch is the relation list in cross_runtime_schema_validation.rs. Nothing adds a nillable-element array field."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.invalid",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_collection_reports_unknown_numeric_kind_like_go",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "patch.rs:294-297 asserts `invalid patch: no type found for given name. Type: 111`; cross_runtime_schema_validation.rs:315-319 same Kind 111 rejected on Rust and Go",
+    "note": "Kind 0, the unassigned IDs 32/198 named in Go, and an unknown kind name (`Field: foo, Kind: InvalidKind`) are not tested; 111 exercises the same unassigned-ID path."
+  },
+  {
+    "id": "go.collection_version.patch.add_field.kind.foreign_object",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "cross_runtime_schema_validation.rs:299-312 (validateRelationNameSet: list relation without RelationName; validateRelationalFieldIDType: `_targetID` of wrong kind) both rejected on Rust and Go via assert_outcome at :378",
+    "note": "Only rejection outcomes, not messages. Untested: unknown target collection (`Kind: Unknown`/`[Unknown]`), the one-sided list `relation missing field` case through a patch, numeric kind 16, and the success cases (complete one-to-one or one-to-many relation added in one patch and queried)."
+  },
+  {
+    "id": "go.collection_version.patch.add_collection",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "cross_runtime_schema_validation.rs:281-285 (validateCollectionNotAdded: add at `/-`) rejected on Rust and Go via assert_outcome at :378",
+    "note": "Only the `/-` form and only the rejection; the `adding collections via patch is not supported. Name: Book` message and the unknown top-level path, copy-under-new-name and replace-with-another-collection forms are untested."
+  },
+  {
+    "id": "go.collection_version.patch.invalid_paths",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for 'doc is missing path', 'unknown field \"-\"' and patch ops on unknown paths/root/unsupported properties (rg over tools/integration-test/tests, crates/*/tests, crates/db/tests/definition): only implementation in crates/db/src/definition/patch/{apply,helpers}.rs, no test."
+  },
+  {
+    "id": "go.collection_version.patch.field_reorder",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:257-260 move of /PatchFieldMove/Fields/1 to /Fields/2 asserted rejected by both Rust and Go (assert_outcome at :378)",
+    "note": "Only accept/reject is asserted; the 'moving fields is not currently supported. Name: ..., ProposedIndex, ExistingIndex' message, the copy-onto-position variant and one-line-per-moved-field are unverified."
+  },
+  {
+    "id": "go.collection_version.patch.copy_field",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test issues a JSON Patch 'copy' op (rg for '\"op\": \"copy\"' and op.{0,6}copy in all Rust tests); new-field-from-copy queryability and the 'no type found ... Kind: NotAValidKind' substitution error are untested."
+  },
+  {
+    "id": "go.collection_version.patch.collection_name",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:263-273 replacing /PatchName/Name and setting it to \"\" both asserted rejected (assert_outcome at :378)",
+    "note": "Messages 'collection name cannot be mutated.' / \"collection name can't be empty\" not asserted; inactive-version and one-to-many cases, removing/moving Name, copying a name between versions in a field-adding patch (accepted), and the whole-collection-key move no-op are unverified."
+  },
+  {
+    "id": "go.collection_version.patch.immutable_identity",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:239-249 empty and changed CollectionID rejected; :287-291 VersionID replaced by an unknown CID rejected; :351-361 invalid VersionID and CollectionID strings rejected; :215 and :363 replaced PreviousVersion source rejected (all via assert_outcome at :378)",
+    "note": "Only accept/reject parity with Go is asserted, none of the error messages; removing VersionID ('cid too short'), adding/removing sources vs replacing them, and a changed source collection ID ('collection source ID cannot be mutated.') are not exercised."
+  },
+  {
+    "id": "go.collection_version.patch.immutable_settings",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_collection_rejects_mutating_an_existing_policy",
+      "crates/db/tests/definition/patch.rs::patch_collection_rejects_adding_a_policy_to_a_policy_free_collection",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "crates/db/tests/definition/patch.rs:530 and :566 assert 'collection policy cannot be mutated.' for replacing and adding a policy; tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:221 (Indexes replaced), :293 (IsBranchable false->true), :333 (IsMaterialized false on a collection) asserted rejected",
+    "note": "Messages for IsBranchable ('mutating IsBranchable is not supported'), Indexes ('collection indexes cannot be mutated.') and IsMaterialized ('non-materialized collections are not supported') unasserted; IsBranchable true->false direction and removing the policy / its ID / resource unverified."
+  },
+  {
+    "id": "go.collection_version.patch.remove_field",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test removes or replaces an existing field by patch and checks 'Cannot query field \"name\" on type \"Users\"' (searched for remove ops on /Fields paths and whole-Fields replacements dropping a field; crates/db/tests/definition/patch.rs:421 only replaces the list to add a field)."
+  },
+  {
+    "id": "go.collection_version.patch.field_mutation_errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_collection_rejects_numeric_kind_in_direct_kind_replacement",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+    ],
+    "evidence": "crates/db/tests/definition/patch.rs:483-486 asserts exact 'invalid patch: mutating an existing field is not supported. ProposedName: ' for replacing Fields/message/Kind; tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:251 Kind replacement rejected",
+    "note": "Only Kind replacement is checked; removing/replacing name, CRDT type, default value and size constraint are unverified, as is the whole-fields-list replacement error 'no type found for given name. Type: 0' (crates/db/tests/definition/patch.rs:294 asserts 'Type: 111' for an added field, not a list replacement)."
+  },
+  {
+    "id": "go.collection_version.patch.embeddings.valid",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test patches VectorEmbeddings (rg for VectorEmbeddings/vector_embeddings and patch usage in crates/db/tests, crates/query/tests, crates/defra-node/tests, tools/integration-test/tests found none); add/replace/remove by patch and GetCollections reflection untested."
+  },
+  {
+    "id": "go.collection_version.patch.embeddings.missing_settings",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No patch test for empty FieldName/Fields/Provider/Model or unknown provider; the messages exist only in crates/schema/src/definition_validation/global_validators.rs. Nearest: tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:176 rejects an unknown provider at SDL add (accept/reject only), a different surface."
+  },
+  {
+    "id": "go.collection_version.patch.embeddings.field_references",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No patch test for unknown vector/source field, JSON source, or self/other-embedding reference. Nearest: tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:157 and :167 reject a String vector field and a missing generation field at SDL add (accept/reject only, no message, not via patch)."
+  },
+  {
+    "id": "go.collection_version.patch.test_op",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test sends a JSON Patch 'test' op (rg '\"op\": \"test\"' in all Rust tests); 'testing value ... failed: test failed' exists only in crates/db/src/definition/patch/apply.rs:339."
+  },
+  {
+    "id": "go.collection_version.patch.remove_collection.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/collection_delete_4657.rs::stale_transaction_cannot_write_after_collection_delete_test"
+    ],
+    "evidence": "tools/integration-test/tests/basic/collection_delete_4657.rs:13 removes /Users by patch; :16-18 asserts 'query { Users }' then errors; :27-29 asserts a write fails with 'collection not found' OR 'Cannot query field' OR any message containing 'Users'",
+    "note": "Exact 'Cannot query field \"Users\" on type \"Query\"' / add_Users mutation errors not asserted (loose OR match, and the write is from a stale txn); removal by version ID and re-adding a same-named collection yielding a fresh empty collection are unverified."
+  },
+  {
+    "id": "go.collection_version.patch.remove_collection.with_documents",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test asserts 'cannot delete a collection that has documents' (rg over all tests; message only in crates/db/src/definition/patch/mod.rs:266, txn/registry/collections.rs, collection/ops/version.rs). Soft-deleted and same-transaction variants also untested."
+  },
+  {
+    "id": "go.collection_version.patch.remove_collection.version_chain",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test asserts 'cannot delete a version that is used by a newer version' or removing newest versions then reactivating the previous one (rg over all tests; message only in crates/db/src/txn/registry/collections.rs and collection/ops/version.rs)."
+  },
+  {
+    "id": "go.collection_version.patch.remove_collection.relations",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
+      "crates/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
+    ],
+    "evidence": "crates/db/tests/collection/delete.rs:236-238 asserts 'cannot remove a collection while another field references it' and :239-240 both collections remain; :257-258 both sides deleted together succeeds",
+    "note": "Asserted through the delete_collections API, not a patch 'remove' op; removal of the other side (from either side) is not checked."
+  },
+  {
+    "id": "go.collection_version.patch.remove_collection.concurrency",
+    "verdict": "diverges",
+    "rust_tests": [
+      "crates/db/tests/collection/schema_write_conflicts.rs::document_write_conflicts_with_collection_drop",
+      "crates/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion",
+      "tools/integration-test/tests/basic/collection_delete_4657.rs::stale_transaction_cannot_write_after_collection_delete_test"
+    ],
+    "evidence": "schema_write_conflicts.rs:67-69 drop completes while a create is staged and the writer's commit fails with a txn conflict; registry_suite.rs:1219-1227 a reader txn opened before deletion still sees the collection, :1249 a new txn does not; tools/integration-test/tests/basic/collection_delete_4657.rs:13-29 patch-remove succeeds while a txn is open and the stale txn's write then fails",
+    "note": "Go pins removal as blocking (deadlock) until the writing txn ends; Rust removes immediately and the concurrent writer loses with a conflict at commit (regolith validation). Rust also lets an open txn keep seeing the removed collection (snapshot), whereas Go's leaf says the txn's later GetCollections omits it. Redeclaring in the txn and view-read non-deadlock are untested."
+  },
+  {
+    "id": "go.collection_version.patch.remove_view",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test removes a view (or its backing collection) by patch; searched tools/integration-test/tests/query/{view,go_view_paths}.rs, crates/db/tests/view/ops.rs, crates/db/tests/definition/patch.rs. Refreshed-view 'has documents' error and 'collection not found' after removing the source are untested."
+  },
+  {
+    "id": "go.collection_version.patch.view_sources",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_view_query_creates_new_version"
+    ],
+    "evidence": "crates/db/tests/definition/patch.rs:335-346 replacing /UserView/Query/Query creates a new version (asserts exact version_id, previous_version source, 3 versions)",
+    "note": "The view's query results after the patch are not asserted; replacing the queried collection name or the Lens transform is unverified."
+  },
+  {
+    "id": "go.collection_version.patch.dematerialize",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/patch.rs::patch_dematerialization_requires_an_empty_view",
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation/stateful.rs::go_schema_stateful_validation_parity",
+      "crates/schema/tests/validation_tests.rs::materialized_view_cannot_have_policy"
+    ],
+    "evidence": "crates/db/tests/definition/patch.rs:411-415 asserts 'cannot dematerialize a materialized view that has data, first truncate it and then try again'; :373 dematerializing an empty view succeeds; tools/integration-test/tests/basic/cross_runtime_schema_validation/stateful.rs:178 rejection parity with Go after refresh",
+    "note": "Success after truncate and the dematerialized view then querying its source directly are unverified. Policy part: Go errors 'materialized views do not support ACP' when a policy is patched onto a cacheless view (Go-Bug-Suspect); Rust asserts that message only for a materialized view (validation_tests.rs:341), and stateful.rs:202 asserts both runtimes accept @policy on a @materialized(if:false) view at add. Patching a policy onto a cacheless view is not tested."
+  },
+  {
+    "id": "go.collection_version.migrations.lens_registry",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::with_view",
+      "crates/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
+    ],
+    "evidence": "p2p_iroh/sync/version.rs:381-384 expects lens_add to return a lensId (then used for a view); issue_859_schema_migration.rs:239-241 asserts the transform id is non-empty",
+    "note": "Unverified: ListLenses returning an added lens (query/lens.rs and lens_persistence.rs only assert the list is empty on a fresh node), distinct IDs for different lenses, the same CID for identical lenses, and 2^53 vs 2^53+1 arguments staying distinct. Searched lens_add/lens_list/add_lens callers and 'identical|same cid|9007199254740993'."
+  },
+  {
+    "id": "go.collection_version.migrations.patch_transform",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
+      "crates/db/tests/definition/patch.rs::patch_collection_registers_migration_atomically",
+      "crates/http/src/handlers/collections_tests.rs::patch_collection_forwards_migration"
+    ],
+    "evidence": "lens_cross_runtime.rs:248-265 patches with a migration via CLI and asserts migrated=true on read (and equal to Go at :258); patch.rs:103-106 asserts the patch records a transform on the previous version and registers it",
+    "note": "Unverified: a patch with no migration records no transform; a present-but-empty lens records the empty lens's ID (collections_tests.rs:339 only checks the HTTP handler forwards an empty Lenses list to a mock); replacing or removing a collection source's Transform by patch (no test patches /Sources/.../Transform)."
+  },
+  {
+    "id": "go.collection_version.migrations.configure",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_is_only_visible_inside_transaction",
+      "crates/db/tests/read/lensed_snapshot_history.rs::writable_transaction_observes_its_own_migration_registration",
+      "crates/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
+    ],
+    "evidence": "registry_suite.rs:363-379 sets a migration between unknown versions 'users-v1'->'users-v2' without error and asserts it is visible inside the txn and not outside; lensed_snapshot_history.rs:179 asserts a read in the txn applies its own migration",
+    "note": "Unverified: several migrations returned by GetCollections, a second migration with the same source replacing the first, and the 'cannot migrate between non-adjacent collection versions' error (string exists in crates/db/src/definition/migration/set.rs:165 but no test asserts it)."
+  },
+  {
+    "id": "go.collection_version.migrations.query.forward",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration",
+      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version",
+      "crates/db/tests/definition/migration_suite.rs::migration_context_cache_invalidates_when_graph_changes_without_version_change"
+    ],
+    "evidence": "lens_reindex_secondary_index_979.rs:109-120 asserts a v1->v2 migration registered after the patch applies to all 3 docs; schema_migration.rs:524-525 asserts a two-step chain applies both steps; migration_suite.rs:642-650 asserts both edges apply when v2->v3 was registered before v1->v2",
+    "note": "Unverified: migration registered before the patch that creates the destination version; a missing edge being skipped (replicated_doc_much_newer_with_history_gap only asserts name, not that verified stays unset); migrations naming unknown versions being ignored on query."
+  },
+  {
+    "id": "go.collection_version.migrations.query.field_mapping",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
+      "crates/db/tests/definition/helpers.rs::lens_removed_field_is_returned_as_explicit_null",
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration"
+    ],
+    "evidence": "lens_cross_runtime.rs:263-271 asserts a lens-set scalar plus untouched fields across 8 scalar kinds; helpers.rs:169-172 asserts a field the lens omits comes back as Null (unit test of lens_doc_to_document); 979.rs:105-120 filters on the migrated field without selecting it",
+    "note": "Unverified: mutating an inline-array field, the removed-field null through a GraphQL query, copy migrations when src/dst fields are not requested, and a second request with a different field set still seeing unmutated fields."
+  },
+  {
+    "id": "go.collection_version.migrations.query.incremental",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/migration_suite.rs::migration_context_cache_invalidates_when_graph_changes_without_version_change",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version"
+    ],
+    "evidence": "migration_suite.rs:642-650 asserts that after registering v2->v3 then the earlier edge v1->v2, a read returns values from both edges (stub transform store); schema_migration.rs:524-525 asserts a two-edge chain",
+    "note": "Unverified: sparse chain with an index, three or more incremental steps, the restart variant, and resetting the active version to the document's original version clearing migrations. Go-Bug-Suspect #4736: lens_reindex_secondary_index_979.rs header says Rust has no incremental lens mode, so the stale-stamp bug does not apply; no test exercises the indexed sparse-chain case."
+  },
+  {
+    "id": "go.collection_version.migrations.query.active_version",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_newer_schema_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_other_schema_branch"
+    ],
+    "evidence": "schema_migration.rs:585-590 asserts a node at the older version sees the inverse migration clear verified; schema_migration.rs:717-727 asserts a node on another version branch sees name cleared by the inverse and phone set by its branch's lens",
+    "note": "Unverified: switching the active version with set-active (latest -> forward, original -> inverse) on one node with a migration, and inverse migration across several versions. set_active tests (issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original, patch.rs) check only the version id, not migrated values."
+  },
+  {
+    "id": "go.collection_version.migrations.query.filters",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/migration_suite.rs::implicit_query_leaves_storage_unchanged_after_snapshot_closes",
+      "crates/db/tests/definition/migration_suite.rs::field_value_fetch_filters_after_lens_transform",
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::single_field_index_rebuilt_after_lens_migration"
+    ],
+    "evidence": "migration_suite.rs:892-906 asserts a GraphQL filter on the migrated field returns the migrated doc, and :872-874 asserts lookup by docID returns the migrated value; migration_suite.rs:956-957 asserts field-value fetch filters after the transform",
+    "note": "Unverified: filters when the migration sits between older versions or in an older patch, and a GraphQL query by several docIDs over migrated documents (the docID lookups are DB-level fetcher calls)."
+  },
+  {
+    "id": "go.collection_version.migrations.query.index.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::single_field_index_rebuilt_after_lens_migration",
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::composite_index_rebuilt_after_lens_migration",
+      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity"
+    ],
+    "evidence": "979.rs:71-78 asserts an indexed filter on the lens-set field returns the migrated doc; 979.rs:153-160 the same for a composite index; lens_cross_runtime.rs:273-282 for an indexed DateTime field after a patch migration",
+    "note": "Unverified: activating an older version making the index return old values, an index created after the migration or after a version switch indexing the active version's values, and un-migrated documents not hindering index queries."
+  },
+  {
+    "id": "go.collection_version.migrations.query.index.reindex",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration",
+      "tools/integration-test/tests/cursor/reindex_datetime_visibility.rs::datetime_index_survives_reindex_and_stays_cursor_visible"
+    ],
+    "evidence": "979.rs:105-120 asserts registering a migration affecting the active version reindexes all docs",
+    "note": "Unverified: switching to a distant old/new version with or without a migration in between (reindex vs no reindex), a migration between newer inactive versions not reindexing, and a migration to unknown versions followed by a patch reindexing. No Rust test combines set-active with an index and a lens."
+  },
+  {
+    "id": "go.collection_version.migrations.query.index.branches",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test combines branched version histories, per-branch migrations and an index. Searched for set_active/collection_set_active together with lens_set/set_migration in crates/*/tests and tools/integration-test/tests; only branch coverage is the unindexed P2P replicated_doc_other_schema_branch."
+  },
+  {
+    "id": "go.collection_version.migrations.query.p2p",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_older_schema_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_newer_schema_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_newer_with_history_gap",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_other_schema_branch"
+    ],
+    "evidence": "schema_migration.rs:454-461 (older: sender as written, receiver verified=true), :518-525 (much older chain), :578-590 (newer: inverse clears verified), :648 (history gap still replicates), :710-727 (other branch)",
+    "note": "Ported one-to-one from the five Go tests. The history-gap test asserts only that the doc arrives (name), matching Go's assertion."
+  },
+  {
+    "id": "go.collection_version.migrations.query.restart",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc together with lens_set/set_migration."
+  },
+  {
+    "id": "go.collection_version.migrations.query.txn",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/read/lensed_snapshot_history.rs::writable_transaction_observes_its_own_migration_registration",
+      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_promotes_transform_on_commit"
+    ],
+    "evidence": "lensed_snapshot_history.rs:171-182 asserts a read in the txn applies the migration set in it (via the stub module's failure); registry_suite.rs:408-413 asserts the transform is in the global store after commit",
+    "note": "Unverified: migrated values returned by a query in the transaction (the test infers application from an error), and migrated values returned by a query outside the transaction after commit."
+  },
+  {
+    "id": "go.collection_version.migrations.query.update",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/definition/migration_suite/json_frontier.rs::lens_rewrite_of_a_json_field_lands_through_the_next_write"
+    ],
+    "evidence": "json_frontier.rs:91-100 asserts an update to a doc stored at v1 writes it at v2 carrying the lens-set value and the new name",
+    "note": "Unverified: the update_ GraphQL mutation's returned fields showing migrated values, and a migration registered after the update still applying. disjoint_parts.rs::updates_of_a_migrated_collection_both_commit uses an empty migration, so it does not check migrated values."
+  },
+  {
+    "id": "go.collection.relations_to_existing",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/schema/tests/validation_tests.rs::new_relation_can_target_an_existing_collection"
+    ],
+    "evidence": "validation_tests.rs:228 validate_new_collections_with_existing(&[posts], &[user_collection()]).unwrap() accepts a new relation to an existing collection",
+    "note": "Only the definition validator is checked. Unverified: an AddCollection call through the node that relates to one or several existing collections (or a chain of separate adds, or a patch adding such a relation), and creating/querying documents across that relation."
+  },
+  {
+    "id": "go.collection.delete.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/delete.rs::delete_collections_removes_single_name",
+      "crates/db/tests/collection/delete.rs::delete_collections_removes_multiple_names_atomically",
+      "crates/db/tests/collection/delete.rs::delete_collections_errors_on_unknown_name",
+      "crates/db/tests/collection/delete.rs::delete_collections_rejects_empty_name_without_deleting_valid_names",
+      "crates/db/tests/collection/delete.rs::delete_collections_dedupes_repeated_names"
+    ],
+    "evidence": "delete.rs:126-133 both names gone after one call; delete.rs:189-198 unknown name errors and Users survives (rollback); delete.rs:169 'collection name can't be empty'; delete.rs:215 duplicates deduplicated",
+    "note": "Unverified: GraphQL schema removal after DeleteCollection ('Cannot query field \"Users\" on type \"Query\"', no add_Users mutation); unknown-name error is only loosely checked (contains 'Ghost' or 'not found', not 'collection not found'). All tests run at the db layer with active_only=true, not via CLI/HTTP."
+  },
+  {
+    "id": "go.collection.delete.with_documents",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for 'cannot delete a collection that has documents', 'has documents', delete_collections/delete_collection calls on populated collections; the message exists only in crates/db/src (collection/ops/version.rs:355, txn/registry/collections.rs:133, definition/patch/mod.rs:266). No test deletes a collection holding (or soft-deleted) documents."
+  },
+  {
+    "id": "go.collection.delete.transactions",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion"
+    ],
+    "evidence": "registry_suite.rs:1224-1233 a transaction opened before the delete still reads the collection; registry_suite.rs:1236 DB reports it gone; :1247 a new transaction cannot see it",
+    "note": "The delete itself runs outside a transaction. Unverified: delete_collections_in_txn (no test calls it) removing collections on commit, and other transactions still seeing them in GetCollections before that commit."
+  },
+  {
+    "id": "go.collection.delete.relations",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
+      "crates/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
+    ],
+    "evidence": "delete.rs:236 deleting Users alone fails with 'cannot remove a collection while another field references it' and both survive (:239-240); delete.rs:257-258 deleting both sides in one call removes both",
+    "note": "Unverified: the error when deleting the other side (Books alone); active_only=false variant; survivor of a pair remaining queryable; deleting self-referencing one-to-one/one-to-many collections, and active-only leaving the earlier version."
+  },
+  {
+    "id": "go.collection.delete.versions",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched delete_collections/delete_collection/active_only/active-only in tests. All db delete tests use single-version collections with active_only=true; ffi test_delete_collections (active_only=false) uses single-version collections. No test patches a collection then deletes, checks which versions remain, or reactivates an earlier version after an active-only delete."
+  },
+  {
+    "id": "go.collection.delete.recreate",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for re-adding a collection after delete_collection(s)/collection patch remove (recreat, re-add, readd). None re-adds a deleted collection name and checks old fields, versions or documents are gone."
+  },
+  {
+    "id": "go.collection.delete.dependents",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test deletes a collection with secondary indexes and checks they are removed, or queries/refreshes a view whose source was deleted ('collection not found'). Closest: crates/db/src/database/mod.rs deleting_a_collection_evicts_its_vector_caches (in-memory vector code caches only, not indexes or views)."
+  },
+  {
+    "id": "go.collection.truncate.basic",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test truncates an empty collection, truncates the same collection twice, or truncates while documents are added concurrently. truncate_parallel.rs (despite its name) truncates two populated collections sequentially; that belongs to removes_data."
+  },
+  {
+    "id": "go.collection.truncate.removes_data",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/truncate_parallel.rs::parallel_truncate_test",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test"
+    ],
+    "evidence": "truncate_parallel.rs:58-74 both collections return 0 documents after truncate; document_lifecycle.rs:150 0 articles after truncate",
+    "note": "Only plain documents disappearing from queries is asserted. Unverified: blocks removed from _commits (shared field blocks, branchable collection head), and signed, encrypted or branchable documents."
+  },
+  {
+    "id": "go.collection.truncate.re_add",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes"
+    ],
+    "evidence": "truncate.rs:72 re-created Alice after a (filtered) truncate gets the same DocID",
+    "note": "Unverified: same head CID as the original and blocks restarting at height 1; full (unfiltered) truncate followed by re-add of the same document."
+  },
+  {
+    "id": "go.collection.truncate.filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes",
+      "tools/integration-test/tests/basic/collection_management.rs::filtered_truncate_test"
+    ],
+    "evidence": "truncate.rs:65-70 only the age=30 document is removed; truncate.rs:72-79 re-creating Alice under the unique name index succeeds (unique value freed); collection_management.rs:105-108 GraphQL truncate_TruncateUser(filter) leaves only Bob",
+    "note": "Unverified: idempotent retry of a filtered truncate, exact large-integer matching (2^53 vs 2^53+1), and truncate through a plain (non-unique) secondary index."
+  },
+  {
+    "id": "go.collection.truncate.acp",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched truncate in acp tests. acp/revoke_lifecycle.rs truncates a DAC collection and then creates a different document (NewDoc), asserting the old grant does not apply (:105-109); no test re-adds the same private or public document after truncate to check its ACP registration is kept."
+  },
+  {
+    "id": "go.collection.truncate.views",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test truncates a materialized view or truncates the source of a materialized view and checks the cache (searched truncate together with view_add/view_refresh)."
+  },
+  {
+    "id": "go.collection.truncate.actions",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/index_management.rs::index_management_test"
+    ],
+    "evidence": "index_management.rs:151 GET /api/v0/actions returns [] after a completed truncate",
+    "note": "Unverified: a truncate is listed while it is still running."
+  },
+  {
+    "id": "go.collection.refresh_actions",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched tests for /actions and list_actions; only index_management.rs checks the actions list (after truncate). No test lists an uncompleted or failed view refresh, or checks completed refreshes are dropped."
+  },
+  {
+    "id": "go.view.simple",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation/stateful.rs::go_schema_stateful_validation_parity"
+    ],
+    "evidence": "stateful.rs:167 Rust and Go view results are equal; stateful.rs:168-172 MaterializedView returns name 'value' for the source document",
+    "note": "Only a one-field view returning source values is asserted. Unverified: SDL fields missing from the query returned as null, query fields omitted from the SDL not exposed ('Cannot query field \"age\" on type \"UserView\"'), aliases mapping onto SDL fields, and a view over another view. query/view.rs::view_test adds a view but never queries it."
+  },
+  {
+    "id": "go.view.filter",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test defines a view with a filter in its query or filters a view request; all view_add calls in tests (query/view.rs, go_view_paths.rs, stateful.rs, nac/operations.rs, p2p_iroh/sync/version.rs, downsample*) use unfiltered source queries."
+  },
+  {
+    "id": "go.view.introspection",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test introspects a view's GraphQL type (__type on a view name) to check SDL fields, aggregates, _group and the absence of _docID/_version/_deleted."
+  },
+  {
+    "id": "go.view.transforms",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::with_view_activated_and_queried"
+    ],
+    "evidence": "version.rs:532-538 querying UserView on node1 returns fullName == 'John', produced by the copy lens transform",
+    "note": "Only a single one-to-one-document copy transform on a synced, activated view. Unverified: several transforms, transforms returning more or fewer documents than input, aggregating across documents, transforms on the outer side of one-to-one/one-to-many views or adding inner documents, and transforms working after restart."
+  },
+  {
+    "id": "go.view.transform_cid",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::with_view_activated_and_queried"
+    ],
+    "evidence": "version.rs:475 view_add_with_lens passes the CID returned by lens_add; version.rs:532-538 the view applies that lens",
+    "note": "Reusing an existing lens by CID is exercised. Unverified: unknown CID failing with 'lens CID not found' and blank CID failing with 'cid too short' without creating a view. query/go_view_paths.rs accepts either success or any 4xx for an unknown CID, so it does not assert Go's error."
+  },
+  {
+    "id": "go.view.materialized",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_schema_validation/stateful.rs::go_schema_stateful_validation_parity"
+    ],
+    "evidence": "stateful.rs:159-172 after view_refresh the materialized view returns the source document, matching Go",
+    "note": "Unverified: the view is populated when added (without refresh), later source changes are not reflected until RefreshViews, and a second refresh with existing data. The refresh result itself is discarded (let _ =)."
+  },
+  {
+    "id": "go.view.constraints",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test declares @constraints(size: N) on a view array field (searched view SDLs in tests). Go-Bug-Suspect: Go returns untyped float64 slices for materialized arrays; no Rust test pins either behaviour."
+  },
+  {
+    "id": "go.view.source_only_features",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test declares @default or @embedding in a view SDL and checks it is not applied/generated."
+  },
+  {
+    "id": "go.view.one_to_many",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test adds a view over a one-to-many query; no assertions on nested related documents in views, the embedded inner type not being top-level ('Cannot query field \"BookView\" on type \"Query\"') or not navigating back."
+  },
+  {
+    "id": "go.view.one_to_many_count",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No view test uses _count. 'aggregate must be provided with a property to aggregate' is only raised in crates/query/src (query_parse/aggregates.rs, runner/plan_validation.rs), not asserted for a view."
+  },
+  {
+    "id": "go.view.one_to_one",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test adds a one-to-one view, reuses an embedded type across views ('collection already exists. Name: BookView'), or checks an embedded type survives a view update and restart."
+  }
+]
