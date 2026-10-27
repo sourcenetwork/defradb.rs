@@ -3,3 +3,4 @@ import ChunkSplit.Covers
 import ChunkSplit.Bounded
 import ChunkSplit.Local
 import ChunkSplit.Identity
+import ChunkSplit.Cascade

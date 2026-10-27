@@ -100,6 +100,10 @@ pub async fn export_database_as<S: Store>(
             })?;
 
         let schema = collection.schema().clone();
+        // Import rebuilds `@chunk` collections from the parents' text.
+        if schema.is_generated() {
+            continue;
+        }
         let fields = classify_schema_fields(&schema);
 
         let mut query_parts = vec!["_docID".to_string()];

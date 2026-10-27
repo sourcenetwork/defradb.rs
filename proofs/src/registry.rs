@@ -1221,4 +1221,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Text chunking",
+        name: "no_orphan_chunks / parent_is_gone / others_stay / delete_alone_leaves_an_orphan",
+        axis: Lean,
+        anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn, delete_collections_as",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_LiveParentHasChunks",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/delete.rs truncate_collection_as; crates/db/src/collection/ops/truncate_filtered.rs truncate_filtered_chunk",
+        model_ref: "MC_TruncateChunks_Green.cfg / MC_TruncateChunks_Red_ParentsFirst.cfg",
+        tiers: &[Boundary],
+    },
 ];

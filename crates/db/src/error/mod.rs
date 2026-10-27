@@ -68,6 +68,12 @@ pub enum Error {
     #[error("filtered truncate is not supported for branchable collections")]
     FilteredTruncateBranchableCollection,
 
+    #[error("{0} holds generated chunks and is emptied only with its parent")]
+    TruncateGeneratedCollection(String),
+
+    #[error("{0} holds generated chunks and is deleted only with its parent")]
+    DeleteGeneratedCollection(String),
+
     #[error("database is closed")]
     DatabaseClosed,
 

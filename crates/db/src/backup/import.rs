@@ -91,6 +91,10 @@ pub async fn import_database_as<S: Store + 'static>(
             })?;
 
         let schema = collection.schema();
+        // `@chunk` collections are rebuilt from the parents' text, not imported.
+        if schema.is_generated() {
+            continue;
+        }
         let fields = classify_schema_fields(schema);
 
         let fk_names: Vec<String> = fields
@@ -138,6 +142,9 @@ pub async fn import_database_as<S: Store + 'static>(
                 Some(m) => m.clone(),
                 None => continue,
             };
+            for chunked in &schema.chunked_fields {
+                doc_map.remove(&chunked.list_field());
+            }
 
             // The file's identities become aliases of the fresh
             // genesis-derived identity.
