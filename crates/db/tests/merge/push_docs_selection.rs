@@ -63,17 +63,23 @@ async fn exercise(
         "v1",
         "col-push-note",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
         ],
     ))
     .await
     .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
+    let schema = db.get_collection("PushNote").unwrap().unwrap().schema_arc();
     let mut ids = Vec::new();
     for body in ["selected", "unselected"] {
-        let mut doc = Document::new();
-        doc.set("body", body.to_owned());
+        let mut doc = Document::new(schema.clone());
+        doc.set("body", body.to_owned()).unwrap();
         ids.push(
             mutator
                 .create("PushNote", doc)
