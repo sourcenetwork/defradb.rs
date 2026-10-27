@@ -1,0 +1,892 @@
+[
+  {
+    "id": "go.mutation.add.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
+      "tools/integration-test/tests/basic/multi_collection.rs::many_collections_field_ids_test",
+      "tools/integration-test/tests/nac/multi_doc_create.rs::nac_multi_doc_create_gate_test",
+      "tools/integration-test/tests/query/default_values_v1.rs::default_directive_value_v1_test"
+    ],
+    "evidence": "smoke.rs:43-48 asserts add_User result and a later User query return the doc; multi_collection.rs:110-133 asserts _docID is a string and each of 12 collections returns its field; multi_doc_create.rs:48-50 asserts a two-element array create returns 2 docs; default_values_v1.rs:28 creates with input: {} and 50-58 reads it back",
+    "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/embedded/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
+  },
+  {
+    "id": "go.mutation.add.null_input",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for `input: null`, `input: [null]`, `encrypt: null`, `encryptFields: null` and explicit-null create inputs across crates/*/tests, crates/query/src and tools/integration-test/tests: no matches (the only null input found is an update in p2p_iroh/schema/encryption.rs). The omitted-vs-explicit-null distinct-docs case is not tested either."
+  },
+  {
+    "id": "go.mutation.add.variables",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
+      "crates/query/tests/mutation_input_variables.rs::default_object_input_is_resolved"
+    ],
+    "evidence": "defra-node mutation_input_variables.rs:21-24 and 41-44 assert an object variable (with a JSON payload {nested:[1,null,true]}) is applied and returned; query mutation_input_variables.rs:49 asserts a variable default resolves at parse time",
+    "note": "Covers update/upsert input variables, not add_ with a `[UsersMutationInputArg!]!` list variable; a variable inside a JSON object literal (`{embed: {message: $message}}`) is not tested; the default-value case is parse-level only."
+  },
+  {
+    "id": "go.mutation.add.default_values",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/default_values_v1.rs::default_directive_value_v1_test",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_for_all_scalar_types"
+    ],
+    "evidence": "default_values_v1.rs:50-58 asserts omitted Boolean, DateTime, String, Int, Float, Float32, Float64, JSON and Blob fields take their @default values",
+    "note": "Not asserted: explicit null stores null; provided values win over defaults; JSON int/float/bool/object/nested-object defaults returned as canonical JSON; `@default(value: null)` on JSON failing with `default value is invalid`; a defaulted value violating a unique index."
+  },
+  {
+    "id": "go.mutation.duplicate",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/write/identical_create.rs::concurrent_identical_autocommit_creates_exactly_one_commits",
+      "crates/db/tests/write/identical_create.rs::two_identical_creates_exactly_one_commits"
+    ],
+    "evidence": "identical_create.rs:57 asserts identical content derives one DocID; :115-121 asserts every losing identical create errors with 'already exists' and only one commits",
+    "note": "Rust-API concurrency tests only. Not asserted: a sequential duplicate add_ through GraphQL/collection API with the full message `a document with the given ID already exists`; two all-default docs; JSON objects differing only in key order yielding the same docID."
+  },
+  {
+    "id": "go.mutation.deleted_doc",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/document_lifecycle.rs::create_on_deleted_document_errors"
+    ],
+    "evidence": "document_lifecycle.rs:385-388 asserts re-adding deleted content fails with 'a document with the given ID has been deleted'",
+    "note": "Not asserted: the document stays deleted afterwards (a later query returns nothing); saving an update to a deleted document fails with the same error."
+  },
+  {
+    "id": "go.mutation.unknown_field",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/document/tests/document_tests.rs::set_unknown_field_errors"
+    ],
+    "evidence": "document_tests.rs:498-500 asserts setting a missing field returns FieldNotExist('missing') with 'does not exist' and leaves the doc empty",
+    "note": "Document-level only: no create/update through the collection API or GraphQL asserting `the given field does not exist. Name: <field>` and that nothing is written; relation one-side `published`/`_publishedID` on Author not covered."
+  },
+  {
+    "id": "go.mutation.ordering",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/batch_mutations.rs::mutation_fragment_spread_order_test",
+      "crates/query/src/query_parse/mutation_tests.rs::test_parse_mutation_fragment_spread_in_request_order",
+      "crates/query/src/query_parse/mutation_tests.rs::test_parse_mutation_inline_fragment_in_request_order"
+    ],
+    "evidence": "mutation_tests.rs:193 asserts a fragment spread is ordered where it is spread; batch_mutations.rs:127-133 asserts both fragment and field mutations run",
+    "note": "Serial execution order is only asserted at parse level; no test checks that an unordered `User` query returns the docs in request (insertion) order."
+  },
+  {
+    "id": "go.mutation.request_validation",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/query_parse/validation.rs::test_invalid_mutation_collection",
+      "crates/query/src/query_parse/mutation_tests.rs::test_invalid_mutation_name_error"
+    ],
+    "evidence": "validation.rs:234 asserts `Cannot query field \"add_Usr\" on type \"Mutation\".`; mutation_tests.rs:357 asserts an unknown mutation name errors",
+    "note": "Not asserted: the exact message for an unknown verb (`dostuff_User`); `delete_User` without a selection set failing with `must have a sub selection` (implemented in query_parse/mutations.rs:249, untested); an empty selection set failing with a syntax error."
+  },
+  {
+    "id": "go.mutation.null_args",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go-Bug-Suspect leaf. No test passes `filter: null` or `docID: null` to update_/delete_ (searched `filter: ?null`, `docID: ?null`); only omitted targets are tested at parse level (mutation_tests.rs::test_update_without_target_succeeds, test_delete_without_target_succeeds), so Rust's behaviour for an explicit null (update/delete everything, or reject like truncate) is unverified."
+  },
+  {
+    "id": "go.mutation.constraints",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/write/size_constraint.rs::create_rejects_an_array_of_the_wrong_size",
+      "crates/db/tests/write/size_constraint.rs::update_rejects_an_array_of_the_wrong_size",
+      "crates/db/tests/write/size_constraint.rs::create_and_update_accept_an_array_of_the_right_size"
+    ],
+    "evidence": "size_constraint.rs:34 and :54 assert 'array size mismatch' on create and update with 3 elements; :65 and :69-72 expect a 2-element create and update to succeed",
+    "note": "Rust mutator API only (no GraphQL); the accepted two-element array is not read back and compared."
+  },
+  {
+    "id": "go.mutation.utc_now",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "rg 'UTC_NOW|utc_now' finds only implementation (query/src/plan/mutation/{add,update,upsert}.rs, runner/mutation.rs, sdl_parse/fields.rs); no test uses UTC_NOW as an input or @default, or asserts that two UTC_NOWs in one request are equal."
+  },
+  {
+    "id": "go.mutation.embeddings.generate",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/write/embedding.rs::autocommit_create_generates_embedding",
+      "crates/db/tests/write/embedding.rs::explicit_txn_update_regenerates_embedding",
+      "crates/db/tests/write/embedding.rs::explicit_txn_graphql_update_regenerates_embedding"
+    ],
+    "evidence": "embedding.rs:102,108 assert a create fills the vector [1.0, 2.0] from a stub provider; :203,210 and :250 assert an update regenerates it as [3.0, 4.0]",
+    "note": "Only single-source-field embeddings are tested; an embedding over two source fields (`fields: [\"name\", \"about\"]`) updated with one or both is not. The real ollama 768-dim model is out of scope."
+  },
+  {
+    "id": "go.mutation.embeddings.skip",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched crates/db/tests/write/embedding*.rs, crates/query/src/update_parts/tests.rs and integration vector tests: no test supplies an explicit vector on create/update and asserts it is stored as-is, or updates a non-source field and asserts no provider call and an unchanged vector."
+  },
+  {
+    "id": "go.mutation.field_kinds.numeric",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "tools/integration-test/tests/query/float_precision.rs::create_round_trip_test"
+    ],
+    "evidence": "smoke.rs:48 asserts Int age 30; cross_runtime_queries.rs:89 asserts Rust returns the same Int!, Int, Float64! and Float64 values as Go; float_precision.rs:28-31 asserts a Float round-trips its exact f64",
+    "note": "Float32 scalar (non-counter) returned at float32 precision (1.2) and the non-nillable Float!/Float32! kinds are not asserted."
+  },
+  {
+    "id": "go.mutation.field_kinds.other_scalars",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/document/tests/encoding_tests.rs::test_time_to_json_with_nanoseconds"
+    ],
+    "evidence": "cross_runtime_queries.rs:89 asserts Rust returns the same Boolean, String, Blob ('00FF') and DateTime values (nillable and !) as Go; encoding_tests.rs:209 asserts DateTime JSON round-trip keeps nanoseconds",
+    "note": "Not asserted end to end: DateTimes 1 ns apart stored as three distinct documents with distinct times."
+  },
+  {
+    "id": "go.mutation.field_kinds.null_scalars",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "cross_runtime_indexes.rs:249-258 asserts a doc created with optionalInteger: null returns null",
+    "note": "Only a nillable Int created with explicit null is asserted; Float32, Float64, Boolean, String, Blob and DateTime created with null are not (cross_runtime_queries omits those fields instead of passing null)."
+  },
+  {
+    "id": "go.mutation.field_kinds.nillable_arrays",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/document/tests/encoding_tests.rs::nillable_array_preserves_null_elements",
+      "crates/document/tests/encoding_tests.rs::nullable_float_elements_preserve_null_and_reject_nonfinite_values"
+    ],
+    "evidence": "encoding_tests.rs:326-345 asserts [Boolean] and [DateTime] JSON with a null element convert with None in place; :398-404 asserts [Float64]/[Float32] with a null render as [1.5, null, 2.5]",
+    "note": "Conversion layer only: no create-then-query round trip for any nillable array kind; [Int] and [String] with null elements are not covered."
+  },
+  {
+    "id": "go.mutation.field_kinds.non_nillable_arrays",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+    ],
+    "evidence": "cross_runtime_indexes.rs:278-283 asserts [Int!] values [5, 5, 8] and [5, 9] are returned in order (and equal Go's)",
+    "note": "Only [Int!] is round-tripped end to end; [Boolean!], [Float!], [Float32!], [Float64!], [String!] and [DateTime!] (including from RFC 3339 strings) are not. crates/document/tests/encoding_tests.rs homogeneous-array tests only check is_array()."
+  },
+  {
+    "id": "go.mutation.field_kinds.json",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
+      "crates/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates"
+    ],
+    "evidence": "mutation_input_variables.rs:41-44 asserts a JSON object with a nested list incl. null is returned exactly; cross_runtime_queries.rs:89 asserts an object JSON value matches Go",
+    "note": "json_update_revalidation.rs:63-66 creates list, scalar and null JSON payloads but only asserts the value is unchanged by a later update, never that it equals the input; a number returned as float64 (250), a string, a boolean and null are not asserted against the stored value."
+  },
+  {
+    "id": "go.mutation.crdt.create",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/crdt_fields.rs::graphql_rejects_a_negative_pcounter_increment",
+      "tools/integration-test/tests/basic/crdt_field_blocks.rs::less_common_kinds_keep_their_values"
+    ],
+    "evidence": "crdt_fields.rs:89 asserts an Int pcounter created at 2 and a Float pncounter created at 1.5 read back those values; crdt_field_blocks.rs:127-140 asserts Int pncounter, Float pcounter and Float32 pncounter sums starting from their created values",
+    "note": "Float32 pcounter is not tested; Int pncounter, Float pcounter and Float32 pncounter initial values are only implied through a later sum, not read right after create."
+  },
+  {
+    "id": "go.mutation.crdt.increment",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/crdt_fields.rs::graphql_updates_replace_lww_and_add_to_counters",
+      "tools/integration-test/tests/basic/crdt_fields.rs::float_counters_add_in_f64",
+      "crates/db/tests/write/doc_suite.rs::auto_commit_float32_counter_accumulates_with_float32_precision",
+      "tools/integration-test/tests/basic/crdt_fields.rs::graphql_rejects_a_negative_pcounter_increment"
+    ],
+    "evidence": "crdt_fields.rs:66 asserts 2+3=5 for an Int pcounter and 1.5-4=-2.5 for a Float pncounter; :146 asserts 0.1+0.2 sums to 0.30000000000000004 in f64; doc_suite.rs:243-246 asserts a Float32 counter sums 10.1f32+10.2f32 at f32 precision; crdt_fields.rs:88-89 asserts a negative pcounter update fails with 'value cannot be negative' and the total is unchanged",
+    "note": ""
+  },
+  {
+    "id": "go.mutation.crdt.overflow",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/crdt/tests/field_contract.rs::an_integer_counter_wraps_on_overflow"
+    ],
+    "evidence": "field_contract.rs:98 asserts a pncounter at i64::MAX plus 1 yields i64::MIN (Go's wrap)",
+    "note": "Go-Bug-Suspect leaf; Rust matches Go's wrap at the CRDT unit level, but there is no mutation-level test, no pcounter wrap test, and no test for float pncounter overflow to +Inf/-Inf or for an insignificant float increment leaving the value unchanged."
+  },
+  {
+    "id": "go.mutation.relation.one_to_one_link",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/embedded/tests/one_to_one_primary.rs::a_primary_side_create_commits"
+    ],
+    "evidence": "one_to_one_primary.rs:84-87 asserts a Publisher created with book: <id> (primary side) is visible as Book { publisher { name } }",
+    "note": "Not asserted: linking via update (and in the update_ response selection), the `_<field>ID` form, querying from the primary side, explicit `null` on the primary side, and a self-referencing one-to-one resolving both ways."
+  },
+  {
+    "id": "go.mutation.relation.one_to_one_secondary",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No create/update test sets a one-to-one relation from the secondary side. crates/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side only covers a list (one-to-many) secondary field at the Document level; the GraphQL `Argument \"input\" has invalid value` rejection is not tested."
+  },
+  {
+    "id": "go.mutation.relation.one_to_one_unique",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "crates/query/src/sdl_parse/parser_tests.rs (~line 1985) only asserts that a one-to-one primary gets an implicit unique FK index; no mutation creates or updates a second Author pointing at an already-linked book and asserts `violates unique index`."
+  },
+  {
+    "id": "go.mutation.relation.one_to_many_link",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence"
+    ],
+    "evidence": "cross_runtime_queries.rs:181-201 creates Books with author: <id> and asserts that Author { published { author { name } } } and Book { author { name } } match Go",
+    "note": "Not asserted: the `_authorID` form, re-pointing a book to another author via update (old author's `published` empty), and the alias and `_authorID` forms producing the same docID."
+  },
+  {
+    "id": "go.mutation.relation.one_to_many_single_side",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side"
+    ],
+    "evidence": "document_tests.rs:550-553 asserts setting the list relation `books` on Author fails with CannotSetRelationFromSecondarySide('books') ('cannot set relation from secondary side') and leaves the doc empty",
+    "note": "Document level only. Not asserted: updating Author with `_publishedID` failing with `the given field does not exist`, the collection-API update path, and the GraphQL `Argument \"input\" has invalid value` rejection."
+  },
+  {
+    "id": "go.mutation.relation.dangling",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go-Bug-Suspect leaf. No test creates or updates a doc whose relation ID is a well-formed but non-existent docID (searched dangling/orphan/nonexistent across tests). Rust's choice (accept like Go, or reject) is unverified."
+  },
+  {
+    "id": "go.mutation.relation.invalid_id",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go-Bug-Suspect leaf. Only crates/document/tests/doc_id_tests.rs::test_invalid_string_bad_uuid checks that DocID::from_string rejects a bad UUID (no message). No mutation sets a relation field to a 30-character UUID part; the Go uuid-library message is not ported."
+  },
+  {
+    "id": "go.mutation.update.basic",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test"
+    ],
+    "evidence": "json_update_revalidation.rs:64 asserts a JSON field is unchanged after updating only `sibling`; document_lifecycle.rs:118 asserts collection_update sets views=100",
+    "note": "Unverified: underscored collection name (My_User), a stored value under @default not overwritten by an unrelated update, Blob and DateTime values replaced and read back, and update_X(input:) with no filter/docID updating every document. datetime_update_revalidation.rs only asserts the update has no errors, not the stored value."
+  },
+  {
+    "id": "go.mutation.update.by_id",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/write/same_request.rs::a_same_request_update_by_the_created_document_id_applies_with_kms_on",
+      "tools/integration-test/tests/issue1194_repro.rs::issue1194_same_doc_txn_pair_still_conflicts"
+    ],
+    "evidence": "same_request.rs:61-62 asserts update_Secrets(docID:) returns that doc with the new value; same_request.rs:66 asserts the stored value",
+    "note": "Unverified: a list of docIDs updates exactly those docs (only a mock-level preparation test, crates/query/src/runner/mutation.rs::update_preparation_keeps_custom_hook_and_only_records_found_targets, checks target recording), an unknown docID returns an empty list without error, and `_version { cid }` on update returns two entries (update commit then create commit)."
+  },
+  {
+    "id": "go.mutation.update.by_filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/document_lifecycle.rs::filter_mutations_return_post_update_docs",
+      "tools/integration-test/tests/basic/transactions.rs::update_with_filter_sees_txn_scoped_state",
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence"
+    ],
+    "evidence": "document_lifecycle.rs:252-254 asserts the filtered update returns the doc with age 50 and :259 that it no longer matches the filter; transactions.rs:244 asserts filter name John -> input name Chris returns Chris; cross_runtime_queries.rs:138 asserts update_QueryCase(filter:) response equals Go's",
+    "note": "Unverified: filtering on a related field (published: {rating: {_gt: 3}}) and selecting relation fields in the update response; no test found for update_ with a relation filter."
+  },
+  {
+    "id": "go.mutation.update.collection_filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/document_lifecycle.rs::filtered_document_update_http_contract",
+      "crates/http/tests/filtered_document_update.rs::a_bare_scalar_condition_means_equality",
+      "crates/http/tests/filtered_document_update.rs::an_incomplete_request_is_refused"
+    ],
+    "evidence": "document_lifecycle.rs:197-216 asserts PATCH /collections/X with a GraphQL-text filter and JSON updater updates only Alice on a real node; filtered_document_update.rs:246 (mock store) asserts a map filter is applied",
+    "note": "Map filter is only checked against MockRestOperations. No-filter (None option) updating every document diverges: Rust refuses a missing/null filter with 400 (filtered_document_update.rs:154,162). The 2^53 int filter (9007199254740993 vs ...992) is not tested."
+  },
+  {
+    "id": "go.mutation.update.collection_filter_errors",
+    "verdict": "diverges",
+    "rust_tests": [
+      "crates/http/tests/filtered_document_update.rs::a_json_patch_updater_is_refused_rather_than_silently_doing_nothing",
+      "crates/http/tests/filtered_document_update.rs::an_incomplete_request_is_refused",
+      "crates/http/tests/filtered_document_update.rs::an_unknown_collection_is_not_a_success"
+    ],
+    "evidence": "filtered_document_update.rs:214 asserts a JSON-array (patch) updater returns 400 and :216 that nothing changed; :162 asserts a non-JSON updater returns 400",
+    "note": "Go accepts a JSON-array updater and silently does nothing; Rust refuses it with 400 (deliberate, documented in the test). Error messages (`unsupported filter type`, `filter cannot be empty`, `cannot parse JSON`, `the updater of a document is of invalid type`) are not asserted on the update route; empty/unsupported filter types are only checked on the delete route (filtered_document_delete.rs::an_unsupported_filter_type_is_refused). Unknown collection only asserts non-200. All against a mock store."
+  },
+  {
+    "id": "go.mutation.update.set_null",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/encryption.rs::updates_set_string_to_null"
+    ],
+    "evidence": "encryption.rs:339 asserts name is null on the peer after update_Users(input: {name: null})",
+    "note": "Only String, and only observed on a replicated encrypted doc. Blob, Boolean, DateTime, Float, Int and JSON set to null are unverified; searched for update_ mutations with `: null` inputs."
+  },
+  {
+    "id": "go.mutation.update.array_clear",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched update_ mutations with array inputs ([] / null) and array-named test fns; crates/db/tests/write/empty_arrays.rs only checks a stored [] survives an unrelated update, not updating an array to null or []."
+  },
+  {
+    "id": "go.mutation.update.array_replace",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched update_ mutations with list inputs (only a vector embedding update in vector.rs) and array-named test fns; no test updates [Boolean!]/[Float!]/[Int!]/[String!] to a same/shorter/longer list and checks the result."
+  },
+  {
+    "id": "go.mutation.update.nillable_arrays",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test updates a nillable-element array ([Int] etc.) with null elements and reads it back; same searches as array_replace."
+  },
+  {
+    "id": "go.mutation.upsert.apply",
+    "verdict": "covered",
+    "rust_tests": [
+      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::filter_mutations_return_post_update_docs",
+      "tools/integration-test/tests/basic/upsert_counter.rs::upsert_adds_to_counters_and_refuses_a_negative_pcounter"
+    ],
+    "evidence": "mutation_input_variables.rs:32-35 asserts the first upsert returns the added doc (label created) and the second returns the updated doc (label updated); document_lifecycle.rs:290-302 asserts an upsert matching name Bob changes name to Robert and returns it",
+    "note": "The `_version` variant (WithFilterMatchAndVersion) is not separately checked."
+  },
+  {
+    "id": "go.mutation.upsert.errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_filter_error",
+      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_add_error",
+      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_update_error"
+    ],
+    "evidence": "mutation_tests.rs:447,465,483 assert an upsert omitting filter/add/update fails naming that argument",
+    "note": "Parser-level, and for omitted arguments rather than explicit `null` (Go message `Argument \"add\" has invalid value <nil>` not asserted). `cannot upsert multiple matching documents` (code at crates/query/src/plan/mutation/upsert.rs:456) has no test; the unique composite index collision on upsert-update has no test."
+  },
+  {
+    "id": "go.mutation.delete.by_id",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/transaction_rollback.rs::acp_transaction_rollback_test",
+      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility",
+      "tools/integration-test/tests/query/limit_pushdown.rs::deleted_documents_do_not_shorten_a_limited_page"
+    ],
+    "evidence": "transaction_rollback.rs:171 asserts delete_User(docID:) returns that docID; point_read_query_path.rs:86-92 asserts the doc is gone and visible with showDeleted; limit_pushdown.rs:149 asserts docs deleted by a docIDs list are not returned",
+    "note": "Unverified: `_deleted: true` in the delete response, aliasing `_docID` (also after an update), unknown IDs skipped without error (alone or mixed with known), `docID: []` deleting nothing, and `filter: {}` alongside docIDs not widening the delete."
+  },
+  {
+    "id": "go.mutation.delete.by_filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence"
+    ],
+    "evidence": "cross_runtime_queries.rs:147 asserts delete_QueryCase(filter: {name: {_eq: \"omega\"}}) returns the same as Go, and the following query (:153) matches Go",
+    "note": "Only a single-match filter. Unverified: a filter matching several docs, `filter: {}` deleting all, and no-match / empty-collection returning an empty list."
+  },
+  {
+    "id": "go.mutation.delete.collection_filter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/document_lifecycle.rs::filtered_document_delete_http_contract",
+      "crates/http/tests/filtered_document_delete.rs::a_bare_scalar_condition_means_equality",
+      "crates/http/tests/filtered_document_delete.rs::a_request_without_a_usable_filter_is_refused"
+    ],
+    "evidence": "document_lifecycle.rs:348-357 asserts DELETE /collections/X with a GraphQL-text filter deletes only Alice on a real node; filtered_document_delete.rs:249-250 (mock store) asserts a map filter",
+    "note": "Map filter only against a mock. No-filter deleting all documents diverges: Rust refuses a missing/null filter with 400 (filtered_document_delete.rs:141). Multiple matches deleted only on the mock; the 2^53 int filter is not tested."
+  },
+  {
+    "id": "go.mutation.delete.relation",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for Publisher/Book/Author one-to-one-to-one deletes, relational queries after delete, and `showDeleted: true` on a relation field; no test deletes a related doc and checks the relation goes null or that `Author(showDeleted: true) { published { _deleted } }` lists it."
+  },
+  {
+    "id": "go.mutation.truncate.apply",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/runner/mutation.rs::truncate_mutation_forwards_filter_and_returns_true",
+      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes",
+      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test"
+    ],
+    "evidence": "mutation.rs:1397 asserts truncate_User(filter:) returns true (mock truncator); truncate.rs:65-69 asserts filtered truncate keeps only Bob; document_lifecycle.rs:151 asserts collection truncate (CLI) leaves 0 docs",
+    "note": "No end-to-end GraphQL `truncate_User` test on a real node. The `docID:` argument (scalar, list, unknown, with filter) is not parsed by Rust at all (crates/query/src/query_parse/mutations.rs only accepts `filter` for truncate), so those cases are unverified and likely unimplemented."
+  },
+  {
+    "id": "go.mutation.truncate.restrictions",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/src/runner/mutation.rs::filtered_truncate_rejects_transactions_and_sibling_mutations",
+      "crates/query/src/query_parse/mutation_tests.rs::test_truncate_rejects_null_filter_and_selection"
+    ],
+    "evidence": "mutation.rs:1434 asserts `only field in an operation` and :1449 `cannot run in a transaction`; mutation_tests.rs:155 asserts `truncate filter cannot be null` for a null filter variable",
+    "note": "Unit level only. `docID: null` -> `truncate docID cannot be null` is unverified (the string does not exist in the Rust code). Documents left intact after a rejected truncate is not asserted."
+  },
+  {
+    "id": "go.mutation.txn.isolation",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/transactions.rs::transactions_test",
+      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation",
+      "tools/integration-test/tests/acp/transaction_rollback.rs::acp_transaction_rollback_test"
+    ],
+    "evidence": "transactions.rs:304,319 assert an add in a txn is visible inside only; rest_transactions.rs:144-146 assert a txn sees its update while outside sees the old value, :157-166 a txn's own delete makes the doc 404 inside it; transaction_rollback.rs:185 a txn's delete hides the doc inside it",
+    "note": "Comparisons are against autocommit reads, not a second open transaction. Unverified: a second txn's delete_User of a doc added in an uncommitted txn returns empty, and a second txn still reading a doc (and its relation, both directions) deleted in an uncommitted txn."
+  },
+  {
+    "id": "go.mutation.txn.conflict",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/issue1194_repro.rs::issue1194_same_doc_txn_pair_still_conflicts",
+      "crates/defra-node/tests/commit_conflict.rs::losing_commit_reports_a_typed_conflict",
+      "tools/integration-test/tests/issue1194_repro.rs::issue1194_identical_delta_txn_pair_distinct_docs"
+    ],
+    "evidence": "issue1194_repro.rs:226-229 asserts the second commit on the same doc fails with `transaction conflict`; commit_conflict.rs:40 same at the embedded layer; issue1194_repro.rs:183 expects two txns updating different docs both to commit",
+    "note": "Unverified: the stored value after the conflict is the first commit's. The Go-Bug-Suspect relational case (two txns each create+link a book to a different publisher, then query publishers) has no Rust test either way; the leaf expects Rust to commit both."
+  },
+  {
+    "id": "go.mutation.txn.atomic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation",
+      "crates/db/tests/txn/requests.rs::concurrent_mutations_on_one_transaction_all_succeed",
+      "crates/db/tests/txn/registry_suite.rs::test_concurrent_commit_and_discard_same_transaction"
+    ],
+    "evidence": "rest_transactions.rs:179-188 asserts a write to a discarded txn returns 404 and :231 that nothing extra was stored; requests.rs:87,93 assert concurrent adds on one txn are invisible before commit and all present after; registry_suite.rs:975 asserts exactly one of a racing commit/discard succeeds",
+    "note": "The `transaction not found` message is not asserted (status only). Unverified: two concurrent updates of one doc in one txn leave one update whole (never a field mix), an update racing a commit leaves old or new values whole, and an add racing a discard leaves the collection empty (the registry race test has no writes)."
+  },
+  {
+    "id": "go.net.peers.connect",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/connection/connection.rs::peers_empty",
+      "tools/integration-test/tests/p2p_iroh/connection/connection.rs::connect_peers",
+      "tools/integration-test/tests/p2p_iroh/connection/connection.rs::connect_multiple_peers",
+      "tools/integration-test/tests/p2p_iroh/connection/connection.rs::no_p2p_configured"
+    ],
+    "evidence": "connection.rs:75 asserts a fresh node has 0 active peers; connection.rs:116-118 asserts exactly the connected peer is listed; connection.rs:175 asserts node0 lists >=2 peers",
+    "note": "Unverified: the exact 'no p2p system configured' error (no_p2p_configured calls p2p_info, not active peers or connect, and accepts any error containing 'error' or an empty Ok at connection.rs:30-43); connecting from a P2P-disabled node; nodes 1 and 2 listing each other after both connect to node 0."
+  },
+  {
+    "id": "go.net.peers.disconnect",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/http/src/router/routes.rs::p2p_disconnect_removes_connected_peer",
+      "crates/p2p/tests/host_tests.rs::test_disconnect_drops_connected_peer",
+      "tools/integration-test/tests/p2p/manage_relay.rs::manage_peer_disconnect_severs_live_connection"
+    ],
+    "evidence": "routes.rs:579 asserts connected_peers is empty after POST /p2p/disconnect (mock P2P); host_tests.rs:988 waits until the peer leaves connected_peers; manage_relay.rs:789-799 asserts C leaves B's active peers",
+    "note": "Single-peer disconnect only. Unverified: disconnecting several peers in one call against a real node. Empty list: Rust's disconnect handler (crates/http/src/handlers/p2p/peers.rs:172) loops over an empty Vec and returns 200, so Go's 'addresses cannot be empty' error is neither implemented nor tested (a parity gap, not just a test gap)."
+  },
+  {
+    "id": "go.net.peer_events.doc_sync",
+    "verdict": "diverges",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::on_connect_join_event_doc_sync_topic",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::on_connect_bidirectional_join_events",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::on_connect_multiple_peers_all_join_events"
+    ],
+    "evidence": "events.rs:151 asserts a JOINED event only after both nodes subscribe to a collection; events.rs:203/208 both sides see JOINED; events.rs:258 >=2 JOINED with two peers",
+    "note": "Iroh emits no join on a 'doc-sync' topic at connect time (events.rs:119-120: 'peer events come from gossip topic subscriptions, not raw connections'), so the ports subscribe to a collection first. No test checks the topic name or which peer joined."
+  },
+  {
+    "id": "go.net.peer_events.collection",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::subscribe_collection_join_event",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::subscribe_multiple_collections_join_events",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::multiple_nodes_subscribed_collection_join_events",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::unsubscribe_collection_left_event",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::unsubscribe_multiple_collections_left_events"
+    ],
+    "evidence": "events.rs:301 JOINED on subscribe; events.rs:357 >=2 JOINED for 2 collections; events.rs:406 >=2 JOINED from 2 peers; events.rs:454 LEFT on unsubscribe; events.rs:516 >=2 LEFT for 2 collections",
+    "note": "Only event counts by type are asserted. Unverified: that each event names the right collection topic and the right peer."
+  },
+  {
+    "id": "go.net.peer_events.document",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::subscribe_document_join_event",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::subscribe_multiple_documents_join_events",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::unsubscribe_document_left_event",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::unsubscribe_multiple_documents_left_events",
+      "tools/integration-test/tests/p2p_iroh/peer/events.rs::all_topic_types_join_events"
+    ],
+    "evidence": "events.rs:563 JOINED on doc subscribe; events.rs:614 >=2 JOINED for 2 docs; events.rs:667 LEFT on doc unsubscribe; events.rs:724 >=2 LEFT; events.rs:785 >=2 JOINED for collection+document",
+    "note": "Only counts by type. Unverified: the topic or peer named in each event. The 'alongside doc-sync' part has no counterpart in iroh (see go.net.peer_events.doc_sync)."
+  },
+  {
+    "id": "go.net.subscribe.collection_list",
+    "verdict": "diverges",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_get_all",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_get_single",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_get_multiple",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_remove_get_single",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_remove_get_multiple"
+    ],
+    "evidence": "collection_sub.rs:49 empty initially; collection_sub.rs:65 asserts the list returns the collection NAME 'Users'; collection_sub.rs:146 empty after remove; collection_sub.rs:169 one left after removing one",
+    "note": "Go adds, lists and removes P2P collections by collection ID; Rust takes and returns collection names (crates/p2p-adapter/src/iroh.rs:855-905 maps names to IDs and back). A Go client sending collection IDs would get 'not found'. The list/remove semantics match. The multi-collection checks assert counts only, not which collection is left."
+  },
+  {
+    "id": "go.net.subscribe.collection_sync",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/overlay_origin.rs::overlay_delivered_hint_from_unknown_origin_leaves_no_pending_root",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_none",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_single_remove_none"
+    ],
+    "evidence": "overlay_origin.rs:110-121 polls until A's docs reach B with only collection subscriptions (no replicator); collection_sub.rs:264 empty add leaves list empty; collection_sub.rs:364 empty remove keeps the subscription",
+    "note": "Unverified: docs in an unsubscribed collection are not received; docs stop arriving after the subscription is removed; docs created on the subscriber are not pushed back. Rust's HTTP handler rejects an empty list with 400 ('at least one collection is required') where Go accepts it; the tests ignore the result."
+  },
+  {
+    "id": "go.net.subscribe.collection_errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_erroneous_id",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_mixed_batch_preserves_prior_subscription",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_valid_then_erroneous",
+      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_single_remove_erroneous"
+    ],
+    "evidence": "collection_sub.rs:212 unknown collection errors; collection_sub.rs:226-233 a mixed valid+unknown batch errors and adds nothing; collection_sub.rs:249 earlier subscription still listed; collection_sub.rs:345-348 subscription kept after a bad remove",
+    "note": "The error text 'collection not found' is not asserted. A bad remove's result is ignored, so whether it errors is unverified. 'Still working' is checked through the list, not by syncing a doc."
+  },
+  {
+    "id": "go.net.subscribe.collection_inactive",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for tests that subscribe to, unsubscribe from or list a collection that has a synced but inactive version: rg 'inactive|NoActiveVersion' in tools/integration-test/tests; p2p_iroh/sync/version.rs syncs inactive versions but never calls p2p_collection_add on them. Rust resolves subscriptions by name through the active definition (crates/p2p-adapter/src/iroh.rs:883), so an inactive-only collection may fail; this is untested."
+  },
+  {
+    "id": "go.net.subscribe.document_list",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/document.rs::p2p_document_test",
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_get_all_none_configured",
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_get_multiple",
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_remove_get_multiple"
+    ],
+    "evidence": "document.rs:43 empty initially, document.rs:69-74 the added docID is listed, document.rs:85 empty after remove (rust/go/go_rust via for_each_runtime); document_sub.rs:68, :99 (2 listed), :150 (1 left after removing one)",
+    "note": "The multi-doc checks assert counts, not which docID is left."
+  },
+  {
+    "id": "go.net.subscribe.document_sync",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_single_should_sync",
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_single_remove_none"
+    ],
+    "evidence": "document_sub.rs:206-224 polls until the tracked doc reaches node1; document_sub.rs:342-346 an empty remove keeps the subscription",
+    "note": "document_add_single_should_sync also sets a collection subscription and a 0->1 replicator (document_sub.rs:200-202), so delivery is never shown to come from the doc subscription alone. Unverified: other docs not delivered; updates stop after the doc subscription is removed while other subscribed docs keep syncing."
+  },
+  {
+    "id": "go.net.subscribe.document_errors",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_single_remove_erroneous",
+      "tools/integration-test/tests/p2p_iroh/replication/document_sub.rs::document_add_erroneous_should_not_sync"
+    ],
+    "evidence": "document_sub.rs:323-326 the valid subscription is still listed after removing a bogus docID",
+    "note": "document_add_erroneous_should_not_sync accepts success or failure (document_sub.rs:247-255), and no test asserts 'malformed document ID, missing either version or cid' (implemented at crates/p2p-adapter/src/iroh.rs:972/999). Unverified: a failed add syncs nothing; the kept subscription still syncs."
+  },
+  {
+    "id": "go.net.peer.isolation",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/create.rs::create_does_not_sync",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::update_does_not_sync_to_non_peer",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::update_does_not_sync_from_unmapped_node"
+    ],
+    "evidence": "create.rs:66-68 connected peers without subscriptions do not receive new docs; update.rs:439-441 an unconnected third node has 0 docs; update.rs:504-510 docs from an unconnected node2 do not reach node0 or node1",
+    "note": ""
+  },
+  {
+    "id": "go.net.peer.collection_topic",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/overlay_origin.rs::overlay_delivered_hint_from_unknown_origin_leaves_no_pending_root",
+      "tools/integration-test/tests/p2p_iroh/sync/overlay_rebroadcast.rs::third_hop_converges_through_rebroadcasting_relay",
+      "tools/integration-test/tests/p2p_iroh/peer/create.rs::create_with_collection_and_subscription",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::multiple_updates_per_node",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::multiple_updates_per_node_with_p2p_collection"
+    ],
+    "evidence": "overlay_origin.rs:110-121 subscription-only delivery A->B; overlay_rebroadcast.rs:102-107 a 3-node subscription-only chain reaches C; create.rs:573-575 a GraphQL subscription on the receiver fires with the synced doc; update.rs:607-630 concurrent updates converge to 47 or 62; update.rs:724-746 later updates propagate",
+    "note": "Unverified: docs created on the subscriber are not pushed back (create_with_p2p_collection subscribes both nodes and asserts Fred does reach node0, create.rs:201); Go's 5-node chain and the case where only the last node subscribes; the GraphQL-subscription and convergence tests also configure replicators, so collection-topic delivery is not isolated there."
+  },
+  {
+    "id": "go.net.peer.doc_updates",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::single_update_from_child",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::single_update_from_parent",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::update_per_node",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::multiple_updates_per_node",
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::single_update_from_child_and_restart"
+    ],
+    "evidence": "update.rs:103-119 an age=60 update reaches node1; update.rs:205-221 an update on node1 reaches node0; update.rs:307-330 concurrent updates converge to the same 45/60; update.rs:871 update arrives after both nodes restart",
+    "note": "Every port uses collection subscriptions plus replicators (one-way or bidirectional) instead of a doc subscription on the receiver, so propagation via doc subscriptions specifically is unverified."
+  },
+  {
+    "id": "go.net.peer.deletes",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/delete.rs::multiple_docs_single_delete",
+      "tools/integration-test/tests/p2p_iroh/peer/delete.rs::multiple_docs_single_delete_show_deleted",
+      "tools/integration-test/tests/p2p_iroh/peer/delete.rs::update_before_connect_then_delete_show_deleted",
+      "tools/integration-test/tests/p2p_iroh/peer/delete.rs::multiple_updates_before_connect_then_delete_show_deleted"
+    ],
+    "evidence": "delete.rs:108-125 after the delete node1 has only Andy; delete.rs:180-181 showDeleted shows John _deleted:true with age 43; delete.rs:279 tombstone keeps the pre-connect update (60); delete.rs:385 tombstone with final age 62",
+    "note": "Delivery goes through a replicator (delete.rs:46), not doc subscriptions. Unverified: a delete concurrent with an update ends deleted on both nodes (TestP2PWithSingleDocumentConcurrentDeleteAndUpdate has no port)."
+  },
+  {
+    "id": "go.net.peer.no_head_exchange",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Port update_and_delete_before_connect_show_deleted (p2p_iroh/peer/delete.rs:398) drops Go's step where node1 updates the doc to 66 after connecting. On node1 it asserts only conditionally (delete.rs:508-519: if John appears, it is deleted at 62). So neither Go's divergence (deleted at 62 vs live at 66) nor a Rust convergence outcome is asserted. Rust probably converges through replicator backfill (haven't verified)."
+  },
+  {
+    "id": "go.net.peer_replicator",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_with_create",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_with_update",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_with_delete_show_deleted",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_with_update_and_restart"
+    ],
+    "evidence": "replicator.rs:70-88 the created doc reaches the target; replicator.rs:136-151 the update arrives; replicator.rs:215-217 tombstone with _deleted:true; replicator.rs:629 the update arrives after a restart",
+    "note": "The ports use 2 nodes with a replicator only. Go's 3-node topology (node1 peered via doc subscription, node2 a replicator target) is not reproduced. Unverified: a new doc does NOT reach the peer node1; updates and deletes reach the doc-subscribed peer."
+  },
+  {
+    "id": "go.net.replicator.push",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/replication.rs::replication_test",
+      "tools/integration-test/tests/p2p/replication.rs::go_rust_replicator_backfills_existing_lww_document",
+      "tools/integration-test/tests/p2p/replication_advanced.rs::replication_crud_test",
+      "tools/integration-test/tests/p2p_iroh/peer/create.rs::head_hint_fanout_above_car_worker_bound_quiesces"
+    ],
+    "evidence": "replication.rs:77-79 the replicated doc keeps its docID and values (rust_rust/go_go/go_rust); replication.rs:164 a doc created before the replicator is backfilled to a Go target; replication_advanced.rs:102 10 docs arrive with exact values; create.rs:371-389 one source reaches 9 replicator targets",
+    "note": "Unverified: an unconfigured third node gets nothing; creates after a restart (the restart port covers updates only); a large (200-doc) backfill count."
+  },
+  {
+    "id": "go.net.replicator.direction",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/filtered_replication.rs::rust_filtered_replication_delete_stops_push",
+      "tools/integration-test/tests/p2p/filtered_replication.rs::rust_filtered_replication_delete_stops_push_iroh"
+    ],
+    "evidence": "filtered_replication.rs:2392-2396 after p2p_replicator_delete, a new matching doc is not pushed (libp2p); filtered_replication.rs:2485 same over iroh",
+    "note": "Both tests use a filtered replicator rather than a plain one. Unverified: docs created or updated only on the target are not pushed to the source; every Rust replication test that writes on the target sets a reverse replicator too."
+  },
+  {
+    "id": "go.net.replicator.updates",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/replication_advanced.rs::replication_crud_test",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_with_delete_show_deleted",
+      "tools/integration-test/tests/p2p_iroh/peer/delete.rs::update_before_connect_then_delete_show_deleted"
+    ],
+    "evidence": "replication_advanced.rs:145 updates arrive with exact values and 205-227 deletions arrive; replicator.rs:215-217 showDeleted tombstone; delete.rs:279 a doc created and updated before the replicator, then deleted, arrives deleted with its updated age",
+    "note": "Unverified: an update to a doc created before the replicator was configured (only the delete case is tested); an update on the target reaching the source through a doc subscription on the source."
+  },
+  {
+    "id": "go.net.replicator.offline_target",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/filtered_replication.rs::rust_filtered_replication_retry_respects_filter"
+    ],
+    "evidence": "filtered_replication.rs:3119 and :3140 a matching doc created while node1 was killed arrives after node1 restarts and reconnects",
+    "note": "Filtered replicator only; a single create. Unverified: many creates while offline; updates made while the target is offline arriving with final values; a retry from the doc's heads after the source patched the collection to a new version."
+  },
+  {
+    "id": "go.net.replicator.determinism",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/replication.rs::replication_test",
+      "crates/query/src/sdl_parse/parser_tests.rs::test_fields_sorted_alphabetically_after_docid"
+    ],
+    "evidence": "replication.rs:77 the replicated doc has the source's _docID; parser_tests.rs:1876-1880 fields are canonically sorted, which makes the collection ID independent of declaration order",
+    "note": "Unverified end-to-end: two nodes declaring fields in different orders get the same collection version ID and _version{collectionVersionId}; two docs with the same field value ('Shared') both return it on the target. The parser test checks one declaration order only and does not compare two."
+  },
+  {
+    "id": "go.net.replicator.cross_version",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p/replication.rs::go_rust_replicator_backfills_existing_lww_document",
+      "tools/integration-test/tests/p2p/replication.rs::replication_test"
+    ],
+    "evidence": "replication.rs:149-165 a doc on a Rust node replicates to a Go node (pinned GO_COMPAT_COMMIT build); replication_test's go_rust variant asserts the same at replication.rs:77-79",
+    "note": "The Rust analogue of cross-version is Rust<->Go interop, and only against the pinned Go build, not the v1.0.0 release. These tests cover Rust->Go only. Go->Rust is covered only for encrypted docs (encryption/cross_runtime_p2p.rs::go_to_rust_encrypted_p2p_replication, not read here)."
+  },
+  {
+    "id": "go.net.replicator.branchable",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No integration test replicates an @branchable collection to an offline target and checks the target's _commits(filter: {fieldName: {_eq: null}}) for the collection commit and version ID. Searched tools/integration-test/tests for '@branchable', '_eq: null', 'fieldName'; only sync/branchable.rs (on-demand sync, not replicator), signature.rs (single node) and issue1211_repro.rs (single node) use branchable. crates/db/tests/merge/collection_block_links.rs merges hand-built collection blocks at unit level but asserts head installation, not the replicated collection commit via _commits, and does no offline/restart or patch case."
+  },
+  {
+    "id": "go.net.relations",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/one_to_many.rs::one_to_many_replicator",
+      "tools/integration-test/tests/p2p_iroh/schema/one_to_many.rs::create_update_link_synced_to_unsynced"
+    ],
+    "evidence": "one_to_many.rs:221 polls (asserts) that Author and Book both arrive on the target; one_to_many.rs:236/247-248 assert the book name either via the relation or via a plain Book query",
+    "note": "The link itself is not required: when Author { published } is empty the test falls back to a plain Book query and only eprintln!s (one_to_many.rs:238-249); a failed Book create is tolerated as 'KNOWN GAP' (one_to_many.rs:252). The peer case (book pointed at an author the receiver lacks syncs, returns _AuthorID with Author: null) is not asserted: create_update_link_synced_to_unsynced only asserts the Author's own fields (one_to_many.rs:139-141) and never checks _AuthorID or a null relation."
+  },
+  {
+    "id": "go.net.schema_drift.sync",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_create_new_field_older_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_create_new_field_newer_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_create_new_field_updated_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_update_new_field_older_version",
+      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_update_new_field_older_version_multistep"
+    ],
+    "evidence": "schema_migration.rs:136 (newer-source doc reaches older node), :182 (older-source doc reaches newer node), :238-241 (Email value syncs when both have it), :304 (Name update with Email reaches older node), :374 (Email-only update then Name update: Name 'Shahzad' arrives on older node)",
+    "note": "The replicator half is asserted strictly. The peer (pubsub doc/collection subscription) half is not: the peer/schema.rs ports (create_new_field_syncs_to_older_version, update_new_field_syncs_to_older_version_multistep, etc.) actually use p2p_replicator_set, and they early-return or eprintln on 'KNOWN GAP' when the patch or create fails (peer/schema.rs:47-49, 71-74, 132-134), so they can pass without asserting."
+  },
+  {
+    "id": "go.net.schema_drift.late_patch",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Go-Bug-Suspect leaf. peer/schema.rs::create_synced_before_schema_update_no_new_field reproduces the scenario but asserts nothing about Email: it only eprintln!s when Email is visible (peer/schema.rs:465-470) and returns early on patch failure. So neither Go's Email: null nor a fixed behaviour (returning the synced value) is asserted. Searched p2p_iroh/peer, p2p_iroh/schema, p2p/ for 'email' assertions after a late patch."
+  },
+  {
+    "id": "go.net.crdt.lww",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/update.rs::update_per_node"
+    ],
+    "evidence": "update.rs:324 poll_until asserts both nodes agree on one value (45 or 60) after concurrent updates to the same field",
+    "note": "Only two nodes, joined by bidirectional replicators rather than three fully subscribed peers. Concurrent updates to different fields (name, age, score) all surviving the merge is not asserted anywhere across nodes. Searched for 'different fields', 'score', concurrent multi-field P2P tests; crates/db/tests/write/disjoint_parts.rs covers disjoint-field updates only inside one node's transactions."
+  },
+  {
+    "id": "go.net.crdt.counters_peer",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/peer/crdt.rs::update_with_pcounter",
+      "tools/integration-test/tests/p2p_iroh/peer/crdt.rs::update_with_pcounter_simultaneous",
+      "tools/integration-test/tests/p2p_iroh/peer/crdt.rs::update_with_pncounter",
+      "tools/integration-test/tests/p2p_iroh/peer/crdt.rs::update_with_pncounter_simultaneous"
+    ],
+    "evidence": "crdt.rs:109/125 pcounter 10+10=20 on both nodes; crdt.rs:240-241 two nodes each +45 give 90 (pcounter); crdt.rs:299/314 pncounter 20; crdt.rs:429-430 pncounter 90",
+    "note": "Not asserted: three nodes adding 10, 20, 30 giving 60; pncounter at 100 with 10, -30, 50 giving 130; twenty interleaved +1 on each of two nodes giving 40; five fully connected nodes each +10 giving 50. The Rust tests also link nodes with replicators, not pure doc-subscription pubsub. No 3- or 5-node counter test found (searched 'pcounter'/'pncounter' across tools/integration-test/tests/p2p*)."
+  },
+  {
+    "id": "go.net.crdt.counters_replicator",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_create_pcounter",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_update_pcounter",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_create_pncounter",
+      "tools/integration-test/tests/p2p_iroh/replication/replicator.rs::replicator_update_pncounter"
+    ],
+    "evidence": "replicator.rs:270 created counter (10) arrives on target with its value; replicator.rs:359 and :504 the replicator target reads 20 after a +10 increment (pcounter and pncounter)",
+    "note": "The doc-subscribed third peer of the Go peer_replicator topology (increment visible on source, replicator target AND peer) is not exercised: the Rust tests are two-node. The source-side value 20 is not asserted in the replicator tests either."
+  },
+  {
+    "id": "go.net.sync.documents",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/doc.rs::docs_on_single_node",
+      "tools/integration-test/tests/p2p_iroh/sync/doc.rs::docs_on_multiple_nodes",
+      "tools/integration-test/tests/p2p_iroh/sync/doc.rs::single_doc_on_multiple_nodes",
+      "tools/integration-test/tests/p2p_iroh/sync/doc.rs::different_versions_sync_latest",
+      "tools/integration-test/tests/p2p_iroh/sync/doc.rs::after_sync_no_auto_subscribe"
+    ],
+    "evidence": "doc.rs:99-100 docs pulled from one peer; doc.rs:188-190 docs pulled from two peers; doc.rs:264 one doc only; doc.rs:360 re-sync gets latest age 30; doc.rs:455-456 later source update not received (no subscription)",
+    "note": "Not asserted: four concurrent sync calls for the same docID all succeeding (no concurrent-sync test found; crates/p2p-adapter/src/doc_sync unit tests cover deadlines/timeouts only). 'Diverged versions across peers merge to the latest' is only approximated: Rust updates on one node then re-syncs, not two peers holding different versions. single_doc_on_multiple_nodes has the doc on only one node, not on several."
+  },
+  {
+    "id": "go.net.sync.branchable_copy",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::one_node_empty_another_with_docs",
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::different_docs_on_both_nodes",
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::should_not_subscribe"
+    ],
+    "evidence": "branchable.rs:110-111 empty node gets all docs; branchable.rs:150/165 both nodes end with the union of 4 docs; branchable.rs:534-535 no auto-subscribe, then :550 next sync brings the new docs",
+    "note": "Multi-hop topologies are not tested: the complex-network ports (multiple_docs_complex_linked_network, multiple_heads_from_peers) are 2-node. branched_versions_and_docs only asserts node1 is non-empty (branchable.rs:418-422) after a 3 s sleep; it never checks five docs on each node or per-node field values (email vs score), and only one node patches."
+  },
+  {
+    "id": "go.net.sync.branchable_dag",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "The ports documents_from_peers_identical_dag and documents_from_peers_new_head_after_sync_identical_dag (sync/branchable.rs:180, :224) only check field values (age 30/31). Neither queries _commits or compares collection commit CIDs across nodes, and neither checks a height-2 collection commit whose heads link the 4 previous heads. Searched tools/integration-test/tests for '_commits' with 'fieldName: {_eq: null}' and for 'heads' assertions on collection commits."
+  },
+  {
+    "id": "go.net.sync.branchable_errors",
+    "verdict": "diverges",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::non_existent_collection_error",
+      "tools/integration-test/tests/p2p_iroh/sync/sync.rs::iroh_sync_branchable_invalid",
+      "tools/integration-test/tests/p2p/sync.rs::sync_branchable_test",
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::non_branchable_collection_error"
+    ],
+    "evidence": "sync.rs (p2p_iroh):65-69 and p2p/sync.rs:178-182 assert an unknown collection fails with a 'not found'/'collection' lookup error instead of Go's 'index out of range'; branchable.rs:451 asserts a non-branchable collection fails",
+    "note": "Rust reports a collection-lookup error for a non-existent collection instead of Go's runtime 'index out of range' (the Go-Bug-Suspect part). The non-branchable case asserts only is_err(); the message 'collection is not branchable' (raised in crates/p2p-adapter/src/transport_doc_pusher.rs:593) is never asserted."
+  },
+  {
+    "id": "go.net.sync.branchable_deadline",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/branchable.rs::one_node_empty_another_with_docs"
+    ],
+    "evidence": "branchable.rs:110-111 a branchable sync with no caller deadline completes and the docs arrive (HTTP/CLI surface)",
+    "note": "The Go leaf is C-client only (deadline serialization over the C bindings). The Rust FFI p2p_sync_branchable_collection (crates/ffi/src/p2p/sync.rs:75) takes no deadline argument and has no test; the finite-deadline case is neither expressible nor tested."
+  },
+  {
+    "id": "go.net.sync.collection_version",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::initial_col_version",
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::initial_col_version_activated_and_queried",
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::patch_version_of_known_collection",
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::patch_version_of_unknown_collection"
+    ],
+    "evidence": "version.rs:81-93 synced version ID arrives on node1; version.rs:147-163 after collection_set_active the synced collection accepts a synced doc and is queryable (John, 4); version.rs:226-238 patched version arrives",
+    "note": "Not asserted: that the synced version arrives inactive (listed only with get-inactive); that syncing a patched version also fetches the unknown predecessor with PreviousVersion set (patch_version_of_unknown_collection only checks some VersionID exists, version.rs:305); that a locally active version stays active. The crates/db merge tests assert !is_active only for a policy-bound version (crates/db/tests/merge/governance/definition.rs:503), not the plain case."
+  },
+  {
+    "id": "go.net.sync.collection_version_view",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::with_view_activated_and_queried",
+      "tools/integration-test/tests/p2p_iroh/sync/version.rs::with_view"
+    ],
+    "evidence": "version.rs:529-545 after activating the synced UserView, UserView { fullName } returns 'John' computed by the synced lens; version.rs:416-428 the view version arrives",
+    "note": "That the synced view arrives inactive and non-materialized is not asserted (with_view only checks a VersionID exists). Both tests need the Go repo's copy lens WASM and fail when it is missing (require_lens_wasm)."
+  },
+  {
+    "id": "go.net.sync.collection_version_kinds",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test syncs a collection version with non-nillable scalar (Boolean!, Int!, Float64!, Float32!, String!, DateTime!, Blob!, JSON!) or non-nillable array fields and checks that the receiving node keeps the non-nillable kind with an LWW register. Searched for NonNillable/non_nillable together with sync/merge/block in crates/db/tests, crates/p2p*, crates/schema, tools/integration-test. crates/schema/tests/field_kind_tests.rs:371/414 round-trip kinds through JSON only, not through a synced definition block; governance/definition.rs:336 checks identity reproduction for a String field only."
+  }
+]
