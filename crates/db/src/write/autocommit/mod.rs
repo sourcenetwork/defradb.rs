@@ -10,6 +10,7 @@ pub mod batch;
 mod create;
 mod delete;
 pub(crate) mod helpers;
+mod one_op;
 mod read;
 pub mod update;
 
@@ -388,6 +389,23 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         collection_name: &str,
         doc: Document,
     ) -> query::error::Result<CreateResult> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            let mut docs = vec![doc];
+            self.seed_creates(collection_name, &mut docs).await?;
+            let mut results: Vec<CreateResult> = self
+                .in_batch(
+                    context,
+                    one_op::CreateWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        docs,
+                    },
+                )
+                .await?;
+            return results
+                .pop()
+                .ok_or_else(|| query::error::QueryError::execution("create returned no result"));
+        }
         self.create_with_resolved_inputs(context, collection_name, doc)
             .await
     }
@@ -407,6 +425,20 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         collection_name: &str,
         docs: Vec<Document>,
     ) -> query::error::Result<Vec<CreateResult>> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            let mut docs = docs;
+            self.seed_creates(collection_name, &mut docs).await?;
+            return self
+                .in_batch(
+                    context,
+                    one_op::CreateWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        docs,
+                    },
+                )
+                .await;
+        }
         self.create_many_with_resolved_inputs(context, collection_name, docs)
             .await
     }
@@ -433,6 +465,21 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         doc: Document,
         modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            return self
+                .in_batch(
+                    context,
+                    one_op::UpdateWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        doc,
+                        modified_fields,
+                        expected: None,
+                        expected_fields: None,
+                    },
+                )
+                .await;
+        }
         self.update_with_resolved_inputs(context, collection_name, None, doc, modified_fields)
             .await
     }
@@ -462,6 +509,21 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         doc: Document,
         modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            return self
+                .in_batch(
+                    context,
+                    one_op::UpdateWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        doc,
+                        modified_fields,
+                        expected: Some(expected),
+                        expected_fields: None,
+                    },
+                )
+                .await;
+        }
         self.update_with_resolved_inputs(
             context,
             collection_name,
@@ -500,6 +562,21 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         doc: Document,
         modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            return self
+                .in_batch(
+                    context,
+                    one_op::UpdateWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        doc,
+                        modified_fields,
+                        expected: Some(expected),
+                        expected_fields: Some(expected_fields),
+                    },
+                )
+                .await;
+        }
         self.update_with_projected_resolved_inputs(
             context,
             collection_name,
@@ -526,6 +603,21 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         collection_name: &str,
         doc_id: &DocID,
     ) -> query::error::Result<DeleteResult> {
+        if let one_op::Route::Batch = self.chunk_route(collection_name)? {
+            let mut results: Vec<DeleteResult> = self
+                .in_batch(
+                    context,
+                    one_op::DeleteWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        doc_ids: vec![doc_id.clone()],
+                    },
+                )
+                .await?;
+            return results
+                .pop()
+                .ok_or_else(|| query::error::QueryError::execution("delete returned no result"));
+        }
         self.delete_with_resolved_inputs(context, collection_name, doc_id)
             .await
     }

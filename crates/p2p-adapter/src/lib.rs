@@ -103,6 +103,31 @@ where
         .collect()
 }
 
+/// `names` plus their `@chunk` collections, which replicate and subscribe with
+/// their parent. A `filtered` parent keeps its chunks out, since a chunk can't
+/// be matched against its parent's filter.
+pub fn with_chunk_collections<F>(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    names: Vec<String>,
+    filtered: F,
+) -> Vec<String>
+where
+    F: Fn(&str) -> bool,
+{
+    let Some(pusher) = pusher else {
+        return names;
+    };
+    let mut all = names.clone();
+    for name in names.iter().filter(|name| !filtered(name)) {
+        for chunks in pusher.chunk_collections(name) {
+            if !all.contains(&chunks) {
+                all.push(chunks);
+            }
+        }
+    }
+    all
+}
+
 /// Collections that need an initial document replay when adding a replicator.
 ///
 /// Replays collections that are newly authorized, or whose filter or explicit

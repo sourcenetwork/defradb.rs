@@ -1,12 +1,14 @@
-//! Text chunking: cutting a `@chunk` field into chunk documents.
+//! Text chunking for `@chunk` fields.
 //!
-//! [`split`] cuts a text into chunks and [`list`] builds the parent's chunk
-//! list from them, [`access`] decides who a chunk's blocks and keys belong
-//! to outside a query plan, and [`window`] is the older fixed-size splitter
-//! the benchmark fixtures use.
+//! `sync` writes chunk documents in the parent's transaction, and [`access`]
+//! decides who may read them outside a query. [`window`] is an older
+//! fixed-size splitter that only the benchmark fixtures use.
 
 pub use chunk_split::{list, split};
 
 pub mod access;
+pub(crate) mod encryption;
+pub mod guard;
+pub(crate) mod sync;
 pub(crate) mod user_writes;
 pub mod window;

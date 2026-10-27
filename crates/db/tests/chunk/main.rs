@@ -3,6 +3,7 @@
 mod common;
 
 mod key_owners;
+mod race;
 mod schema;
 mod user_writes;
 mod window;

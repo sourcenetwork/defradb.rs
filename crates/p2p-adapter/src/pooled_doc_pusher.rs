@@ -240,6 +240,10 @@ impl TransportDocPusher for PooledDocPusher {
         self.inner.get_collection_id(name)
     }
 
+    fn chunk_collections(&self, name: &str) -> Vec<String> {
+        self.inner.chunk_collections(name)
+    }
+
     fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>> {
         self.inner.get_collection_name(collection_id)
     }

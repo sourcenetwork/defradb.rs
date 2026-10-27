@@ -1183,6 +1183,14 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent",
+        axis: Tla,
+        anchor: "crates/db/src/chunk/sync/mod.rs set_lists, ChunkWrites::create_missing, ChunkWrites::delete_all; crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as, delete_as; crates/db/src/write/doc.rs DbDocMutator",
+        model_ref: "MC_ParentChunks_Green.cfg / MC_ParentChunks_Red_SeparateTxn.cfg / MC_ParentChunks_Red_NoCascade.cfg / MC_ParentChunks_Red_NoValidation.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Text chunking",
         name: "covers / bounded / deterministic / local_edit",
         axis: Lean,
         anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs fence_before; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
@@ -1201,7 +1209,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "INV_ReadsMatchText / INV_SettledPeersAgree",
         axis: Tla,
-        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes",
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes; crates/db/src/chunk/guard.rs check_chunk_merge",
         model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
         tiers: &[Boundary],
     },
