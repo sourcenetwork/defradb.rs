@@ -2507,6 +2507,7 @@ dependencies = [
  "async-trait",
  "defra-core",
  "schema",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -4876,7 +4877,6 @@ dependencies = [
  "blockstore",
  "cbindgen",
  "cid",
- "client",
  "crypto",
  "db",
  "defra-core",

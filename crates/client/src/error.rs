@@ -23,6 +23,9 @@ pub enum Error {
     /// The node's own storage failed while serving the request.
     #[error("{0}")]
     Storage(String),
+    /// A remote node refused the request; its message, unchanged.
+    #[error("{0}")]
+    Remote(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

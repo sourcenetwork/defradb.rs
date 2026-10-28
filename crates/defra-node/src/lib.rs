@@ -22,6 +22,7 @@ mod benchmark_queries;
 mod benchmark_stats;
 #[doc(hidden)]
 pub mod benchmark_support;
+mod client_impl;
 pub mod coding_search;
 pub mod config;
 #[cfg(test)]

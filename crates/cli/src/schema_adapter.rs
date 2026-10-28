@@ -47,7 +47,8 @@ impl<S: Store + 'static> SchemaAdapter<S> {
     }
 
     async fn add_collection_inner(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
-        client::Client::add_collection(&*self.database, &self.context(), sdl)
+        self.database
+            .add_collection(&self.context(), sdl)
             .await
             .map_err(|e| e.to_string())
     }

@@ -339,16 +339,13 @@ impl DefraClient {
     async fn add_collection_impl(&mut self, sdl: &str) -> Result<JsValue> {
         let db = self.ensure_open()?;
 
-        let added = client::Client::add_collection(
-            db.as_ref(),
-            &defra_core::RequestContext::default(),
-            sdl,
-        )
-        .await
-        .map_err(|e| WasmError::Schema(e.to_string()))?
-        .into_iter()
-        .map(|collection| collection.name)
-        .collect::<Vec<_>>();
+        let added = db
+            .add_collection(&defra_core::RequestContext::default(), sdl)
+            .await
+            .map_err(|e| WasmError::Schema(e.to_string()))?
+            .into_iter()
+            .map(|collection| collection.name)
+            .collect::<Vec<_>>();
 
         // Persist to OPFS so schema definitions survive page refresh
         self.persist_impl().await?;

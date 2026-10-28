@@ -1,7 +1,6 @@
 //! Adding collections from SDL: the one implementation every edge calls.
 
 use super::*;
-use async_trait::async_trait;
 use defra_core::RequestContext;
 use identity::Did;
 use rapidhash::RapidHashSet;
@@ -65,13 +64,13 @@ where
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S> client::Client for crate::database::DB<S>
+impl<S> crate::database::DB<S>
 where
     S: Store + 'static,
 {
-    async fn add_collection(
+    /// Parse `sdl`, check it and create every collection it defines, or none.
+    /// The one core function every edge's `Client::add_collection` calls.
+    pub async fn add_collection(
         &self,
         context: &RequestContext,
         sdl: &str,

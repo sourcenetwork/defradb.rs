@@ -108,7 +108,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     }
 
     /// Add a schema within an existing transaction, through the same checks
-    /// as [`client::Client::add_collection`]. The collections are only
+    /// as [`crate::database::DB::add_collection`]. The collections are only
     /// visible after the transaction commits, but queries within it can use
     /// them. Branchable collection ACP objects are registered before the
     /// storage commit when document ACP is installed.

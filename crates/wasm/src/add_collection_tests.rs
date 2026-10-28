@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use client::Client;
     use db::DB;
     use defra_core::RequestContext;
     use storage::RegolithStore;

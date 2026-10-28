@@ -68,7 +68,7 @@ pub unsafe extern "C" fn add_schema(
         let context = defra_core::RequestContext::default().with_identity(identity_str);
 
         ffi_async!(node_ptr, {
-            let created_versions = client::Client::add_collection(&*database, &context, &schema_str)
+            let created_versions = database.add_collection(&context, &schema_str)
                 .await
                 .map_err(|e| e.to_string())?;
 

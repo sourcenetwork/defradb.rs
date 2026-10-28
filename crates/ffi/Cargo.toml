@@ -72,7 +72,6 @@ hex.workspace = true
 # Internal crates
 crypto = { path = "../crypto" }
 db = { path = "../db", default-features = false }
-client = { path = "../client" }
 defra-core = { path = "../defra-core" }
 defra-http = { path = "../http" }
 document = { path = "../document" }

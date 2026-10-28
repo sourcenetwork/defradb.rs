@@ -101,7 +101,7 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
         let database = Arc::clone(&self.database);
         let sdl = sdl.to_owned();
         self.on_pool(move || async move {
-            client::Client::add_collection(&*database, &context, &sdl).await?;
+            database.add_collection(&context, &sdl).await?;
             Ok(())
         })
         .await

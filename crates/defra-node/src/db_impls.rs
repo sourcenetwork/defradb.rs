@@ -166,7 +166,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         context: &RequestContext,
         sdl: &str,
     ) -> Result<Vec<CollectionVersion>> {
-        Ok(client::Client::add_collection(&*self.database, context, sdl).await?)
+        Ok(self.database.add_collection(context, sdl).await?)
     }
 
     async fn ensure_ordinary_index(

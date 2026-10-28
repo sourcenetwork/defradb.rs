@@ -1,7 +1,7 @@
 //! `Client::add_collection`: the one place collections are added from SDL.
 
 use acp::{MemoryZanzibarStore, Policy, PolicyLookup};
-use client::{Client, Error};
+use client::Error;
 use db::{NacConfig, NacManager, DB};
 use defra_core::RequestContext;
 use identity::Did;
