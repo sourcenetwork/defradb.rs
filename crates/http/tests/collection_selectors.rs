@@ -298,16 +298,19 @@ async fn view_refresh_uses_the_same_json_selector_error() {
     assert!(error["error"].as_str().is_some(), "{error}");
 }
 
-#[tokio::test]
-async fn a_transaction_header_reads_transaction_visible_collections() {
-    assert!(names("?name=MockCollection").await.is_empty());
+#[test]
+fn a_transaction_header_reads_transaction_visible_collections() {
+    workers::block_on(async {
+        assert!(names("?name=MockCollection").await.is_empty());
 
-    let response = get_response_with_txn(router(), "?name=MockCollection", Some("123")).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
-    assert_eq!(body.as_array().unwrap().len(), 1);
-    assert_eq!(body[0]["Name"], "MockCollection");
+        let response = get_response_with_txn(router(), "?name=MockCollection", Some("123")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["Name"], "MockCollection");
+    })
+    .unwrap()
 }
 
 /// Go keys the selectors off `Query().Has(..)`, so `?name=` is a name set to

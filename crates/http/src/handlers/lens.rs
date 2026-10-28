@@ -194,8 +194,9 @@ mod tests {
         assert!(json.contains("lens-123"));
     }
 
-    #[tokio::test]
-    async fn set_migration_uses_tx_header_without_global_lens_ops() {
+    #[test]
+    fn set_migration_uses_tx_header_without_global_lens_ops() {
+        workers::block_on(async {
         let state = AppStateBuilder::new(
             Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
@@ -215,6 +216,8 @@ mod tests {
         .expect("set migration via transaction header should succeed");
 
         assert_eq!(response.0.lens_id, "mock-transform-id");
+        })
+        .unwrap()
     }
 }
 
