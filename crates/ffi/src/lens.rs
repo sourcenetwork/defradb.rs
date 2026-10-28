@@ -153,14 +153,14 @@ pub unsafe extern "C" fn lens_add_in_txn(
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
         let lens_str = try_ffi!(require_c_str(lens_json, "lens_json"));
 
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
 
         // The caller acts in the call's context, so the NAC checks the body
         // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
+        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty())).with_txn(Some(txn));
 
         let result = crate::call::wait(async move {
             let modules: Vec<LensModule> =
@@ -185,11 +185,11 @@ pub unsafe extern "C" fn lens_add_in_txn(
             let mut all_ids = Vec::new();
             for lens_module in &modules {
                 let config = LensConfig::new("", "", lens_module.clone());
-                let transform_id = registry
-                    .add_lens_in_txn_as(&context, &txn_str, config)
+                let transform_id = runner
+                    .add_lens_as(&context, config)
                     .await
                     .map_err(|e| format!("failed to add lens in txn: {}", e))?;
-                all_ids.push(transform_id.to_string());
+                all_ids.push(transform_id);
             }
 
             Ok::<String, String>(all_ids.join(","))
@@ -256,25 +256,20 @@ pub unsafe extern "C" fn lens_list_in_txn(
         ));
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
 
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
 
         // The caller acts in the call's context, so the NAC checks the body
         // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
+        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty())).with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let lenses = registry
-                .list_lenses_in_txn_as(&context, &txn_str)
+            runner
+                .list_lenses_as(&context)
                 .await
-                .map_err(|e| format!("failed to list lenses in txn: {}", e))?;
-
-            let json = serde_json::to_string(&lenses)
-                .map_err(|e| format!("failed to serialize lenses: {}", e))?;
-
-            Ok(json)
+                .map_err(|e| format!("failed to list lenses in txn: {}", e))
         })
     }
 }

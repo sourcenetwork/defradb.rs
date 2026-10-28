@@ -1,8 +1,7 @@
 use crate::ffi_node_db_async_body;
 use crate::helpers::require_c_str;
 use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
-use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, ffi_entry, try_ffi};
 use acp::nac::NodePermission;
 
 /// Delete a collection by name.
@@ -104,17 +103,19 @@ pub unsafe extern "C" fn delete_collections_in_txn(
         ));
         let txn_id = try_ffi!(require_c_str(txn_id, "txn_id"));
         let targets_json = try_ffi!(require_c_str(targets_json, "targets_json"));
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(registry) => registry,
-            None => return crate::types::FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_id
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| crate::types::FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
             let targets: Vec<String> = serde_json::from_str(&targets_json)
                 .map_err(|error| format!("failed to parse collection targets JSON: {}", error))?;
-            registry
-                .delete_collections_in_txn_as(&context, &txn_id, targets, active_only)
+            runner
+                .delete_collections_as(&context, targets, active_only)
                 .await
                 .map_err(|error| format!("failed to delete collections: {}", error))?;
             Ok("{}".to_string())
@@ -185,15 +186,17 @@ pub unsafe extern "C" fn set_collection_active_in_txn(
         ));
         let txn_id = try_ffi!(require_c_str(txn_id, "txn_id"));
         let version_id = try_ffi!(require_c_str(version_id, "version_id"));
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(registry) => registry,
-            None => return crate::types::FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_id
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| crate::types::FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let version = registry
-                .set_collection_active_in_txn_as(&context, &txn_id, &version_id, is_active)
+            let version = runner
+                .set_collection_active_as(&context, &version_id, is_active)
                 .await
                 .map_err(|error| format!("failed to update collection active state: {}", error))?;
             serde_json::to_string(&version)
