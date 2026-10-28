@@ -977,6 +977,35 @@ async fn run_mixed_fields_3node_probe(
         "[{label}] seed DAG did not converge before the mixed-field updates"
     );
 
+    for n in 0..3 {
+        let state = mixed_fields_state(&cluster.client(n));
+        assert_eq!(
+            state,
+            ("seed".to_string(), 0),
+            "[{label}] node {n} must share the seed state before the isolated writes"
+        );
+    }
+
+    // Keep the counter writes based on the same zero value. Without this
+    // partition, the first writer can replicate before the second mutation
+    // reads its current value, turning this into sequential assignment rather
+    // than the independent counter updates this parity case exercises.
+    for i in 0..3 {
+        for (j, peer) in addr.iter().enumerate() {
+            if i != j {
+                let peer_id = peer.rsplit("/p2p/").next().expect("peer ID");
+                cluster
+                    .client(i)
+                    .p2p_replicator_delete(&["Mixed"], Some(peer_id))
+                    .expect("pause mixed-field replication");
+            }
+        }
+        cluster
+            .client(i)
+            .p2p_collection_delete(&["Mixed"])
+            .expect("pause mixed-field collection subscription");
+    }
+
     cluster
         .client(0)
         .query(&format!(
@@ -984,6 +1013,11 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node0 name=alice");
     required_commits.extend(support::commit_cids(&cluster.client(0), &id));
+    assert_eq!(
+        mixed_fields_state(&cluster.client(1)),
+        ("seed".to_string(), 0),
+        "[{label}] node1 must still have the common counter base before its update"
+    );
     cluster
         .client(1)
         .query(&format!(
@@ -991,6 +1025,11 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node1 views=10");
     required_commits.extend(support::commit_cids(&cluster.client(1), &id));
+    assert_eq!(
+        mixed_fields_state(&cluster.client(2)),
+        ("seed".to_string(), 0),
+        "[{label}] node2 must still have the common counter base before its update"
+    );
     cluster
         .client(2)
         .query(&format!(
@@ -998,6 +1037,27 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node2 views=7");
     required_commits.extend(support::commit_cids(&cluster.client(2), &id));
+
+    for i in 0..3 {
+        cluster
+            .client(i)
+            .p2p_collection_add(&["Mixed"])
+            .expect("resume mixed-field collection subscription");
+    }
+    for i in 0..3 {
+        for (j, peer) in addr.iter().enumerate() {
+            if i != j {
+                cluster
+                    .client(i)
+                    .p2p_connect(&[peer.as_str()])
+                    .expect("reconnect mixed-field peer");
+                cluster
+                    .client(i)
+                    .p2p_replicator_set(&["Mixed"], peer)
+                    .expect("resume mixed-field replication");
+            }
+        }
+    }
 
     assert!(
         poll_mixed_fields_dags_converged(

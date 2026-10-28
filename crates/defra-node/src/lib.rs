@@ -1572,6 +1572,10 @@ impl NodeBuilder {
                 Some(extra) => server.with_extra_routes(extra),
                 None => server,
             };
+            let server = match http_cfg.router_transform {
+                Some(transform) => server.with_router_transform(transform),
+                None => server,
+            };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
             // The accept loop is a service of the node's scope: shutting the
@@ -2241,3 +2245,6 @@ mod p2p_tests;
 
 #[cfg(test)]
 mod owner_observation_tests;
+
+#[cfg(all(test, feature = "http"))]
+mod router_transform_tests;

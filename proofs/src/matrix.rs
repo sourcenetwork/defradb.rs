@@ -10,6 +10,7 @@ use crate::registry::{Property, Tier, PROPERTIES};
 /// self-contained; if the README grows a family, this list and `PROPERTIES`
 /// must both grow or the tests fail, and the README must list exactly these.
 pub const MODELED_FAMILIES: &[&str] = &[
+    "HTTP router composition",
     "Storage failure classification",
     "B3 filtered replication",
     "DAG convergence (partition / eviction / restart)",
@@ -57,6 +58,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Iroh service records",
     "Iroh solicited replies",
     "Reply-driven DAG fetch",
+    "Embedded node startup",
     "Text CRDT convergence",
     "JSON CRDT per-path merge",
     "Custom CRDT types",

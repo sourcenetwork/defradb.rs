@@ -98,7 +98,8 @@ where
                     .collect();
                 let mut result = Vec::with_capacity(doc_ids.len());
                 for doc_id in doc_ids {
-                    let owner = if visible.contains(doc_id.as_str()) {
+                    let readable = visible.contains(doc_id.as_str());
+                    let owner = if readable {
                         if let Some(policy) = &definition.policy {
                             if acp
                                 .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)
@@ -117,7 +118,11 @@ where
                     } else {
                         None
                     };
-                    result.push(DocumentOwnerObservation { doc_id, owner });
+                    result.push(DocumentOwnerObservation {
+                        doc_id,
+                        visible: readable,
+                        owner,
+                    });
                 }
                 Ok(result)
             })

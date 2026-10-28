@@ -64,7 +64,29 @@ pub enum TransportConfig {
 #[cfg(feature = "libp2p")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Libp2pConfig {
-    pub listen_addr: String,
+    /// The addresses the host listens on; none leaves it dialing out only.
+    pub listen_addrs: Vec<String>,
+    /// Peers the host connects to once it listens.
+    pub bootstrap_peers: Vec<String>,
+    /// Run GossipSub, which document topics replicate over.
+    pub enable_pubsub: bool,
+    /// Run the relay client transport.
+    pub enable_relay: bool,
+    /// Seconds a block-sync stream may take; `None` keeps the host default.
+    pub stream_timeout_secs: Option<u64>,
+}
+
+#[cfg(feature = "libp2p")]
+impl Default for Libp2pConfig {
+    fn default() -> Self {
+        Self {
+            listen_addrs: Vec::new(),
+            bootstrap_peers: Vec::new(),
+            enable_pubsub: true,
+            enable_relay: true,
+            stream_timeout_secs: None,
+        }
+    }
 }
 
 /// Iroh transport configuration.
@@ -167,6 +189,15 @@ pub struct EmbeddedNodeConfig {
     pub max_doc_sync_request_doc_ids: Option<usize>,
     pub rate_limit_burst: Option<u32>,
     pub rate_limit_rate: Option<f64>,
+    /// Retries of a conflicting transaction; `None` keeps the database default.
+    pub max_txn_retries: Option<u32>,
+    /// Bytes per block chunk; `None` keeps the database default.
+    pub chunk_size: Option<usize>,
+    /// Seconds between replicator retries, the last one repeating; `None`
+    /// keeps the Go-compatible default ladder.
+    pub replicator_retry_intervals: Option<Vec<u64>>,
+    /// Enable node access control at startup, owned by the node identity.
+    pub node_acp_enabled: bool,
 }
 
 /// Runtime P2P transport kind.

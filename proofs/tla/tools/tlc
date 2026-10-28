@@ -87,4 +87,9 @@ else
   exit 1
 fi
 
+# TLC extracts bundled standard modules into java.io.tmpdir. Parallel JVMs
+# need distinct directories or one can read another's partially written module.
+if [ -n "${TLA_JAVA_TMPDIR:-}" ]; then
+  exec "$JAVA" "-Djava.io.tmpdir=$TLA_JAVA_TMPDIR" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+fi
 exec "$JAVA" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"

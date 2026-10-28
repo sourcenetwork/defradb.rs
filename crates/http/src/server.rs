@@ -84,6 +84,11 @@ impl Default for ServerConfig {
     }
 }
 
+/// Application-owned wrapping of the complete serving router. The callback
+/// runs once per router construction, after native and extra routes are merged,
+/// including the native fallback. Its body is trusted application code.
+pub type RouterTransform = Arc<dyn Fn(Router) -> Router + Send + Sync>;
+
 /// HTTP server for DefraDB.
 pub struct Server {
     config: ServerConfig,
@@ -117,6 +122,7 @@ pub struct Server {
     node_identity_did: Option<String>,
     dev_mode: bool,
     extra_routes: Option<Router>,
+    router_transform: Option<RouterTransform>,
 }
 
 /// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
@@ -182,12 +188,20 @@ impl Server {
             node_identity_did: None,
             dev_mode: false,
             extra_routes: None,
+            router_transform: None,
         }
     }
 
     /// Serve `routes` beside the API's own.
     pub fn with_extra_routes(mut self, routes: Router) -> Self {
         self.extra_routes = Some(routes);
+        self
+    }
+
+    /// Wrap the complete router, including native authentication, extra routes
+    /// and the normalized fallback. The same composition serves HTTP and TLS.
+    pub fn with_router_transform(mut self, transform: RouterTransform) -> Self {
+        self.router_transform = Some(transform);
         self
     }
 
@@ -560,7 +574,14 @@ impl Server {
         // Router layers run after route matching, so normalize misses through a
         // clone that already carries the complete auth and request middleware.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
-        Ok(router.fallback_service(normalized))
+        let mut router = router.fallback_service(normalized);
+        if let Some(extra) = &self.extra_routes {
+            router = router.merge(extra.clone());
+        }
+        if let Some(transform) = &self.router_transform {
+            router = transform(router);
+        }
+        Ok(router)
     }
 
     /// Build CORS layer matching Go DefraDB behavior.
@@ -645,10 +666,7 @@ impl Server {
     }
 
     async fn serve(self, listener: TcpListener) -> Result<()> {
-        let mut router = self.router()?;
-        if let Some(extra) = self.extra_routes {
-            router = router.merge(extra);
-        }
+        let router = self.router()?;
         let address = listener
             .get_ref()
             .local_addr()
@@ -722,3 +740,7 @@ impl Server {
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "router_transform_tests.rs"]
+mod router_transform_tests;

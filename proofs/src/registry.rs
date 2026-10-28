@@ -48,18 +48,34 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
-        family: "Peer connection observation",
-        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused",
+        family: "HTTP router composition",
+        name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model",
+        anchor: "crates/http/src/server.rs Server::router, Server::serve; router_transform_tests::forwarding_filter_matches_executed_model; crates/defra-node/src/router_transform_tests.rs",
+        model_ref: "MC_HttpRouterComposition_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP router composition",
+        name: "configured_order / constructor_once / absent_preserves / forwarding_preserves / refuses_every_inner_status",
+        axis: Lean,
+        anchor: "crates/http/src/server.rs Server::router; router_transform_tests::forwarding_filter_matches_executed_model",
+        model_ref: "HttpRouterComposition (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model, native_port_mapping_configuration_matches_executed_model, loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners",
         model_ref: "MC_EndpointBind_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {
         family: "Peer connection observation",
-        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack",
+        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack / specific_address_disables_mapping / absent_address_preserves_mapping / wildcard_preserves_mapping",
         axis: Lean,
-        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases",
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases, native_port_mapping_configuration_matches_executed_model",
         model_ref: "EndpointBind (lake build)",
         tiers: &[Boundary],
     },
@@ -209,7 +225,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
-        name: "Owner observations retain read gates and the transaction snapshot",
+        name: "Owner and visibility observations retain read gates and the transaction snapshot",
         axis: Tla,
         anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
         model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
@@ -217,7 +233,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
-        name: "Acp.OwnerObservation.exact_snapshot and denied-owner noninterference",
+        name: "Acp.OwnerObservation.exact_snapshot, unreadable_observation_hidden and unregistered_read_keeps_visibility",
         axis: Lean,
         anchor: "crates/query/src/runner/owners.rs",
         model_ref: "Acp.OwnerObservation",
@@ -1018,6 +1034,27 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // An embedded node checks its config before it opens anything, hands
+        // its retry ladder to every retry site of either transport, stops a
+        // host whose listen failed, enables NAC owned by the node identity,
+        // and dials bootstrap peers only once NAC is in place, logging a peer
+        // that does not answer.
+        family: "Embedded node startup",
+        name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
+        axis: Tla,
+        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Embedded node startup",
+        name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
+        model_ref: "RetrySchedule (lake build)",
         tiers: &[Boundary],
     },
     Property {

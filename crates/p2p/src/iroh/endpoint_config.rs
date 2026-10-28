@@ -461,6 +461,14 @@ pub(super) fn apply_bind_config(
     let bind_error =
         |error| crate::error::Error::Transport(format!("invalid bind addr: {}", error));
 
+    if let Some(ip) = bind_addr.filter(|ip| !ip.is_unspecified()) {
+        builder = builder.portmapper_config(iroh::endpoint::PortmapperConfig::Disabled);
+        tracing::info!(
+            bind_addr = %ip,
+            "automatic port mapping disabled: gateway discovery cannot be scoped to the selected address"
+        );
+    }
+
     match (bind_addr, bind_port) {
         (Some(ip), port) => {
             builder = builder.clear_ip_transports();

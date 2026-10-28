@@ -23,6 +23,53 @@ struct ExpectedSocket {
 struct Case {
     input: Value,
     expected: Vec<ExpectedSocket>,
+    port_mapping_allowed: bool,
+}
+
+#[test]
+#[ignore = "requires the prepared executable Lean model"]
+fn native_port_mapping_configuration_matches_executed_model() {
+    let mut inputs = Vec::new();
+    for address in [
+        None,
+        Some("0.0.0.0"),
+        Some("::"),
+        Some("127.0.0.1"),
+        Some("::1"),
+        Some("192.168.1.10"),
+        Some("198.51.100.10"),
+        Some("2001:db8::10"),
+    ] {
+        for port in [None, Some(0), Some(9512)] {
+            inputs.push(json!({
+                "addr": address.map(|ip| {
+                    let ip: IpAddr = ip.parse().unwrap();
+                    json!({"ip":ip.to_string(),"ipv6":ip.is_ipv6()})
+                }),
+                "port": port,
+            }));
+        }
+    }
+    for case in model_cases(&inputs) {
+        let address = case.input["addr"]["ip"]
+            .as_str()
+            .map(|ip| ip.parse::<IpAddr>().unwrap());
+        let port = case.input["port"]
+            .as_u64()
+            .map(|port| u16::try_from(port).unwrap());
+        let builder = super::apply_bind_config(
+            iroh::Endpoint::builder(iroh::endpoint::presets::Minimal),
+            address,
+            port,
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{builder:?}").contains("portmapper_config: Disabled"),
+            !case.port_mapping_allowed,
+            "native mapper configuration disagrees with the model for {}",
+            case.input,
+        );
+    }
 }
 
 fn model_cases(inputs: &[Value]) -> Vec<Case> {
@@ -139,4 +186,63 @@ fn native_bindings_match_executed_model() {
         cases = count,
         "native listener requests matched the executable model"
     );
+}
+
+/// Only bound wildcard UDP listeners are gateway-discovery leaks here. A
+/// connected, short-lived socket used to inspect routing is not such a listener.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires native UDP sockets and the owned-process lsof observation"]
+fn loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners() {
+    edge::testing::edge()
+        .block_on(edge::compat(async {
+            let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+                .relay_mode(iroh::RelayMode::Disabled);
+            let endpoint =
+                super::apply_bind_config(builder, Some(IpAddr::from([127, 0, 0, 1])), Some(0))
+                    .unwrap()
+                    .bind()
+                    .await
+                    .unwrap();
+            let pid = std::process::id().to_string();
+            let deadline = crate::rt::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut observations = 0;
+            loop {
+                let process = pid.clone();
+                let output = nuclei::spawn_blocking(move || {
+                    Command::new("/usr/sbin/lsof")
+                        .args(["-a", "-p", &process, "-iUDP", "-nP", "-Ftn"])
+                        .output()
+                })
+                .join()
+                .await
+                .unwrap()
+                .unwrap();
+                assert!(
+                    output.status.success(),
+                    "owned UDP socket observation failed"
+                );
+                let listing = String::from_utf8(output.stdout).unwrap();
+                assert!(listing.lines().any(|line| line.starts_with("n127.0.0.1:")));
+                let wildcard = listing.lines().find(|line| {
+                    ["n*:", "n0.0.0.0:", "n[::]:"].iter().any(|prefix| {
+                        line.strip_prefix(prefix)
+                            .and_then(|port| port.parse::<u16>().ok())
+                            .is_some_and(|port| port != 0)
+                    })
+                });
+                assert!(
+                    wildcard.is_none(),
+                    "unscoped gateway listener: {wildcard:?}"
+                );
+                observations += 1;
+                if crate::rt::time::Instant::now() >= deadline {
+                    break;
+                }
+                crate::rt::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            endpoint.close().await;
+            assert!(observations > 1);
+        }))
+        .expect("native loopback gateway scope");
 }

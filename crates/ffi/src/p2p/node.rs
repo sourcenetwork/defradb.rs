@@ -60,7 +60,8 @@ fn resolve_transport(
                     return Err("listen_addr is required for libp2p transport".to_string());
                 }
                 Ok(embedded::TransportConfig::Libp2p(embedded::Libp2pConfig {
-                    listen_addr: listen_addr.to_string(),
+                    listen_addrs: vec![listen_addr.to_string()],
+                    ..Default::default()
                 }))
             }
             #[cfg(not(feature = "libp2p"))]
