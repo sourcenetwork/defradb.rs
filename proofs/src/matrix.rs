@@ -13,6 +13,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "HTTP router composition",
     "Storage failure classification",
     "B3 filtered replication",
+    "Explicit transactions in the request context",
     "DAG convergence (partition / eviction / restart)",
     "CRDT merge laws",
     "Replicator lifecycle (no-loss / resume)",
