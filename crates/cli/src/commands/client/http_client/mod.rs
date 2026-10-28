@@ -302,14 +302,19 @@ impl HttpClient {
         }))
     }
 
-    /// Extract error details from a failed response and return an error.
+    /// Extract error details from a failed response and return an error: the
+    /// server's `{"error": …}` text unchanged, as Go's client returns it, or
+    /// the status and raw body when the body is not that shape.
     async fn extract_error(response: Response) -> Error {
         let status = response.status();
         let body = response
             .text()
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
-        Error::Server(format!("HTTP {}: {}", status, body.trim()))
+        match serde_json::from_str::<types::ErrorResponse>(&body) {
+            Ok(parsed) => Error::Server(parsed.error),
+            Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
+        }
     }
 
     /// Helper for POST requests with plain text body

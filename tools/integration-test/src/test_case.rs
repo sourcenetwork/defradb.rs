@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -12,20 +13,29 @@ use crate::client_type::ClientType;
 use crate::export;
 use crate::scenario::Bindings;
 
-/// What every action sees: the node it acts on, and what earlier actions
-/// captured.
+/// What every action sees: the node an in-process action acts on, or the URL
+/// the other clients reach it at; whatever must stay alive for that (a
+/// server, a child process); and what earlier actions captured.
 #[derive(Clone, Default)]
 pub struct State {
     pub node: Option<Arc<Node>>,
+    pub url: Option<String>,
+    pub held: Vec<Arc<dyn Any + Send + Sync>>,
     pub captures: RapidHashMap<String, Value>,
     pub bindings: Bindings,
 }
 
 impl State {
     pub fn node(&self) -> &Node {
-        self.node
+        self.node.as_deref().expect(
+            "no in-process node: Connect did not run, or this client reaches the node by URL",
+        )
+    }
+
+    pub fn url(&self) -> &str {
+        self.url
             .as_deref()
-            .expect("no node: the Connect action did not run")
+            .expect("no URL: Connect did not run, or this client calls the node in-process")
     }
 
     pub fn block_on<F>(&self, future: F) -> F::Output
@@ -121,7 +131,8 @@ fn active_client_types() -> Vec<ClientType> {
     assert_eq!(
         active.len(),
         requested.len(),
-        "DEFRA_CLIENT={requested:?}: expected names from in-process"
+        "DEFRA_CLIENT={requested:?}: expected names from {}",
+        ClientType::names()
     );
     active.into_iter().cloned().collect()
 }

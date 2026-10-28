@@ -4,6 +4,7 @@ use serde_json::Value;
 use testo::prelude::*;
 
 use crate::actions::expect::expect_error;
+use crate::clients::{CliRun, HttpRun};
 use crate::test_case::State;
 
 /// Runs a GraphQL introspection query and compares its `data` in full, or, with
@@ -33,6 +34,28 @@ impl Action for IntrospectionRequest {
             response.data,
             response.errors.iter().map(|e| e.message.as_str()),
         ));
+    }
+}
+
+impl HttpRun for IntrospectionRequest {
+    fn execute_http(&self, state: &mut State) {
+        assert!(self.txn.is_none(), "transactions are not supported yet");
+        let request = self.request.clone();
+        let response = state
+            .http(|client| async move { client.graphql(&request, None, None).await })
+            .expect("run request");
+        self.check(graphql_outcome(
+            response.data,
+            response.errors.iter().map(|e| e.message.as_str()),
+        ));
+    }
+}
+
+impl CliRun for IntrospectionRequest {
+    fn execute_cli(&self, state: &mut State) {
+        assert!(self.txn.is_none(), "transactions are not supported yet");
+        let result = state.defra_client(&["query", &self.request]);
+        self.check(result.map(|printed| printed["data"].clone()));
     }
 }
 

@@ -16,5 +16,5 @@ pub use common::{captures, Common, Eventually, DEFAULT_NODE};
 pub use error::ScenarioError;
 pub use matcher::{match_expected, validate, Bindings, Options};
 pub use op::{Failure, FailureKind, Op};
-pub use run::execute;
+pub use run::{execute, execute_with};
 pub use text::Text;
