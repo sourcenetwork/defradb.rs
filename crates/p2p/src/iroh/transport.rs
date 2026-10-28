@@ -26,6 +26,8 @@ use crate::QueryId;
 
 use super::command::IrohCommand;
 use super::endpoint_config::AdmissionAuthority;
+use super::peer_map::endpoint_id_to_peer_id;
+use super::records::{ServiceProfile, ServiceRecord};
 
 /// Iroh-backed P2P transport.
 ///
@@ -42,6 +44,32 @@ pub struct IrohTransport {
 }
 
 impl IrohTransport {
+    /// The live service record this node holds for `peer_id`, or its own.
+    pub async fn service_record(&self, peer_id: PeerId) -> Result<Option<ServiceRecord>> {
+        self.send_command(|reply| IrohCommand::ServiceRecord { peer_id, reply })
+            .await
+    }
+
+    /// Nodes whose service record offers to be a replicator, and holds
+    /// `collection_id` when given, so an operator can pick one. Nothing here
+    /// adds a replicator.
+    pub async fn replicator_offers(&self, collection_id: Option<String>) -> Result<Vec<PeerId>> {
+        let nodes = self
+            .send_command(|reply| IrohCommand::ReplicatorOffers {
+                collection_id,
+                reply,
+            })
+            .await?;
+        Ok(nodes.iter().map(endpoint_id_to_peer_id).collect())
+    }
+
+    /// Sets what this node advertises in its service record. Until it is
+    /// set, the node advertises nothing but still reads other records.
+    pub async fn set_service_profile(&self, profile: ServiceProfile) -> Result<()> {
+        self.send_command(|reply| IrohCommand::SetServiceProfile { profile, reply })
+            .await
+    }
+
     /// Create a new `IrohTransport` with the given command channel and identity.
     pub fn new(command_tx: mpsc::Sender<IrohCommand>, secret_key: SecretKey) -> Self {
         let node_id = secret_key.public();
@@ -97,6 +125,21 @@ impl IrohTransport {
             .await
             .map_err(|_| Error::ChannelSend)?;
         rx.await.map_err(|_| Error::ChannelReceive)?
+    }
+
+    /// Reply on the request's stream from the endpoint's task registry.
+    async fn reply_on_stream<T: serde::Serialize>(
+        &self,
+        send_stream: iroh::endpoint::SendStream,
+        reply: &T,
+    ) -> Result<()> {
+        let payload = super::protocols::encode(reply)?;
+        self.send_command(|reply| IrohCommand::ReplyOnStream {
+            send_stream,
+            payload,
+            reply,
+        })
+        .await
     }
 
     /// Notify iroh that the surrounding network may have changed.
@@ -282,6 +325,37 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    async fn collection_providers(&self, collection_id: &str) -> Result<Vec<PeerId>> {
+        let nodes = self
+            .send_command(|reply| IrohCommand::CollectionProviders {
+                collection_id: collection_id.to_string(),
+                reply,
+            })
+            .await?;
+        Ok(nodes.iter().map(endpoint_id_to_peer_id).collect())
+    }
+
+    async fn inbound_budget(&self) -> Result<Vec<crate::transport::InboundClassSnapshot>> {
+        self.send_command(|reply| IrohCommand::InboundBudget { reply })
+            .await
+    }
+
+    async fn fetch_stats(&self) -> Result<Vec<crate::transport::PeerFetchStats>> {
+        self.send_command(|reply| IrohCommand::FetchStats { reply })
+            .await
+    }
+
+    async fn peer_connection(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<Option<crate::transport::PeerConnectionInfo>> {
+        self.send_command(|reply| IrohCommand::PeerConnection {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
         self.send_command(|reply| IrohCommand::ListenAddresses { reply })
             .await
@@ -357,12 +431,7 @@ impl P2PTransport for IrohTransport {
         send_stream: Self::ResponseToken,
         reply: PushLogReply,
     ) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendPushLogResponse {
-            send_stream,
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+        self.reply_on_stream(send_stream, &reply).await
     }
 
     async fn send_two_stream_request(
@@ -385,13 +454,12 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendTwoStreamResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: PushLogReply,
+    ) -> Result<()> {
+        Err(no_reply_stream("two-stream"))
     }
 
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()> {
@@ -403,13 +471,8 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_doc_sync_response(&self, peer_id: &PeerId, reply: DocSyncReply) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendDocSyncResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+    async fn send_doc_sync_response(&self, _peer_id: &PeerId, _reply: DocSyncReply) -> Result<()> {
+        Err(no_reply_stream("doc sync"))
     }
 
     async fn send_branchable_sync_request(
@@ -427,15 +490,10 @@ impl P2PTransport for IrohTransport {
 
     async fn send_branchable_sync_response(
         &self,
-        peer_id: &PeerId,
-        reply: BranchableSyncReply,
+        _peer_id: &PeerId,
+        _reply: BranchableSyncReply,
     ) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendBranchableSyncResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+        Err(no_reply_stream("branchable sync"))
     }
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
@@ -447,13 +505,8 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()> {
-        self.send_command(|reply| IrohCommand::SendCarResponse {
-            peer_id: peer_id.clone(),
-            car_data,
-            reply,
-        })
-        .await
+    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> Result<()> {
+        Err(no_reply_stream("CAR"))
     }
 
     async fn send_doc_sync_response_token(
@@ -461,12 +514,7 @@ impl P2PTransport for IrohTransport {
         send_stream: Self::ResponseToken,
         reply: DocSyncReply,
     ) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendDocSyncResponseToken {
-            send_stream,
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+        self.reply_on_stream(send_stream, &reply).await
     }
 
     async fn send_branchable_sync_response_token(
@@ -474,12 +522,7 @@ impl P2PTransport for IrohTransport {
         send_stream: Self::ResponseToken,
         reply: BranchableSyncReply,
     ) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendBranchableSyncResponseToken {
-            send_stream,
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+        self.reply_on_stream(send_stream, &reply).await
     }
 
     async fn send_car_response_token(
@@ -527,8 +570,12 @@ impl P2PTransport for IrohTransport {
     async fn send_se_query_response(
         &self,
         peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
         reply_msg: QuerySEArtifactsReply,
     ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return self.reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendSEQueryResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -546,7 +593,15 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_manage_response(&self, peer_id: &PeerId, reply_msg: ManageReply) -> Result<()> {
+    async fn send_manage_response(
+        &self,
+        peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
+        reply_msg: ManageReply,
+    ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return self.reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendManageResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -571,8 +626,12 @@ impl P2PTransport for IrohTransport {
     async fn send_manage_query_response(
         &self,
         peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
         reply_msg: ManageQueryReply,
     ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return self.reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendManageQueryResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -690,6 +749,14 @@ impl P2PTransport for IrohTransport {
 #[path = "../../tests/iroh/transport_poll.rs"]
 mod poll_tests;
 
+/// Iroh writes every one of these replies on its request's stream, which
+/// every request carries; a reply without one has nowhere to go.
+fn no_reply_stream(kind: &str) -> crate::error::Error {
+    crate::error::Error::Transport(format!(
+        "an Iroh {kind} reply goes on its request's stream, and this one has none"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
@@ -699,12 +766,16 @@ mod tests {
     use identity::Identity as _;
     use n0_future::time::timeout;
 
-    use crate::iroh::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig};
+    use crate::iroh::records::RECORDS_TOPIC;
+    use crate::iroh::{
+        spawn_endpoint, CollectionKey, IrohDiscoveryConfig, IrohEndpointConfig, Role, Service,
+    };
     use crate::message::{
         PushLogBroadcast, PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
         SEArtifact, SEFieldQuery,
     };
     use crate::signing::sign_with_transport;
+    use crate::topics::DefraTopic;
     use crate::transport::{P2PTransport, TransportEvent};
 
     use super::*;
@@ -718,7 +789,6 @@ mod tests {
             bind_port: None,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
-            gossip_heal: Default::default(),
             allowlist: Default::default(),
         }
     }
@@ -847,14 +917,19 @@ mod tests {
             .await
             .unwrap();
 
-        let received_request = loop {
+        let (received_request, token) = loop {
             let event = timeout(Duration::from_secs(5), events1.recv())
                 .await
                 .expect("timed out waiting for SE query request")
                 .expect("iroh event channel closed");
-            if let TransportEvent::SEQueryRequest { peer_id, request } = event {
+            if let TransportEvent::SEQueryRequest {
+                peer_id,
+                request,
+                token,
+            } = event
+            {
                 assert_eq!(peer_id, *transport0.local_peer_id());
-                break request;
+                break (request, token);
             }
         };
         assert_eq!(received_request.message_id, request_message_id);
@@ -870,7 +945,7 @@ mod tests {
             QuerySEArtifactsReply::success(&request_message_id, vec!["doc1".into(), "doc2".into()]);
         sign_with_transport(&transport1, &mut reply).unwrap();
         transport1
-            .send_se_query_response(transport0.local_peer_id(), reply)
+            .send_se_query_response(transport0.local_peer_id(), token, reply)
             .await
             .unwrap();
 
@@ -1149,7 +1224,7 @@ mod tests {
         // Wait for the gossip mesh to form on BOTH sides so the broadcast is
         // deliverable from the sender to the receiver.
         async fn wait_peer_subscribed(
-            events: &mut tokio::sync::mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+            events: &mut crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
         ) {
             loop {
                 let event = timeout(Duration::from_secs(5), events.recv())
@@ -1200,6 +1275,81 @@ mod tests {
         transport1.shutdown().await.unwrap();
         task0.await.unwrap();
         task1.await.unwrap();
+    }
+
+    /// A record one node signs reaches a connected peer's book over the
+    /// discovery topic, and advertises the public collection it holds.
+    #[tokio::test]
+    async fn a_service_record_reaches_a_connected_peer() {
+        let key0 = SecretKey::generate();
+        let key1 = SecretKey::generate();
+        let (command_tx0, _events0, _replicators0, task0) =
+            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+        let (command_tx1, mut events1, _replicators1, task1) =
+            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+        let transport0 = IrohTransport::new(command_tx0, key0);
+        let transport1 = IrohTransport::new(command_tx1, key1);
+        transport1
+            .dial(
+                transport0.local_peer_id(),
+                transport0.listen_addresses().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        loop {
+            let event = timeout(Duration::from_secs(5), events1.recv())
+                .await
+                .expect("timed out waiting for the records topic")
+                .expect("iroh event channel closed");
+            if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
+            {
+                break;
+            }
+        }
+
+        transport0
+            .subscribe(DefraTopic::Collection("users".into()))
+            .await
+            .unwrap();
+        let mut public_collections = rapidhash::RapidHashSet::default();
+        public_collections.insert("users".to_owned());
+        transport0
+            .set_service_profile(ServiceProfile {
+                secret: None,
+                role: Role::Archive,
+                public_collections,
+                offers: vec![Service::Kms],
+            })
+            .await
+            .unwrap();
+
+        let record = timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(record) = transport1
+                    .service_record(transport0.local_peer_id().clone())
+                    .await
+                    .unwrap()
+                {
+                    return record;
+                }
+                n0_future::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the record never reached the peer");
+        assert_eq!(
+            record.services,
+            vec![
+                Service::Kms,
+                Service::Collection {
+                    key: CollectionKey::Plain("users".into()),
+                    role: Role::Archive,
+                },
+            ]
+        );
+
+        task0.abort();
+        task1.abort();
     }
 
     /// Regression for #976: `subscribe_raw` must JOIN the gossip mesh for a raw
@@ -1253,7 +1403,7 @@ mod tests {
             .unwrap();
 
         async fn wait_peer_subscribed(
-            events: &mut tokio::sync::mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+            events: &mut crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
             want_topic: &str,
         ) {
             loop {

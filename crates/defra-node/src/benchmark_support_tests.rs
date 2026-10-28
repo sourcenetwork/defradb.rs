@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 use kovan::Atom;
 
-#[tokio::test]
-async fn coding_session_fixture_smoke_test() {
+#[test]
+fn coding_session_fixture_smoke_test() {
+    edge::testing::edge().block_on(async {
     let node = crate::EmbeddedNode::builder().build().await.unwrap();
     let fixture = seed_coding_session_fixture(&node, &CodingSessionFixtureConfig::smoke_test())
         .await
@@ -69,56 +70,64 @@ async fn coding_session_fixture_smoke_test() {
         render_action_search_query(&fixture.hot_session.session_id, "cargo", 10, 0, false);
     let action_data = ensure_success(node.execute(&action_query).await, "smoke action").unwrap();
     assert!(count_hits(&action_data, SearchTarget::Actions) > 0);
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn coding_session_fixture_exports_context1_style_tasks() {
-    let node = crate::EmbeddedNode::builder().build().await.unwrap();
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 40;
-    config.hot_session_actions = 16;
-    config.medium_session_messages = 12;
-    config.medium_session_actions = 6;
+#[test]
+fn coding_session_fixture_exports_context1_style_tasks() {
+    edge::testing::edge()
+        .block_on(async {
+            let node = crate::EmbeddedNode::builder().build().await.unwrap();
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 40;
+            config.hot_session_actions = 16;
+            config.medium_session_messages = 12;
+            config.medium_session_actions = 6;
 
-    let fixture = seed_coding_session_fixture(&node, &config).await.unwrap();
+            let fixture = seed_coding_session_fixture(&node, &config).await.unwrap();
 
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
-    assert!(!tasks.is_empty());
-    assert!(tasks
-        .iter()
-        .any(|task| task.task_id == "hot_messages_pushdown"));
-    assert!(tasks
-        .iter()
-        .any(|task| task.task_id == "hot_actions_rg_pushdown"));
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
+            assert!(!tasks.is_empty());
+            assert!(tasks
+                .iter()
+                .any(|task| task.task_id == "hot_messages_pushdown"));
+            assert!(tasks
+                .iter()
+                .any(|task| task.task_id == "hot_actions_rg_pushdown"));
 
-    for task in &tasks {
-        assert!(
-            !task.supporting_items.is_empty(),
-            "{} missing supports",
-            task.task_id
-        );
-        assert!(
-            !task.distractors.is_empty(),
-            "{} missing distractors",
-            task.task_id
-        );
-        assert_eq!(
-            task.items_and_contents.len(),
-            task.supporting_items.len() + task.distractors.len(),
-            "{} items_and_contents should cover support + distractor items",
-            task.task_id
-        );
-    }
+            for task in &tasks {
+                assert!(
+                    !task.supporting_items.is_empty(),
+                    "{} missing supports",
+                    task.task_id
+                );
+                assert!(
+                    !task.distractors.is_empty(),
+                    "{} missing distractors",
+                    task.task_id
+                );
+                assert_eq!(
+                    task.items_and_contents.len(),
+                    task.supporting_items.len() + task.distractors.len(),
+                    "{} items_and_contents should cover support + distractor items",
+                    task.task_id
+                );
+            }
 
-    let serialized = serde_json::to_value(&tasks).unwrap();
-    assert!(serialized.is_array());
-    assert!(serialized
-        .as_array()
+            let serialized = serde_json::to_value(&tasks).unwrap();
+            assert!(serialized.is_array());
+            assert!(serialized
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(
+                    |task| task.get("question").is_some() && task.get("supporting_items").is_some()
+                ));
+        })
         .unwrap()
-        .iter()
-        .all(|task| task.get("question").is_some() && task.get("supporting_items").is_some()));
 }
 
 #[derive(Clone, Default)]
@@ -162,11 +171,11 @@ struct EmbeddingResponseItem {
 struct MockEmbeddingServer {
     base_url: String,
     state: MockEmbeddingState,
-    task: tokio::task::JoinHandle<()>,
-    _fixture_permit: tokio::sync::SemaphorePermit<'static>,
+    _server: edge::Service,
+    _fixture_permit: regolith::sync::SemaphorePermit<'static>,
 }
 
-static EMBEDDING_FIXTURE_TEST: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+static EMBEDDING_FIXTURE_TEST: regolith::sync::Semaphore = regolith::sync::Semaphore::new(1);
 
 impl MockEmbeddingServer {
     async fn start() -> Self {
@@ -174,7 +183,7 @@ impl MockEmbeddingServer {
     }
 
     async fn start_with_dimensions(dimensions: [usize; 3]) -> Self {
-        let fixture_permit = EMBEDDING_FIXTURE_TEST.acquire().await.unwrap();
+        let fixture_permit = EMBEDDING_FIXTURE_TEST.acquire(1).await;
         let state = MockEmbeddingState {
             dimensions,
             ..MockEmbeddingState::default()
@@ -183,28 +192,24 @@ impl MockEmbeddingServer {
             .route("/embeddings", post(mock_embedding_handler))
             .with_state(state.clone());
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+        let server = edge::testing::edge().spawn_service(async move {
+            defra_http::server::serve_router(listener, app)
+                .await
+                .unwrap();
         });
 
         Self {
             base_url: format!("http://{}", addr),
             state,
-            task,
+            _server: server,
             _fixture_permit: fixture_permit,
         }
     }
 
     fn requests(&self) -> Vec<EmbeddingRequest> {
         self.state.requests.load_clone()
-    }
-}
-
-impl Drop for MockEmbeddingServer {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -978,375 +983,403 @@ fn assert_hybrid_summary(summary: &HybridComparisonSummary, expected_term: &str)
     );
 }
 
-#[tokio::test]
-async fn coding_session_embedding_fixture_accepts_model_specific_dimensions() {
-    let server = MockEmbeddingServer::start_with_dimensions([16, 24, 32]).await;
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-    seed_coding_session_embedding_fixture_with_dimensions(
-        &node,
-        &CodingSessionFixtureConfig::smoke_test(),
-        [16, 24, 32],
-    )
-    .await
-    .unwrap();
-    for (collection, field, width) in [
-        ("CodingMessage", "content_v", 16),
-        ("CodingAction", "command_v", 24),
-        ("CodingSearchChunk", "content_v", 32),
-    ] {
-        let result = node
-            .execute(&format!("{{ {collection}(limit: 1) {{ {field} }} }}"))
-            .await;
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        assert_eq!(
-            result.data.unwrap()[collection][0][field]
-                .as_array()
-                .unwrap()
-                .len(),
-            width
-        );
-    }
-}
-
-#[tokio::test]
-async fn coding_session_embedding_fixture_supports_similarity_queries() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 40;
-    config.hot_session_actions = 16;
-    config.medium_session_messages = 12;
-    config.medium_session_actions = 6;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let _fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-
-    let requests = server.requests();
-    assert_eq!(requests.len(), embedded_source_texts(&node).await);
-    assert!(requests
-        .iter()
-        .any(|request| request.model == "coding-message-model"));
-    assert!(requests
-        .iter()
-        .any(|request| request.model == "coding-action-model"));
-
-    let message_vector = deterministic_embedding("coding-message-model", "pushdown");
-    let message_data = ensure_success(
-        node.execute(&render_message_similarity_query(
-            "pushdown",
-            &message_vector,
-        ))
-        .await,
-        "message similarity",
-    )
-    .unwrap();
-    let top_message = &message_data["CodingMessage"][0];
-    assert!(top_message["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("pushdown")));
-    assert!(top_message["sim"].as_f64().unwrap_or_default() > 0.0);
-    assert!(top_message["bm25"].as_f64().unwrap_or_default() > 0.0);
-
-    let action_vector = deterministic_embedding("coding-action-model", "rg");
-    let action_data = ensure_success(
-        node.execute(&render_action_similarity_query(&action_vector))
-            .await,
-        "action similarity",
-    )
-    .unwrap();
-    let top_action = &action_data["CodingAction"][0];
-    assert!(top_action["command"]
-        .as_str()
-        .is_some_and(|command| command.contains("rg")));
-    assert!(top_action["sim"].as_f64().unwrap_or_default() > 0.0);
-}
-
-#[tokio::test]
-async fn coding_session_embedding_fixture_scores_context1_style_tasks() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 64;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
-
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let query_vector =
-            deterministic_embedding(task_embedding_model(task.target), task.effective_query());
-        let evaluation = evaluate_coding_task(&node, task, &query_vector, 6)
-            .await
-            .unwrap();
-        eprintln!("{}", evaluation.render());
-
-        let bm25 = evaluation.metric(RetrievalStrategy::Bm25).unwrap();
-        let dense = evaluation.metric(RetrievalStrategy::Dense).unwrap();
-        let rrf = evaluation.metric(RetrievalStrategy::Rrf).unwrap();
-
-        assert!(bm25.answer_found, "{} bm25 missed supports", task.task_id);
-        assert!(rrf.answer_found, "{} rrf missed supports", task.task_id);
-        assert!(dense.limit > 0, "{} dense ranking was empty", task.task_id);
-        assert!(
-            rrf.support_hits >= 1,
-            "{} rrf should recover at least one support item",
-            task.task_id
-        );
-        assert!(
-            rrf.distractor_hits < rrf.limit,
-            "{} rrf ranking should not be all distractors",
-            task.task_id
-        );
-    }
-}
-
-#[tokio::test]
-async fn coding_session_embedding_fixture_supports_hybrid_rank_comparison() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 64;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 18;
-    config.medium_session_actions = 10;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-
-    let message_query = "pushdown candidate";
-    let message_vector = deterministic_embedding("coding-message-model", message_query);
-    let message_summary = run_hybrid_comparison(
-        &node,
-        SearchTarget::Messages,
-        &fixture.hot_session.session_id,
-        "mock_hot_messages_pushdown_candidate",
-        message_query,
-        &message_vector,
-        8,
-    )
-    .await
-    .unwrap();
-    eprintln!("{}", message_summary.render());
-    assert_hybrid_summary(&message_summary, "pushdown");
-
-    let action_query = "rg pushdown";
-    let action_vector = deterministic_embedding("coding-action-model", action_query);
-    let action_summary = run_hybrid_comparison(
-        &node,
-        SearchTarget::Actions,
-        &fixture.hot_session.session_id,
-        "mock_hot_actions_rg_pushdown",
-        action_query,
-        &action_vector,
-        6,
-    )
-    .await
-    .unwrap();
-    eprintln!("{}", action_summary.render());
-    assert_hybrid_summary(&action_summary, "rg");
-}
-
-#[tokio::test]
-async fn coding_session_embedding_fixture_supports_query_text_hybrid_search_api() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 64;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
-
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let response = node
-            .hybrid_search_coding(
-                &crate::CodingHybridSearchRequest::new(
-                    task_search_target(task.target),
-                    task.effective_query(),
-                )
-                .with_session_id(task.session_id.clone())
-                .with_limit(6),
+#[test]
+fn coding_session_embedding_fixture_accepts_model_specific_dimensions() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start_with_dimensions([16, 24, 32]).await;
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+            seed_coding_session_embedding_fixture_with_dimensions(
+                &node,
+                &CodingSessionFixtureConfig::smoke_test(),
+                [16, 24, 32],
             )
             .await
             .unwrap();
-        eprintln!(
-            "{} query=\"{}\" hits={}",
-            task.task_id,
-            response.query_text,
-            response.hits.len()
-        );
+            for (collection, field, width) in [
+                ("CodingMessage", "content_v", 16),
+                ("CodingAction", "command_v", 24),
+                ("CodingSearchChunk", "content_v", 32),
+            ] {
+                let result = node
+                    .execute(&format!("{{ {collection}(limit: 1) {{ {field} }} }}"))
+                    .await;
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                assert_eq!(
+                    result.data.unwrap()[collection][0][field]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    width
+                );
+            }
+        })
+        .unwrap()
+}
 
-        assert_eq!(response.target, task_search_target(task.target));
-        assert_eq!(response.embedding_model, task_embedding_model(task.target));
-        assert!(response.query_vector_dimensions > 0);
-        assert!(!response.bm25_candidates.is_empty());
-        assert!(!response.dense_candidates.is_empty());
-        assert!(!response.hits.is_empty());
-        assert!(
-            response
-                .hits
+#[test]
+fn coding_session_embedding_fixture_supports_similarity_queries() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 40;
+            config.hot_session_actions = 16;
+            config.medium_session_messages = 12;
+            config.medium_session_actions = 6;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let _fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+
+            let requests = server.requests();
+            assert_eq!(requests.len(), embedded_source_texts(&node).await);
+            assert!(requests
                 .iter()
-                .any(|hit| task.support_ids().contains(&hit.doc_id)),
-            "{} hybrid_search_coding missed all labeled supports",
-            task.task_id
-        );
-    }
+                .any(|request| request.model == "coding-message-model"));
+            assert!(requests
+                .iter()
+                .any(|request| request.model == "coding-action-model"));
 
-    let requests = server.requests();
-    assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-message-model"
-                    && request.input == "relation narrowing bm25 pushdown"
-            })
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-action-model"
-                    && request.input == "rg pushdown planner joins"
-            })
-            .count(),
-        1
-    );
+            let message_vector = deterministic_embedding("coding-message-model", "pushdown");
+            let message_data = ensure_success(
+                node.execute(&render_message_similarity_query(
+                    "pushdown",
+                    &message_vector,
+                ))
+                .await,
+                "message similarity",
+            )
+            .unwrap();
+            let top_message = &message_data["CodingMessage"][0];
+            assert!(top_message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("pushdown")));
+            assert!(top_message["sim"].as_f64().unwrap_or_default() > 0.0);
+            assert!(top_message["bm25"].as_f64().unwrap_or_default() > 0.0);
+
+            let action_vector = deterministic_embedding("coding-action-model", "rg");
+            let action_data = ensure_success(
+                node.execute(&render_action_similarity_query(&action_vector))
+                    .await,
+                "action similarity",
+            )
+            .unwrap();
+            let top_action = &action_data["CodingAction"][0];
+            assert!(top_action["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("rg")));
+            assert!(top_action["sim"].as_f64().unwrap_or_default() > 0.0);
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn coding_session_embedding_fixture_hybrid_search_api_honors_session_scope_and_exclusions() {
-    let server = MockEmbeddingServer::start().await;
+#[test]
+fn coding_session_embedding_fixture_scores_context1_style_tasks() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 20;
-    config.medium_session_messages = 14;
-    config.medium_session_actions = 8;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 64;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-    let session_doc_id = lookup_session_doc_id(&node, &fixture.hot_session.session_id)
-        .await
-        .unwrap();
-    let request = crate::CodingHybridSearchRequest::new(
-        crate::CodingSearchTarget::Messages,
-        "pushdown candidate",
-    )
-    .with_session_id(fixture.hot_session.session_id.clone())
-    .with_limit(5);
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
 
-    let first_response = node.hybrid_search_coding(&request).await.unwrap();
-    assert!(!first_response.hits.is_empty());
-    assert_hits_belong_to_session(
-        &node,
-        crate::CodingSearchTarget::Messages,
-        &first_response.hits,
-        &session_doc_id,
-    )
-    .await
-    .unwrap();
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let query_vector = deterministic_embedding(
+                    task_embedding_model(task.target),
+                    task.effective_query(),
+                );
+                let evaluation = evaluate_coding_task(&node, task, &query_vector, 6)
+                    .await
+                    .unwrap();
+                eprintln!("{}", evaluation.render());
 
-    let excluded_doc_id = first_response.hits[0].doc_id.clone();
-    let second_response = node
-        .hybrid_search_coding(
-            &request
-                .clone()
-                .with_excluded_doc_ids(vec![excluded_doc_id.clone()]),
-        )
-        .await
-        .unwrap();
+                let bm25 = evaluation.metric(RetrievalStrategy::Bm25).unwrap();
+                let dense = evaluation.metric(RetrievalStrategy::Dense).unwrap();
+                let rrf = evaluation.metric(RetrievalStrategy::Rrf).unwrap();
 
-    assert!(!second_response.hits.is_empty());
-    assert!(
-        second_response
-            .hits
-            .iter()
-            .all(|hit| hit.doc_id != excluded_doc_id),
-        "excluded doc_id {} was still returned",
-        excluded_doc_id
-    );
-    assert_hits_belong_to_session(
-        &node,
-        crate::CodingSearchTarget::Messages,
-        &second_response.hits,
-        &session_doc_id,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        server.requests().len(),
-        embedded_source_texts(&node).await + 2
-    );
+                assert!(bm25.answer_found, "{} bm25 missed supports", task.task_id);
+                assert!(rrf.answer_found, "{} rrf missed supports", task.task_id);
+                assert!(dense.limit > 0, "{} dense ranking was empty", task.task_id);
+                assert!(
+                    rrf.support_hits >= 1,
+                    "{} rrf should recover at least one support item",
+                    task.task_id
+                );
+                assert!(
+                    rrf.distractor_hits < rrf.limit,
+                    "{} rrf ranking should not be all distractors",
+                    task.task_id
+                );
+            }
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn coding_data_fixture_materializes_search_chunks_for_large_messages() {
-    let node = crate::EmbeddedNode::builder().build().await.unwrap();
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 24;
-    config.hot_session_actions = 10;
-    config.assistant_message_bytes = 1_600;
-    config.action_command_bytes = 420;
+#[test]
+fn coding_session_embedding_fixture_supports_hybrid_rank_comparison() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
 
-    let fixture = seed_coding_session_fixture(&node, &config).await.unwrap();
-    let data = ensure_success(
-        node.execute(&format!(
-            r#"{{
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 64;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 18;
+            config.medium_session_actions = 10;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+
+            let message_query = "pushdown candidate";
+            let message_vector = deterministic_embedding("coding-message-model", message_query);
+            let message_summary = run_hybrid_comparison(
+                &node,
+                SearchTarget::Messages,
+                &fixture.hot_session.session_id,
+                "mock_hot_messages_pushdown_candidate",
+                message_query,
+                &message_vector,
+                8,
+            )
+            .await
+            .unwrap();
+            eprintln!("{}", message_summary.render());
+            assert_hybrid_summary(&message_summary, "pushdown");
+
+            let action_query = "rg pushdown";
+            let action_vector = deterministic_embedding("coding-action-model", action_query);
+            let action_summary = run_hybrid_comparison(
+                &node,
+                SearchTarget::Actions,
+                &fixture.hot_session.session_id,
+                "mock_hot_actions_rg_pushdown",
+                action_query,
+                &action_vector,
+                6,
+            )
+            .await
+            .unwrap();
+            eprintln!("{}", action_summary.render());
+            assert_hybrid_summary(&action_summary, "rg");
+        })
+        .unwrap()
+}
+
+#[test]
+fn coding_session_embedding_fixture_supports_query_text_hybrid_search_api() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 64;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
+
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let response = node
+                    .hybrid_search_coding(
+                        &crate::CodingHybridSearchRequest::new(
+                            task_search_target(task.target),
+                            task.effective_query(),
+                        )
+                        .with_session_id(task.session_id.clone())
+                        .with_limit(6),
+                    )
+                    .await
+                    .unwrap();
+                eprintln!(
+                    "{} query=\"{}\" hits={}",
+                    task.task_id,
+                    response.query_text,
+                    response.hits.len()
+                );
+
+                assert_eq!(response.target, task_search_target(task.target));
+                assert_eq!(response.embedding_model, task_embedding_model(task.target));
+                assert!(response.query_vector_dimensions > 0);
+                assert!(!response.bm25_candidates.is_empty());
+                assert!(!response.dense_candidates.is_empty());
+                assert!(!response.hits.is_empty());
+                assert!(
+                    response
+                        .hits
+                        .iter()
+                        .any(|hit| task.support_ids().contains(&hit.doc_id)),
+                    "{} hybrid_search_coding missed all labeled supports",
+                    task.task_id
+                );
+            }
+
+            let requests = server.requests();
+            assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-message-model"
+                            && request.input == "relation narrowing bm25 pushdown"
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-action-model"
+                            && request.input == "rg pushdown planner joins"
+                    })
+                    .count(),
+                1
+            );
+        })
+        .unwrap()
+}
+
+#[test]
+fn coding_session_embedding_fixture_hybrid_search_api_honors_session_scope_and_exclusions() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 20;
+            config.medium_session_messages = 14;
+            config.medium_session_actions = 8;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+            let session_doc_id = lookup_session_doc_id(&node, &fixture.hot_session.session_id)
+                .await
+                .unwrap();
+            let request = crate::CodingHybridSearchRequest::new(
+                crate::CodingSearchTarget::Messages,
+                "pushdown candidate",
+            )
+            .with_session_id(fixture.hot_session.session_id.clone())
+            .with_limit(5);
+
+            let first_response = node.hybrid_search_coding(&request).await.unwrap();
+            assert!(!first_response.hits.is_empty());
+            assert_hits_belong_to_session(
+                &node,
+                crate::CodingSearchTarget::Messages,
+                &first_response.hits,
+                &session_doc_id,
+            )
+            .await
+            .unwrap();
+
+            let excluded_doc_id = first_response.hits[0].doc_id.clone();
+            let second_response = node
+                .hybrid_search_coding(
+                    &request
+                        .clone()
+                        .with_excluded_doc_ids(vec![excluded_doc_id.clone()]),
+                )
+                .await
+                .unwrap();
+
+            assert!(!second_response.hits.is_empty());
+            assert!(
+                second_response
+                    .hits
+                    .iter()
+                    .all(|hit| hit.doc_id != excluded_doc_id),
+                "excluded doc_id {} was still returned",
+                excluded_doc_id
+            );
+            assert_hits_belong_to_session(
+                &node,
+                crate::CodingSearchTarget::Messages,
+                &second_response.hits,
+                &session_doc_id,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                server.requests().len(),
+                embedded_source_texts(&node).await + 2
+            );
+        })
+        .unwrap()
+}
+
+#[test]
+fn coding_data_fixture_materializes_search_chunks_for_large_messages() {
+    edge::testing::edge()
+        .block_on(async {
+            let node = crate::EmbeddedNode::builder().build().await.unwrap();
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 24;
+            config.hot_session_actions = 10;
+            config.assistant_message_bytes = 1_600;
+            config.action_command_bytes = 420;
+
+            let fixture = seed_coding_session_fixture(&node, &config).await.unwrap();
+            let data = ensure_success(
+                node.execute(&format!(
+                    r#"{{
   CodingSearchChunk(
 filter: {{
   session_id: {{ _eq: "{session_id}" }}
@@ -1366,316 +1399,334 @@ chunk_count
 content
   }}
 }}"#,
-            session_id = crate::benchmark_queries::escape_graphql(&fixture.hot_session.session_id),
-        ))
-        .await,
-        "coding search chunk materialization",
-    )
-    .unwrap();
-
-    let chunks = data["CodingSearchChunk"].as_array().unwrap();
-    assert!(!chunks.is_empty());
-    assert!(chunks.iter().all(|chunk| {
-        chunk["session_id"].as_str() == Some(fixture.hot_session.session_id.as_str())
-            && chunk["project_path"].as_str() == Some(fixture.hot_session.project_path.as_str())
-            && chunk["role"].as_str() == Some("assistant")
-    }));
-    assert!(chunks
-        .iter()
-        .any(|chunk| chunk["chunk_index"].as_i64() == Some(1)));
-    assert!(chunks
-        .iter()
-        .all(|chunk| chunk["chunk_count"].as_i64().unwrap_or_default() > 1));
-}
-
-#[tokio::test]
-async fn dense_search_v1_supports_production_coding_search_chunks() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 24;
-    config.assistant_message_bytes = 1_600;
-    config.action_command_bytes = 480;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-
-    let message_response = node
-        .hybrid_search_dense(
-            &dense_chunk_request(
-                "message",
-                "relation narrowing bm25 pushdown",
-                Some(&fixture.hot_session.session_id),
-                Some(&fixture.hot_session.project_path),
+                    session_id =
+                        crate::benchmark_queries::escape_graphql(&fixture.hot_session.session_id),
+                ))
+                .await,
+                "coding search chunk materialization",
             )
-            .with_limit(6),
-        )
-        .await
-        .unwrap();
-    assert_eq!(message_response.collection_name, "CodingSearchChunk");
-    assert_eq!(
-        message_response.embedding_model,
-        "coding-search-chunk-model"
-    );
-    assert!(message_response.query_vector_dimensions > 0);
-    assert!(!message_response.hits.is_empty());
-    assert!(message_response.hits.iter().all(|hit| {
-        hit.fields["target_kind"].as_str() == Some("message")
-            && hit.fields["session_id"].as_str() == Some(fixture.hot_session.session_id.as_str())
-            && hit.fields["project_path"].as_str()
-                == Some(fixture.hot_session.project_path.as_str())
-    }));
-    assert!(message_response.hits.iter().any(|hit| {
-        hit.fields["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("relation narrowing"))
-    }));
-
-    let action_response = node
-        .hybrid_search_dense(
-            &dense_chunk_request(
-                "action",
-                "rg pushdown planner joins",
-                Some(&fixture.hot_session.session_id),
-                Some(&fixture.hot_session.project_path),
-            )
-            .with_limit(6),
-        )
-        .await
-        .unwrap();
-    assert_eq!(action_response.collection_name, "CodingSearchChunk");
-    assert!(!action_response.hits.is_empty());
-    assert!(action_response.hits.iter().all(|hit| {
-        hit.fields["target_kind"].as_str() == Some("action")
-            && hit.fields["session_id"].as_str() == Some(fixture.hot_session.session_id.as_str())
-            && hit.fields["project_path"].as_str()
-                == Some(fixture.hot_session.project_path.as_str())
-    }));
-    assert!(action_response.hits.iter().any(|hit| {
-        hit.fields["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("rg"))
-    }));
-
-    let requests = server.requests();
-    assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-search-chunk-model"
-                    && request.input == "relation narrowing bm25 pushdown"
-            })
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-search-chunk-model"
-                    && request.input == "rg pushdown planner joins"
-            })
-            .count(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn dense_search_v1_supports_query_text_api() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 64;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
-
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let session_doc_id = lookup_session_doc_id(&node, &task.session_id)
-            .await
             .unwrap();
-        let response = node
-            .hybrid_search_dense(
-                &dense_request_for_target(
-                    task.target,
-                    task.effective_query(),
-                    Some(&session_doc_id),
+
+            let chunks = data["CodingSearchChunk"].as_array().unwrap();
+            assert!(!chunks.is_empty());
+            assert!(chunks.iter().all(|chunk| {
+                chunk["session_id"].as_str() == Some(fixture.hot_session.session_id.as_str())
+                    && chunk["project_path"].as_str()
+                        == Some(fixture.hot_session.project_path.as_str())
+                    && chunk["role"].as_str() == Some("assistant")
+            }));
+            assert!(chunks
+                .iter()
+                .any(|chunk| chunk["chunk_index"].as_i64() == Some(1)));
+            assert!(chunks
+                .iter()
+                .all(|chunk| chunk["chunk_count"].as_i64().unwrap_or_default() > 1));
+        })
+        .unwrap()
+}
+
+#[test]
+fn dense_search_v1_supports_production_coding_search_chunks() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 24;
+            config.assistant_message_bytes = 1_600;
+            config.action_command_bytes = 480;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+
+            let message_response = node
+                .hybrid_search_dense(
+                    &dense_chunk_request(
+                        "message",
+                        "relation narrowing bm25 pushdown",
+                        Some(&fixture.hot_session.session_id),
+                        Some(&fixture.hot_session.project_path),
+                    )
+                    .with_limit(6),
                 )
-                .with_limit(6),
+                .await
+                .unwrap();
+            assert_eq!(message_response.collection_name, "CodingSearchChunk");
+            assert_eq!(
+                message_response.embedding_model,
+                "coding-search-chunk-model"
+            );
+            assert!(message_response.query_vector_dimensions > 0);
+            assert!(!message_response.hits.is_empty());
+            assert!(message_response.hits.iter().all(|hit| {
+                hit.fields["target_kind"].as_str() == Some("message")
+                    && hit.fields["session_id"].as_str()
+                        == Some(fixture.hot_session.session_id.as_str())
+                    && hit.fields["project_path"].as_str()
+                        == Some(fixture.hot_session.project_path.as_str())
+            }));
+            assert!(message_response.hits.iter().any(|hit| {
+                hit.fields["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("relation narrowing"))
+            }));
+
+            let action_response = node
+                .hybrid_search_dense(
+                    &dense_chunk_request(
+                        "action",
+                        "rg pushdown planner joins",
+                        Some(&fixture.hot_session.session_id),
+                        Some(&fixture.hot_session.project_path),
+                    )
+                    .with_limit(6),
+                )
+                .await
+                .unwrap();
+            assert_eq!(action_response.collection_name, "CodingSearchChunk");
+            assert!(!action_response.hits.is_empty());
+            assert!(action_response.hits.iter().all(|hit| {
+                hit.fields["target_kind"].as_str() == Some("action")
+                    && hit.fields["session_id"].as_str()
+                        == Some(fixture.hot_session.session_id.as_str())
+                    && hit.fields["project_path"].as_str()
+                        == Some(fixture.hot_session.project_path.as_str())
+            }));
+            assert!(action_response.hits.iter().any(|hit| {
+                hit.fields["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("rg"))
+            }));
+
+            let requests = server.requests();
+            assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-search-chunk-model"
+                            && request.input == "relation narrowing bm25 pushdown"
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-search-chunk-model"
+                            && request.input == "rg pushdown planner joins"
+                    })
+                    .count(),
+                1
+            );
+        })
+        .unwrap()
+}
+
+#[test]
+fn dense_search_v1_supports_query_text_api() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 64;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
+
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let session_doc_id = lookup_session_doc_id(&node, &task.session_id)
+                    .await
+                    .unwrap();
+                let response = node
+                    .hybrid_search_dense(
+                        &dense_request_for_target(
+                            task.target,
+                            task.effective_query(),
+                            Some(&session_doc_id),
+                        )
+                        .with_limit(6),
+                    )
+                    .await
+                    .unwrap();
+                eprintln!(
+                    "{} dense v1 query=\"{}\" hits={}",
+                    task.task_id,
+                    response.query_text,
+                    response.hits.len()
+                );
+
+                assert!(response.query_vector_dimensions > 0);
+                assert_eq!(response.embedding_model, task_embedding_model(task.target));
+                assert!(!response.bm25_candidates.is_empty());
+                assert!(!response.dense_candidates.is_empty());
+                assert!(!response.hits.is_empty());
+
+                match task.target {
+                    SearchTarget::Messages => {
+                        assert_eq!(response.collection_name, "CodingMessage");
+                        assert_eq!(response.vector_field, "content_v");
+                        assert!(response.hits.iter().all(|hit| hit
+                            .fields
+                            .get("message_id")
+                            .is_some()
+                            && hit.fields.get("content").is_some()));
+                    }
+                    SearchTarget::Actions => {
+                        assert_eq!(response.collection_name, "CodingAction");
+                        assert_eq!(response.vector_field, "command_v");
+                        assert!(response.hits.iter().all(|hit| {
+                            hit.fields.get("action_type").is_some()
+                                && hit.fields.get("target").is_some()
+                                && hit.fields.get("command").is_some()
+                        }));
+                    }
+                }
+
+                assert!(
+                    response
+                        .hits
+                        .iter()
+                        .any(|hit| task.support_ids().contains(&hit.doc_id)),
+                    "{} dense v1 search missed all labeled supports",
+                    task.task_id
+                );
+            }
+
+            let requests = server.requests();
+            assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-message-model"
+                            && request.input == "relation narrowing bm25 pushdown"
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| {
+                        request.model == "coding-action-model"
+                            && request.input == "rg pushdown planner joins"
+                    })
+                    .count(),
+                1
+            );
+        })
+        .unwrap()
+}
+
+#[test]
+fn dense_search_v1_honors_filter_and_exclusions() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
+
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 20;
+            config.medium_session_messages = 14;
+            config.medium_session_actions = 8;
+
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+
+            let fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
+            let session_doc_id = lookup_session_doc_id(&node, &fixture.hot_session.session_id)
+                .await
+                .unwrap();
+            let request = dense_request_for_target(
+                SearchTarget::Messages,
+                "pushdown candidate",
+                Some(&session_doc_id),
             )
-            .await
-            .unwrap();
-        eprintln!(
-            "{} dense v1 query=\"{}\" hits={}",
-            task.task_id,
-            response.query_text,
-            response.hits.len()
-        );
+            .with_limit(5);
 
-        assert!(response.query_vector_dimensions > 0);
-        assert_eq!(response.embedding_model, task_embedding_model(task.target));
-        assert!(!response.bm25_candidates.is_empty());
-        assert!(!response.dense_candidates.is_empty());
-        assert!(!response.hits.is_empty());
-
-        match task.target {
-            SearchTarget::Messages => {
-                assert_eq!(response.collection_name, "CodingMessage");
-                assert_eq!(response.vector_field, "content_v");
-                assert!(response
+            let first_response = node.hybrid_search_dense(&request).await.unwrap();
+            assert!(!first_response.hits.is_empty());
+            assert_doc_ids_belong_to_session(
+                &node,
+                "CodingMessage",
+                &first_response
                     .hits
                     .iter()
-                    .all(|hit| hit.fields.get("message_id").is_some()
-                        && hit.fields.get("content").is_some()));
-            }
-            SearchTarget::Actions => {
-                assert_eq!(response.collection_name, "CodingAction");
-                assert_eq!(response.vector_field, "command_v");
-                assert!(response.hits.iter().all(|hit| {
-                    hit.fields.get("action_type").is_some()
-                        && hit.fields.get("target").is_some()
-                        && hit.fields.get("command").is_some()
-                }));
-            }
-        }
+                    .map(|hit| hit.doc_id.clone())
+                    .collect::<Vec<_>>(),
+                &session_doc_id,
+            )
+            .await
+            .unwrap();
 
-        assert!(
-            response
-                .hits
-                .iter()
-                .any(|hit| task.support_ids().contains(&hit.doc_id)),
-            "{} dense v1 search missed all labeled supports",
-            task.task_id
-        );
-    }
+            let excluded_doc_id = first_response.hits[0].doc_id.clone();
+            let second_response = node
+                .hybrid_search_dense(
+                    &request
+                        .clone()
+                        .with_excluded_doc_ids(vec![excluded_doc_id.clone()]),
+                )
+                .await
+                .unwrap();
 
-    let requests = server.requests();
-    assert_eq!(requests.len(), embedded_source_texts(&node).await + 2);
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-message-model"
-                    && request.input == "relation narrowing bm25 pushdown"
-            })
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| {
-                request.model == "coding-action-model"
-                    && request.input == "rg pushdown planner joins"
-            })
-            .count(),
-        1
-    );
-}
+            assert!(!second_response.hits.is_empty());
+            assert!(
+                second_response
+                    .hits
+                    .iter()
+                    .all(|hit| hit.doc_id != excluded_doc_id),
+                "excluded doc_id {} was still returned",
+                excluded_doc_id
+            );
+            assert_doc_ids_belong_to_session(
+                &node,
+                "CodingMessage",
+                &second_response
+                    .hits
+                    .iter()
+                    .map(|hit| hit.doc_id.clone())
+                    .collect::<Vec<_>>(),
+                &session_doc_id,
+            )
+            .await
+            .unwrap();
 
-#[tokio::test]
-async fn dense_search_v1_honors_filter_and_exclusions() {
-    let server = MockEmbeddingServer::start().await;
-
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 20;
-    config.medium_session_messages = 14;
-    config.medium_session_actions = 8;
-
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
-    let session_doc_id = lookup_session_doc_id(&node, &fixture.hot_session.session_id)
-        .await
-        .unwrap();
-    let request = dense_request_for_target(
-        SearchTarget::Messages,
-        "pushdown candidate",
-        Some(&session_doc_id),
-    )
-    .with_limit(5);
-
-    let first_response = node.hybrid_search_dense(&request).await.unwrap();
-    assert!(!first_response.hits.is_empty());
-    assert_doc_ids_belong_to_session(
-        &node,
-        "CodingMessage",
-        &first_response
-            .hits
-            .iter()
-            .map(|hit| hit.doc_id.clone())
-            .collect::<Vec<_>>(),
-        &session_doc_id,
-    )
-    .await
-    .unwrap();
-
-    let excluded_doc_id = first_response.hits[0].doc_id.clone();
-    let second_response = node
-        .hybrid_search_dense(
-            &request
-                .clone()
-                .with_excluded_doc_ids(vec![excluded_doc_id.clone()]),
-        )
-        .await
-        .unwrap();
-
-    assert!(!second_response.hits.is_empty());
-    assert!(
-        second_response
-            .hits
-            .iter()
-            .all(|hit| hit.doc_id != excluded_doc_id),
-        "excluded doc_id {} was still returned",
-        excluded_doc_id
-    );
-    assert_doc_ids_belong_to_session(
-        &node,
-        "CodingMessage",
-        &second_response
-            .hits
-            .iter()
-            .map(|hit| hit.doc_id.clone())
-            .collect::<Vec<_>>(),
-        &session_doc_id,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        server.requests().len(),
-        embedded_source_texts(&node).await + 2
-    );
+            assert_eq!(
+                server.requests().len(),
+                embedded_source_texts(&node).await + 2
+            );
+        })
+        .unwrap()
 }
 
 struct RealEmbeddingServer {
@@ -1723,7 +1774,9 @@ impl RealEmbeddingServer {
                     return Ok(());
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            edge::testing::edge()
+                .sleep(std::time::Duration::from_secs(1))
+                .await;
         }
 
         panic!(
@@ -1815,302 +1868,322 @@ command
     )
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "downloads local Hugging Face embedding models and runs a full real-model e2e"]
-async fn coding_session_embedding_fixture_real_models_e2e() {
-    let server = RealEmbeddingServer::start().await.unwrap();
+fn coding_session_embedding_fixture_real_models_e2e() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = RealEmbeddingServer::start().await.unwrap();
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 40;
-    config.hot_session_actions = 20;
-    config.medium_session_messages = 12;
-    config.medium_session_actions = 6;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 40;
+            config.hot_session_actions = 20;
+            config.medium_session_messages = 12;
+            config.medium_session_actions = 6;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let _fixture = seed_real_embedding_fixture(&node, &config, &server)
-        .await
-        .unwrap();
-    assert!(total_embedding_documents(&node).await > 102);
+            let _fixture = seed_real_embedding_fixture(&node, &config, &server)
+                .await
+                .unwrap();
+            assert!(total_embedding_documents(&node).await > 102);
 
-    let message_vector = request_real_embedding(
-        &server.base_url,
-        "coding-message-model",
-        "relation narrowing before bm25 scoring pushdown",
-    )
-    .await
-    .unwrap();
-    let message_data = ensure_success(
-        node.execute(&render_real_message_similarity_query(&message_vector))
-            .await,
-        "real message similarity",
-    )
-    .unwrap();
-    let top_messages = message_data["CodingMessage"].as_array().unwrap();
-    assert!(!top_messages.is_empty());
-    assert!(top_messages.iter().any(|message| {
-        message["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("bm25"))
-    }));
-    assert!(top_messages
-        .iter()
-        .any(|message| message["sim"].as_f64().unwrap_or_default() > 0.0));
+            let message_vector = request_real_embedding(
+                &server.base_url,
+                "coding-message-model",
+                "relation narrowing before bm25 scoring pushdown",
+            )
+            .await
+            .unwrap();
+            let message_data = ensure_success(
+                node.execute(&render_real_message_similarity_query(&message_vector))
+                    .await,
+                "real message similarity",
+            )
+            .unwrap();
+            let top_messages = message_data["CodingMessage"].as_array().unwrap();
+            assert!(!top_messages.is_empty());
+            assert!(top_messages.iter().any(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("bm25"))
+            }));
+            assert!(top_messages
+                .iter()
+                .any(|message| message["sim"].as_f64().unwrap_or_default() > 0.0));
 
-    let action_vector = request_real_embedding(
-        &server.base_url,
-        "coding-action-model",
-        "rg bm25 nested query planner",
-    )
-    .await
-    .unwrap();
-    let action_data = ensure_success(
-        node.execute(&render_real_action_similarity_query(&action_vector))
-            .await,
-        "real action similarity",
-    )
-    .unwrap();
-    let top_actions = action_data["CodingAction"].as_array().unwrap();
-    assert!(!top_actions.is_empty());
-    assert!(top_actions.iter().any(|action| {
-        action["command"]
-            .as_str()
-            .is_some_and(|command| command.contains("rg") || command.contains("cargo"))
-    }));
-    assert!(top_actions
-        .iter()
-        .any(|action| action["sim"].as_f64().unwrap_or_default() > 0.0));
+            let action_vector = request_real_embedding(
+                &server.base_url,
+                "coding-action-model",
+                "rg bm25 nested query planner",
+            )
+            .await
+            .unwrap();
+            let action_data = ensure_success(
+                node.execute(&render_real_action_similarity_query(&action_vector))
+                    .await,
+                "real action similarity",
+            )
+            .unwrap();
+            let top_actions = action_data["CodingAction"].as_array().unwrap();
+            assert!(!top_actions.is_empty());
+            assert!(top_actions.iter().any(|action| {
+                action["command"]
+                    .as_str()
+                    .is_some_and(|command| command.contains("rg") || command.contains("cargo"))
+            }));
+            assert!(top_actions
+                .iter()
+                .any(|action| action["sim"].as_f64().unwrap_or_default() > 0.0));
+        })
+        .unwrap()
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "downloads local Hugging Face embedding models and runs a hybrid bm25+dense comparison"]
-async fn coding_session_embedding_fixture_real_models_hybrid_rank_comparison() {
-    let server = RealEmbeddingServer::start().await.unwrap();
+fn coding_session_embedding_fixture_real_models_hybrid_rank_comparison() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = RealEmbeddingServer::start().await.unwrap();
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let fixture = seed_real_embedding_fixture(&node, &config, &server)
-        .await
-        .unwrap();
+            let fixture = seed_real_embedding_fixture(&node, &config, &server)
+                .await
+                .unwrap();
 
-    let message_query = "pushdown candidate relation narrowing";
-    let message_vector =
-        request_real_embedding(&server.base_url, "coding-message-model", message_query)
+            let message_query = "pushdown candidate relation narrowing";
+            let message_vector =
+                request_real_embedding(&server.base_url, "coding-message-model", message_query)
+                    .await
+                    .unwrap();
+            let message_summary = run_hybrid_comparison(
+                &node,
+                SearchTarget::Messages,
+                &fixture.hot_session.session_id,
+                "real_hot_messages_pushdown_candidate",
+                message_query,
+                &message_vector,
+                8,
+            )
             .await
             .unwrap();
-    let message_summary = run_hybrid_comparison(
-        &node,
-        SearchTarget::Messages,
-        &fixture.hot_session.session_id,
-        "real_hot_messages_pushdown_candidate",
-        message_query,
-        &message_vector,
-        8,
-    )
-    .await
-    .unwrap();
-    eprintln!("{}", message_summary.render());
-    assert_hybrid_summary(&message_summary, "pushdown");
+            eprintln!("{}", message_summary.render());
+            assert_hybrid_summary(&message_summary, "pushdown");
 
-    let action_query = "rg pushdown planner";
-    let action_vector =
-        request_real_embedding(&server.base_url, "coding-action-model", action_query)
+            let action_query = "rg pushdown planner";
+            let action_vector =
+                request_real_embedding(&server.base_url, "coding-action-model", action_query)
+                    .await
+                    .unwrap();
+            let action_summary = run_hybrid_comparison(
+                &node,
+                SearchTarget::Actions,
+                &fixture.hot_session.session_id,
+                "real_hot_actions_rg_pushdown",
+                action_query,
+                &action_vector,
+                6,
+            )
             .await
             .unwrap();
-    let action_summary = run_hybrid_comparison(
-        &node,
-        SearchTarget::Actions,
-        &fixture.hot_session.session_id,
-        "real_hot_actions_rg_pushdown",
-        action_query,
-        &action_vector,
-        6,
-    )
-    .await
-    .unwrap();
-    eprintln!("{}", action_summary.render());
-    assert_hybrid_summary(&action_summary, "rg");
+            eprintln!("{}", action_summary.render());
+            assert_hybrid_summary(&action_summary, "rg");
+        })
+        .unwrap()
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "downloads local Hugging Face embedding models and runs query-text hybrid search"]
-async fn coding_session_embedding_fixture_real_models_hybrid_search_api() {
-    let server = RealEmbeddingServer::start().await.unwrap();
+fn coding_session_embedding_fixture_real_models_hybrid_search_api() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = RealEmbeddingServer::start().await.unwrap();
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let fixture = seed_real_embedding_fixture(&node, &config, &server)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
+            let fixture = seed_real_embedding_fixture(&node, &config, &server)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
 
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let response = node
-            .hybrid_search_coding(
-                &crate::CodingHybridSearchRequest::new(
-                    task_search_target(task.target),
-                    task.effective_query(),
-                )
-                .with_session_id(task.session_id.clone())
-                .with_limit(6),
-            )
-            .await
-            .unwrap();
-        eprintln!(
-            "{} real hybrid_search_coding query=\"{}\" hits={}",
-            task.task_id,
-            response.query_text,
-            response.hits.len()
-        );
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let response = node
+                    .hybrid_search_coding(
+                        &crate::CodingHybridSearchRequest::new(
+                            task_search_target(task.target),
+                            task.effective_query(),
+                        )
+                        .with_session_id(task.session_id.clone())
+                        .with_limit(6),
+                    )
+                    .await
+                    .unwrap();
+                eprintln!(
+                    "{} real hybrid_search_coding query=\"{}\" hits={}",
+                    task.task_id,
+                    response.query_text,
+                    response.hits.len()
+                );
 
-        assert_eq!(response.embedding_model, task_embedding_model(task.target));
-        assert!(response.query_vector_dimensions > 0);
-        assert!(!response.hits.is_empty());
-        assert!(
-            response
-                .hits
-                .iter()
-                .any(|hit| task.support_ids().contains(&hit.doc_id)),
-            "{} real hybrid_search_coding missed all labeled supports",
-            task.task_id
-        );
-    }
+                assert_eq!(response.embedding_model, task_embedding_model(task.target));
+                assert!(response.query_vector_dimensions > 0);
+                assert!(!response.hits.is_empty());
+                assert!(
+                    response
+                        .hits
+                        .iter()
+                        .any(|hit| task.support_ids().contains(&hit.doc_id)),
+                    "{} real hybrid_search_coding missed all labeled supports",
+                    task.task_id
+                );
+            }
+        })
+        .unwrap()
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "downloads local Hugging Face embedding models and runs generic dense-search v1"]
-async fn dense_search_v1_real_models_query_text_api() {
-    let server = RealEmbeddingServer::start().await.unwrap();
+fn dense_search_v1_real_models_query_text_api() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = RealEmbeddingServer::start().await.unwrap();
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let fixture = seed_real_embedding_fixture(&node, &config, &server)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
+            let fixture = seed_real_embedding_fixture(&node, &config, &server)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
 
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let session_doc_id = lookup_session_doc_id(&node, &task.session_id)
-            .await
-            .unwrap();
-        let response = node
-            .hybrid_search_dense(
-                &dense_request_for_target(
-                    task.target,
-                    task.effective_query(),
-                    Some(&session_doc_id),
-                )
-                .with_limit(6),
-            )
-            .await
-            .unwrap();
-        eprintln!(
-            "{} real dense v1 query=\"{}\" hits={}",
-            task.task_id,
-            response.query_text,
-            response.hits.len()
-        );
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let session_doc_id = lookup_session_doc_id(&node, &task.session_id)
+                    .await
+                    .unwrap();
+                let response = node
+                    .hybrid_search_dense(
+                        &dense_request_for_target(
+                            task.target,
+                            task.effective_query(),
+                            Some(&session_doc_id),
+                        )
+                        .with_limit(6),
+                    )
+                    .await
+                    .unwrap();
+                eprintln!(
+                    "{} real dense v1 query=\"{}\" hits={}",
+                    task.task_id,
+                    response.query_text,
+                    response.hits.len()
+                );
 
-        assert_eq!(response.embedding_model, task_embedding_model(task.target));
-        assert!(response.query_vector_dimensions > 0);
-        assert!(!response.hits.is_empty());
-        assert!(
-            response
-                .hits
-                .iter()
-                .any(|hit| task.support_ids().contains(&hit.doc_id)),
-            "{} real dense v1 search missed all labeled supports",
-            task.task_id
-        );
-    }
+                assert_eq!(response.embedding_model, task_embedding_model(task.target));
+                assert!(response.query_vector_dimensions > 0);
+                assert!(!response.hits.is_empty());
+                assert!(
+                    response
+                        .hits
+                        .iter()
+                        .any(|hit| task.support_ids().contains(&hit.doc_id)),
+                    "{} real dense v1 search missed all labeled supports",
+                    task.task_id
+                );
+            }
+        })
+        .unwrap()
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "downloads local Hugging Face embedding models and evaluates context-1-style coding tasks"]
-async fn coding_session_embedding_fixture_real_models_context1_task_eval() {
-    let server = RealEmbeddingServer::start().await.unwrap();
+fn coding_session_embedding_fixture_real_models_context1_task_eval() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = RealEmbeddingServer::start().await.unwrap();
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 48;
-    config.hot_session_actions = 24;
-    config.medium_session_messages = 16;
-    config.medium_session_actions = 8;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 48;
+            config.hot_session_actions = 24;
+            config.medium_session_messages = 16;
+            config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
 
-    let fixture = seed_real_embedding_fixture(&node, &config, &server)
-        .await
-        .unwrap();
-    let tasks = build_context1_style_coding_tasks(&node, &fixture)
-        .await
-        .unwrap();
+            let fixture = seed_real_embedding_fixture(&node, &config, &server)
+                .await
+                .unwrap();
+            let tasks = build_context1_style_coding_tasks(&node, &fixture)
+                .await
+                .unwrap();
 
-    for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
-        let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
-        let query_vector = request_real_embedding(
-            &server.base_url,
-            task_embedding_model(task.target),
-            task.effective_query(),
-        )
-        .await
-        .unwrap();
-        let evaluation = evaluate_coding_task(&node, task, &query_vector, 6)
-            .await
-            .unwrap();
-        eprintln!("{}", evaluation.render());
+            for task_id in ["hot_messages_pushdown", "hot_actions_rg_pushdown"] {
+                let task = tasks.iter().find(|task| task.task_id == task_id).unwrap();
+                let query_vector = request_real_embedding(
+                    &server.base_url,
+                    task_embedding_model(task.target),
+                    task.effective_query(),
+                )
+                .await
+                .unwrap();
+                let evaluation = evaluate_coding_task(&node, task, &query_vector, 6)
+                    .await
+                    .unwrap();
+                eprintln!("{}", evaluation.render());
 
-        let rrf = evaluation.metric(RetrievalStrategy::Rrf).unwrap();
-        assert!(rrf.answer_found, "{} rrf missed all supports", task.task_id);
-        assert!(
-            rrf.support_hits >= 1,
-            "{} rrf did not recover any labeled support item",
-            task.task_id
-        );
-    }
+                let rrf = evaluation.metric(RetrievalStrategy::Rrf).unwrap();
+                assert!(rrf.answer_found, "{} rrf missed all supports", task.task_id);
+                assert!(
+                    rrf.support_hits >= 1,
+                    "{} rrf did not recover any labeled support item",
+                    task.task_id
+                );
+            }
+        })
+        .unwrap()
 }
 
 /// `indexFetches` counts a vector-index hit. A full-scan fallback leaves it at
@@ -2139,61 +2212,66 @@ fn index_fetches(explain: &serde_json::Value) -> u64 {
 /// This is the shape that hid the bug: a full scan returns the same rows in the
 /// same order, so the sibling assertions on content all passed while the index
 /// was never consulted.
-#[tokio::test]
-async fn coding_session_embedding_fixture_similarity_uses_the_vector_index() {
-    let server = MockEmbeddingServer::start().await;
+#[test]
+fn coding_session_embedding_fixture_similarity_uses_the_vector_index() {
+    edge::testing::edge()
+        .block_on(async {
+            let server = MockEmbeddingServer::start().await;
 
-    let mut config = CodingSessionFixtureConfig::smoke_test();
-    config.hot_session_messages = 40;
-    config.hot_session_actions = 16;
-    config.medium_session_messages = 12;
-    config.medium_session_actions = 6;
+            let mut config = CodingSessionFixtureConfig::smoke_test();
+            config.hot_session_messages = 40;
+            config.hot_session_actions = 16;
+            config.medium_session_messages = 12;
+            config.medium_session_actions = 6;
 
-    let node = crate::EmbeddedNode::builder()
-        .with_embedding_url(server.base_url.clone())
-        .build()
-        .await
-        .unwrap();
-    let _fixture = seed_coding_session_embedding_fixture(&node, &config)
-        .await
-        .unwrap();
+            let node = crate::EmbeddedNode::builder()
+                .with_embedding_url(server.base_url.clone())
+                .build()
+                .await
+                .unwrap();
+            let _fixture = seed_coding_session_embedding_fixture(&node, &config)
+                .await
+                .unwrap();
 
-    let message_vector = deterministic_embedding("coding-message-model", "pushdown");
-    let explain = ensure_success(
-        node.execute(&format!(
-            "query @explain(type: execute) {}",
-            render_message_similarity_query("pushdown", &message_vector)
-        ))
-        .await,
-        "message similarity explain",
-    )
-    .unwrap();
-    assert!(
+            let message_vector = deterministic_embedding("coding-message-model", "pushdown");
+            let explain = ensure_success(
+                node.execute(&format!(
+                    "query @explain(type: execute) {}",
+                    render_message_similarity_query("pushdown", &message_vector)
+                ))
+                .await,
+                "message similarity explain",
+            )
+            .unwrap();
+            assert!(
         index_fetches(&explain) > 0,
         "CodingMessage similarity full-scanned instead of using its vector index\n{explain:#}"
     );
 
-    let action_vector = deterministic_embedding("coding-action-model", "rg");
-    let explain = ensure_success(
-        node.execute(&format!(
-            "query @explain(type: execute) {}",
-            render_action_similarity_query(&action_vector)
-        ))
-        .await,
-        "action similarity explain",
-    )
-    .unwrap();
-    assert!(
+            let action_vector = deterministic_embedding("coding-action-model", "rg");
+            let explain = ensure_success(
+                node.execute(&format!(
+                    "query @explain(type: execute) {}",
+                    render_action_similarity_query(&action_vector)
+                ))
+                .await,
+                "action similarity explain",
+            )
+            .unwrap();
+            assert!(
         index_fetches(&explain) > 0,
         "CodingAction similarity full-scanned instead of using its vector index\n{explain:#}"
     );
+        })
+        .unwrap()
 }
 
 /// A filter over the corpus must still fill the requested page: the answer is
 /// the nearest matching messages, not whatever survives filtering the nearest
 /// overall.
-#[tokio::test]
-async fn coding_session_embedding_fixture_filtered_similarity_fills_the_page() {
+#[test]
+fn coding_session_embedding_fixture_filtered_similarity_fills_the_page() {
+    edge::testing::edge().block_on(async {
     let server = MockEmbeddingServer::start().await;
 
     let mut config = CodingSessionFixtureConfig::smoke_test();
@@ -2254,4 +2332,6 @@ sim: SIMILARITY(content_v: {{vector: [{}]}})
         rows.iter().all(|row| row["role"] == "assistant"),
         "every row must match the filter"
     );
+})
+    .unwrap()
 }

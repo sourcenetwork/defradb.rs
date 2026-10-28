@@ -131,7 +131,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         force_write: bool,
     ) {
         if force_write || doc.get(field_name) != Some(&value) {
-            doc.set(field_name, value);
+            doc.set_unchecked(field_name.to_string(), value);
             modified_fields.insert(field_name.to_string());
         }
     }
@@ -602,9 +602,8 @@ where
         };
         let Some(mut doc) = existing else {
             self.created.store(true, Ordering::Release);
-            let mut doc = Document::new();
-            doc.set_collection(self.plan.target.clone());
-            doc.set_schema_version_id(self.plan.target.version_id.clone());
+            let mut doc = Document::new(self.plan.target.clone());
+            doc.set_collection_version_id(self.plan.target.version_id.clone());
             self.db
                 .apply_window_to_target_doc(
                     &self.plan,
@@ -642,8 +641,7 @@ where
         if modified_fields.is_empty() {
             return done;
         }
-        doc.set_collection(self.plan.target.clone());
-        doc.set_schema_version_id(self.plan.target.version_id.clone());
+        doc.set_collection_version_id(self.plan.target.version_id.clone());
         doc.set_id(id);
         mutator
             .update_as(&self.context, target_name, doc, modified_fields)
@@ -658,88 +656,121 @@ mod tests {
     use schema::{FieldDescription, FieldKind};
     use storage::RegolithStore;
 
-    #[tokio::test]
-    async fn concurrent_window_updates_keep_the_highest_source_height() {
-        let db = Arc::new(crate::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        // Exercise persistence directly so background scheduling cannot hide a
-        // stale processor behind a process-local series lock.
-        let target = CollectionVersion::new(
-            "Window",
-            "window-v1",
-            "window",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "source_doc_id", FieldKind::string()),
-                FieldDescription::new("3", "source_height", FieldKind::int()),
-                FieldDescription::new("4", "window_start", FieldKind::datetime()),
-                FieldDescription::new("5", "window_end", FieldKind::datetime()),
-                FieldDescription::new("6", "count", FieldKind::int()),
-            ],
-        );
-        db.create_collection(target).await.unwrap();
-        let target = db
-            .get_collection("Window")
-            .unwrap()
-            .unwrap()
-            .schema()
-            .clone();
-        let plan = DownsamplePlan {
-            source: target.clone(),
-            target,
-            interval_raw: "1s".into(),
-            interval_nanos: 1_000_000_000,
-            time_field: "ts".into(),
-            retention_nanos: None,
-            passthrough_fields: vec![],
-            aggregate_fields: vec![AggregateField::Count],
-            source_kind: SourceKind::Raw {
-                measure_field: "value".into(),
-            },
-        };
-        let source = Document::new();
-        let window = |height| WindowAggregate {
-            count: height,
-            sum: None,
-            avg: None,
-            min: None,
-            max: None,
-            window_start: chrono::DateTime::from_timestamp(height, 0)
+    #[test]
+    fn concurrent_window_updates_keep_the_highest_source_height() {
+        workers::block_on(async {
+            let db = Arc::new(crate::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            // Exercise persistence directly so background scheduling cannot hide a
+            // stale processor behind a process-local series lock.
+            let target = CollectionVersion::new(
+                "Window",
+                "window-v1",
+                "window",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "source_doc_id",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "source_height",
+                        FieldKind::int(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "4",
+                        "window_start",
+                        FieldKind::datetime(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "5",
+                        "window_end",
+                        FieldKind::datetime(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "6",
+                        "count",
+                        FieldKind::int(),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            );
+            db.create_collection(target).await.unwrap();
+            let target = db
+                .get_collection("Window")
                 .unwrap()
-                .fixed_offset(),
-            window_end: chrono::DateTime::from_timestamp(height + 1, 0)
                 .unwrap()
-                .fixed_offset(),
-            source_height: height,
-        };
-        let id = db
-            .persist_window_update(&plan, &source, "series", None, &window(1))
-            .await
-            .unwrap();
-        let high = window(10);
-        let middle = window(9);
-        let low = window(8);
-        let (a, b, c) = tokio::join!(
-            db.persist_window_update(&plan, &source, "series", Some(&id), &high),
-            db.persist_window_update(&plan, &source, "series", Some(&id), &middle),
-            db.persist_window_update(&plan, &source, "series", Some(&id), &low),
-        );
-        for result in [a, b, c] {
-            assert_eq!(result.unwrap(), id);
-        }
-        // A delayed processor must also be harmless after all races finish.
-        db.persist_window_update(&plan, &source, "series", Some(&id), &window(2))
-            .await
-            .unwrap();
-        let actual = crate::AutoCommitMutator::new(db)
-            .get_for_update("Window", &id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(actual.get("source_height"), Some(&NormalValue::Int(10)));
-        assert_eq!(actual.get("count"), Some(&NormalValue::Int(10)));
-        assert_eq!(
-            actual.get("window_start").and_then(normal_value_to_time),
-            Some(high.window_start)
-        );
+                .schema()
+                .clone();
+            let plan = DownsamplePlan {
+                source: target.clone(),
+                target,
+                interval_raw: "1s".into(),
+                interval_nanos: 1_000_000_000,
+                time_field: "ts".into(),
+                retention_nanos: None,
+                passthrough_fields: vec![],
+                aggregate_fields: vec![AggregateField::Count],
+                source_kind: SourceKind::Raw {
+                    measure_field: "value".into(),
+                },
+            };
+            let source = Document::new(crate::common::schema::open_collection(&[]));
+            let window = |height| WindowAggregate {
+                count: height,
+                sum: None,
+                avg: None,
+                min: None,
+                max: None,
+                window_start: chrono::DateTime::from_timestamp(height, 0)
+                    .unwrap()
+                    .fixed_offset(),
+                window_end: chrono::DateTime::from_timestamp(height + 1, 0)
+                    .unwrap()
+                    .fixed_offset(),
+                source_height: height,
+            };
+            let id = db
+                .persist_window_update(&plan, &source, "series", None, &window(1))
+                .await
+                .unwrap();
+            let high = window(10);
+            let middle = window(9);
+            let low = window(8);
+            let (a, b, c) = futures::join!(
+                db.persist_window_update(&plan, &source, "series", Some(&id), &high),
+                db.persist_window_update(&plan, &source, "series", Some(&id), &middle),
+                db.persist_window_update(&plan, &source, "series", Some(&id), &low),
+            );
+            for result in [a, b, c] {
+                assert_eq!(result.unwrap(), id);
+            }
+            // A delayed processor must also be harmless after all races finish.
+            db.persist_window_update(&plan, &source, "series", Some(&id), &window(2))
+                .await
+                .unwrap();
+            let actual = crate::AutoCommitMutator::new(db)
+                .get_for_update("Window", &id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(actual.get("source_height"), Some(&NormalValue::Int(10)));
+            assert_eq!(actual.get("count"), Some(&NormalValue::Int(10)));
+            assert_eq!(
+                actual.get("window_start").and_then(normal_value_to_time),
+                Some(high.window_start)
+            );
+        })
+        .unwrap()
     }
 }

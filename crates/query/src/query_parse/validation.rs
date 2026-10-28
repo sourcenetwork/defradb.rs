@@ -74,7 +74,7 @@ async fn validate_mutation_collection(
     if provider.get_collection(name).await?.is_none() {
         let suggestion = suggest_collection(name, provider).await;
         let field_name = match mutation.mutation_type {
-            crate::mapper::MutationType::Create => format!("add_{}", name),
+            crate::mapper::MutationType::Add => format!("add_{}", name),
             crate::mapper::MutationType::Update => format!("update_{}", name),
             crate::mapper::MutationType::Delete => format!("delete_{}", name),
             crate::mapper::MutationType::Upsert => format!("upsert_{}", name),
@@ -158,93 +158,111 @@ mod tests {
         assert_eq!(edit_distance("abc", "xyz"), 3);
     }
 
-    #[tokio::test]
-    async fn test_valid_query_passes() {
-        let provider = make_provider(&["User", "Article"]);
-        let op = ParsedOperation::Query {
-            selects: vec![Select::new("User")],
-            explain: None,
-            exhaustive: false,
-        };
-        assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+    #[test]
+    fn test_valid_query_passes() {
+        workers::block_on(async {
+            let provider = make_provider(&["User", "Article"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("User")],
+                explain: None,
+                exhaustive: false,
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_invalid_query_collection() {
-        let provider = make_provider(&["User", "Article"]);
-        let op = ParsedOperation::Query {
-            selects: vec![Select::new("Uzr")],
-            explain: None,
-            exhaustive: false,
-        };
-        let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("Uzr"), "error should contain collection name");
-        assert!(msg.contains("Cannot query field \"Uzr\" on type \"Query\"."));
-        assert!(
-            msg.contains("Did you mean \"User\""),
-            "error should suggest User, got: {}",
-            msg
-        );
+    #[test]
+    fn test_invalid_query_collection() {
+        workers::block_on(async {
+            let provider = make_provider(&["User", "Article"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("Uzr")],
+                explain: None,
+                exhaustive: false,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Uzr"), "error should contain collection name");
+            assert!(msg.contains("Cannot query field \"Uzr\" on type \"Query\"."));
+            assert!(
+                msg.contains("Did you mean \"User\""),
+                "error should suggest User, got: {}",
+                msg
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_commits_skipped() {
-        let provider = make_provider(&["User"]);
-        let op = ParsedOperation::Query {
-            selects: vec![Select::new("_commits")],
-            explain: None,
-            exhaustive: false,
-        };
-        assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+    #[test]
+    fn test_commits_skipped() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("_commits")],
+                explain: None,
+                exhaustive: false,
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_invalid_mutation_collection() {
-        let provider = make_provider(&["User"]);
-        let mutation = Mutation {
-            mutation_type: crate::mapper::MutationType::Create,
-            collection_name: "Usr".to_string(),
-            alias: None,
-            create_input: vec![],
-            update_input: Default::default(),
-            doc_ids: None,
-            filter: None,
-            fields: vec![],
-            document_mapping: DocumentMapping::new(),
-            encrypt_doc: false,
-            encrypt_fields: vec![],
-        };
-        let op = ParsedOperation::Mutation {
-            mutations: vec![mutation],
-            explain: None,
-        };
-        let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("Cannot query field \"add_Usr\" on type \"Mutation\"."));
-        assert!(msg.contains("Did you mean \"User\""));
+    #[test]
+    fn test_invalid_mutation_collection() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let mutation = Mutation {
+                mutation_type: crate::mapper::MutationType::Add,
+                collection_name: "Usr".to_string(),
+                alias: None,
+                create_input: vec![],
+                update_input: Default::default(),
+                doc_ids: None,
+                filter: None,
+                fields: vec![],
+                document_mapping: DocumentMapping::new(),
+                encrypt_doc: false,
+                encrypt_fields: vec![],
+            };
+            let op = ParsedOperation::Mutation {
+                mutations: vec![mutation],
+                explain: None,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Cannot query field \"add_Usr\" on type \"Mutation\"."));
+            assert!(msg.contains("Did you mean \"User\""));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_introspection_skipped() {
-        let provider = make_provider(&[]);
-        let op = ParsedOperation::Introspection {
-            query: "{ __schema { types { name } } }".to_string(),
-        };
-        assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+    #[test]
+    fn test_introspection_skipped() {
+        workers::block_on(async {
+            let provider = make_provider(&[]);
+            let op = ParsedOperation::Introspection {
+                query: "{ __schema { types { name } } }".to_string(),
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_no_suggestion_for_distant_name() {
-        let provider = make_provider(&["User"]);
-        let op = ParsedOperation::Query {
-            selects: vec![Select::new("CompletelyDifferent")],
-            explain: None,
-            exhaustive: false,
-        };
-        let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("CompletelyDifferent"));
-        assert!(!msg.contains("Did you mean"));
+    #[test]
+    fn test_no_suggestion_for_distant_name() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("CompletelyDifferent")],
+                explain: None,
+                exhaustive: false,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("CompletelyDifferent"));
+            assert!(!msg.contains("Did you mean"));
+        })
+        .unwrap()
     }
 }

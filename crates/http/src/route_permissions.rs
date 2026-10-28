@@ -60,20 +60,13 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         }
         "/api/v0/events" => RoutePermission::Dynamic,
         "/api/v0/actions" => RoutePermission::Required(NodePermission::ActionList),
-        "/api/v0/schema" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::CollectionGet),
-            Method::POST => RoutePermission::Required(NodePermission::CollectionPatch),
-            _ => RoutePermission::Required(NodePermission::CollectionGet),
-        },
+        "/api/v0/schema" => RoutePermission::Required(NodePermission::CollectionGet),
 
         // =====================================================================
         // Transactions (permissions enforced per-operation within tx)
         // =====================================================================
         "/api/v0/tx" => RoutePermission::IdentityOnly,
         "/api/v0/tx/{id}" => RoutePermission::IdentityOnly,
-        "/api/v0/tx/{id}/lens" => RoutePermission::Required(NodePermission::CollectionPatch),
-        "/api/v0/tx/{id}/collections" => RoutePermission::Required(NodePermission::CollectionGet),
-        "/api/v0/tx/{id}/schema" => RoutePermission::Required(NodePermission::CollectionPatch),
 
         // =====================================================================
         // Collections
@@ -89,18 +82,10 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             _ => RoutePermission::Required(NodePermission::CollectionGet),
         },
         "/api/v0/collections/default" => RoutePermission::Required(NodePermission::CollectionPatch),
-        "/api/v0/collections/versions" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::CollectionGet),
-            Method::DELETE => RoutePermission::Required(NodePermission::CollectionPatch),
-            _ => RoutePermission::Required(NodePermission::CollectionGet),
-        },
+        "/api/v0/collections/versions" => {
+            RoutePermission::Required(NodePermission::CollectionPatch)
+        }
         "/api/v0/collections/migrations" => RoutePermission::Required(NodePermission::MigrationSet),
-        "/api/v0/collections/by-id/{id}" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
-        "/api/v0/collections/by-version/{id}" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
         "/api/v0/collections/indexes" => RoutePermission::Required(NodePermission::IndexList),
         // PATCH and DELETE here are Go's filtered document operations, not
         // collection ones, so they are document permissions. Dropping a
@@ -150,22 +135,12 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // =====================================================================
         "/api/v0/p2p/info" => RoutePermission::Required(NodePermission::P2pPeerInfo),
         "/api/v0/p2p/sync/status" => RoutePermission::Required(NodePermission::P2pPeerInfo),
+        "/api/v0/p2p/peers/{peer_id}" => RoutePermission::Required(NodePermission::P2pPeerInfo),
         "/api/v0/p2p/shareable-address" => RoutePermission::Required(NodePermission::P2pPeerInfo),
         "/api/v0/p2p/active-peers" => RoutePermission::Required(NodePermission::P2pPeerActive),
         "/api/v0/p2p/connect" => RoutePermission::Required(NodePermission::P2pPeerConnect),
         "/api/v0/p2p/disconnect" => RoutePermission::Required(NodePermission::P2pPeerDisconnect),
-        "/api/v0/p2p/peers" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::P2pPeerConnect),
-            Method::POST => RoutePermission::Required(NodePermission::P2pPeerConnect),
-            _ => RoutePermission::Required(NodePermission::P2pPeerConnect),
-        },
         "/api/v0/p2p/replicators" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::P2pReplicatorList),
-            Method::POST => RoutePermission::Required(NodePermission::P2pReplicatorAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::P2pReplicatorDelete),
-            _ => RoutePermission::Required(NodePermission::P2pReplicatorList),
-        },
-        "/api/v0/p2p/replicator" => match *method {
             Method::GET => RoutePermission::Required(NodePermission::P2pReplicatorList),
             Method::POST => RoutePermission::Required(NodePermission::P2pReplicatorAdd),
             Method::DELETE => RoutePermission::Required(NodePermission::P2pReplicatorDelete),
@@ -199,13 +174,8 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // ACP (Document Access Control)
         // =====================================================================
         "/api/v0/acp/status" => RoutePermission::Required(NodePermission::DacStatus),
-        // An aliased route gets its own MatchedPath, so it needs its own key
-        // here or it falls to the safe default and loses DacPolicyAdd.
-        "/api/v0/acp/policy" | "/api/v0/acp/document/policy" => match *method {
-            Method::POST => RoutePermission::Required(NodePermission::DacPolicyAdd),
-            Method::GET => RoutePermission::Required(NodePermission::DacStatus),
-            _ => RoutePermission::Required(NodePermission::DacStatus),
-        },
+        "/api/v0/acp/document/policy" => RoutePermission::Required(NodePermission::DacPolicyAdd),
+        "/api/v0/acp/policy" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/policy/{id}" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/document/decide" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/document/relationship" => match *method {
@@ -234,26 +204,6 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/acp/node/re-enable" => RoutePermission::Dynamic,
 
         // =====================================================================
-        // NAC (Rust-native routes)
-        // =====================================================================
-        "/api/v0/nac/status" => RoutePermission::Required(NodePermission::NacStatus),
-        "/api/v0/nac/admin" => match *method {
-            Method::POST => RoutePermission::Required(NodePermission::NacRelationAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::NacRelationDelete),
-            _ => RoutePermission::Required(NodePermission::NacRelationAdd),
-        },
-
-        // =====================================================================
-        // Index (Rust-native routes)
-        // =====================================================================
-        "/api/v0/index" => match *method {
-            Method::POST => RoutePermission::Required(NodePermission::IndexCreate),
-            Method::GET => RoutePermission::Required(NodePermission::IndexList),
-            Method::DELETE => RoutePermission::Required(NodePermission::IndexDelete),
-            _ => RoutePermission::Required(NodePermission::IndexList),
-        },
-
-        // =====================================================================
         // Backup
         // =====================================================================
         "/api/v0/backup/export" => RoutePermission::Required(NodePermission::DocumentRead),
@@ -274,7 +224,6 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             Method::GET => RoutePermission::Required(NodePermission::LensList),
             _ => RoutePermission::Required(NodePermission::LensList),
         },
-        "/api/v0/lens/set" => RoutePermission::Required(NodePermission::MigrationSet),
         "/api/v0/lens/reload" => RoutePermission::Required(NodePermission::CollectionPatch),
 
         // =====================================================================
@@ -286,11 +235,9 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // =====================================================================
         // Views
         // =====================================================================
-        "/api/v0/views" | "/api/v0/view" => RoutePermission::Required(NodePermission::ViewAdd),
-        "/api/v0/views/refresh" | "/api/v0/view/refresh" => {
-            RoutePermission::Required(NodePermission::ViewRefresh)
-        }
-        // No /view/gc to alias: Go has no such route.
+        "/api/v0/view" => RoutePermission::Required(NodePermission::ViewAdd),
+        "/api/v0/view/refresh" => RoutePermission::Required(NodePermission::ViewRefresh),
+        // Go has no view GC route.
         "/api/v0/views/gc" => RoutePermission::Required(NodePermission::ViewGc),
 
         // =====================================================================

@@ -124,12 +124,12 @@ impl<S: Store + 'static> BlockClassifier for DbBlockClassifier<S> {
                     return BlockClass::Allow;
                 }
 
-                let Some(schema_version_id) = block.delta.schema_version_id() else {
+                let Some(collection_version_id) = block.delta.collection_version_id() else {
                     return BlockClass::Deny;
                 };
                 let collection = match self
                     .db
-                    .get_collection_by_version_id_full(schema_version_id)
+                    .get_collection_by_version_id_full(collection_version_id)
                     .await
                 {
                     Ok(Some(collection)) => collection,
@@ -239,8 +239,13 @@ mod tests {
             "version-1",
             "collection-1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
         .with_policy(PolicyDescription::new("policy1", "users"))
@@ -252,7 +257,7 @@ mod tests {
             defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
                 field_name: "name".to_string(),
                 priority: 1,
-                schema_version_id: "version-1".to_string(),
+                collection_version_id: "version-1".to_string(),
                 data: b"Alice".to_vec(),
             }),
             vec![],
@@ -319,7 +324,12 @@ mod tests {
                 "Other",
                 "version-2",
                 "collection-2",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             )
             .with_policy(PolicyDescription::new("policy2", "others")),
         )

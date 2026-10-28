@@ -7,7 +7,9 @@ use serde_json::{Map, Value as JsonValue};
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
 use crate::mapper::{Filter, Requestable, Select};
-use crate::planner::index_selection::{can_be_ordered_by_index, can_or_filter_use_index};
+use crate::planner::index_selection::{
+    can_be_ordered_by_index, can_or_filter_use_index, filtered_index_order_prefix,
+};
 use crate::txn::TransactionRegistry;
 
 use super::super::plan;
@@ -25,6 +27,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         if select.collection_name == "_documentArrivals" {
             return self
                 .execute_arrivals_query(select, fetcher, caller_identity)
+                .await;
+        }
+        if select.collection_name == "_jsonConflicts" {
+            return self
+                .execute_json_conflicts_query(select, fetcher, caller_identity)
                 .await;
         }
         // Handle encrypted search queries (encrypted_<Collection>)
@@ -219,10 +226,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .order_by
                 .as_ref()
                 .map(|o| {
-                    collection
-                        .indexes
-                        .iter()
-                        .any(|idx| can_be_ordered_by_index(o, idx).0)
+                    collection.indexes.iter().any(|idx| {
+                        select.filter.as_ref().map_or_else(
+                            || can_be_ordered_by_index(o, idx).0,
+                            |filter| filtered_index_order_prefix(o, idx, filter).0 > 0,
+                        )
+                    })
                 })
                 .unwrap_or(false);
 
@@ -262,9 +271,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         if let schema::FieldKind::ScalarArray(arr) = &f.kind {
                             let ek = arr.element_kind();
                             match ek {
-                                schema::ScalarKind::Int
-                                | schema::ScalarKind::Float32
-                                | schema::ScalarKind::Float64 => Some(ek),
+                                schema::ScalarKind::NillableInt
+                                | schema::ScalarKind::NillableFloat32
+                                | schema::ScalarKind::NillableFloat64 => Some(ek),
                                 _ => None,
                             }
                         } else {
@@ -283,7 +292,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     };
 
                     // For Int fields, validate that vector values are integers
-                    if element_kind == schema::ScalarKind::Int {
+                    if element_kind == schema::ScalarKind::NillableInt {
                         let non_int_values: Vec<String> = sim
                             .vector
                             .iter()

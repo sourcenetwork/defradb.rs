@@ -89,40 +89,49 @@ async fn measure(nprobe: u32) -> Measured {
 /// Every list probed, so the scan is exhaustive and there is no partial-probe
 /// error left at all: this must be a perfect recall against the same oracle,
 /// on this corpus, not merely a high one.
-#[tokio::test]
-async fn probing_every_list_matches_the_oracle_exactly() {
-    let m = measure(8).await;
-    println!("nprobe=8 (of 8): recall@10={:.4}", m.recall);
-    assert_eq!(
-        m.recall, 1.0,
-        "full probe must be exact, recall@10 was {:.4}",
-        m.recall
-    );
+#[test]
+fn probing_every_list_matches_the_oracle_exactly() {
+    workers::block_on(async {
+        let m = measure(8).await;
+        println!("nprobe=8 (of 8): recall@10={:.4}", m.recall);
+        assert_eq!(
+            m.recall, 1.0,
+            "full probe must be exact, recall@10 was {:.4}",
+            m.recall
+        );
+    })
+    .unwrap()
 }
 
 /// One list probed: most of the loss is the coarse step missing a neighbour
 /// it never scanned. A floor, so a broken probe ordering is caught.
-#[tokio::test]
-async fn a_single_probe_still_finds_most_neighbours() {
-    let m = measure(1).await;
-    println!("nprobe=1 (of 8): recall@10={:.4}", m.recall);
-    assert!(m.recall >= 0.55, "recall@10 fell to {:.4}", m.recall);
+#[test]
+fn a_single_probe_still_finds_most_neighbours() {
+    workers::block_on(async {
+        let m = measure(1).await;
+        println!("nprobe=1 (of 8): recall@10={:.4}", m.recall);
+        assert!(m.recall >= 0.55, "recall@10 fell to {:.4}", m.recall);
+    })
+    .unwrap()
 }
 
 /// Probing more lists can only see more candidates.
-#[tokio::test]
-async fn recall_rises_with_nprobe() {
-    let one = measure(1).await.recall;
-    let half = measure(4).await.recall;
-    let all = measure(8).await.recall;
-    assert!(
-        half >= one,
-        "probing half the lists ({half:.4}) was worse than one ({one:.4})"
-    );
-    assert!(
-        all >= half,
-        "probing every list ({all:.4}) was worse than half ({half:.4})"
-    );
+#[test]
+fn recall_rises_with_nprobe() {
+    workers::block_on(async {
+        let one = measure(1).await.recall;
+        let half = measure(4).await.recall;
+        let all = measure(8).await.recall;
+        assert!(
+            half >= one,
+            "probing half the lists ({half:.4}) was worse than one ({one:.4})"
+        );
+        assert!(
+            all >= half,
+            "probing every list ({all:.4}) was worse than half ({half:.4})"
+        );
+    })
+    .unwrap()
 }
 
 /// Recall at each engine's own default settings, on one shared corpus: what
@@ -131,91 +140,94 @@ async fn recall_rises_with_nprobe() {
 ///
 /// Every parameter left at `default()`: `nlist` and `m` derive from the
 /// corpus, `nprobe` is `DEFAULT_NPROBE`, `ef_search` is `DEFAULT_EF_SEARCH`.
-#[tokio::test]
-async fn recall_against_ivfpq_and_hnsw_at_default_settings() {
-    const COUNT: usize = 2_000;
-    const DIMS: usize = 32;
-    const CLUSTERS: usize = 40;
-    const COMPARE_SEED: u64 = 0x9E37_79B9;
+#[test]
+fn recall_against_ivfpq_and_hnsw_at_default_settings() {
+    workers::block_on(async {
+        const COUNT: usize = 2_000;
+        const DIMS: usize = 32;
+        const CLUSTERS: usize = 40;
+        const COMPARE_SEED: u64 = 0x9E37_79B9;
 
-    let mut corpus = crate::support::Corpus::new(COMPARE_SEED);
-    let vectors = corpus.clustered(COUNT, DIMS, CLUSTERS, 0.15);
+        let mut corpus = crate::support::Corpus::new(COMPARE_SEED);
+        let vectors = corpus.clustered(COUNT, DIMS, CLUSTERS, 0.15);
 
-    let flat = oracle(&vectors).await;
+        let flat = oracle(&vectors).await;
 
-    let mut ivfflat = IvfFlat::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfFlatParams::default(),
-        COMPARE_SEED,
-    )
-    .unwrap();
-    let mut ivfpq = IvfPq::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfPqParams::default(),
-        COMPARE_SEED,
-    )
-    .unwrap();
-    let mut hnsw = Hnsw::new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        Params::new(DEFAULT_M),
-        COMPARE_SEED,
-    );
-    for (i, vector) in vectors.iter().enumerate() {
-        let id = NodeId(i as u64 + 1);
-        ivfflat.insert(id, vector).await.unwrap();
-        ivfpq.insert(id, vector).await.unwrap();
-        hnsw.insert(id, vector).await.unwrap();
-    }
-    ivfflat.build().await.unwrap();
-    ivfpq.build().await.unwrap();
+        let mut ivfflat = IvfFlat::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfFlatParams::default(),
+            COMPARE_SEED,
+        )
+        .unwrap();
+        let mut ivfpq = IvfPq::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfPqParams::default(),
+            COMPARE_SEED,
+        )
+        .unwrap();
+        let mut hnsw = Hnsw::new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            Params::new(DEFAULT_M),
+            COMPARE_SEED,
+        );
+        for (i, vector) in vectors.iter().enumerate() {
+            let id = NodeId(i as u64 + 1);
+            ivfflat.insert(id, vector).await.unwrap();
+            ivfpq.insert(id, vector).await.unwrap();
+            hnsw.insert(id, vector).await.unwrap();
+        }
+        ivfflat.build().await.unwrap();
+        ivfpq.build().await.unwrap();
 
-    let mut queries = crate::support::Corpus::new(COMPARE_SEED ^ 0xFFFF);
-    let (mut hit_ivfflat, mut hit_ivfpq, mut hit_hnsw, mut total) =
-        (0usize, 0usize, 0usize, 0usize);
-    for _ in 0..QUERIES {
-        let query = queries.vector(DIMS);
-        let want = exact(&flat, &query).await;
+        let mut queries = crate::support::Corpus::new(COMPARE_SEED ^ 0xFFFF);
+        let (mut hit_ivfflat, mut hit_ivfpq, mut hit_hnsw, mut total) =
+            (0usize, 0usize, 0usize, 0usize);
+        for _ in 0..QUERIES {
+            let query = queries.vector(DIMS);
+            let want = exact(&flat, &query).await;
 
-        let from_ivfflat = ivfflat.search(&query, K, None).await.unwrap();
-        let from_ivfpq = ivfpq.search(&query, K, None).await.unwrap();
-        let from_hnsw = hnsw
-            .search(&query, K, Some(DEFAULT_EF_SEARCH))
-            .await
-            .unwrap();
+            let from_ivfflat = ivfflat.search(&query, K, None).await.unwrap();
+            let from_ivfpq = ivfpq.search(&query, K, None).await.unwrap();
+            let from_hnsw = hnsw
+                .search(&query, K, Some(DEFAULT_EF_SEARCH))
+                .await
+                .unwrap();
 
-        hit_ivfflat += from_ivfflat
-            .iter()
-            .filter(|n| want.contains(&n.id.0))
-            .count();
-        hit_ivfpq += from_ivfpq.iter().filter(|n| want.contains(&n.id.0)).count();
-        hit_hnsw += from_hnsw.iter().filter(|n| want.contains(&n.id.0)).count();
-        total += want.len();
-    }
+            hit_ivfflat += from_ivfflat
+                .iter()
+                .filter(|n| want.contains(&n.id.0))
+                .count();
+            hit_ivfpq += from_ivfpq.iter().filter(|n| want.contains(&n.id.0)).count();
+            hit_hnsw += from_hnsw.iter().filter(|n| want.contains(&n.id.0)).count();
+            total += want.len();
+        }
 
-    let recall_ivfflat = hit_ivfflat as f64 / total as f64;
-    let recall_ivfpq = hit_ivfpq as f64 / total as f64;
-    let recall_hnsw = hit_hnsw as f64 / total as f64;
+        let recall_ivfflat = hit_ivfflat as f64 / total as f64;
+        let recall_ivfpq = hit_ivfpq as f64 / total as f64;
+        let recall_hnsw = hit_hnsw as f64 / total as f64;
 
-    println!(
-        "corpus: clustered N={COUNT} d={DIMS} clusters={CLUSTERS}, defaults, recall@{K}:\n\
+        println!(
+            "corpus: clustered N={COUNT} d={DIMS} clusters={CLUSTERS}, defaults, recall@{K}:\n\
          \x20 IVF_FLAT (nlist={}, nprobe={}) = {recall_ivfflat:.4}\n\
          \x20 IVF_PQ   (nlist={}, nprobe={}, m={}) = {recall_ivfpq:.4}\n\
          \x20 HNSW     (m={DEFAULT_M}, ef_search={DEFAULT_EF_SEARCH}) = {recall_hnsw:.4}",
-        IvfFlatParams::default().resolved_nlist(COUNT as u64),
-        IvfFlatParams::default().nprobe,
-        IvfPqParams::default().resolved_nlist(COUNT as u64),
-        IvfPqParams::default().nprobe,
-        IvfPqParams::default().resolved_m(DIMS),
-    );
+            IvfFlatParams::default().resolved_nlist(COUNT as u64),
+            IvfFlatParams::default().nprobe,
+            IvfPqParams::default().resolved_nlist(COUNT as u64),
+            IvfPqParams::default().nprobe,
+            IvfPqParams::default().resolved_m(DIMS),
+        );
 
-    // A floor, not a race: IVF_FLAT has no quantization error, so it must not
-    // be the worst of the three on the same corpus at default settings.
-    assert!(
-        recall_ivfflat >= recall_ivfpq - 0.02,
-        "IVF_FLAT ({recall_ivfflat:.4}) fell meaningfully behind IVF_PQ ({recall_ivfpq:.4}) \
+        // A floor, not a race: IVF_FLAT has no quantization error, so it must not
+        // be the worst of the three on the same corpus at default settings.
+        assert!(
+            recall_ivfflat >= recall_ivfpq - 0.02,
+            "IVF_FLAT ({recall_ivfflat:.4}) fell meaningfully behind IVF_PQ ({recall_ivfpq:.4}) \
          despite paying no quantization error"
-    );
+        );
+    })
+    .unwrap()
 }

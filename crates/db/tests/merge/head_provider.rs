@@ -27,169 +27,196 @@ async fn remove_composite_head(headstore: &datastore::NamespaceView, doc_short_i
         .unwrap();
 }
 
-#[tokio::test]
-async fn batch_create_docs_expose_composite_heads() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-            FieldDescription::new("3", "idx", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
+#[test]
+fn batch_create_docs_expose_composite_heads() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        db.create_collection(CollectionVersion::new(
+            "Transcript",
+            "v1",
+            "col-transcript",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
+            ],
+        ))
+        .await
+        .unwrap();
 
-    let mutator = AutoCommitMutator::new(db.clone());
-    let docs = vec![
-        make_transcript("first", 1),
-        make_transcript("second", 2),
-        make_transcript("third", 3),
-    ];
-    let results = mutator.create_many("Transcript", docs).await.unwrap();
-    assert_eq!(results.len(), 3);
+        let mutator = AutoCommitMutator::new(db.clone());
+        let docs = vec![
+            make_transcript(&db, "first", 1),
+            make_transcript(&db, "second", 2),
+            make_transcript(&db, "third", 3),
+        ];
+        let results = mutator.create_many("Transcript", docs).await.unwrap();
+        assert_eq!(results.len(), 3);
 
-    let provider = DbHeadProvider::new(db);
-    for result in results {
+        let provider = DbHeadProvider::new(db);
+        for result in results {
+            let doc_id = result.doc_id.to_string();
+            let heads = provider.get_document_heads(&doc_id).await.unwrap();
+            assert!(
+                !heads.is_empty(),
+                "expected composite heads for batch-created doc {}",
+                doc_id
+            );
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn falls_back_to_priority_index_when_composite_head_entry_is_missing() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        db.create_collection(CollectionVersion::new(
+            "Transcript",
+            "v1",
+            "col-transcript",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
+            ],
+        ))
+        .await
+        .unwrap();
+
+        let mutator = AutoCommitMutator::new(db.clone());
+        let result = mutator
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         let doc_id = result.doc_id.to_string();
+        let commit_cid = result.commit_cid.expect("commit cid");
+        let doc_short_id = doc_short_id_for(&db, &doc_id).await;
+
+        let txn = db.new_txn(false).await.unwrap();
+        remove_composite_head(&txn.headstore().unwrap(), doc_short_id, commit_cid).await;
+        txn.commit().await.unwrap();
+
+        let provider = DbHeadProvider::new(db);
         let heads = provider.get_document_heads(&doc_id).await.unwrap();
-        assert!(
-            !heads.is_empty(),
-            "expected composite heads for batch-created doc {}",
-            doc_id
+        assert_eq!(heads, vec![commit_cid]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn falls_back_to_blockstore_scan_when_head_indexes_are_missing() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        db.create_collection(CollectionVersion::new(
+            "Transcript",
+            "v1",
+            "col-transcript",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
+            ],
+        ))
+        .await
+        .unwrap();
+
+        let mutator = AutoCommitMutator::new(db.clone());
+        let result = mutator
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let doc_id = result.doc_id.to_string();
+        let commit_cid = result.commit_cid.expect("commit cid");
+        let commit_block = result.commit_block.expect("commit block");
+        let priority = Block::from_dag_cbor(&commit_block)
+            .expect("decode commit block")
+            .delta
+            .priority();
+        let doc_short_id = doc_short_id_for(&db, &doc_id).await;
+
+        let txn = db.new_txn(false).await.unwrap();
+        remove_composite_head(&txn.headstore().unwrap(), doc_short_id, commit_cid).await;
+        txn.headstore()
+            .unwrap()
+            .delete(&HeadstorePriorityKey::new(doc_short_id, priority, commit_cid).bytes())
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+
+        let provider = DbHeadProvider::new(db);
+        let heads = provider.get_document_heads(&doc_id).await.unwrap();
+        assert_eq!(heads, vec![commit_cid]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn falls_back_to_ownership_index_when_head_indexes_are_missing() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+
+        let block = Block::new_with_options(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema-v1".to_string(),
+                priority: 7,
+                status: 1,
+            }),
+            vec![],
+            vec![],
+            None,
+            None,
         );
-    }
-}
+        let block_bytes = block.to_dag_cbor().unwrap();
+        let cid = generate_cid_from_bytes(&block_bytes).unwrap();
+        let doc_id = db::block::builder::derive_doc_id(&cid);
 
-#[tokio::test]
-async fn falls_back_to_priority_index_when_composite_head_entry_is_missing() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-            FieldDescription::new("3", "idx", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let mutator = AutoCommitMutator::new(db.clone());
-    let result = mutator
-        .create_many("Transcript", vec![make_transcript("first", 1)])
-        .await
-        .unwrap()
-        .pop()
-        .unwrap();
-    let doc_id = result.doc_id.to_string();
-    let commit_cid = result.commit_cid.expect("commit cid");
-    let doc_short_id = doc_short_id_for(&db, &doc_id).await;
-
-    let txn = db.new_txn(false).await.unwrap();
-    remove_composite_head(&txn.headstore().unwrap(), doc_short_id, commit_cid).await;
-    txn.commit().await.unwrap();
-
-    let provider = DbHeadProvider::new(db);
-    let heads = provider.get_document_heads(&doc_id).await.unwrap();
-    assert_eq!(heads, vec![commit_cid]);
-}
-
-#[tokio::test]
-async fn falls_back_to_blockstore_scan_when_head_indexes_are_missing() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-            FieldDescription::new("3", "idx", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let mutator = AutoCommitMutator::new(db.clone());
-    let result = mutator
-        .create_many("Transcript", vec![make_transcript("first", 1)])
-        .await
-        .unwrap()
-        .pop()
-        .unwrap();
-    let doc_id = result.doc_id.to_string();
-    let commit_cid = result.commit_cid.expect("commit cid");
-    let commit_block = result.commit_block.expect("commit block");
-    let priority = Block::from_dag_cbor(&commit_block)
-        .expect("decode commit block")
-        .delta
-        .priority();
-    let doc_short_id = doc_short_id_for(&db, &doc_id).await;
-
-    let txn = db.new_txn(false).await.unwrap();
-    remove_composite_head(&txn.headstore().unwrap(), doc_short_id, commit_cid).await;
-    txn.headstore()
-        .unwrap()
-        .delete(&HeadstorePriorityKey::new(doc_short_id, priority, commit_cid).bytes())
-        .await
-        .unwrap();
-    txn.commit().await.unwrap();
-
-    let provider = DbHeadProvider::new(db);
-    let heads = provider.get_document_heads(&doc_id).await.unwrap();
-    assert_eq!(heads, vec![commit_cid]);
-}
-
-#[tokio::test]
-async fn falls_back_to_ownership_index_when_head_indexes_are_missing() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-
-    let block = Block::new_with_options(
-        CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
-            priority: 7,
-            status: 1,
-        }),
-        vec![],
-        vec![],
-        None,
-        None,
-    );
-    let block_bytes = block.to_dag_cbor().unwrap();
-    let cid = generate_cid_from_bytes(&block_bytes).unwrap();
-    let doc_id = db::block::builder::derive_doc_id(&cid);
-
-    let txn = db.new_txn(false).await.unwrap();
-    txn.blockstore()
-        .unwrap()
-        .set(&cid.to_bytes(), &block_bytes)
-        .await
-        .unwrap();
-    {
-        let systemstore = txn.systemstore().unwrap();
-        let short_id = db.next_doc_short_id().await.unwrap();
-        db::docid::map::set_doc_id_mapping(&systemstore, 1, short_id, &doc_id)
+        let txn = db.new_txn(false).await.unwrap();
+        txn.blockstore()
+            .unwrap()
+            .set(&cid.to_bytes(), &block_bytes)
             .await
             .unwrap();
-        db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
-            .await
-            .unwrap();
-    }
-    txn.commit().await.unwrap();
+        {
+            let systemstore = txn.systemstore().unwrap();
+            let short_id = db.next_doc_short_id().await.unwrap();
+            db::docid::map::set_doc_id_mapping(&systemstore, 1, short_id, &doc_id)
+                .await
+                .unwrap();
+            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    let provider = DbHeadProvider::new(db);
-    let heads = provider.get_document_heads(&doc_id).await.unwrap();
-    assert_eq!(heads, vec![cid]);
+        let provider = DbHeadProvider::new(db);
+        let heads = provider.get_document_heads(&doc_id).await.unwrap();
+        assert_eq!(heads, vec![cid]);
+    })
+    .unwrap()
 }
 
 async fn doc_short_id_for(db: &Arc<DB<RegolithStore>>, doc_id: &str) -> u64 {
@@ -202,9 +229,14 @@ async fn doc_short_id_for(db: &Arc<DB<RegolithStore>>, doc_id: &str) -> u64 {
         .doc_short_id
 }
 
-fn make_transcript(body: &str, idx: i64) -> Document {
-    let mut doc = Document::new();
-    doc.set("body", body.to_string());
-    doc.set("idx", idx);
+fn make_transcript(db: &Arc<DB<RegolithStore>>, body: &str, idx: i64) -> Document {
+    let transcript = db
+        .get_collection("Transcript")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    let mut doc = Document::new(transcript);
+    doc.set("body", body.to_string()).unwrap();
+    doc.set("idx", idx).unwrap();
     doc
 }

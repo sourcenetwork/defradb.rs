@@ -57,7 +57,7 @@ impl<S: Store + 'static> DbDocFetcher<S> {
         }
     }
 
-    /// Take the transaction out of the fetcher (for commit/rollback). `None`
+    /// Take the transaction out of the fetcher (for commit/discard). `None`
     /// once it was taken, or while another handle still holds it.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
         self.txn.take()
@@ -264,10 +264,19 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        crate::read::json_conflicts::read(&*self.shared_txn()?, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+    }
+
     async fn get_commits(
         &self,
         options: &CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         // Convert query options to db options
         let db_options = DbCommitsOptions {
             doc_id: options.doc_id.clone(),
@@ -539,11 +548,17 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             .filter(|id| seen.insert(*id))
             .collect();
 
-        let mut doc_ids = crate::docid::map::resolve_doc_ids(&systemstore, &doc_short_ids)
+        let resolved = crate::docid::map::resolve_doc_id_pairs(&systemstore, &doc_short_ids)
             .await
             .map_err(|e| {
                 query::error::QueryError::execution(format!("doc ID resolution error: {}", e))
             })?;
+        let short_ids_by_public = resolved
+            .iter()
+            .cloned()
+            .collect::<rapidhash::RapidHashMap<_, _>>();
+        let physical_ids_unique = short_ids_by_public.len() == resolved.len();
+        let mut doc_ids = resolved.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
         crate::read::index_tiebreak::apply_equal_key_doc_id_tie_break(
             &params.scan_type,
             &mut doc_ids,
@@ -552,10 +567,15 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             &group_lens,
         );
 
-        Ok(query::fetcher::IndexScanResult::with_raw_count(
-            doc_ids,
-            raw_fetches,
-        ))
+        if !physical_ids_unique {
+            return Ok(query::fetcher::IndexScanResult::with_raw_count(
+                doc_ids,
+                raw_fetches,
+            ));
+        }
+        let ordered_short_ids = doc_ids.iter().map(|id| short_ids_by_public[id]).collect();
+        query::fetcher::IndexScanResult::with_raw_count(doc_ids, raw_fetches)
+            .with_doc_short_ids(ordered_short_ids)
     }
 
     fn supports_index_queries(&self) -> bool {
@@ -588,25 +608,31 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         _caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
         let versioned_fetcher = VersionedFetcher::new(self.shared_txn()?);
         versioned_fetcher
-            .get_document_at_cid(cid, expected_doc_id)
+            .get_document_at_cid(cid, expected_doc_id, collection.clone())
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         _caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Vec<Document>> {
         let versioned_fetcher = VersionedFetcher::new(self.shared_txn()?);
         versioned_fetcher
-            .get_documents_at_cid(cid, expected_doc_id, Some(collection_short_id))
+            .get_documents_at_cid(
+                cid,
+                expected_doc_id,
+                Some(collection.resolved_root_id()),
+                collection.clone(),
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }

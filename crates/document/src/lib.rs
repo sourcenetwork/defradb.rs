@@ -5,15 +5,20 @@
 //! - `DocID` - Content-addressed document identifier
 //! - `NormalValue` - Type-safe value enum for all field types
 //! - `FieldValue` - Wrapper with CRDT type and dirty tracking
-//! - `Field` - Field definition with name and CRDT type
+//! - `Field` - Field name with its CRDT type
 //!
 //! ## Example
 //!
 //! ```
 //! use document::{Document, NormalValue};
+//! use schema::{CType, CollectionBuilder, FieldDescription, FieldKind};
 //!
-//! // Create a document from JSON
-//! let doc = Document::from_json_str(r#"{"name": "Alice", "age": 30}"#).unwrap();
+//! // A document is always built against its collection definition
+//! let collection = CollectionBuilder::new("User", "bafyuser")
+//!     .field(FieldDescription::new("1", "name", FieldKind::string(), CType::LwwRegister))
+//!     .field(FieldDescription::new("2", "age", FieldKind::int(), CType::LwwRegister))
+//!     .build();
+//! let doc = Document::from_json_str(r#"{"name": "Alice", "age": 30}"#, collection).unwrap();
 //!
 //! // Access fields
 //! assert_eq!(doc.get("name").and_then(|v| v.as_str()), Some("Alice"));
@@ -24,12 +29,14 @@
 //! assert!(doc.id().is_none());
 //! ```
 
+mod commit_row;
 mod doc_id;
 mod document;
 pub mod encoding;
 mod encoding_cbor;
 mod error;
 mod field;
+mod field_op;
 mod json_leaf;
 mod json_path;
 mod json_traverse;
@@ -39,10 +46,12 @@ pub mod rfc3339;
 mod value;
 mod write_preparation;
 
+pub use commit_row::CommitRow;
 pub use doc_id::{validate_doc_ids, DocID, DOC_ID_V0, SDN_NAMESPACE_V0};
 pub use document::Document;
 pub use error::{Error, Result};
 pub use field::{special, Field};
+pub use field_op::FieldOp;
 pub use json_leaf::{JsonLeafValue, JsonScalarValue};
 pub use json_path::{JsonPath, JsonPathPart};
 pub use json_traverse::{index_traverse_options, traverse_json, TraverseOptions};
@@ -53,5 +62,3 @@ pub use write_preparation::WritePreparation;
 
 // Re-export schema types commonly used with documents
 pub use schema::{CType, CollectionVersion};
-
-pub mod stored;

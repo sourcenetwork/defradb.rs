@@ -233,5 +233,47 @@ fn merge(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(mutations, insert, update, delete, bulk_load, build, merge);
+/// One insert committed through `VectorIndex` on a regolith store, the way a
+/// collection writes it: a fresh engine per transaction, so the codebook
+/// decode and the encode are both part of it.
+fn insert_through_index(c: &mut Criterion) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use storage::corekv::Store;
+    use storage::index::CollectionIndex;
+
+    let rt = common::owned_runtime();
+    let dimensions = 768;
+    let (store, index) = rt.block_on(common::vector::trained_ivfpq(dimensions));
+    let mut corpus = Corpus::new(SEED ^ 0x1FB);
+    let vectors: Vec<_> = (0..64).map(|_| corpus.vector(dimensions)).collect();
+    let next = AtomicU64::new(1 << 32);
+
+    let mut group = c.benchmark_group("insert_through_index");
+    group.bench_function(BenchmarkId::new("ivfpq[built]", dimensions), |b| {
+        b.to_async(&rt).iter(|| async {
+            let id = next.fetch_add(1, Ordering::Relaxed);
+            let value = vec![document::NormalValue::Float32Array(
+                vectors[id as usize % vectors.len()].clone(),
+            )];
+            let mut txn = store.new_txn(false).await.expect("a transaction");
+            index
+                .save(&mut txn, id, black_box(&value))
+                .await
+                .expect("save");
+            txn.commit().await.expect("commit");
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    mutations,
+    insert,
+    update,
+    delete,
+    bulk_load,
+    build,
+    merge,
+    insert_through_index
+);
 criterion_main!(mutations);

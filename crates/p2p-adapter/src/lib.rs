@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use kovan::Atom;
-use rapidhash::{RapidHashMap, RapidHashSet};
+#[cfg(test)]
+use rapidhash::RapidHashMap;
+use rapidhash::RapidHashSet;
 use zeroize::Zeroizing;
 
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
@@ -18,9 +20,17 @@ mod iroh_restore;
 mod libp2p;
 pub mod manage;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod peer_details;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod pooled_doc_pusher;
 mod read_gate;
 mod replication_events;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_install_store;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_installs;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_replay;
 mod replicator_status;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod retry;
@@ -45,9 +55,13 @@ pub use iroh_restore::restore_iroh_p2p_state;
 #[cfg(feature = "libp2p")]
 pub use libp2p::{CollectionLookup, P2PAdapter, VersionSyncer};
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub use peer_details::PeerPushRetries;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
 pub use pooled_doc_pusher::pooled;
 pub use read_gate::{DbBlockClassifier, DbBlockReadGate};
 pub use replication_events::publish_replication_result;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub use replicator_install_store::{ReplicatorInstall, ReplicatorInstallRequest};
 pub use replicator_status::{
     load_persisted_replicators, set_persisted_replicator_status,
     set_persisted_replicator_status_for_incarnation,
@@ -113,7 +127,7 @@ pub fn collections_requiring_replay(
         .collect()
 }
 
-#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
+#[cfg(test)]
 fn collections_with_changed_capabilities(
     collection_cids: &[String],
     validated_capabilities: &[(String, String)],

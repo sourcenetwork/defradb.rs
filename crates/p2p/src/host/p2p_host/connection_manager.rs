@@ -22,7 +22,7 @@ pub(super) enum ConnectionPath {
 }
 
 #[derive(Debug)]
-pub(super) struct ActiveConnectionManager {
+pub(in crate::host) struct ActiveConnectionManager {
     low_water: usize,
     high_water: usize,
     grace_period: Duration,
@@ -80,6 +80,36 @@ impl ActiveConnectionManager {
 
     pub(super) fn on_closed(&mut self, connection_id: ConnectionId) {
         self.connections.remove(&connection_id);
+    }
+
+    /// Open connections to `peer_id`: `(path, dialed_by_us, established_at)`,
+    /// best path first.
+    pub(in crate::host) fn peer_connections(
+        &self,
+        peer_id: &PeerId,
+    ) -> Vec<(&'static str, bool, Instant)> {
+        let mut open: Vec<_> = self
+            .connections
+            .values()
+            .filter(|connection| connection.peer_id == *peer_id && !connection.closing)
+            .map(|connection| {
+                (
+                    connection.path,
+                    connection.dialed_by_us,
+                    connection.established_at,
+                )
+            })
+            .collect();
+        open.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.cmp(&b.2)));
+        open.into_iter()
+            .map(|(path, dialed_by_us, established_at)| {
+                let path = match path {
+                    ConnectionPath::Direct => "direct",
+                    ConnectionPath::Relayed => "relay",
+                };
+                (path, dialed_by_us, established_at)
+            })
+            .collect()
     }
 
     /// Connections to `peer_id` that must close so exactly one survives.

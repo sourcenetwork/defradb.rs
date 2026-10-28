@@ -295,8 +295,8 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let committed_migration = if let Some(mut config) = migration {
-            config.source_schema_version_id = old_version_id.to_string();
-            config.destination_schema_version_id = new_version_id.clone();
+            config.source_collection_version_id = old_version_id.to_string();
+            config.destination_collection_version_id = new_version_id.clone();
 
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
             let transform_id = txn_lens_store.add(config.clone()).await?;
@@ -506,7 +506,7 @@ impl<S: Store> crate::database::DB<S> {
         if let Ok(new_cid) = cid::Cid::try_from(new_version_id.as_str()) {
             let schema_heads = std::sync::Arc::clone(&self.schema_heads);
             let head_name = actual_name.to_string();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 schema_heads.insert(head_name.clone(), (vec![new_cid], collection_priority));
             })))?;
         }
@@ -519,7 +519,7 @@ impl<S: Store> crate::database::DB<S> {
         } else {
             None
         };
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             collections.rcu(|old| {
                 let mut cache = old.clone();
                 if let Some(collection) = &cached_collection {
@@ -649,7 +649,7 @@ impl<S: Store> crate::database::DB<S> {
                         .await?;
                 let collections = std::sync::Arc::clone(&self.collections);
                 let registered_name = coll_name.to_string();
-                txn.on_commit(OnCommit::Ordered(Box::new(move || {
+                txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
                         cache.put_named(&registered_name, cached_collection.clone());

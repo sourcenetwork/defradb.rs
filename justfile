@@ -20,7 +20,7 @@ go_root     := tooling / "go"
 jdk_root    := tooling / "jdk"
 
 # Pinned to what CI uses. ci.yml pins Go 1.25 (:449); Cargo.toml sets
-# rust-version 1.98; proofs/lean/lean-toolchain pins Lean v4.18.0; #1310 pins
+# rust-version 1.99; proofs/lean/lean-toolchain pins Lean v4.18.0; #1310 pins
 # TLC 1.7.4 by checksum. The upstream 1.8.0 pre-release asset is rolling and
 # cannot provide a reproducible clean-checkout gate.
 protoc_version := "35.1"
@@ -140,13 +140,14 @@ setup-jq:
 # test the browser client. wasm-bindgen-cli must match the wasm-bindgen version
 # in Cargo.lock exactly or the test runner refuses the module, so it is derived
 # rather than pinned by hand.
-[doc("cbindgen, wasm-pack, and a lockfile-matched wasm-bindgen-cli.")]
+[doc("cbindgen, wasm-pack, cargo-nextest, and a lockfile-matched wasm-bindgen-cli.")]
 [group('setup')]
 setup-cargo-tools:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v cbindgen  >/dev/null 2>&1 || cargo install cbindgen --locked
     command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+    command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
     command -v jq >/dev/null 2>&1 || { echo "error: jq is required; run 'just setup-jq'" >&2; exit 1; }
     meta="$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown)"
     wb_version="$(echo "$meta" | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' | head -1)"
@@ -507,7 +508,8 @@ build-apple:
 [doc("Workspace unit tests (mirrors CI's unit-tests jobs).")]
 [group('test')]
 test:
-    cargo test --workspace --profile {{ profile }} --exclude integration-test --exclude conformance
+    cargo nextest run --workspace --cargo-profile {{ profile }} --exclude integration-test --exclude conformance
+    cargo test --doc --workspace --profile {{ profile }} --exclude integration-test --exclude conformance
 
 # The only place the wasm SIMD kernels execute; they are compiled out of every
 # host build. Their target-feature flag lives in .cargo/config.toml.
@@ -543,32 +545,32 @@ test-browser-p2p:
 # Unit tests for one crate: `just test-crate crdt`.
 [group('test')]
 test-crate crate *args:
-    cargo test -p {{ crate }} --profile {{ profile }} {{ args }}
+    cargo nextest run -p {{ crate }} --cargo-profile {{ profile }} {{ args }}
 
 # Feature-gated suites the default workspace run skips. defra-node's p2p tests
 # are in-crate and off by default, so nothing else reaches them.
 [doc("Feature-gated suites the default workspace run never reaches.")]
 [group('test')]
 test-features:
-    cargo test -p telemetry --profile {{ profile }} --features otlp
-    cargo test -p cli --profile {{ profile }} --features otel --test telemetry_dedup
-    cargo test -p defra-node --profile {{ profile }} --features p2p
+    cargo nextest run -p telemetry --cargo-profile {{ profile }} --features otlp
+    cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
+    cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]
 integration:
-    cargo test -p integration-test --profile {{ profile }}
+    cargo nextest run -p integration-test --cargo-profile {{ profile }}
 
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
 integration-suite suite *args:
-    cargo test -p integration-test --test {{ suite }} --profile {{ profile }} {{ args }}
+    cargo nextest run -p integration-test --test {{ suite }} --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
 # (`DEFRA_WORKERS=1`): the same suites the default pool runs, on one worker.
 [group('test')]
 integration-one-worker *args:
-    DEFRA_WORKERS=1 cargo test -p integration-test --test basic --test query --profile {{ profile }} {{ args }}
+    DEFRA_WORKERS=1 cargo nextest run -p integration-test --test basic --test query --cargo-profile {{ profile }} {{ args }}
 
 # The pure-Rust half of the P2P topologies, serialized. `--skip ::go_` drops the
 # dual-runtime variants; the harness port allocator has a bind race in parallel
@@ -576,17 +578,17 @@ integration-one-worker *args:
 [doc("Pure-Rust P2P topologies, serialized (skips the go_ variants).")]
 [group('test')]
 integration-p2p:
-    cargo test -p integration-test --test p2p --profile {{ profile }} -- --test-threads=1 --skip ::go_
+    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- --skip ::go_
 
 # The go_* half, which needs a Go DefraDB binary on PATH.
 [group('test')]
 integration-go:
-    cargo test -p integration-test --test p2p --profile {{ profile }} -- --test-threads=1 ::go_
+    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- ::go_
 
 # The ffi-test tool's own unit tests. No Go checkout or generated header needed.
 [group('test')]
 test-ffi:
-    cargo test -p ffi-test --profile {{ profile }}
+    cargo nextest run -p ffi-test --cargo-profile {{ profile }}
 
 # Run every listed integration area one at a time, reporting each. Keeps going
 # after a failure and exits non-zero if any failed, so one red area does not
@@ -599,7 +601,7 @@ integration-all:
     failed=()
     for suite in {{ integration_suites }}; do
         echo "== $suite =="
-        cargo test -p integration-test --test "$suite" --profile {{ profile }} || failed+=("$suite")
+        cargo nextest run -p integration-test --test "$suite" --cargo-profile {{ profile }} || failed+=("$suite")
     done
     total=$(echo {{ integration_suites }} | wc -w | tr -d ' ')
     if [ ${#failed[@]} -gt 0 ]; then
@@ -642,14 +644,14 @@ lean:
 [doc("Model-to-code binding, Lean axis (fast, no binary needed).")]
 [group('proofs')]
 conformance: lean
-    cargo test -p conformance --lib --test lean_conformance
-    cargo test -p db --test block head_cache_conformance::
+    cargo nextest run -p conformance --lib --test lean_conformance
+    cargo nextest run -p db --test block head_cache_conformance::
 
 [doc("Model-to-code binding, TLA axis against the release binary.")]
 [group('proofs')]
 conformance-behavioral: build-fast
     DEFRA_CONFORMANCE_BINARY="{{ root }}/target/release-fast/defra" \
-        cargo test -p conformance --test tla_conformance -- --test-threads=1
+        cargo nextest run -p conformance --test tla_conformance
 
 # ---------------------------------------------------------------------------
 # Quality gates

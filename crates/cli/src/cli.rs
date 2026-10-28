@@ -163,14 +163,14 @@ pub struct Cli {
     #[arg(long = "node-acp-enable", global = true, env = "DEFRA_ACP_NODE_ENABLE", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub acp_node_enable: Option<bool>,
 
-    /// Document ACP type. Options are none, local, vera, or verars
+    /// Document ACP type. Options are none, local, vera (or remote), or verars
     #[cfg(feature = "vera")]
     #[arg(
         long = "document-acp-type",
         global = true,
         env = "DEFRA_ACP_DOCUMENT_TYPE"
     )]
-    pub acp_document_type: Option<String>,
+    pub acp_document_type: Option<crate::config::AcpDocumentType>,
 
     /// Document ACP type. Options are none or local
     #[cfg(not(feature = "vera"))]
@@ -179,7 +179,16 @@ pub struct Cli {
         global = true,
         env = "DEFRA_ACP_DOCUMENT_TYPE"
     )]
-    pub acp_document_type: Option<String>,
+    pub acp_document_type: Option<crate::config::AcpDocumentType>,
+
+    /// Account named as the authorized account in client auth tokens, for
+    /// nodes using remote document ACP
+    #[arg(
+        long = "remote-dac-address",
+        global = true,
+        env = "DEFRA_ACP_DOCUMENT_REMOTE_ADDRESS"
+    )]
+    pub remote_dac_address: Option<String>,
 
     #[command(subcommand)]
     pub command: Command,

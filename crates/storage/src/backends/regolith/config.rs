@@ -33,6 +33,9 @@ pub struct RegolithStoreOptions {
     /// The environment the store's files live in, beneath the pool's
     /// placement wrapper ([`Self::files_env`]).
     files_env: Option<Arc<dyn regolith::Env>>,
+    /// The CRDT types of the node the store belongs to: its merge operator
+    /// folds document parts by them ([`Self::with_crdts`]).
+    crdts: crdt::Crdts,
 }
 
 impl RegolithStoreOptions {
@@ -56,6 +59,17 @@ impl RegolithStoreOptions {
         I: IntoIterator<Item = [u8; 32]>,
     {
         Ok(self.with_keys(AtRestKeys::rotated(current, older)?))
+    }
+
+    /// The node's CRDT types, which the store's merge operator folds document
+    /// parts by. Without them only the native types merge.
+    pub fn with_crdts(mut self, crdts: crdt::Crdts) -> Self {
+        self.crdts = crdts;
+        self
+    }
+
+    pub(super) fn crdts(&self) -> &crdt::Crdts {
+        &self.crdts
     }
 
     fn with_keys(mut self, keys: AtRestKeys) -> Self {
@@ -93,7 +107,9 @@ impl RegolithStoreOptions {
     /// writable one does.
     pub(super) fn engine_for_open(&self) -> Options {
         self.engine_with_keys()
-            .merge_operator(Some(Arc::new(super::merge::DefraMergeOperator)))
+            .merge_operator(Some(Arc::new(super::merge::DefraMergeOperator::new(
+                self.crdts.clone(),
+            ))))
             .prefix_extractor(Some(Arc::new(super::prefix::DefraPrefixExtractor)))
     }
 
@@ -106,6 +122,7 @@ impl RegolithStoreOptions {
             at_rest: None,
             pool: None,
             files_env: None,
+            crdts: crdt::Crdts::default(),
         }
     }
 
@@ -210,22 +227,25 @@ mod tests {
 
     /// A read-only open folds merged values as the writable open does. It
     /// opened without the merge operator before, and the read failed.
-    #[tokio::test]
-    async fn a_read_only_open_reads_merged_values() {
-        let dir = tempfile::tempdir().unwrap();
-        let options = RegolithStoreOptions::default();
-        let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
-        for delta in [2, 3] {
-            let mut txn = store.new_txn(false).await.unwrap();
-            txn.merge(b"counter", &counter_i64(delta)).await.unwrap();
-            txn.commit().await.unwrap();
-        }
-        store.close().await.unwrap();
-        drop(store);
-        let txn = RegolithTxn::open_read_only(dir.path(), options).unwrap();
-        assert_eq!(
-            txn.get(b"counter").await.unwrap().as_deref(),
-            Some(5i64.to_be_bytes().as_slice())
-        );
+    #[test]
+    fn a_read_only_open_reads_merged_values() {
+        workers::block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let options = RegolithStoreOptions::default();
+            let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
+            for delta in [2, 3] {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.merge(b"counter", &counter_i64(delta)).await.unwrap();
+                txn.commit().await.unwrap();
+            }
+            store.close().await.unwrap();
+            drop(store);
+            let txn = RegolithTxn::open_read_only(dir.path(), options).unwrap();
+            assert_eq!(
+                txn.get(b"counter").await.unwrap().as_deref(),
+                Some(5i64.to_be_bytes().as_slice())
+            );
+        })
+        .unwrap()
     }
 }

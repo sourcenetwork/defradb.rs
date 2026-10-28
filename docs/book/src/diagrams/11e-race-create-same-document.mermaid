@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    participant L as worker L: local create of doc d
+    participant P as worker P: P2P merge brings doc d
+    participant R as regolith
+
+    L->>R: put blocks: ContentAddressed, never conflicts
+    P->>R: put the same blocks: identical, never conflicts
+    L->>R: read DocID mapping for d: absent, validated
+    P->>R: read DocID mapping for d: absent, validated
+    L->>R: write the mapping, the value, append(journal, d, once key d)
+    P->>R: write the mapping, operands, append(journal, d, once key d)
+    L->>R: commit
+    R-->>L: committed: d gets journal position 57
+    P->>R: commit
+    Note over R: the mapping read is now stale: exactly one materializes d
+    R-->>P: Conflict: mine Read, theirs Put on the DocID mapping
+    P->>R: transact re-runs: d exists, apply the remote blocks as operands only
+    R-->>P: committed: the once key holds 57, so no second journal row

@@ -218,6 +218,18 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         answered(Some(handle), outcome)
     }
 
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        self.observe_owners(context, handle, collection, doc_ids, identity)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
@@ -248,19 +260,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.commit_as(context, handle).await
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback(handle).await
+        self.registry.discard(handle).await
     }
 
-    async fn rollback_txn_as(
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback_as(context, handle).await
+        self.registry.discard_as(context, handle).await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {
@@ -334,7 +346,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .await
             {
                 Err(TransactionError::NotSupported(_)) => {}
-                Err(error @ TransactionError::Execution(_)) => return answered(None, Err(error)),
+                Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
+                    return answered(None, Err(error));
+                }
                 Err(error) => {
                     return QueryResponse::error(format!(
                         "failed to create implicit read-only transaction: {}",
@@ -585,6 +599,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 doc_ids: &request.doc_ids,
                 create_input: &request.create_input,
                 update_input: &request.update_input,
+                update_ops: &request.update_ops,
             })
             .await
             .map_err(crate::error::QueryError::execution)?;
@@ -676,21 +691,25 @@ mod tests {
     use crate::test_utils::{MockFetcher, MockTxnRegistry};
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn caller_deadline_uses_its_configured_node_pool() {
-        let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-        pool.shutdown_blocking().unwrap();
-        let runner = QueryRunner::new(MockFetcher::new(), vec![]).with_deadline_pool(Some(pool));
+    #[test]
+    fn caller_deadline_uses_its_configured_node_pool() {
+        workers::block_on(async {
+            let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+            pool.shutdown_blocking().unwrap();
+            let runner =
+                QueryRunner::new(MockFetcher::new(), vec![]).with_deadline_pool(Some(pool));
 
-        let result = runner
-            .prepare_request(&QueryRequest::new("{ probe }"))
-            .await;
+            let result = runner
+                .prepare_request(&QueryRequest::new("{ probe }"))
+                .await;
 
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("deadline could not be kept: the worker pool is shut down"),
-            "{error}"
-        );
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("deadline could not be kept: the worker pool is shut down"),
+                "{error}"
+            );
+        })
+        .unwrap();
     }
 
     #[test]
@@ -718,9 +737,9 @@ mod tests {
         }
 
         fn make_doc(&self, name: String) -> Document {
-            let mut doc = Document::new();
+            let mut doc = crate::test_utils::test_doc(&["name"]);
             doc.set_id(document::DocID::new_v0_from_seed(&name));
-            doc.set("name", serde_json::Value::String(name));
+            doc.set("name", serde_json::Value::String(name)).unwrap();
             doc
         }
     }
@@ -785,42 +804,46 @@ mod tests {
     }
 
     fn make_users_doc(name: &str) -> Document {
-        let mut doc = Document::new();
+        let mut doc = crate::test_utils::test_doc(&["name"]);
         doc.set_id(document::DocID::new_v0_from_seed(name));
-        doc.set("name", serde_json::Value::String(name.to_string()));
+        doc.set("name", serde_json::Value::String(name.to_string()))
+            .unwrap();
         doc
     }
 
-    #[tokio::test]
-    async fn execute_uses_implicit_read_txn_when_registry_is_available() {
-        let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
+    #[test]
+    fn execute_uses_implicit_read_txn_when_registry_is_available() {
+        workers::block_on(async {
+            let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
 
-        let txn_fetcher = MockFetcher::new();
-        txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
+            let txn_fetcher = MockFetcher::new();
+            txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
 
-        let runner = QueryRunner::with_registry(
-            ChangingFetcher::new(),
-            collections,
-            MockTxnRegistry::new(txn_fetcher),
-        );
+            let runner = QueryRunner::with_registry(
+                ChangingFetcher::new(),
+                collections,
+                MockTxnRegistry::new(txn_fetcher),
+            );
 
-        let response = runner
-            .execute(QueryRequest::new(
-                "{ first: Users { name } second: Users { name } }",
-            ))
-            .await;
+            let response = runner
+                .execute(QueryRequest::new(
+                    "{ first: Users { name } second: Users { name } }",
+                ))
+                .await;
 
-        assert!(
-            !response.has_errors(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-        assert_eq!(
-            response.data,
-            Some(json!({
-                "first": [{"name": "txn-snapshot"}],
-                "second": [{"name": "txn-snapshot"}],
-            }))
-        );
+            assert!(
+                !response.has_errors(),
+                "unexpected errors: {:?}",
+                response.errors
+            );
+            assert_eq!(
+                response.data,
+                Some(json!({
+                    "first": [{"name": "txn-snapshot"}],
+                    "second": [{"name": "txn-snapshot"}],
+                }))
+            );
+        })
+        .unwrap()
     }
 }

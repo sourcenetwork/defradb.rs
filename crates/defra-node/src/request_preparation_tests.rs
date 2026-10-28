@@ -71,7 +71,7 @@ impl QueryExecutor for ConflictExecutor {
         Err(TransactionError::not_supported("test executor"))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
@@ -83,35 +83,42 @@ impl QueryExecutor for ConflictExecutor {
     }
 }
 
-#[tokio::test]
-async fn embedded_returns_conflict_after_one_prepared_attempt() {
-    let executor = ConflictExecutor::default();
-    let response =
-        super::execute_autocommit_request(&executor, QueryRequest::new("{ probe }")).await;
-    assert!(response.is_transaction_conflict());
-    assert_eq!(executor.preparations.load(Ordering::SeqCst), 1);
-    assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 1);
+#[test]
+fn embedded_returns_conflict_after_one_prepared_attempt() {
+    workers::block_on(async {
+        let executor = ConflictExecutor::default();
+        let response =
+            super::execute_autocommit_request(&executor, QueryRequest::new("{ probe }")).await;
+        assert!(response.is_transaction_conflict());
+        assert_eq!(executor.preparations.load(Ordering::SeqCst), 1);
+        assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 1);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn autocommit_prepares_on_caller_and_routes_execution_to_node_worker() {
-    let executor = Arc::new(ConflictExecutor::default());
-    let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-    let pooled = query::pooled::PooledExecutor::new(executor.clone(), pool.clone());
+#[test]
+fn autocommit_prepares_on_caller_and_routes_execution_to_node_worker() {
+    workers::block_on(async {
+        let executor = Arc::new(ConflictExecutor::default());
+        let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+        let pooled = query::pooled::PooledExecutor::new(executor.clone(), pool.clone());
 
-    let response = super::execute_autocommit_request(&pooled, QueryRequest::new("{ probe }")).await;
+        let response =
+            super::execute_autocommit_request(&pooled, QueryRequest::new("{ probe }")).await;
 
-    assert!(response.is_transaction_conflict());
-    assert_eq!(executor.preparations.load(Ordering::SeqCst), 1);
-    assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 1);
-    assert!(
-        !executor.preparation_on_worker.load(Ordering::SeqCst),
-        "remote preparation stays on the caller, outside worker execution"
-    );
-    assert!(
-        executor.execution_on_worker.load(Ordering::SeqCst),
-        "the prepared autocommit attempt runs on the configured worker pool"
-    );
+        assert!(response.is_transaction_conflict());
+        assert_eq!(executor.preparations.load(Ordering::SeqCst), 1);
+        assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 1);
+        assert!(
+            !executor.preparation_on_worker.load(Ordering::SeqCst),
+            "remote preparation stays on the caller, outside worker execution"
+        );
+        assert!(
+            executor.execution_on_worker.load(Ordering::SeqCst),
+            "the prepared autocommit attempt runs on the configured worker pool"
+        );
 
-    pool.stop().await.unwrap();
+        pool.stop().await.unwrap();
+    })
+    .unwrap()
 }

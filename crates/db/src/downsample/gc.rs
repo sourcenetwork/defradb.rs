@@ -2,6 +2,7 @@ use super::parse::*;
 use super::types::*;
 use crate::error::{Error, Result};
 use cid::Cid;
+use defra_core::CrdtDelta;
 use query::fetcher::CommitsQueryOptions;
 use query::runner::DocFetcher;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
@@ -45,7 +46,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     fn pruneable_source_heights(
         &self,
         plan: &DownsamplePlan,
-        commits: &[document::Document],
+        commits: &[document::CommitRow],
         cutoff_nanos: i64,
     ) -> Result<RapidHashSet<u64>> {
         let samples = self.build_source_samples(plan, commits.to_vec())?;
@@ -139,30 +140,67 @@ impl<S: Store + 'static> crate::database::DB<S> {
                 .await
                 .map_err(Error::Storage)?;
 
-            let mut keys_to_delete = Vec::new();
+            let mut entries = Vec::new();
             while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
-                let Some((priority, cid)) = Self::parse_priority_entry(doc_short_id, &pair.key)
-                else {
-                    continue;
-                };
-                if !pruneable_heights.contains(&priority) || current_head_cids.contains(&cid) {
-                    continue;
+                if let Some((priority, cid)) = Self::parse_priority_entry(doc_short_id, &pair.key) {
+                    entries.push((pair.key, priority, cid));
                 }
-                keys_to_delete.push((pair.key, cid));
             }
             iter.close().await.map_err(Error::Storage)?;
 
-            let mut deleted_commits = RapidHashSet::new();
+            // Field blocks are indexed at their own field height, so only
+            // composites are compared against the pruneable composite heights.
+            let mut pruned_commits = Vec::new();
+            let mut kept_commits = current_head_cids.clone();
+            let mut field_entries = Vec::new();
+            for (key, priority, cid) in entries {
+                let block = crate::block::cleanup::load_block(&blockstore, &cid).await?;
+                let Some(block) =
+                    block.filter(|block| matches!(block.delta, CrdtDelta::Composite(_)))
+                else {
+                    field_entries.push((key, cid));
+                    continue;
+                };
+                if pruneable_heights.contains(&priority) && !current_head_cids.contains(&cid) {
+                    pruned_commits.push((key, cid, block));
+                } else {
+                    kept_commits.insert(cid);
+                }
+            }
+            let retained =
+                crate::block::cleanup::referenced_blocks(&blockstore, kept_commits).await?;
 
-            for (key, cid) in keys_to_delete {
+            let mut deleted_commits = RapidHashSet::new();
+            let mut pruned_fields = RapidHashSet::new();
+            for (key, cid, block) in pruned_commits {
                 headstore.delete(&key).await.map_err(Error::Storage)?;
 
                 if !deleted_commits.insert(cid) {
                     continue;
                 }
 
-                crate::block::cleanup::delete_owned_commit(&blockstore, &systemstore, &cid, doc_id)
-                    .await?;
+                pruned_fields.extend(
+                    block
+                        .links
+                        .iter()
+                        .flatten()
+                        .map(|link| link.link)
+                        .filter(|link| !retained.contains(link)),
+                );
+                crate::block::cleanup::delete_owned_commit(
+                    &blockstore,
+                    &systemstore,
+                    &cid,
+                    doc_id,
+                    &retained,
+                )
+                .await?;
+            }
+
+            for (key, cid) in field_entries {
+                if pruned_fields.contains(&cid) {
+                    headstore.delete(&key).await.map_err(Error::Storage)?;
+                }
             }
 
             Ok(())

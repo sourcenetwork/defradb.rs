@@ -2,10 +2,11 @@ use defra_node::Result;
 use defra_node::{EmbeddedNode, QueryRequest};
 use serde_json::{json, Value};
 
-#[tokio::test]
-async fn retained_json_survives_unrelated_updates() -> Result<()> {
+#[test]
+fn retained_json_survives_unrelated_updates() -> Result<()> {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(
+    node.add_collection(
         "type JsonProbe { key: String @index(unique: true) payload: JSON sibling: String }",
     )
     .await?;
@@ -67,4 +68,6 @@ async fn retained_json_survives_unrelated_updates() -> Result<()> {
     }
     node.shutdown().await;
     Ok(())
+})
+    .unwrap()
 }

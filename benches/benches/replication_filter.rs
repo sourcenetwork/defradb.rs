@@ -24,12 +24,18 @@ const COLLECTION_ID: &str = "replfilter";
 /// Immutable scalar LWW fields, which are the only kind a replication filter
 /// may reference.
 fn fields(count: usize) -> Vec<FieldDescription> {
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for i in 0..count {
         let mut field = FieldDescription::new(
             (i + 2).to_string(),
             format!("field_{i}"),
             FieldKind::string(),
+            schema::CType::LwwRegister,
         );
         field.immutable = true;
         fields.push(field);

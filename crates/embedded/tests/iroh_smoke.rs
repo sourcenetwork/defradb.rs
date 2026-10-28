@@ -2,60 +2,67 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
+use clock::sleep;
 use embedded::{IrohConfig, NodeBuilder};
 use outcome::Result;
-use tokio::time::{sleep, Duration, Instant};
+use std::time::{Duration, Instant};
 
 const BOOK_SDL: &str = "type Book { title: String }";
 const REPLICATED_TITLE: &str = "Replicated over iroh";
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
-    let node_a = NodeBuilder::default()
-        .with_iroh(test_iroh_config())
-        .build()
-        .await?;
-    let node_b = NodeBuilder::default()
-        .with_iroh(test_iroh_config())
-        .build()
-        .await?;
+#[test]
+fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let node_a = NodeBuilder::default()
+                .with_iroh(test_iroh_config())
+                .build()
+                .await?;
+            let node_b = NodeBuilder::default()
+                .with_iroh(test_iroh_config())
+                .build()
+                .await?;
 
-    node_a.add_schema(BOOK_SDL).await?;
-    node_b.add_schema(BOOK_SDL).await?;
+            node_a.add_collection(BOOK_SDL).await?;
+            node_b.add_collection(BOOK_SDL).await?;
 
-    let p2p_b = node_b.p2p().cloned().expect("node_b missing p2p system");
-    let p2p_a = node_a.p2p().cloned().expect("node_a missing p2p system");
+            let p2p_b = node_b.p2p().cloned().expect("node_b missing p2p system");
+            let p2p_a = node_a.p2p().cloned().expect("node_a missing p2p system");
 
-    let peer_a = p2p_a.ops().local_peer_id().await?;
-    let connect_addr_a = wait_for_connectable_iroh_addr(&p2p_a).await?;
+            let peer_a = p2p_a.ops().local_peer_id().await?;
+            let connect_addr_a = wait_for_connectable_iroh_addr(&p2p_a).await?;
 
-    let create_response = node_a
+            let create_response = node_a
         .execute(
             r#"mutation { add_Book(input: {title: "Replicated over iroh"}) { _docID title } }"#,
         )
         .await;
-    ensure_success(&create_response, "add_Book")?;
-    let doc_id = extract_created_doc_id(&create_response)?;
+            ensure_success(&create_response, "add_Book")?;
+            let doc_id = extract_created_doc_id(&create_response)?;
 
-    p2p_b.ops().connect_peer(&connect_addr_a).await?;
-    wait_for_connected_peer(&p2p_b, &peer_a).await?;
+            p2p_b.ops().connect_peer(&connect_addr_a).await?;
+            wait_for_connected_peer(&p2p_b, &peer_a).await?;
 
-    p2p_b
-        .ops()
-        .sync_documents("Book", vec![doc_id], None)
-        .await?;
+            p2p_b
+                .ops()
+                .sync_documents("Book", vec![doc_id], None)
+                .await?;
 
-    wait_for_book_title(&node_b, REPLICATED_TITLE).await?;
+            wait_for_book_title(&node_b, REPLICATED_TITLE).await?;
 
-    p2p_a.shutdown().await;
-    p2p_b.shutdown().await;
-    node_a.database.close().await?;
-    node_b.database.close().await?;
+            p2p_a.shutdown().await;
+            p2p_b.shutdown().await;
+            node_a.database.close().await?;
+            node_b.database.close().await?;
 
-    Ok(())
+            Ok(())
+        })
+        .unwrap()
 }
 
 /// A node built with an explicit allowlist admits the peer it is told to
@@ -67,44 +74,48 @@ async fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
 /// use the feature at all. Starting from an empty explicit set is the
 /// strictest case: nothing is authorized yet, so the connection that
 /// succeeds below succeeds because of the authorization and nothing else.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
-    let listener = NodeBuilder::default()
-        .with_iroh(IrohConfig {
-            allowlist: p2p::iroh::IrohAllowlistConfig::Explicit(Default::default()),
-            ..test_iroh_config()
+#[test]
+fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let listener = NodeBuilder::default()
+                .with_iroh(IrohConfig {
+                    allowlist: p2p::iroh::IrohAllowlistConfig::Explicit(Default::default()),
+                    ..test_iroh_config()
+                })
+                .build()
+                .await?;
+            let dialer = NodeBuilder::default()
+                .with_iroh(test_iroh_config())
+                .build()
+                .await?;
+
+            let listener_p2p = listener
+                .p2p()
+                .cloned()
+                .expect("listener missing p2p system");
+            let dialer_p2p = dialer.p2p().cloned().expect("dialer missing p2p system");
+
+            let dialer_peer = dialer_p2p.ops().local_peer_id().await?;
+            let listener_addr = wait_for_connectable_iroh_addr(&listener_p2p).await?;
+
+            // Authorize the other node, by its own endpoint id, before it dials.
+            let admitted = defra_http::TransportPeerId::new(dialer_peer.clone())?;
+            listener_p2p.ops().allow_peer(&admitted).await?;
+
+            dialer_p2p.ops().connect_peer(&listener_addr).await?;
+
+            // The inbound side is what the allowlist governs, so the assertion is
+            // that the listener sees the peer, not merely that the dial returned.
+            wait_for_connected_peer(&listener_p2p, &dialer_peer).await?;
+
+            listener_p2p.shutdown().await;
+            dialer_p2p.shutdown().await;
+            listener.database.close().await?;
+            dialer.database.close().await?;
+            Ok(())
         })
-        .build()
-        .await?;
-    let dialer = NodeBuilder::default()
-        .with_iroh(test_iroh_config())
-        .build()
-        .await?;
-
-    let listener_p2p = listener
-        .p2p()
-        .cloned()
-        .expect("listener missing p2p system");
-    let dialer_p2p = dialer.p2p().cloned().expect("dialer missing p2p system");
-
-    let dialer_peer = dialer_p2p.ops().local_peer_id().await?;
-    let listener_addr = wait_for_connectable_iroh_addr(&listener_p2p).await?;
-
-    // Authorize the other node, by its own endpoint id, before it dials.
-    let admitted = defra_http::TransportPeerId::new(dialer_peer.clone())?;
-    listener_p2p.ops().allow_peer(&admitted).await?;
-
-    dialer_p2p.ops().connect_peer(&listener_addr).await?;
-
-    // The inbound side is what the allowlist governs, so the assertion is
-    // that the listener sees the peer, not merely that the dial returned.
-    wait_for_connected_peer(&listener_p2p, &dialer_peer).await?;
-
-    listener_p2p.shutdown().await;
-    dialer_p2p.shutdown().await;
-    listener.database.close().await?;
-    dialer.database.close().await?;
-    Ok(())
+        .unwrap()
 }
 
 fn test_iroh_config() -> IrohConfig {

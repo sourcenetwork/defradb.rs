@@ -19,9 +19,7 @@ use crate::collection::epoch::EpochedCollections;
 use crate::collection::Collection;
 use crate::definition::lens::build_collection_history;
 use crate::definition::loader::get_collections_by_collection_id;
-use crate::definition::migration::helpers::{
-    cache_document_version, cache_migrated_document, migrate_to_active, ToActive,
-};
+use crate::definition::migration::helpers::{cache_migrated_document, migrate_to_active, ToActive};
 use crate::error::{Error, Result};
 use crate::index::manager::DocumentSource;
 use crate::index::pages::Page;
@@ -205,11 +203,11 @@ impl ReindexPage {
             let doc = match migrate_to_active(&doc, collection, &history, &self.lens_store).await? {
                 ToActive::Current => doc,
                 ToActive::Identity if self.restamp_identity => {
-                    if cache_document_version(datastore, systemstore, collection, &doc).await? {
+                    if cache_migrated_document(datastore, systemstore, collection, &doc).await? {
                         materialized += 1;
                     }
                     let mut restamped = doc;
-                    restamped.set_schema_version_id(collection.version_id());
+                    restamped.set_collection_version_id(collection.version_id());
                     restamped
                 }
                 ToActive::Identity => doc,

@@ -14,12 +14,15 @@
 //! docIDs from the artifacts A pushed). Both hold the same 32-byte SE key.
 #![cfg(any(feature = "libp2p", feature = "iroh"))]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
+use clock::sleep;
 use embedded::{EmbeddedNode, EmbeddedStore, NodeBuilder, ReplicatorPushOptions};
 use outcome::Result;
-use tokio::time::{sleep, Duration, Instant};
+use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 const USER_SCHEMA: &str = "type User { name: String  age: Int  city: String }";
@@ -32,179 +35,188 @@ const SHARED_SE_KEY: [u8; 32] = [
 ];
 
 #[cfg(feature = "libp2p")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn embedded_libp2p_se_owner_queries_replicator() -> Result<()> {
-    let owner = NodeBuilder::default()
-        .with_libp2p("/ip4/127.0.0.1/tcp/0")
-        .build()
-        .await?;
-    let replicator = NodeBuilder::default()
-        .with_libp2p("/ip4/127.0.0.1/tcp/0")
-        .build()
-        .await?;
+#[test]
+fn embedded_libp2p_se_owner_queries_replicator() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let owner = NodeBuilder::default()
+                .with_libp2p("/ip4/127.0.0.1/tcp/0")
+                .build()
+                .await?;
+            let replicator = NodeBuilder::default()
+                .with_libp2p("/ip4/127.0.0.1/tcp/0")
+                .build()
+                .await?;
 
-    // Same schema + encrypted index on `name` on both nodes.
-    owner.add_schema(USER_SCHEMA).await?;
-    replicator.add_schema(USER_SCHEMA).await?;
-    owner.add_encrypted_index("User", "name").await?;
-    replicator.add_encrypted_index("User", "name").await?;
+            // Same schema + encrypted index on `name` on both nodes.
+            owner.add_collection(USER_SCHEMA).await?;
+            replicator.add_collection(USER_SCHEMA).await?;
+            owner.add_encrypted_index("User", "name").await?;
+            replicator.add_encrypted_index("User", "name").await?;
 
-    // Provision the SAME SE key at runtime on BOTH nodes (mirrors FFI
-    // set_se_encryption_key -> set_replicator_push_options).
-    set_se_key(&owner, SHARED_SE_KEY)?;
-    set_se_key(&replicator, SHARED_SE_KEY)?;
+            // Provision the SAME SE key at runtime on BOTH nodes (mirrors FFI
+            // set_se_encryption_key -> set_replicator_push_options).
+            set_se_key(&owner, SHARED_SE_KEY)?;
+            set_se_key(&replicator, SHARED_SE_KEY)?;
 
-    let p2p_owner = owner.p2p().cloned().expect("owner missing p2p system");
-    let p2p_replicator = replicator
-        .p2p()
-        .cloned()
-        .expect("replicator missing p2p system");
+            let p2p_owner = owner.p2p().cloned().expect("owner missing p2p system");
+            let p2p_replicator = replicator
+                .p2p()
+                .cloned()
+                .expect("replicator missing p2p system");
 
-    let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
-    let replicator_addr = wait_for_shareable_addr(&p2p_replicator, &replicator_peer).await?;
+            let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
+            let replicator_addr =
+                wait_for_shareable_addr(&p2p_replicator, &replicator_peer).await?;
 
-    // Owner connects to replicator and registers it as the User replicator.
-    p2p_owner.ops().connect_peer(&replicator_addr).await?;
-    wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
+            // Owner connects to replicator and registers it as the User replicator.
+            p2p_owner.ops().connect_peer(&replicator_addr).await?;
+            wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
 
-    p2p_owner
-        .ops()
-        .add_collections(vec!["User".to_string()])
-        .await?;
-    p2p_replicator
-        .ops()
-        .add_collections(vec!["User".to_string()])
-        .await?;
-    p2p_owner
-        .ops()
-        .add_replicator(
-            vec!["User".to_string()],
-            Some(&replicator_addr),
-            Default::default(),
-            Vec::new(),
-            None,
-        )
-        .await?;
+            p2p_owner
+                .ops()
+                .add_collections(vec!["User".to_string()])
+                .await?;
+            p2p_replicator
+                .ops()
+                .add_collections(vec!["User".to_string()])
+                .await?;
+            p2p_owner
+                .ops()
+                .add_replicator(
+                    vec!["User".to_string()],
+                    Some(&replicator_addr),
+                    Default::default(),
+                    Vec::new(),
+                    None,
+                )
+                .await?;
 
-    // Owner writes the encrypted-indexed doc; this pushes the SE artifact to B.
-    let created = owner
+            // Owner writes the encrypted-indexed doc; this pushes the SE artifact to B.
+            let created = owner
         .execute(r#"mutation { add_User(input: {name: "John", age: 21, city: "NYC"}) { _docID } }"#)
         .await;
-    if created.has_errors() {
-        panic!("add_User returned errors: {:?}", created.errors);
-    }
-    let doc_id = created
-        .data
-        .as_ref()
-        .and_then(|d| d.get("add_User"))
-        .and_then(|v| v.as_array())
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("_docID"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .expect("add_User response missing _docID");
+            if created.has_errors() {
+                panic!("add_User returned errors: {:?}", created.errors);
+            }
+            let doc_id = created
+                .data
+                .as_ref()
+                .and_then(|d| d.get("add_User"))
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("_docID"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .expect("add_User response missing _docID");
 
-    // Query runs on the OWNER (node A); A fans the tag out to replicator B.
-    wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
+            // Query runs on the OWNER (node A); A fans the tag out to replicator B.
+            wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
 
-    p2p_owner.shutdown().await;
-    p2p_replicator.shutdown().await;
-    owner.database.close().await?;
-    replicator.database.close().await?;
-    Ok(())
+            p2p_owner.shutdown().await;
+            p2p_replicator.shutdown().await;
+            owner.database.close().await?;
+            replicator.database.close().await?;
+            Ok(())
+        })
+        .unwrap()
 }
 
 #[cfg(feature = "iroh")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
-    use std::net::{IpAddr, Ipv4Addr};
+#[test]
+fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            use std::net::{IpAddr, Ipv4Addr};
 
-    use embedded::IrohConfig;
+            use embedded::IrohConfig;
 
-    fn iroh_config() -> IrohConfig {
-        IrohConfig {
-            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            bind_port: Some(0),
-            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-            max_concurrent_multipath_paths: None,
-            secret_key_path: None,
-            allowlist: Default::default(),
-        }
-    }
+            fn iroh_config() -> IrohConfig {
+                IrohConfig {
+                    bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                    bind_port: Some(0),
+                    relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+                    discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+                    max_concurrent_multipath_paths: None,
+                    secret_key_path: None,
+                    allowlist: Default::default(),
+                }
+            }
 
-    let owner = NodeBuilder::default()
-        .with_iroh(iroh_config())
-        .build()
-        .await?;
-    let replicator = NodeBuilder::default()
-        .with_iroh(iroh_config())
-        .build()
-        .await?;
+            let owner = NodeBuilder::default()
+                .with_iroh(iroh_config())
+                .build()
+                .await?;
+            let replicator = NodeBuilder::default()
+                .with_iroh(iroh_config())
+                .build()
+                .await?;
 
-    owner.add_schema(USER_SCHEMA).await?;
-    replicator.add_schema(USER_SCHEMA).await?;
-    owner.add_encrypted_index("User", "name").await?;
-    replicator.add_encrypted_index("User", "name").await?;
+            owner.add_collection(USER_SCHEMA).await?;
+            replicator.add_collection(USER_SCHEMA).await?;
+            owner.add_encrypted_index("User", "name").await?;
+            replicator.add_encrypted_index("User", "name").await?;
 
-    set_se_key(&owner, SHARED_SE_KEY)?;
-    set_se_key(&replicator, SHARED_SE_KEY)?;
+            set_se_key(&owner, SHARED_SE_KEY)?;
+            set_se_key(&replicator, SHARED_SE_KEY)?;
 
-    let p2p_owner = owner.p2p().cloned().expect("owner missing p2p system");
-    let p2p_replicator = replicator
-        .p2p()
-        .cloned()
-        .expect("replicator missing p2p system");
+            let p2p_owner = owner.p2p().cloned().expect("owner missing p2p system");
+            let p2p_replicator = replicator
+                .p2p()
+                .cloned()
+                .expect("replicator missing p2p system");
 
-    let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
-    let replicator_addr = wait_for_iroh_addr(&p2p_replicator).await?;
+            let replicator_peer = p2p_replicator.ops().local_peer_id().await?;
+            let replicator_addr = wait_for_iroh_addr(&p2p_replicator).await?;
 
-    p2p_owner.ops().connect_peer(&replicator_addr).await?;
-    wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
+            p2p_owner.ops().connect_peer(&replicator_addr).await?;
+            wait_for_connected_peer(&p2p_owner, &replicator_peer).await?;
 
-    p2p_owner
-        .ops()
-        .add_collections(vec!["User".to_string()])
-        .await?;
-    p2p_replicator
-        .ops()
-        .add_collections(vec!["User".to_string()])
-        .await?;
-    p2p_owner
-        .ops()
-        .add_replicator(
-            vec!["User".to_string()],
-            Some(&replicator_addr),
-            Default::default(),
-            Vec::new(),
-            None,
-        )
-        .await?;
+            p2p_owner
+                .ops()
+                .add_collections(vec!["User".to_string()])
+                .await?;
+            p2p_replicator
+                .ops()
+                .add_collections(vec!["User".to_string()])
+                .await?;
+            p2p_owner
+                .ops()
+                .add_replicator(
+                    vec!["User".to_string()],
+                    Some(&replicator_addr),
+                    Default::default(),
+                    Vec::new(),
+                    None,
+                )
+                .await?;
 
-    let created = owner
+            let created = owner
         .execute(r#"mutation { add_User(input: {name: "John", age: 21, city: "NYC"}) { _docID } }"#)
         .await;
-    if created.has_errors() {
-        panic!("add_User returned errors: {:?}", created.errors);
-    }
-    let doc_id = created
-        .data
-        .as_ref()
-        .and_then(|d| d.get("add_User"))
-        .and_then(|v| v.as_array())
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("_docID"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .expect("add_User response missing _docID");
+            if created.has_errors() {
+                panic!("add_User returned errors: {:?}", created.errors);
+            }
+            let doc_id = created
+                .data
+                .as_ref()
+                .and_then(|d| d.get("add_User"))
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("_docID"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .expect("add_User response missing _docID");
 
-    wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
+            wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
 
-    p2p_owner.shutdown().await;
-    p2p_replicator.shutdown().await;
-    owner.database.close().await?;
-    replicator.database.close().await?;
-    Ok(())
+            p2p_owner.shutdown().await;
+            p2p_replicator.shutdown().await;
+            owner.database.close().await?;
+            replicator.database.close().await?;
+            Ok(())
+        })
+        .unwrap()
 }
 
 #[cfg(feature = "iroh")]

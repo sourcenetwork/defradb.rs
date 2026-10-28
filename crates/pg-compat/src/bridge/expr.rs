@@ -203,7 +203,10 @@ fn typed_value_to_graphql(
     let is_string_field = type_hint.is_some_and(|kind| {
         matches!(
             kind.base_kind(),
-            ScalarKind::String | ScalarKind::DocID | ScalarKind::None | ScalarKind::DateTime
+            ScalarKind::NillableString
+                | ScalarKind::DocID
+                | ScalarKind::None
+                | ScalarKind::NillableDateTime
         )
     });
 

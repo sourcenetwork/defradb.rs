@@ -89,8 +89,18 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "embedding", FieldKind::float64_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "embedding",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -106,11 +116,12 @@ fn wide(vector: &[f32]) -> Vec<NormalValue> {
 }
 
 fn document(vector: &[f32]) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(schema());
     doc.set(
         "embedding",
         NormalValue::Float64Array(vector.iter().map(|x| *x as f64).collect()),
-    );
+    )
+    .unwrap();
     doc
 }
 
@@ -150,172 +161,182 @@ async fn self_match_count(
 /// through ordinary document writes, with nothing in this test calling
 /// `build()`. Searches stay correct on both sides of the threshold, so
 /// crossing it is not observable as a wrong answer.
-#[tokio::test]
-async fn training_triggers_through_vector_index_save() {
-    let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
-    let below = threshold as usize - 12;
-    let corpus_size = threshold as usize + 88;
+#[test]
+fn training_triggers_through_vector_index_save() {
+    workers::block_on(async {
+        let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
+        let below = threshold as usize - 12;
+        let corpus_size = threshold as usize + 88;
 
-    let store = RegolithStore::in_memory().unwrap();
-    let index = VectorIndex::try_new(
-        COLLECTION,
-        description(INDEX_ID, ivfpq_vector_description()),
-    )
-    .unwrap();
-
-    let mut corpus = crate::support::Corpus::new(SEED ^ 0x01);
-    let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
-
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors[..below].iter().enumerate() {
-        index
-            .save(&mut write, i as u64 + 1, &wide(vector))
-            .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
-
-    let mut read = txn(&store).await;
-    assert!(
-        !is_trained(&mut read, INDEX_ID).await,
-        "must not train before the threshold"
-    );
-    let hits = index
-        .search(&mut read, vectors[3].as_slice(), 1, None)
-        .await
+        let store = RegolithStore::in_memory().unwrap();
+        let index = VectorIndex::try_new(
+            COLLECTION,
+            description(INDEX_ID, ivfpq_vector_description()),
+        )
         .unwrap();
-    assert_eq!(
-        hits[0].id,
-        NodeId(4),
-        "an untrained index is an exact scan, so a vector must find itself first"
-    );
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors[below..].iter().enumerate() {
-        index
-            .save(&mut write, (below + i) as u64 + 1, &wide(vector))
+        let mut corpus = crate::support::Corpus::new(SEED ^ 0x01);
+        let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
+
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors[..below].iter().enumerate() {
+            index
+                .save(&mut write, i as u64 + 1, &wide(vector))
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
+
+        let mut read = txn(&store).await;
+        assert!(
+            !is_trained(&mut read, INDEX_ID).await,
+            "must not train before the threshold"
+        );
+        let hits = index
+            .search(&mut read, vectors[3].as_slice(), 1, None)
             .await
             .unwrap();
-    }
-    write.commit().await.unwrap();
+        assert_eq!(
+            hits[0].id,
+            NodeId(4),
+            "an untrained index is an exact scan, so a vector must find itself first"
+        );
 
-    let mut read = txn(&store).await;
-    assert!(
-        is_trained(&mut read, INDEX_ID).await,
-        "#1463: no test call to build() here, so the write path must trigger it"
-    );
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors[below..].iter().enumerate() {
+            index
+                .save(&mut write, (below + i) as u64 + 1, &wide(vector))
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
 
-    let sample = [0usize, 100, 250, 350, corpus_size - 1];
-    let found = self_match_count(&store, &index, &vectors, &sample).await;
-    assert!(
-        found >= 4,
-        "a trained index must still find most vectors' own documents: {found}/{}",
-        sample.len()
-    );
+        let mut read = txn(&store).await;
+        assert!(
+            is_trained(&mut read, INDEX_ID).await,
+            "#1463: no test call to build() here, so the write path must trigger it"
+        );
+
+        let sample = [0usize, 100, 250, 350, corpus_size - 1];
+        let found = self_match_count(&store, &index, &vectors, &sample).await;
+        assert!(
+            found >= 4,
+            "a trained index must still find most vectors' own documents: {found}/{}",
+            sample.len()
+        );
+    })
+    .unwrap()
 }
 
 /// The same regression, through the index manager's bulk backfill path.
-#[tokio::test]
-async fn training_triggers_through_bulk_index_from() {
-    let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
-    let corpus_size = threshold as usize + 88;
+#[test]
+fn training_triggers_through_bulk_index_from() {
+    workers::block_on(async {
+        let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
+        let corpus_size = threshold as usize + 88;
 
-    let mut corpus = crate::support::Corpus::new(SEED ^ 0x02);
-    let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
-    let documents: Vec<(u64, Document)> = vectors
-        .iter()
-        .enumerate()
-        .map(|(i, v)| (i as u64 + 1, document(v)))
-        .collect();
+        let mut corpus = crate::support::Corpus::new(SEED ^ 0x02);
+        let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
+        let documents: Vec<(u64, Document)> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i as u64 + 1, document(v)))
+            .collect();
 
-    let store = RegolithStore::in_memory().unwrap();
-    let db = DB::new(store.clone()).unwrap();
-    let txn = db.new_txn(false).await.unwrap();
-    let datastore = txn.datastore().unwrap();
+        let store = RegolithStore::in_memory().unwrap();
+        let db = DB::new(store.clone()).unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
 
-    let mut manager = IndexManager::new(COLLECTION);
-    let desc = manager
-        .create_index_of_kind(
-            &datastore,
-            "docs",
-            "by_embedding".to_string(),
-            vec![IndexedFieldDescription {
-                name: "embedding".to_string(),
-                descending: false,
-            }],
-            IndexKind::Vector(ivfpq_vector_description()),
-            &schema().fields,
-        )
-        .await
-        .unwrap();
+        let mut manager = IndexManager::new(COLLECTION);
+        let desc = manager
+            .create_index_of_kind(
+                &datastore,
+                "docs",
+                "by_embedding".to_string(),
+                vec![IndexedFieldDescription {
+                    name: "embedding".to_string(),
+                    descending: false,
+                }],
+                IndexKind::Vector(ivfpq_vector_description()),
+                &schema().fields,
+            )
+            .await
+            .unwrap();
 
-    let mut source = SliceSource::new(&documents);
-    let result = manager
-        .bulk_index_from(&datastore, "by_embedding", &mut source, &schema())
-        .await
-        .unwrap();
-    assert_eq!(result.indexed, documents.len());
+        let mut source = SliceSource::new(&documents);
+        let result = manager
+            .bulk_index_from(&datastore, "by_embedding", &mut source, &schema())
+            .await
+            .unwrap();
+        assert_eq!(result.indexed, documents.len());
 
-    // A commit refuses while any `NamespaceView` still references the shared
-    // transaction, so this must go before it.
-    drop(datastore);
-    txn.commit().await.unwrap();
+        // A commit refuses while any `NamespaceView` still references the shared
+        // transaction, so this must go before it.
+        drop(datastore);
+        txn.commit().await.unwrap();
 
-    let read_txn = db.new_txn(false).await.unwrap();
-    let mut read_datastore = read_txn.datastore().unwrap();
-    assert!(
-        is_trained(&mut read_datastore, desc.id).await,
-        "#1463: no test call to build() here, so bulk_index_from must trigger it"
-    );
+        let read_txn = db.new_txn(false).await.unwrap();
+        let mut read_datastore = read_txn.datastore().unwrap();
+        assert!(
+            is_trained(&mut read_datastore, desc.id).await,
+            "#1463: no test call to build() here, so bulk_index_from must trigger it"
+        );
+    })
+    .unwrap()
 }
 
 /// HNSW has nothing to train, so it must never observably "build", and must
 /// keep answering correctly across the same corpus size that trains IVF-PQ.
-#[tokio::test]
-async fn hnsw_never_builds_and_keeps_answering() {
-    let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
-    let below = threshold as usize - 12;
-    let corpus_size = threshold as usize + 88;
+#[test]
+fn hnsw_never_builds_and_keeps_answering() {
+    workers::block_on(async {
+        let threshold = u64::from(NLIST) * u64::from(TRAIN_PER_LIST);
+        let below = threshold as usize - 12;
+        let corpus_size = threshold as usize + 88;
 
-    let store = RegolithStore::in_memory().unwrap();
-    let index =
-        VectorIndex::try_new(COLLECTION, description(INDEX_ID, hnsw_vector_description())).unwrap();
+        let store = RegolithStore::in_memory().unwrap();
+        let index =
+            VectorIndex::try_new(COLLECTION, description(INDEX_ID, hnsw_vector_description()))
+                .unwrap();
 
-    let mut corpus = crate::support::Corpus::new(SEED ^ 0x03);
-    let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
+        let mut corpus = crate::support::Corpus::new(SEED ^ 0x03);
+        let vectors = corpus.clustered(corpus_size, DIMENSIONS as usize, 8, 0.1);
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors[..below].iter().enumerate() {
-        index
-            .save(&mut write, i as u64 + 1, &wide(vector))
-            .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors[..below].iter().enumerate() {
+            index
+                .save(&mut write, i as u64 + 1, &wide(vector))
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
 
-    let early_sample = [0usize, 50, below - 1];
-    let found = self_match_count(&store, &index, &vectors, &early_sample).await;
-    assert_eq!(
-        found,
-        early_sample.len(),
-        "HNSW recall dropped below the IVF-PQ threshold size: {found}/{}",
-        early_sample.len()
-    );
+        let early_sample = [0usize, 50, below - 1];
+        let found = self_match_count(&store, &index, &vectors, &early_sample).await;
+        assert_eq!(
+            found,
+            early_sample.len(),
+            "HNSW recall dropped below the IVF-PQ threshold size: {found}/{}",
+            early_sample.len()
+        );
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors[below..].iter().enumerate() {
-        index
-            .save(&mut write, (below + i) as u64 + 1, &wide(vector))
-            .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors[below..].iter().enumerate() {
+            index
+                .save(&mut write, (below + i) as u64 + 1, &wide(vector))
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
 
-    let late_sample = [0usize, 100, 250, 350, corpus_size - 1];
-    let found = self_match_count(&store, &index, &vectors, &late_sample).await;
-    assert!(
-        found >= 4,
-        "HNSW recall dropped past the IVF-PQ threshold size: {found}/{}",
-        late_sample.len()
-    );
+        let late_sample = [0usize, 100, 250, 350, corpus_size - 1];
+        let found = self_match_count(&store, &index, &vectors, &late_sample).await;
+        assert!(
+            found >= 4,
+            "HNSW recall dropped past the IVF-PQ threshold size: {found}/{}",
+            late_sample.len()
+        );
+    })
+    .unwrap()
 }

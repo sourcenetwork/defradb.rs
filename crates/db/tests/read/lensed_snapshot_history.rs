@@ -95,8 +95,9 @@ async fn verified_collection<S: Store + 'static>(store: S) -> (Arc<DB<S>>, Strin
         .unwrap()
         .version_id()
         .to_owned();
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Ada".to_string()));
+    let mut doc = Document::new(db.get_collection("Probe").unwrap().unwrap().schema_arc());
+    doc.set("name", NormalValue::String("Ada".to_string()))
+        .unwrap();
     db::AutoCommitMutator::new(db.clone())
         .create_many("Probe", vec![doc])
         .await
@@ -128,102 +129,114 @@ fn verified(docs: &[Document]) -> Option<&NormalValue> {
     docs[0].get("verified")
 }
 
-#[tokio::test]
-async fn readonly_snapshot_keeps_its_history_while_a_new_snapshot_observes_a_migration() {
-    let (db, v1, v2) = verified_collection(RegolithStore::in_memory().unwrap()).await;
-    let old = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
-    assert_eq!(verified(&old.get_all("Probe").await.unwrap()), None);
+#[test]
+fn readonly_snapshot_keeps_its_history_while_a_new_snapshot_observes_a_migration() {
+    workers::block_on(async {
+        let (db, v1, v2) = verified_collection(RegolithStore::in_memory().unwrap()).await;
+        let old = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
+        assert_eq!(verified(&old.get_all("Probe").await.unwrap()), None);
 
-    db.set_migration(migration(&v1, &v2), None).await.unwrap();
+        db.set_migration(migration(&v1, &v2), None).await.unwrap();
 
-    assert_eq!(verified(&old.get_all("Probe").await.unwrap()), None);
-    let mut stream = old.stream_all_with_deleted("Probe", false).await.unwrap();
-    let (streamed, _) = stream.next().await.unwrap().unwrap();
-    assert_eq!(streamed.get("verified"), None);
-    stream.close().await.unwrap();
+        assert_eq!(verified(&old.get_all("Probe").await.unwrap()), None);
+        let mut stream = old.stream_all_with_deleted("Probe", false).await.unwrap();
+        let (streamed, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(streamed.get("verified"), None);
+        stream.close().await.unwrap();
 
-    let fresh = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
-    assert_eq!(
-        verified(&fresh.get_all("Probe").await.unwrap()),
-        Some(&NormalValue::Bool(true))
-    );
-    let _ = old.take_txn().await.unwrap().discard();
-    let _ = fresh.take_txn().await.unwrap().discard();
+        let fresh = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
+        assert_eq!(
+            verified(&fresh.get_all("Probe").await.unwrap()),
+            Some(&NormalValue::Bool(true))
+        );
+        let _ = old.take_txn().await.unwrap().discard();
+        let _ = fresh.take_txn().await.unwrap().discard();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn writable_transaction_observes_its_own_migration_registration() {
-    let (db, v1, v2) = verified_collection(RegolithStore::in_memory().unwrap()).await;
-    let registry = db::DbTransactionRegistry::new(db.clone());
-    let txn_id = registry.begin(false).await.unwrap();
-    let read = || {
-        crate::common::owned::in_txn(&registry, &txn_id, |context| {
-            Box::pin(async move { context.doc_fetcher().get_all("Probe").await })
-        })
-    };
-    assert_eq!(verified(&read().await.unwrap()), None);
+#[test]
+fn writable_transaction_observes_its_own_migration_registration() {
+    workers::block_on(async {
+        let (db, v1, v2) = verified_collection(RegolithStore::in_memory().unwrap()).await;
+        let registry = db::DbTransactionRegistry::new(db.clone());
+        let txn_id = registry.begin(false).await.unwrap();
+        let read = || {
+            crate::common::owned::in_txn(&registry, &txn_id, |context| {
+                Box::pin(async move { context.doc_fetcher().get_all("Probe").await })
+            })
+        };
+        assert_eq!(verified(&read().await.unwrap()), None);
 
-    registry
-        .set_migration_in_txn(&txn_id, migration(&v1, &v2), None)
-        .await
-        .unwrap();
+        registry
+            .set_migration_in_txn(&txn_id, migration(&v1, &v2), None)
+            .await
+            .unwrap();
 
-    // Transaction-local transforms run in a real WASM store, where the
-    // placeholder module fails; the failure shows the read applied it.
-    let error = read().await.unwrap_err().to_string();
-    assert!(
-        error.contains("lens migration failed"),
-        "the read ignored its transaction's migration: {error}"
-    );
-    registry.rollback(&txn_id).await.unwrap();
+        // Transaction-local transforms run in a real WASM store, where the
+        // placeholder module fails; the failure shows the read applied it.
+        let error = read().await.unwrap_err().to_string();
+        assert!(
+            error.contains("lens migration failed"),
+            "the read ignored its transaction's migration: {error}"
+        );
+        registry.discard(&txn_id).await.unwrap();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn writable_reads_reload_schema_history() {
-    let (db, _, _) =
-        verified_collection(CountingStore::new(RegolithStore::in_memory().unwrap())).await;
-    deepen_history(&db).await;
-    let fetcher = LensedDocFetcher::new(
-        db.clone(),
-        db.new_txn(false).await.unwrap(),
-        db.lens_store().clone(),
-    );
-    fetcher.get_all("Probe").await.unwrap();
-    let before = db.store().keys_read();
-    fetcher.get_all("Probe").await.unwrap();
-    let repeated = db.store().keys_read() - before;
-    assert!(
-        repeated >= HISTORY_DEPTH,
-        "a writable read reused cached schema history: {repeated} iterator keys"
-    );
-    let _ = fetcher.take_txn().await.unwrap().discard();
+#[test]
+fn writable_reads_reload_schema_history() {
+    workers::block_on(async {
+        let (db, _, _) =
+            verified_collection(CountingStore::new(RegolithStore::in_memory().unwrap())).await;
+        deepen_history(&db).await;
+        let fetcher = LensedDocFetcher::new(
+            db.clone(),
+            db.new_txn(false).await.unwrap(),
+            db.lens_store().clone(),
+        );
+        fetcher.get_all("Probe").await.unwrap();
+        let before = db.store().keys_read();
+        fetcher.get_all("Probe").await.unwrap();
+        let repeated = db.store().keys_read() - before;
+        assert!(
+            repeated >= HISTORY_DEPTH,
+            "a writable read reused cached schema history: {repeated} iterator keys"
+        );
+        let _ = fetcher.take_txn().await.unwrap().discard();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn stream_migrates_documents_without_rescanning_schema_history() {
-    let (db, v1, v2) =
-        verified_collection(CountingStore::new(RegolithStore::in_memory().unwrap())).await;
-    db.set_migration(migration(&v1, &v2), None).await.unwrap();
-    deepen_history(&db).await;
-    let fetcher = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
-    assert_eq!(
-        verified(&fetcher.get_all("Probe").await.unwrap()),
-        Some(&NormalValue::Bool(true))
-    );
+#[test]
+fn stream_migrates_documents_without_rescanning_schema_history() {
+    workers::block_on(async {
+        let (db, v1, v2) =
+            verified_collection(CountingStore::new(RegolithStore::in_memory().unwrap())).await;
+        db.set_migration(migration(&v1, &v2), None).await.unwrap();
+        deepen_history(&db).await;
+        let fetcher = readonly_fetcher(&db, db.new_txn(true).await.unwrap());
+        assert_eq!(
+            verified(&fetcher.get_all("Probe").await.unwrap()),
+            Some(&NormalValue::Bool(true))
+        );
 
-    let before = db.store().keys_read();
-    let mut stream = fetcher
-        .stream_all_with_deleted("Probe", false)
-        .await
-        .unwrap();
-    let (streamed, _) = stream.next().await.unwrap().unwrap();
-    assert_eq!(streamed.get("verified"), Some(&NormalValue::Bool(true)));
-    assert!(stream.next().await.unwrap().is_none());
-    stream.close().await.unwrap();
-    let streamed_keys = db.store().keys_read() - before;
-    assert!(
-        streamed_keys < HISTORY_DEPTH,
-        "a stream rescanned schema history while migrating: {streamed_keys} iterator keys"
-    );
-    let _ = fetcher.take_txn().await.unwrap().discard();
+        let before = db.store().keys_read();
+        let mut stream = fetcher
+            .stream_all_with_deleted("Probe", false)
+            .await
+            .unwrap();
+        let (streamed, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(streamed.get("verified"), Some(&NormalValue::Bool(true)));
+        assert!(stream.next().await.unwrap().is_none());
+        stream.close().await.unwrap();
+        let streamed_keys = db.store().keys_read() - before;
+        assert!(
+            streamed_keys < HISTORY_DEPTH,
+            "a stream rescanned schema history while migrating: {streamed_keys} iterator keys"
+        );
+        let _ = fetcher.take_txn().await.unwrap().discard();
+    })
+    .unwrap()
 }

@@ -540,267 +540,288 @@ mod tests {
         node.value().doc_id().unwrap_or("")
     }
 
-    #[tokio::test]
-    async fn forward_first_only_emits_n_rows() {
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Forward,
-            Some(2),
-            None, // no after token
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false,
-        );
+    #[test]
+    fn forward_first_only_emits_n_rows() {
+        workers::block_on(async {
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Forward,
+                Some(2),
+                None, // no after token
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false,
+            );
 
-        assert!(node.next().await.unwrap(), "first row");
-        assert_eq!(current_id(&node), "a");
+            assert!(node.next().await.unwrap(), "first row");
+            assert_eq!(current_id(&node), "a");
 
-        assert!(node.next().await.unwrap(), "second row");
-        assert_eq!(current_id(&node), "b");
+            assert!(node.next().await.unwrap(), "second row");
+            assert_eq!(current_id(&node), "b");
 
-        // Third call should drain and return false.
-        assert!(
-            !node.next().await.unwrap(),
-            "should be done after page_size"
-        );
+            // Third call should drain and return false.
+            assert!(
+                !node.next().await.unwrap(),
+                "should be done after page_size"
+            );
 
-        let info = node.page_info_data();
-        assert!(info.has_next, "has_next should be true: c and d remain");
+            let info = node.page_info_data();
+            assert!(info.has_next, "has_next should be true: c and d remain");
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn backward_last_only_emits_last_n_in_order() {
-        // No `before` cursor; iterate forward through all, keep last 2.
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Backward,
-            Some(2),
-            None,
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                has_prev: Some("hasPrev".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false,
-        );
-        node.init().await.unwrap();
+    #[test]
+    fn backward_last_only_emits_last_n_in_order() {
+        workers::block_on(async {
+            // No `before` cursor; iterate forward through all, keep last 2.
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Backward,
+                Some(2),
+                None,
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    has_prev: Some("hasPrev".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false,
+            );
+            node.init().await.unwrap();
 
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "c");
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "d");
-        assert!(!node.next().await.unwrap());
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "c");
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "d");
+            assert!(!node.next().await.unwrap());
 
-        let info = node.page_info_data();
-        assert!(!info.has_next, "before is None => has_next=false");
-        assert!(
-            info.has_prev,
-            "we dropped rows from the front => has_prev=true"
-        );
+            let info = node.page_info_data();
+            assert!(!info.has_next, "before is None => has_next=false");
+            assert!(
+                info.has_prev,
+                "we dropped rows from the front => has_prev=true"
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn backward_last_before_stops_at_boundary() {
-        // `before` = "c"; collect a, b (window of 2); stop before "c".
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let before = Cursor::from_doc_id("c");
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Backward,
-            Some(2),
-            None,
-            Some(before),
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                has_prev: Some("hasPrev".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false,
-        );
-        node.init().await.unwrap();
+    #[test]
+    fn backward_last_before_stops_at_boundary() {
+        workers::block_on(async {
+            // `before` = "c"; collect a, b (window of 2); stop before "c".
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let before = Cursor::from_doc_id("c");
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Backward,
+                Some(2),
+                None,
+                Some(before),
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    has_prev: Some("hasPrev".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false,
+            );
+            node.init().await.unwrap();
 
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "a");
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "b");
-        assert!(!node.next().await.unwrap());
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "a");
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "b");
+            assert!(!node.next().await.unwrap());
 
-        let info = node.page_info_data();
-        assert!(info.has_next, "before.is_some() => has_next=true");
+            let info = node.page_info_data();
+            assert!(info.has_next, "before.is_some() => has_next=true");
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn forward_first_after_skips_to_boundary() {
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let after = Cursor::from_doc_id("b");
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Forward,
-            Some(2),
-            Some(after),
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                has_prev: Some("hasPrev".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false, // no index seek — slow path
-        );
+    #[test]
+    fn forward_first_after_skips_to_boundary() {
+        workers::block_on(async {
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let after = Cursor::from_doc_id("b");
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Forward,
+                Some(2),
+                Some(after),
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    has_prev: Some("hasPrev".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false, // no index seek — slow path
+            );
 
-        // Should skip "a" and "b", then emit "c" and "d".
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "c");
+            // Should skip "a" and "b", then emit "c" and "d".
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "c");
 
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "d");
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "d");
 
-        assert!(!node.next().await.unwrap());
+            assert!(!node.next().await.unwrap());
 
-        let info = node.page_info_data();
-        assert!(info.has_prev, "has_prev because after token was set");
-        assert!(!info.has_next, "has_next false: no rows remain after d");
+            let info = node.page_info_data();
+            assert!(info.has_prev, "has_prev because after token was set");
+            assert!(!info.has_next, "has_next false: no rows remain after d");
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn backward_last_index_seek_fast_path_emits_in_order() {
-        // index_seek_active = true means the inner plan already iterates in reverse.
-        // FakePlan with [d, c, b, a] simulates that (inner = reverse logical order).
-        let inner = FakePlan::new(vec![
-            doc_with_id("d"),
-            doc_with_id("c"),
-            doc_with_id("b"),
-            doc_with_id("a"),
-        ]);
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Backward,
-            Some(2),
-            None,
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                has_prev: Some("hasPrev".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            true, // index_seek_active — fast path
-        );
-        node.init().await.unwrap();
-        // Buffer: collected reverse = [d, c, b]; len=3 == window_size → break.
-        // Reverse for logical order = [b, c, d]; len=3 > page_size=2 → has_prev=true, drop b.
-        // Final buffer = [c, d]. Output: c, d.
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "c");
-        assert!(node.next().await.unwrap());
-        assert_eq!(current_id(&node), "d");
-        assert!(!node.next().await.unwrap());
-        let info = node.page_info_data();
-        assert!(info.has_prev, "page_size+1 < total => has_prev=true");
-        assert!(!info.has_next, "before is None => has_next=false");
+    #[test]
+    fn backward_last_index_seek_fast_path_emits_in_order() {
+        workers::block_on(async {
+            // index_seek_active = true means the inner plan already iterates in reverse.
+            // FakePlan with [d, c, b, a] simulates that (inner = reverse logical order).
+            let inner = FakePlan::new(vec![
+                doc_with_id("d"),
+                doc_with_id("c"),
+                doc_with_id("b"),
+                doc_with_id("a"),
+            ]);
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Backward,
+                Some(2),
+                None,
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    has_prev: Some("hasPrev".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                true, // index_seek_active — fast path
+            );
+            node.init().await.unwrap();
+            // Buffer: collected reverse = [d, c, b]; len=3 == window_size → break.
+            // Reverse for logical order = [b, c, d]; len=3 > page_size=2 → has_prev=true, drop b.
+            // Final buffer = [c, d]. Output: c, d.
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "c");
+            assert!(node.next().await.unwrap());
+            assert_eq!(current_id(&node), "d");
+            assert!(!node.next().await.unwrap());
+            let info = node.page_info_data();
+            assert!(info.has_prev, "page_size+1 < total => has_prev=true");
+            assert!(!info.has_next, "before is None => has_next=false");
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn forward_no_limit_emits_all_rows() {
-        // `first` omitted (limit None) must return ALL rows, mirroring Go's
-        // cursorNode where the limit check is gated on `first.HasValue()`.
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Forward,
-            None, // no `first` — unbounded
-            None,
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false,
-        );
+    #[test]
+    fn forward_no_limit_emits_all_rows() {
+        workers::block_on(async {
+            // `first` omitted (limit None) must return ALL rows, mirroring Go's
+            // cursorNode where the limit check is gated on `first.HasValue()`.
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Forward,
+                None, // no `first` — unbounded
+                None,
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false,
+            );
 
-        for expected in ["a", "b", "c", "d"] {
-            assert!(node.next().await.unwrap(), "row {expected}");
-            assert_eq!(current_id(&node), expected);
-        }
-        assert!(!node.next().await.unwrap(), "drained after all rows");
+            for expected in ["a", "b", "c", "d"] {
+                assert!(node.next().await.unwrap(), "row {expected}");
+                assert_eq!(current_id(&node), expected);
+            }
+            assert!(!node.next().await.unwrap(), "drained after all rows");
 
-        let info = node.page_info_data();
-        assert!(
-            !info.has_next,
-            "no limit => all rows returned => has_next=false"
-        );
+            let info = node.page_info_data();
+            assert!(
+                !info.has_next,
+                "no limit => all rows returned => has_next=false"
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn backward_no_limit_emits_all_rows_in_order() {
-        // `last` omitted (limit None) must return ALL rows in logical order.
-        let inner = FakePlan::new(vec![
-            doc_with_id("a"),
-            doc_with_id("b"),
-            doc_with_id("c"),
-            doc_with_id("d"),
-        ]);
-        let mut node = CursorNode::new(
-            Box::new(inner),
-            CursorDirection::Backward,
-            None, // no `last` — unbounded
-            None,
-            None,
-            CursorPageInfoFields {
-                has_next: Some("hasNext".to_string()),
-                has_prev: Some("hasPrev".to_string()),
-                ..Default::default()
-            },
-            vec![],
-            false,
-        );
-        node.init().await.unwrap();
+    #[test]
+    fn backward_no_limit_emits_all_rows_in_order() {
+        workers::block_on(async {
+            // `last` omitted (limit None) must return ALL rows in logical order.
+            let inner = FakePlan::new(vec![
+                doc_with_id("a"),
+                doc_with_id("b"),
+                doc_with_id("c"),
+                doc_with_id("d"),
+            ]);
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Backward,
+                None, // no `last` — unbounded
+                None,
+                None,
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    has_prev: Some("hasPrev".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                false,
+            );
+            node.init().await.unwrap();
 
-        for expected in ["a", "b", "c", "d"] {
-            assert!(node.next().await.unwrap(), "row {expected}");
-            assert_eq!(current_id(&node), expected);
-        }
-        assert!(!node.next().await.unwrap(), "drained after all rows");
+            for expected in ["a", "b", "c", "d"] {
+                assert!(node.next().await.unwrap(), "row {expected}");
+                assert_eq!(current_id(&node), expected);
+            }
+            assert!(!node.next().await.unwrap(), "drained after all rows");
 
-        let info = node.page_info_data();
-        assert!(
-            !info.has_prev,
-            "no limit => no rows dropped => has_prev=false"
-        );
+            let info = node.page_info_data();
+            assert!(
+                !info.has_prev,
+                "no limit => no rows dropped => has_prev=false"
+            );
+        })
+        .unwrap()
     }
 }

@@ -1,7 +1,10 @@
 //! P2P peer management handlers.
 
-use axum::{extract::State, Json};
-use serde::{Deserialize, Serialize};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
+use serde::Serialize;
 
 use super::{map_p2p_bad_request, map_p2p_internal};
 use crate::error::HttpError;
@@ -22,20 +25,6 @@ pub type P2pInfoResponse = Vec<String>;
 #[derive(Debug, Clone, Serialize)]
 pub struct ShareableAddressResponse {
     pub address: Option<String>,
-}
-
-/// Response for listing peers.
-#[derive(Debug, Clone, Serialize)]
-pub struct PeerInfo {
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
-}
-
-/// Request to connect to a peer.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConnectPeerRequest {
-    pub address: String,
 }
 
 /// Get P2P node information (Go-compatible format).
@@ -91,6 +80,27 @@ pub async fn sync_status(
     Ok(Json(status))
 }
 
+/// Everything this node knows about one peer, for debugging.
+///
+/// GET /api/v0/p2p/peers/{peer_id}
+///
+/// Returns the `p2p::sync::PeerDetails` JSON plus `did` and `push_retries`;
+/// the compact per-peer overview is `peers` in `/p2p/sync/status`.
+///
+/// Requires `P2pPeerInfo` permission when NAC is enabled.
+pub async fn peer_details(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    Path(peer_id): Path<String>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    require_permission(&state, &identity, NodePermission::P2pPeerInfo).await?;
+
+    let peer_id = crate::router::TransportPeerId::new(peer_id).map_err(map_p2p_bad_request)?;
+    let p2p = bound(state.require_p2p()?, &identity.context());
+    let details = p2p.peer_details(&peer_id).await.map_err(map_p2p_internal)?;
+    Ok(Json(details))
+}
+
 /// Get the single best shareable P2P address, if available.
 ///
 /// GET /api/v0/p2p/shareable-address
@@ -106,29 +116,6 @@ pub async fn get_shareable_address(
     let address = p2p.shareable_address().await.map_err(map_p2p_internal)?;
 
     Ok(Json(ShareableAddressResponse { address }))
-}
-
-/// List connected peers.
-///
-/// GET /api/v0/p2p/peers
-///
-/// Requires `P2pPeerConnect` permission when NAC is enabled.
-pub async fn list_peers(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-) -> Result<Json<Vec<PeerInfo>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::P2pPeerConnect).await?;
-
-    let p2p = bound(state.require_p2p()?, &identity.context());
-
-    let peers = p2p.connected_peers().await.map_err(map_p2p_internal)?;
-
-    let peer_infos: Vec<PeerInfo> = peers
-        .into_iter()
-        .map(|id| PeerInfo { id, address: None })
-        .collect();
-
-    Ok(Json(peer_infos))
 }
 
 /// List active peers (Go-compatible).
@@ -149,32 +136,6 @@ pub async fn active_peers(
     let peers = p2p.connected_peers().await.map_err(map_p2p_internal)?;
 
     Ok(Json(peers))
-}
-
-/// Connect to a peer (legacy format).
-///
-/// POST /api/v0/p2p/peers
-///
-/// Body: {"address": "/ip4/..."}
-///
-/// Requires `P2pPeerConnect` permission when NAC is enabled.
-pub async fn connect_peer(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-    Json(request): Json<ConnectPeerRequest>,
-) -> Result<Json<()>, HttpError> {
-    require_permission(&state, &identity, NodePermission::P2pPeerConnect).await?;
-
-    let p2p = bound(state.require_p2p()?, &identity.context());
-
-    // Validate the multiaddr format
-    validate_multiaddr(&request.address)?;
-
-    p2p.connect_peer(&request.address)
-        .await
-        .map_err(map_p2p_bad_request)?;
-
-    Ok(Json(()))
 }
 
 /// Connect to peers (Go-compatible format).
@@ -230,13 +191,6 @@ pub async fn disconnect(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_connect_peer_request_deserialize() {
-        let json = r#"{"address": "/ip4/127.0.0.1/tcp/9000/p2p/12D3KooWtest"}"#;
-        let request: ConnectPeerRequest = serde_json::from_str(json).unwrap();
-        assert!(request.address.contains("12D3KooW"));
-    }
 
     #[test]
     fn test_p2p_info_response_serialize() {

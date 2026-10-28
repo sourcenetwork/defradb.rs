@@ -22,11 +22,11 @@ is NOT the #1021 bug modeled here and is NOT fixed by this PR.)
 | Model element | Code |
 |---|---|
 | `blob` (materialized value, queries read it; local writes RMW it) | the CBOR document blob written by `db` crate `doc_mutator` (local increments) and by `db-merge` composite materialization |
-| `acc` (accumulation store) | the counter `value_key` in `crates/crdt/src/counter.rs` |
-| `MergeReconcile` (`acc := blob`) | `Counter::reconcile_int64(datastore, blob_value)` in `crates/db/src/merge/merge_handler/counter.rs` (`process_counter_delta` / `process_counter_delta_in_txn`) |
-| `MergeCommit` (`acc += δ; blob := acc`) | `counter.merge(+delta)` then blob re-materialization |
+| `acc` (accumulation store) | the pre-#1021 separate counter key; the current code keeps the value only in the counter's part of the document value |
+| `MergeReconcile` (`acc := blob`) | the pre-#1021 reconcile; in the Unified code the part operand reads the stored part when the engine merges it |
+| `MergeCommit` (`acc += δ; blob := acc`) | `apply_field_op_once` in `crates/db/src/merge/merge_handler/field_ops.rs`: one blind operand on the part, summed by `CounterField::merge` (`crates/crdt/src/field/counter.rs`) |
 | `LocalApply` (`blob += 1`, no lock, no `acc`) | local increment via the `db` crate; in the Split (pre-#1021) abstraction it does NOT acquire the shared per-doc guard |
-| `MergeRedeliver` (re-delivery; inline `Dedup` branch) | a delta delivered twice; `is_merged(cid)` merged-set guard in `counter.rs`/`composite.rs` (suppresses when `Dedup="On"`) |
+| `MergeRedeliver` (re-delivery; inline `Dedup` branch) | a delta delivered twice; applied key (`field_ops.rs`) and `is_merged(cid)` merged-set guard (`composite.rs`) (suppresses when `Dedup="On"`) |
 
 ## The knobs
 
@@ -64,12 +64,34 @@ re-delivery path is exercised in BOTH settings):
   with no new increment → `blob > doneCount`, violating `INV_NoDoubleApply`. The Lean
   twin is `CounterReconcile.counter_not_idempotent`.
 
+### `Defer` — the lost-deferral axis (PR #2192)
+
+A counter block can arrive on its own, as a standalone field block, before its
+document has a value it can be an operand on: the document is not materialized yet,
+or its value is on another schema version. Only the composite that links the block
+writes that value. `LateOps` are such increments; `materialized` says whether the
+document has a value, and `applied` holds each one's applied key
+(`HeadstorePriorityKey` in `field_ops.rs`).
+
+- `StandaloneArrive` is `apply_field_op_once` called standalone (`merge_field_in_txn`
+  from `process_block_in_txn` in `batch.rs`). With a value, the increment is an
+  operand, applied once under its applied key.
+- `CompositeArrive` is the composite merge (`composite_fields.rs` through
+  `merge_field_delta_in_txn`). It writes the value and adds the increment unless the
+  applied key is claimed. It may arrive again after the increment finished.
+- `Defer = "On"` [GREEN]: a standalone block with no value to add to is a terminal
+  skip that changes nothing (a no-op transition, so GREEN exercises it).
+- `Defer = "Off"` [RED]: the standalone merge claims the applied key, drops the value
+  it computed and reports the block merged; the composite then skips the increment →
+  `blob < doneCount`, violating `INV_NoLoss`.
+
 ## Invariants
 
 The real definitions in `TwoStoreCounter.tla`:
 
 - `INV_NoLoss == blob >= doneCount` — no increment dropped (the **Split** axis breaks
-  this: a clobbered local write makes `blob < doneCount`).
+  this: a clobbered local write makes `blob < doneCount`; so does **Defer=Off**: a
+  deferred increment the composite skips).
 - `INV_NoDoubleApply == blob <= doneCount` — no increment counted twice (the **Dedup=Off**
   axis breaks this: a re-applied delta makes `blob > doneCount`).
 - `INV_Exact == blob = doneCount` — the headline: the materialized value equals the
@@ -84,9 +106,10 @@ one directional invariant their bug violates.
 
 | Config | Knobs | Invariant | Expected |
 |---|---|---|---|
-| `MC_TwoStoreCounter_Green` | Unified + On | `INV_Exact` | GREEN |
+| `MC_TwoStoreCounter_Green` | Unified + On, `Defer="On"`, two `LateOps` | `INV_Exact` | GREEN |
 | `MC_TwoStoreCounter_Red_Split` | Split + On | `INV_NoLoss` | RED (`blob < doneCount`) |
 | `MC_TwoStoreCounter_Red_DoubleApply` | Unified + Off | `INV_NoDoubleApply` | RED (`blob > doneCount`) |
+| `MC_TwoStoreCounter_Red_LostDeferral` | Unified + On, `Defer="Off"` | `INV_NoLoss` | RED (`blob < doneCount`) |
 
 ## Fix status
 

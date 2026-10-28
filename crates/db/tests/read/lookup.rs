@@ -30,9 +30,24 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
-            FieldDescription::new("3", "embedding", FieldKind::float64_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "embedding",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.indexes = vec![IndexDescription {
@@ -83,9 +98,11 @@ async fn populated() -> (Arc<DB<RegolithStore>>, u32) {
     let txn = db.new_txn(false).await.unwrap();
     let mutator = DbDocMutator::new(db.clone(), txn);
     for i in 0..DOCUMENTS {
-        let mut doc = Document::new();
-        doc.set("title", NormalValue::String(format!("doc-{i}")));
-        doc.set("embedding", NormalValue::Float64Array(vector_at(i)));
+        let mut doc = Document::new(schema());
+        doc.set("title", NormalValue::String(format!("doc-{i}")))
+            .unwrap();
+        doc.set("embedding", NormalValue::Float64Array(vector_at(i)))
+            .unwrap();
         mutator
             .create(COLLECTION, doc)
             .await
@@ -111,67 +128,79 @@ async fn search(db: &Arc<DB<RegolithStore>>, name: &str, index_id: u32, k: usize
         .expect("the search must resolve the collection")
 }
 
-#[tokio::test]
-async fn the_fetcher_resolves_the_collection_and_searches_its_index() {
-    let (db, index_id) = populated().await;
-    let hits = search(&db, COLLECTION, index_id, 5).await;
+#[test]
+fn the_fetcher_resolves_the_collection_and_searches_its_index() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let hits = search(&db, COLLECTION, index_id, 5).await;
 
-    assert_eq!(hits.len(), 5, "k documents must come back");
-    let mut distinct = hits.clone();
-    distinct.sort_unstable();
-    distinct.dedup();
-    assert_eq!(distinct.len(), hits.len(), "no document twice: {hits:?}");
+        assert_eq!(hits.len(), 5, "k documents must come back");
+        let mut distinct = hits.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), hits.len(), "no document twice: {hits:?}");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn the_nearest_hit_is_the_document_the_query_came_from() {
-    let (db, index_id) = populated().await;
-    let hits = search(&db, COLLECTION, index_id, 3).await;
-    let nearest = *hits.first().expect("at least one hit");
+#[test]
+fn the_nearest_hit_is_the_document_the_query_came_from() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let hits = search(&db, COLLECTION, index_id, 3).await;
+        let nearest = *hits.first().expect("at least one hit");
 
-    let txn = db.new_txn(true).await.unwrap();
-    let fetcher = DbDocFetcher::new(txn);
-    let mut stream = fetcher
-        .stream_by_doc_short_ids(COLLECTION, &[nearest], false)
-        .await
-        .expect("the short id must resolve to a document");
-    let (document, _) = stream
-        .next()
-        .await
-        .expect("the stream must read")
-        .expect("the nearest hit must be a live document");
+        let txn = db.new_txn(true).await.unwrap();
+        let fetcher = DbDocFetcher::new(txn);
+        let mut stream = fetcher
+            .stream_by_doc_short_ids(COLLECTION, &[nearest], false)
+            .await
+            .expect("the short id must resolve to a document");
+        let (document, _) = stream
+            .next()
+            .await
+            .expect("the stream must read")
+            .expect("the nearest hit must be a live document");
 
-    assert_eq!(
-        document.get("title"),
-        Some(&NormalValue::String("doc-3".to_string())),
-        "the nearest neighbour of doc-3's own vector must be doc-3"
-    );
+        assert_eq!(
+            document.get("title"),
+            Some(&NormalValue::String("doc-3".to_string())),
+            "the nearest neighbour of doc-3's own vector must be doc-3"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_unknown_index_id_is_an_error() {
-    let (db, index_id) = populated().await;
-    let txn = db.new_txn(true).await.unwrap();
-    let fetcher = DbDocFetcher::new(txn);
+#[test]
+fn an_unknown_index_id_is_an_error() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let txn = db.new_txn(true).await.unwrap();
+        let fetcher = DbDocFetcher::new(txn);
 
-    let err = fetcher
-        .vector_search(COLLECTION, index_id + 99, &vector_at(0), 5, None)
-        .await
-        .expect_err("an unknown index id must fail");
-    assert!(
-        err.to_string().contains("vector index"),
-        "the error must say what was missing, got: {err}"
-    );
+        let err = fetcher
+            .vector_search(COLLECTION, index_id + 99, &vector_at(0), 5, None)
+            .await
+            .expect_err("an unknown index id must fail");
+        assert!(
+            err.to_string().contains("vector index"),
+            "the error must say what was missing, got: {err}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_unknown_collection_is_an_error() {
-    let (db, index_id) = populated().await;
-    let txn = db.new_txn(true).await.unwrap();
-    let fetcher = DbDocFetcher::new(txn);
+#[test]
+fn an_unknown_collection_is_an_error() {
+    workers::block_on(async {
+        let (db, index_id) = populated().await;
+        let txn = db.new_txn(true).await.unwrap();
+        let fetcher = DbDocFetcher::new(txn);
 
-    assert!(fetcher
-        .vector_search("nope", index_id, &vector_at(0), 5, None)
-        .await
-        .is_err());
+        assert!(fetcher
+            .vector_search("nope", index_id, &vector_at(0), 5, None)
+            .await
+            .is_err());
+    })
+    .unwrap()
 }

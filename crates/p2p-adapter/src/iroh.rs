@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use blockstore::Blockstore;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::RapidHashSet;
 
 use crate::transport_doc_pusher::TransportDocPusher;
 use crate::transport_version_syncer::TransportVersionSyncer;
@@ -296,6 +296,24 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .await
     }
 
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        self.check_nac(acp::nac::NodePermission::P2pReplicatorList)
+            .await?;
+        let Some(pusher) = self.doc_pusher.as_ref() else {
+            return Err(P2PError::unsupported(
+                "document head acknowledgement needs a document pusher",
+            ));
+        };
+        pusher
+            .document_heads_acknowledged(peer_id, collection_name, doc_ids)
+            .await
+    }
+
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
@@ -310,6 +328,25 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             );
         }
         Ok(status)
+    }
+
+    async fn peer_details(&self, peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        let Some(coordinator) = self.sync_coordinator.as_ref() else {
+            return Ok(serde_json::Value::Null);
+        };
+        let peer = parse_canonical_peer_id(peer_id.as_str())
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        let details = coordinator.peer_details(&peer).await;
+        let identity = if details.history.connected || details.connection.is_some() {
+            Some(self.resolve_peer_identity(peer_id).await)
+        } else {
+            None
+        };
+        let push_retries = match self.doc_pusher.as_ref() {
+            Some(pusher) => pusher.push_retries_for_peer(peer_id.as_str()).await,
+            None => Ok(None),
+        };
+        crate::peer_details::peer_details_json(details, identity, push_retries)
     }
 
     async fn local_peer_id(&self) -> P2PResult<String> {
@@ -587,56 +624,6 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             self.transport.local_peer_id().as_str(),
             peer_id.as_str(),
         )?;
-        let collections_with_changed_capabilities = crate::collections_with_changed_capabilities(
-            &collection_cids,
-            &validated_capabilities,
-            |collection_id, capability| {
-                self.transport.explicit_replay_capability_matches(
-                    &peer_id,
-                    collection_id,
-                    capability,
-                )
-            },
-        );
-        self.transport
-            .clear_explicit_replay_capabilities(&peer_id, &collection_cids);
-        for (collection_id, capability) in validated_capabilities {
-            self.transport
-                .set_explicit_replay_capability(&peer_id, &collection_id, &capability)
-                .map_err(|error| P2PError::invalid_input(error.to_string()))?;
-        }
-
-        // Check existing replicator state before creating/updating so we can
-        // skip the expensive initial replay when the replicator already exists
-        // with the same collections (idempotent reconnect path).
-        let (existing_collection_ids, existing_filters): (
-            RapidHashSet<String>,
-            p2p::ReplicationFilters,
-        ) = {
-            let result = if let Some(ref coordinator) = self.sync_coordinator {
-                coordinator
-                    .get_replicator(&peer_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))
-            } else {
-                self.transport
-                    .get_replicator(&peer_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))
-            };
-            match result {
-                Ok(Some(info)) => (info.collections.into_iter().collect(), info.filters),
-                Ok(None) => (RapidHashSet::new(), p2p::ReplicationFilters::new()),
-                Err(e) => {
-                    tracing::warn!(
-                        peer_id = %peer_id,
-                        error = %e,
-                        "Failed to check existing replicator state; falling back to full replay"
-                    );
-                    (RapidHashSet::new(), p2p::ReplicationFilters::new())
-                }
-            }
-        };
         // Same rationale as `connect_peer`: in the common pairing flow the
         // replicator is installed over an already-live connection, and a
         // redundant dial can spuriously time out (Linux). The registration and
@@ -660,15 +647,27 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             vec![addr_str.to_string()],
             replication_filters.clone(),
         );
-        if let Some(ref pusher) = self.doc_pusher {
-            pusher
-                .persist_replicator_info(&replicator_info)
-                .await
-                .map_err(|error| {
-                    P2PError::persistence(format!(
-                        "failed to durably register replicator {peer_id}: {error}"
-                    ))
-                })?;
+        let mut replay = if let Some(pusher) = &self.doc_pusher {
+            let request = crate::ReplicatorInstallRequest::new(
+                replicator_info.clone(),
+                effective_collections.clone(),
+                &validated_capabilities,
+            );
+            let plan = pusher.prepare_replicator_install(&request).await?;
+            Some(crate::replicator_replay::ReplayOwner::new(
+                Arc::clone(pusher),
+                plan,
+                self.event_bus.clone(),
+            ))
+        } else {
+            None
+        };
+        self.transport
+            .clear_explicit_replay_capabilities(&peer_id, &collection_cids);
+        for (collection_id, capability) in validated_capabilities {
+            self.transport
+                .set_explicit_replay_capability(&peer_id, &collection_id, &capability)
+                .map_err(|error| P2PError::invalid_input(error.to_string()))?;
         }
 
         if let Some(ref coordinator) = self.sync_coordinator {
@@ -725,19 +724,16 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             )));
         }
 
-        let collection_names_requiring_replay = crate::collections_requiring_replay(
-            &effective_collections,
-            &collection_cids,
-            &existing_collection_ids,
-            &existing_filters,
-            &replication_filters,
-            &collections_with_changed_capabilities,
-        );
-
-        if !collection_names_requiring_replay.is_empty() {
-            if let Some(ref pusher) = self.doc_pusher {
-                let push_pusher = Arc::clone(pusher);
-                let push_event_bus = self.event_bus.clone();
+        if let Some(mut replay) = replay.take() {
+            let collections = replay
+                .plan
+                .as_ref()
+                .expect("new replay owns its plan")
+                .replay
+                .clone();
+            if !collections.is_empty() {
+                let push_pusher =
+                    Arc::clone(self.doc_pusher.as_ref().expect("replay has a pusher"));
                 let push_peer = peer_id;
                 let push_options = self.replicator_push_options.load();
                 let push_se_key = push_options.se_encryption_key;
@@ -746,29 +742,29 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
 
                 tracing::info!(
                     peer_id = %push_peer,
-                    replay_collections = ?collection_names_requiring_replay,
+                    replay_collections = ?collections,
                     "Replaying existing docs for collections requiring replay"
                 );
 
                 n0_future::task::spawn(async move {
-                    if let Err(error) = push_pusher
+                    let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
-                            &collection_names_requiring_replay,
+                            &collections,
                             &push_filters,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                         )
-                        .await
-                    {
+                        .await;
+                    if let Err(ref error) = result {
                         tracing::error!(error = %error, "Failed to push existing docs to replicator");
                     }
-                    if let Some(bus) = push_event_bus {
-                        bus.publish(events::Message::replicator_completed());
-                    }
+                    replay
+                        .complete(result.err().map(|error| error.to_string()))
+                        .await;
                 });
-            } else if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+            } else {
+                replay.complete(None).await;
             }
         } else {
             tracing::debug!(
@@ -776,7 +772,14 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 "Replicator already exists with same collections, filters, and replay capability; skipping initial replay"
             );
             if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         }
 
@@ -1189,7 +1192,6 @@ mod tests {
             bind_port: None,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
-            gossip_heal: Default::default(),
             allowlist: Default::default(),
         }
     }

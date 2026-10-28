@@ -6,6 +6,10 @@
 #[path = "../../../tests/unit/car_serving.rs"]
 mod car_serving;
 
+#[path = "../../../tests/unit/selected_car_authority.rs"]
+#[cfg(not(target_arch = "wasm32"))]
+mod selected_car_authority;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -400,6 +404,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         authorizer,
         classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
         serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress::new(),
         document_acp: regolith::sync::OnceCell::new(),
         #[cfg(feature = "kms")]
         kms_transport: regolith::sync::OnceCell::new(),
@@ -1047,7 +1052,7 @@ fn cid_for(data: &[u8]) -> Cid {
 fn pushlog_request(collection_id: &str) -> PushLogRequest {
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1069,7 +1074,7 @@ fn pushlog_request(collection_id: &str) -> PushLogRequest {
 fn collection_commit_request(collection_id: &str) -> PushLogRequest {
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Collection(defra_core::CollectionDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
         }),
         vec![],
@@ -1375,7 +1380,7 @@ async fn doc_sync_filters_heads_outside_replicator_collection() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection_b".to_string(),
+            collection_version_id: "collection_b".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1442,7 +1447,7 @@ async fn car_fetch_controlled_mode_filters_unauthorized_data_block() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection_b".to_string(),
+            collection_version_id: "collection_b".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1651,7 +1656,7 @@ async fn car_fetch_allows_relayed_receiver_via_authenticated_defra_identity() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -1662,7 +1667,7 @@ async fn car_fetch_allows_relayed_receiver_via_authenticated_defra_identity() {
     blockstore.put(&field_cid, &field_data).await.unwrap();
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -1725,7 +1730,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -1737,7 +1742,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -1751,7 +1756,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "other".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"unrelated".to_vec(),
         }),
         vec![],
@@ -1868,7 +1873,7 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     });
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2028,7 +2033,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 13,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"starting".to_vec(),
         }),
         vec![],
@@ -2044,7 +2049,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![previous_field_cid],
@@ -2056,7 +2061,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -2212,7 +2217,7 @@ async fn collection_head_car_authority_is_rederived_from_transport_after_restart
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -2224,7 +2229,7 @@ async fn collection_head_car_authority_is_rederived_from_transport_after_restart
 
     let collection_head = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 2,
             status: 1,
         }),
@@ -2294,7 +2299,7 @@ async fn gossip_car_authority_is_rederived_from_acp_without_subscription_event_a
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -2306,7 +2311,7 @@ async fn gossip_car_authority_is_rederived_from_acp_without_subscription_event_a
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 2,
             status: 1,
         }),
@@ -2600,7 +2605,7 @@ async fn branchable_sync_reply_remerges_locally_complete_unmerged_head() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2738,7 +2743,7 @@ async fn committed_head_marker_failure_is_returned_before_queue_admission() {
 
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -3634,7 +3639,7 @@ fn pushlog_request_with_missing_link(collection_id: &str, doc_id: &str) -> PushL
         defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
             field_name: "field".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: doc_id.as_bytes().to_vec(),
         }),
         vec![],
@@ -3644,7 +3649,7 @@ fn pushlog_request_with_missing_link(collection_id: &str, doc_id: &str) -> PushL
 
     let composite = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -4281,4 +4286,40 @@ async fn sync_status_surfaces_quarantine_counters() {
     let after = coordinator.sync_status().await;
     assert_eq!(after.pending_dag_terminal_quarantined, 1);
     assert_eq!(after.quarantined_pending_dags, 1);
+}
+
+#[tokio::test]
+async fn live_connection_allows_pull_before_lifecycle_notification_without_granting_push() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let unknown = random_peer_id();
+    let (coordinator, _) =
+        create_test_coordinator(AccessMode::Controlled, replicators, Arc::clone(&peer_state));
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(vec![peer.clone()]);
+    assert!(!peer_state.is_connected(peer.as_str()));
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_ok());
+    assert!(coordinator.check_peer_is_replicator(&peer).await.is_ok());
+    assert!(coordinator
+        .check_pushlog_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+    assert!(coordinator
+        .check_access_str(unknown.as_str(), "collection1")
+        .await
+        .is_err());
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(Vec::new());
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
 }

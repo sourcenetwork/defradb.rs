@@ -1,0 +1,19 @@
+# Tests that start real nodes take ports from the harness allocator, which
+# races when two tests bind at once, so they run one at a time.
+[test-groups]
+nodes = { max-threads = 1 }
+
+[profile.default]
+slow-timeout = { period = "60s" }
+
+[[profile.default.overrides]]
+filter = "package(integration-test) | (package(conformance) & !binary(lean_conformance))"
+test-group = "nodes"
+
+[profile.ci]
+fail-fast = false
+# A test still running after 20 minutes is hung: end it and name it.
+slow-timeout = { period = "60s", terminate-after = 20 }
+
+[profile.ci.junit]
+path = "junit.xml"

@@ -15,7 +15,7 @@
 \*   crates/p2p/src/sync/coordinator/selective_car_access.rs authorizes fetching
 \*   their linked encrypted LWW blocks;
 \* - crates/p2p/src/sync/pending_store.rs persists acknowledged pending DAGs;
-\* - crates/crdt/src/lww.rs selects the greatest (priority, value) version.
+\* - crates/crdt/src/field/lww.rs selects the greatest (priority, value) version.
 EXTENDS Naturals
 
 CONSTANTS

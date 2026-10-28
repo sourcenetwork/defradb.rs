@@ -8,7 +8,7 @@
 //!
 //! ## Cargo features
 //!
-//! - `native` — native host (tokio, event channel). Default-on.
+//! - `native` — native host (event channel). Default-on.
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
 //!   [`EmbeddedNode::set_migration`] returns an explicit error.
@@ -83,7 +83,7 @@ use signed_query::{execute_with_signing_context, unavailable_node_signer_respons
 /// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
-    async fn add_schema(
+    async fn add_collection(
         &self,
         context: &RequestContext,
         sdl: &str,
@@ -140,20 +140,20 @@ struct HttpSchemaOps {
 
 #[cfg(feature = "http")]
 #[async_trait::async_trait]
-impl defra_http::router::SchemaOperations for HttpSchemaOps {
+impl defra_http::router::CollectionOperations for HttpSchemaOps {
     fn bind_request(
         &self,
         context: &RequestContext,
-    ) -> Option<Arc<dyn defra_http::router::SchemaOperations>> {
+    ) -> Option<Arc<dyn defra_http::router::CollectionOperations>> {
         Some(Arc::new(Self {
             schema_ops: Arc::clone(&self.schema_ops),
             context: Some(context.clone()),
         }))
     }
 
-    async fn add_schema(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
         self.schema_ops
-            .add_schema(
+            .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
             )
@@ -458,13 +458,13 @@ impl EmbeddedNode {
     }
 
     /// Add a schema from a GraphQL SDL type definition.
-    pub async fn add_schema(&self, sdl: &str) -> Result<()> {
+    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
         let (ops, sdl, context) = (
             Arc::clone(&self.schema_ops),
             sdl.to_owned(),
             self.node_context(),
         );
-        self.on_pool(move || async move { ops.add_schema(&context, &sdl).await.map(|_| ()) })
+        self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
             .await
     }
 
@@ -559,7 +559,7 @@ impl EmbeddedNode {
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_schema`] (create) or [`Self::patch_collection`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }
@@ -637,12 +637,12 @@ impl EmbeddedNode {
     }
 
     /// Roll back a transaction owned by this embedded node.
-    pub async fn rollback_transaction(
+    pub async fn discard_transaction(
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
         self.runner
-            .rollback_txn_as(&self.node_context(), transaction)
+            .discard_txn_as(&self.node_context(), transaction)
             .await
     }
 
@@ -837,21 +837,21 @@ impl EmbeddedNode {
     /// **The node should not be used after this call.** When the `otel`
     /// feature is on, `shutdown` calls `TelemetryHandle::shutdown` which
     /// flushes and disables the global tracer provider. Subsequent calls
-    /// that emit spans (e.g. `execute`, `add_schema`) go to a no-op
+    /// that emit spans (e.g. `execute`, `add_collection`) go to a no-op
     /// tracer — they still work functionally, but observability is gone
     /// with no error surfaced. Drop the node after shutdown completes.
     pub async fn shutdown(&self) {
         #[cfg(feature = "http")]
         if let Some(task) = self.txn_cleanup_task.pop() {
             task.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
+            let _ = workers::timeout(Duration::from_secs(1), task).await;
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         for task in self.background_tasks.take() {
             task.abort();
             // An aborted task keeps the database open until it is next polled.
-            let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
+            let _ = workers::timeout(Duration::from_secs(1), task).await;
         }
 
         // Stop accepting the node's network work (signed queries, the HTTP
@@ -877,10 +877,41 @@ impl EmbeddedNode {
         //
         // `handle.shutdown()` synchronously joins the SDK batch-exporter
         // thread (up to ~5 s, double with metrics), so run it on a blocking
-        // thread rather than stalling this Tokio worker / reactor.
+        // thread of the network runtime rather than stalling the caller.
         #[cfg(feature = "otel")]
         if let Some(handle) = self.telemetry.pop() {
-            let _ = tokio::task::spawn_blocking(move || handle.shutdown()).await;
+            let runtime = self
+                .network
+                .as_ref()
+                .map(|network| Ok(network.runtime().clone()))
+                .unwrap_or_else(|| edge::on_demand().cloned());
+            // The slot keeps the handle when the runtime refuses the work,
+            // so its flush moves to a thread of its own instead of running
+            // on the caller as the dropped closure's handle.
+            let slot = Arc::new(single_slot(Some(handle)));
+            let flushing = Arc::clone(&slot);
+            let flushed = match runtime {
+                Ok(runtime) => runtime
+                    .spawn_blocking(move || {
+                        if let Some(handle) = flushing.pop() {
+                            handle.shutdown();
+                        }
+                    })
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = flushed {
+                tracing::warn!(%error, "telemetry did not flush on the network runtime");
+            }
+            if let Some(handle) = slot.pop() {
+                if let Err(error) = std::thread::Builder::new()
+                    .name("defra-otel-shutdown".to_string())
+                    .spawn(move || handle.shutdown())
+                {
+                    tracing::warn!(%error, "telemetry could not start its flush thread");
+                }
+            }
         }
 
         // Last: a runtime the node started itself goes once nothing of the
@@ -1040,6 +1071,7 @@ pub struct NodeBuilder {
     p2p_config: Option<P2PConfig>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
+    crdts: Vec<crdt::Registration>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -1299,8 +1331,27 @@ impl NodeBuilder {
         self
     }
 
+    /// A custom CRDT type, which a field takes with `@crdt(custom: "<name>")`;
+    /// `crdt.ctype()` is `CType::Custom` of that name. The type implements
+    /// [`crdt::FieldCrdt`] and passes `crdt::field::testing::check_field_crdt`.
+    ///
+    /// The type belongs to this node alone: another node in the process has
+    /// only the types its own builder registers. A node without the type
+    /// keeps and replicates definitions naming it, leaves the field out of
+    /// its queries, and parks the field's replicated blocks; a later build
+    /// with the type merges them. Registering two types under one name fails
+    /// [`build`](Self::build).
+    pub fn with_crdt<T>(mut self, crdt: T) -> Self
+    where
+        T: crdt::FieldCrdt + 'static,
+    {
+        self.crdts.push(crdt::Registration::new(crdt));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
-    pub async fn build(self) -> Result<EmbeddedNode> {
+    pub async fn build(mut self) -> Result<EmbeddedNode> {
+        let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
         let node_identity_did = self.node_identity_did.clone();
         let node_identity_config = node_identity_did
             .as_deref()
@@ -1398,7 +1449,7 @@ impl NodeBuilder {
 
         // 3. Storage backend + database
         let node = if let Some(path) = self.data_path {
-            tokio::fs::create_dir_all(&path).await?;
+            std::fs::create_dir_all(&path)?;
 
             let persistent_args = PersistentStoreBuildArgs {
                 network,
@@ -1427,7 +1478,8 @@ impl NodeBuilder {
             );
             let opts = with_at_rest_keys(
                 resolve_regolith_options(self.regolith_options.clone(), self.storage_durability)
-                    .placed_on(&pool),
+                    .placed_on(&pool)
+                    .with_crdts(crdts),
                 self.at_rest_encryption_key,
                 &self.previous_at_rest_encryption_keys,
             )?;
@@ -1444,7 +1496,9 @@ impl NodeBuilder {
                 storage::RegolithStore::open_with_options(
                     "memory",
                     with_at_rest_keys(
-                        storage::RegolithStoreOptions::memory().placed_on(&pool),
+                        storage::RegolithStoreOptions::memory()
+                            .placed_on(&pool)
+                            .with_crdts(crdts),
                         self.at_rest_encryption_key,
                         &self.previous_at_rest_encryption_keys,
                     )?,
@@ -1514,38 +1568,20 @@ impl NodeBuilder {
                 server
             };
 
+            let server = match http_cfg.extra_routes {
+                Some(extra) => server.with_extra_routes(extra),
+                None => server,
+            };
             let addr = http_cfg.address;
-            let extra_routes = http_cfg.extra_routes;
             let bound = http_cfg.listener;
             // The accept loop is a service of the node's scope: shutting the
             // node down stops it accepting.
             let service = network.edge().spawn_service(async move {
-                let router_result = server.router();
-                let run_result = async {
-                    let mut router = router_result?;
-                    if let Some(extra) = extra_routes {
-                        router = router.merge(extra);
-                    }
-
-                    let listener = match bound {
-                        Some(listener) => {
-                            listener
-                                .set_nonblocking(true)
-                                .map_err(|source| Error::ListenerPrepare { addr, source })?;
-                            tokio::net::TcpListener::from_std(listener)
-                                .map_err(|source| Error::ListenerAdopt { addr, source })?
-                        }
-                        None => tokio::net::TcpListener::bind(addr)
-                            .await
-                            .map_err(|source| Error::ListenerBind { addr, source })?,
-                    };
-
-                    axum::serve(listener, router).await.map_err(Error::Serve)?;
-                    Ok::<(), Error>(())
-                }
-                .await;
-
-                if let Err(e) = run_result {
+                let served = match bound {
+                    Some(listener) => server.serve_on(listener).await,
+                    None => server.run().await,
+                };
+                if let Err(e) = served {
                     tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
                 }
             });
@@ -1850,6 +1886,8 @@ impl NodeBuilder {
         // GraphQL requests run on the database's worker pool, routed there
         // once at the boundary.
         let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), pool.as_ref());
+        #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
+        let redrive = acp_setup.redrive;
         #[cfg(feature = "vera")]
         let policy_lookup =
             acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
@@ -1878,6 +1916,14 @@ impl NodeBuilder {
             database.clone().start_vector_rebuild_task(),
             database.clone().start_downsample_task(),
         ]);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(replay) = database.clone().start_parked_replay() {
+            background_tasks.0.push(replay);
+        }
+        #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
+        if let Some(start_redrive) = redrive {
+            background_tasks.0.push(start_redrive(database.pool()));
+        }
         let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
             database,
             document_acp.clone(),
@@ -1958,91 +2004,101 @@ mod tests {
     }
 
     #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn embedded_http_exposes_schema_add_and_only_read_collection_versions() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
+    #[test]
+    fn embedded_http_exposes_schema_add_and_only_read_collection_versions() {
+        edge::testing::edge()
+            .block_on(async {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
 
-        let node = EmbeddedNode::builder()
-            .with_http(HttpConfig::with_listener(listener).unwrap())
-            .build()
-            .await
-            .unwrap();
-        let client = reqwest::Client::new();
-        let schema_url = format!("http://{address}/api/v0/schema");
-        let created = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let Ok(response) = client
-                    .post(&schema_url)
-                    .header(reqwest::header::CONTENT_TYPE, "text/plain")
-                    .body("type Book { title: String }")
+                let node = EmbeddedNode::builder()
+                    .with_http(HttpConfig::with_listener(listener).unwrap())
+                    .build()
+                    .await
+                    .unwrap();
+                let client = reqwest::Client::new();
+                let schema_url = format!("http://{address}/api/v0/collections");
+                let created = edge::testing::edge()
+                    .timeout(std::time::Duration::from_secs(5), async {
+                        loop {
+                            if let Ok(response) = client
+                                .post(&schema_url)
+                                .header(reqwest::header::CONTENT_TYPE, "text/plain")
+                                .body("type Book { title: String }")
+                                .send()
+                                .await
+                            {
+                                if response.status().is_success() {
+                                    break response
+                                        .json::<Vec<schema::CollectionVersion>>()
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                            edge::testing::edge()
+                                .sleep(std::time::Duration::from_millis(20))
+                                .await;
+                        }
+                    })
+                    .await
+                    .expect("embedded HTTP server did not expose schema add");
+                assert_eq!(created.len(), 1);
+                assert_eq!(created[0].name, "Book");
+
+                let schema = client
+                    .get(&schema_url)
                     .send()
                     .await
-                {
-                    if response.status().is_success() {
-                        break response
-                            .json::<Vec<schema::CollectionVersion>>()
-                            .await
-                            .unwrap();
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("embedded HTTP server did not expose schema add");
-        assert_eq!(created.len(), 1);
-        assert_eq!(created[0].name, "Book");
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap();
+                assert!(schema.contains("type Book"));
 
-        let schema = client
-            .get(&schema_url)
-            .send()
-            .await
+                let url = format!("http://{address}/api/v0/collections?get_inactive=true");
+                let versions = edge::testing::edge()
+                    .timeout(std::time::Duration::from_secs(5), async {
+                        loop {
+                            if let Ok(response) = client.get(&url).send().await {
+                                if response.status().is_success() {
+                                    break response
+                                        .json::<Vec<schema::CollectionVersion>>()
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                            edge::testing::edge()
+                                .sleep(std::time::Duration::from_millis(20))
+                                .await;
+                        }
+                    })
+                    .await
+                    .expect("embedded HTTP server did not expose collection versions");
+
+                let book = versions
+                    .iter()
+                    .find(|version| version.name == "Book")
+                    .expect("Book collection version should be returned");
+                assert!(!book.collection_id.is_empty());
+                assert!(!book.version_id.is_empty());
+
+                let delete_response = client
+                    .delete(&url)
+                    .json(&vec![book.version_id.clone()])
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    delete_response.status(),
+                    reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                    "embedded collection observation must not enable destructive management"
+                );
+
+                node.shutdown().await;
+            })
             .unwrap()
-            .error_for_status()
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        assert!(schema.contains("type Book"));
-
-        let url = format!("http://{address}/api/v0/collections/versions");
-        let versions = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let Ok(response) = client.get(&url).send().await {
-                    if response.status().is_success() {
-                        break response
-                            .json::<Vec<schema::CollectionVersion>>()
-                            .await
-                            .unwrap();
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("embedded HTTP server did not expose collection versions");
-
-        let book = versions
-            .iter()
-            .find(|version| version.name == "Book")
-            .expect("Book collection version should be returned");
-        assert!(!book.collection_id.is_empty());
-        assert!(!book.version_id.is_empty());
-
-        let delete_response = client
-            .delete(&url)
-            .json(&vec![book.version_id.clone()])
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            delete_response.status(),
-            reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            "embedded collection observation must not enable destructive management"
-        );
-
-        node.shutdown().await;
     }
 
     #[test]
@@ -2105,55 +2161,63 @@ mod tests {
         assert_eq!(super::timeout_secs(std::time::Duration::from_secs(5)), 5);
     }
 
-    #[tokio::test]
-    async fn node_identity_did_requires_registered_signer() {
-        let _serial = SIGNING_STORE_GUARD.lock().await;
-        defra_core::signing::clear_identity_store();
+    #[test]
+    fn node_identity_did_requires_registered_signer() {
+        edge::testing::edge()
+            .block_on(async {
+                let _serial = SIGNING_STORE_GUARD.lock().await;
+                defra_core::signing::clear_identity_store();
 
-        let error = match EmbeddedNode::builder()
-            .with_node_identity_did("did:key:zMissing")
-            .build()
-            .await
-        {
-            Ok(_) => panic!("unregistered node identity must fail"),
-            Err(error) => error,
-        };
+                let error = match EmbeddedNode::builder()
+                    .with_node_identity_did("did:key:zMissing")
+                    .build()
+                    .await
+                {
+                    Ok(_) => panic!("unregistered node identity must fail"),
+                    Err(error) => error,
+                };
 
-        assert!(
-            error
-                .to_string()
-                .contains("is not registered in the DefraDB signing registry"),
-            "{error:#}"
-        );
+                assert!(
+                    error
+                        .to_string()
+                        .contains("is not registered in the DefraDB signing registry"),
+                    "{error:#}"
+                );
+            })
+            .unwrap()
     }
 
-    #[tokio::test]
-    async fn node_identity_did_accepts_registered_remote_signer() {
-        let _serial = SIGNING_STORE_GUARD.lock().await;
-        defra_core::signing::clear_identity_store();
+    #[test]
+    fn node_identity_did_accepts_registered_remote_signer() {
+        edge::testing::edge()
+            .block_on(async {
+                let _serial = SIGNING_STORE_GUARD.lock().await;
+                defra_core::signing::clear_identity_store();
 
-        let did = "did:key:zRegisteredRemote";
-        defra_core::signing::store_identity(
-            did,
-            SigningConfig {
-                key_type: SigningKeyType::Secp256r1,
-                private_key_bytes: Vec::new(),
-                public_key_bytes: vec![2, 3, 4],
-                public_key_hex: "020304".to_string(),
-                remote_signer: Some(Arc::new(TestRemoteSigner)),
-                signing_authorization: None,
-            },
-        );
+                let did = "did:key:zRegisteredRemote";
+                defra_core::signing::store_identity(
+                    did,
+                    SigningConfig {
+                        key_type: SigningKeyType::Secp256r1,
+                        private_key_bytes: Vec::new(),
+                        public_key_bytes: vec![2, 3, 4],
+                        public_key_hex: "020304".to_string(),
+                        remote_signer: Some(Arc::new(TestRemoteSigner)),
+                        signing_authorization: None,
+                    },
+                );
 
-        let node = EmbeddedNode::builder()
-            .with_node_identity_did(did)
-            .build()
-            .await
-            .expect("registered remote signer should build");
+                let node = EmbeddedNode::builder()
+                    .with_node_identity_did(did)
+                    .build()
+                    .await
+                    .expect("registered remote signer should build");
 
-        assert_eq!(node.node_identity_did(), Some(did));
-        node.shutdown().await;
-        defra_core::signing::clear_identity_store();
+                assert_eq!(node.node_identity_did(), Some(did));
+                node.shutdown().await;
+                defra_core::signing::clear_identity_store();
+            })
+            .unwrap()
     }
 
     pub(super) struct TestRemoteSigner;
@@ -2174,3 +2238,6 @@ mod p2p_bench;
 
 #[cfg(all(test, feature = "p2p"))]
 mod p2p_tests;
+
+#[cfg(test)]
+mod owner_observation_tests;

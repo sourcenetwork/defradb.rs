@@ -53,6 +53,7 @@
 //! - Protocol ID: `/defra/0.0.1` (multicodec 961)
 //! - Messages: CBOR encoded using serde
 
+pub mod ack_scope;
 #[cfg(feature = "libp2p-transport")]
 pub mod address;
 #[cfg(feature = "libp2p-transport")]
@@ -108,8 +109,8 @@ pub use explicit_replay::{
 };
 #[cfg(feature = "libp2p-transport")]
 pub use host::{
-    convert_host_event, HostCommand, HostEvent, Libp2pTransport, P2PHost, P2PHostConfig,
-    P2PHostHandle, ResponseChannel,
+    convert_host_event, HostCommand, HostEvent, HostEventReceiver, Libp2pTransport, P2PHost,
+    P2PHostConfig, P2PHostHandle, ResponseChannel,
 };
 pub use message::{Message, MetaData, PushLogBroadcast, PushLogReply, PushLogRequest};
 #[cfg(feature = "libp2p-transport")]
@@ -135,7 +136,9 @@ pub use signing::{sign_message, sign_message_cloned, verify_message};
 pub use topics::{DefraTopic, DOC_SYNC_TOPIC, ENCRYPTION_TOPIC, SYNC_BRANCHABLE_TOPIC};
 
 // Re-export transport types
-pub use transport::{P2PTransport, TransportEvent};
+pub use transport::{
+    InboundClassSnapshot, P2PTransport, PeerConnectionInfo, PeerFetchStats, TransportEvent,
+};
 
 // Re-export sync types
 #[cfg(feature = "iroh-transport")]
@@ -145,8 +148,8 @@ pub use sync::Libp2pSyncCoordinator;
 pub use sync::PENDING_RECOVERY_WORST_CASE_SECS;
 pub use sync::{
     Broadcaster, CreateReplicatorResult, DagSync, DagSyncConfig, DagSyncState,
-    LoadReplicatorsResult, NeedsFetchData, PeerStateTracker, ProcessQueue, SyncConfig,
-    SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
+    LoadReplicatorsResult, NeedsFetchData, PeerHistory, PeerStateTracker, PeerSummary,
+    ProcessQueue, SyncConfig, SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
 };
 
 // Re-export bitswap types
@@ -160,6 +163,8 @@ pub use bitswap::{AccessMode, ReplicatorRegistry};
 /// This is a simple wrapper that allows correlating sync requests with completions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryId(pub u64);
+
+pub use ack_scope::AckScope;
 
 // Re-export replicator types
 pub use replicator::{

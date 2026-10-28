@@ -27,7 +27,7 @@ p2p = [
     "defra-p2p-adapter/kms",
     "defra-p2p-adapter/native",
 ]
-# Native host (tokio, event channel). Default-on.
+# Native host (event channel). Default-on.
 native = ["db/native", ]
 # Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
@@ -51,6 +51,7 @@ bench = false
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
+crdt = { path = "../crdt" }
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
 query = { path = "../query" }
@@ -65,7 +66,6 @@ edge = { path = "../edge" }
 workers = { path = "../workers" }
 schema = { path = "../schema" }
 lens = { path = "../lens", default-features = false }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "net", "sync", "time"] }
 tracing.workspace = true
 async-trait = "0.1"
 serde.workspace = true
@@ -99,9 +99,13 @@ telemetry = { path = "../telemetry", default-features = false }
 mimalloc.workspace = true
 
 [dev-dependencies]
+document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 axum.workspace = true
+# The mock embedding server binds its listener through the HTTP crate.
+defra-http = { path = "../http" }
+futures.workspace = true
 kovan.workspace = true
 crypto = { path = "../crypto" }
 hex.workspace = true

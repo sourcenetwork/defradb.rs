@@ -67,6 +67,10 @@ impl Sealed for FailingHeadStore {}
 
 #[async_trait]
 impl Store for FailingHeadStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -293,7 +297,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 2,
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             data: db::block::builder::encode_value_as_cbor(&document::NormalValue::String(
                 "Bob".to_string(),
             ))
@@ -308,7 +312,7 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
     blocks.put(&name, &field).await.unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         }),
@@ -329,44 +333,53 @@ async fn update_of(blocks: &DefraBlockstore<RegolithStore>, genesis: &MergeBlock
     }
 }
 
-#[tokio::test]
-async fn composite_head_write_failure_aborts_standalone_merge() {
-    let fixture = fixture().await;
-    let block = super::merge_handler_tests::build_merge_block(&fixture.blocks, "Alice", 30).await;
-    let before = fixture.snapshot().await;
-    fixture.fail_at(&[FailPoint::SetHead(block.cid)]);
-    let result = fixture.merge(&block).await;
-    assert!(
-        result.is_err(),
-        "head write failure must fail the merge: {result:?}"
-    );
-    assert_eq!(
-        fixture.snapshot().await,
-        before,
-        "failed merge must leave no document, field or head writes"
-    );
+#[test]
+fn composite_head_write_failure_aborts_standalone_merge() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let block =
+            super::merge_handler_tests::build_merge_block(&fixture.blocks, "Alice", 30).await;
+        let before = fixture.snapshot().await;
+        fixture.fail_at(&[FailPoint::SetHead(block.cid)]);
+        let result = fixture.merge(&block).await;
+        assert!(
+            result.is_err(),
+            "head write failure must fail the merge: {result:?}"
+        );
+        assert_eq!(
+            fixture.snapshot().await,
+            before,
+            "failed merge must leave no document, field or head writes"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn composite_head_write_failure_aborts_batch_merge() {
-    let fixture = fixture().await;
-    let first = super::merge_handler_tests::build_merge_block(&fixture.blocks, "Alice", 30).await;
-    let second = super::merge_handler_tests::build_merge_block(&fixture.blocks, "Bob", 31).await;
-    let before = fixture.snapshot().await;
-    fixture.fail_at(&[
-        FailPoint::SetHead(first.cid),
-        FailPoint::SetHead(second.cid),
-    ]);
-    let results = fixture.handler.handle_block_batch(&[first, second]).await;
-    assert!(
-        results.iter().all(|result| result.is_err()),
-        "head write failure must fail the batch: {results:?}"
-    );
-    assert_eq!(
-        fixture.snapshot().await,
-        before,
-        "failed batch must leave no document, field or head writes"
-    );
+#[test]
+fn composite_head_write_failure_aborts_batch_merge() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let first =
+            super::merge_handler_tests::build_merge_block(&fixture.blocks, "Alice", 30).await;
+        let second =
+            super::merge_handler_tests::build_merge_block(&fixture.blocks, "Bob", 31).await;
+        let before = fixture.snapshot().await;
+        fixture.fail_at(&[
+            FailPoint::SetHead(first.cid),
+            FailPoint::SetHead(second.cid),
+        ]);
+        let results = fixture.handler.handle_block_batch(&[first, second]).await;
+        assert!(
+            results.iter().all(|result| result.is_err()),
+            "head write failure must fail the batch: {results:?}"
+        );
+        assert_eq!(
+            fixture.snapshot().await,
+            before,
+            "failed batch must leave no document, field or head writes"
+        );
+    })
+    .unwrap()
 }
 
 async fn assert_update_rolls_back(point: impl FnOnce(&Update) -> FailPoint) {
@@ -393,32 +406,50 @@ async fn assert_update_rolls_back(point: impl FnOnce(&Update) -> FailPoint) {
     );
 }
 
-#[tokio::test]
-async fn composite_parent_marker_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SupersedeHead(update.genesis)).await;
+#[test]
+fn composite_parent_marker_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SupersedeHead(update.genesis)).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn composite_head_write_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SetHead(update.block.cid)).await;
+#[test]
+fn composite_head_write_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SetHead(update.block.cid)).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn composite_priority_write_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SetPriority(update.block.cid)).await;
+#[test]
+fn composite_priority_write_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SetPriority(update.block.cid)).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn field_parent_marker_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SupersedeHead(update.genesis_name)).await;
+#[test]
+fn field_parent_marker_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SupersedeHead(update.genesis_name)).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn field_head_write_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SetHead(update.name)).await;
+#[test]
+fn field_head_write_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SetHead(update.name)).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn field_priority_write_failure_aborts_update_merge() {
-    assert_update_rolls_back(|update| FailPoint::SetPriority(update.name)).await;
+#[test]
+fn field_priority_write_failure_aborts_update_merge() {
+    workers::block_on(async {
+        assert_update_rolls_back(|update| FailPoint::SetPriority(update.name)).await;
+    })
+    .unwrap()
 }

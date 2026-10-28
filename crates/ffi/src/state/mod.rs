@@ -41,6 +41,12 @@ impl storage::corekv::private::Sealed for FfiStore {}
 
 #[async_trait]
 impl storage::Store for FfiStore {
+    fn crdts(&self) -> &storage::Crdts {
+        match self {
+            FfiStore::Regolith(store) => storage::Store::crdts(store),
+        }
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         match self {
             FfiStore::Regolith(store) => store.allocate(key, count).await,

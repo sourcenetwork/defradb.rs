@@ -63,15 +63,17 @@ impl Default for WideningFetcher {
 
 impl WideningFetcher {
     fn document(short_id: u64) -> document::Document {
-        let mut doc = document::Document::new();
+        let mut doc = document::Document::new(definition(&["_docID", "title"]));
         doc.set(
             "_docID",
             document::NormalValue::String(format!("bae-{short_id}")),
-        );
+        )
+        .unwrap();
         doc.set(
             "title",
             document::NormalValue::String(format!("doc-{short_id}")),
-        );
+        )
+        .unwrap();
         doc
     }
 }
@@ -159,8 +161,18 @@ fn collection() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.indexes = vec![schema::IndexDescription::new("by_embedding")];
@@ -187,132 +199,165 @@ async fn drain(node: &mut ScanNode) -> usize {
 
 /// A page that fills on the first batch opens one stream, so nothing is
 /// replaced and the count is trivially balanced.
-#[tokio::test]
-async fn a_single_batch_closes_its_stream() {
-    let fetcher = Arc::new(WideningFetcher::default());
-    let mut node = ScanNode::new(collection(), mapping())
-        .with_fetcher(fetcher.clone())
-        .with_vector_route(VectorRoute {
-            index_id: 0,
-            query_vector: vec![1.0],
-            k: 4,
-        });
+#[test]
+fn a_single_batch_closes_its_stream() {
+    workers::block_on(async {
+        let fetcher = Arc::new(WideningFetcher::default());
+        let mut node = ScanNode::new(collection(), mapping())
+            .with_fetcher(fetcher.clone())
+            .with_vector_route(VectorRoute {
+                index_id: 0,
+                query_vector: vec![1.0],
+                k: 4,
+            });
 
-    assert_eq!(drain(&mut node).await, 4);
-    assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
-    assert_eq!(fetcher.closed.load(Ordering::Relaxed), 1);
-    assert_eq!(node.explain_execute_inner()["indexFetches"], 1);
+        assert_eq!(drain(&mut node).await, 4);
+        assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
+        assert_eq!(fetcher.closed.load(Ordering::Relaxed), 1);
+        assert_eq!(node.explain_execute_inner()["indexFetches"], 1);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn widening_has_a_fixed_budget_and_falls_back_without_losing_matches() {
-    let fetcher = Arc::new(WideningFetcher {
-        indexed: 8192,
-        corpus: 8192,
-        ..WideningFetcher::default()
-    });
-    let filter = query::mapper::Filter::from_conditions(
-        [("title".to_string(), serde_json::json!({"_eq": "doc-8192"}))]
-            .into_iter()
-            .collect(),
-    );
-    let mut node = ScanNode::new(collection(), mapping())
-        .with_fetcher(fetcher.clone())
-        .with_filter(filter)
-        .with_vector_route(VectorRoute {
-            index_id: 0,
-            query_vector: vec![1.0],
-            k: 4,
+#[test]
+fn widening_has_a_fixed_budget_and_falls_back_without_losing_matches() {
+    workers::block_on(async {
+        let fetcher = Arc::new(WideningFetcher {
+            indexed: 8192,
+            corpus: 8192,
+            ..WideningFetcher::default()
         });
-    for _ in 0..2 {
-        assert_eq!(drain(&mut node).await, 1);
-        assert_eq!(fetcher.max_requested.load(Ordering::Relaxed), 4096);
-        assert_eq!(node.explain_execute_inner()["indexFetches"], 11);
-    }
-    assert_eq!(
-        fetcher.opened.load(Ordering::Relaxed),
-        fetcher.closed.load(Ordering::Relaxed)
-    );
+        let filter = query::mapper::Filter::from_conditions(
+            [("title".to_string(), serde_json::json!({"_eq": "doc-8192"}))]
+                .into_iter()
+                .collect(),
+        );
+        let mut node = ScanNode::new(collection(), mapping())
+            .with_fetcher(fetcher.clone())
+            .with_filter(filter)
+            .with_vector_route(VectorRoute {
+                index_id: 0,
+                query_vector: vec![1.0],
+                k: 4,
+            });
+        for _ in 0..2 {
+            assert_eq!(drain(&mut node).await, 1);
+            assert_eq!(fetcher.max_requested.load(Ordering::Relaxed), 4096);
+            assert_eq!(node.explain_execute_inner()["indexFetches"], 11);
+        }
+        assert_eq!(
+            fetcher.opened.load(Ordering::Relaxed),
+            fetcher.closed.load(Ordering::Relaxed)
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn oversized_initial_page_skips_the_index() {
-    let fetcher = Arc::new(WideningFetcher::default());
-    let mut node = ScanNode::new(collection(), mapping())
-        .with_fetcher(fetcher.clone())
-        .with_vector_route(VectorRoute {
-            index_id: 0,
-            query_vector: vec![1.0],
-            k: 4097,
-        });
-    assert_eq!(drain(&mut node).await, CORPUS as usize);
-    assert_eq!(fetcher.searches.load(Ordering::Relaxed), 0);
-    assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
+#[test]
+fn oversized_initial_page_skips_the_index() {
+    workers::block_on(async {
+        let fetcher = Arc::new(WideningFetcher::default());
+        let mut node = ScanNode::new(collection(), mapping())
+            .with_fetcher(fetcher.clone())
+            .with_vector_route(VectorRoute {
+                index_id: 0,
+                query_vector: vec![1.0],
+                k: 4097,
+            });
+        assert_eq!(drain(&mut node).await, CORPUS as usize);
+        assert_eq!(fetcher.searches.load(Ordering::Relaxed), 0);
+        assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
+    })
+    .unwrap()
 }
 
 /// Every stream a widening pass replaces must be closed, not dropped.
-#[tokio::test]
-async fn every_replaced_stream_is_closed() {
-    let fetcher = Arc::new(WideningFetcher::default());
-    // A filter nothing matches forces widening all the way to exhaustion.
-    let filter = query::mapper::Filter::from_conditions(
-        [(
-            "title".to_string(),
-            serde_json::json!({"_eq": "no such document"}),
-        )]
-        .into_iter()
-        .collect(),
-    );
-    let mut node = ScanNode::new(collection(), mapping())
-        .with_fetcher(fetcher.clone())
-        .with_filter(filter)
-        .with_vector_route(VectorRoute {
-            index_id: 0,
-            query_vector: vec![1.0],
-            k: 4,
-        });
+#[test]
+fn every_replaced_stream_is_closed() {
+    workers::block_on(async {
+        let fetcher = Arc::new(WideningFetcher::default());
+        // A filter nothing matches forces widening all the way to exhaustion.
+        let filter = query::mapper::Filter::from_conditions(
+            [(
+                "title".to_string(),
+                serde_json::json!({"_eq": "no such document"}),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let mut node = ScanNode::new(collection(), mapping())
+            .with_fetcher(fetcher.clone())
+            .with_filter(filter)
+            .with_vector_route(VectorRoute {
+                index_id: 0,
+                query_vector: vec![1.0],
+                k: 4,
+            });
 
-    assert_eq!(drain(&mut node).await, 0, "the filter matches nothing");
+        assert_eq!(drain(&mut node).await, 0, "the filter matches nothing");
 
-    let opened = fetcher.opened.load(Ordering::Relaxed);
-    assert!(
-        opened > 1,
-        "an unsatisfiable filter must widen more than once, opened {opened}"
-    );
-    assert_eq!(
-        fetcher.closed.load(Ordering::Relaxed),
-        opened,
-        "every stream opened must also be closed"
-    );
+        let opened = fetcher.opened.load(Ordering::Relaxed);
+        assert!(
+            opened > 1,
+            "an unsatisfiable filter must widen more than once, opened {opened}"
+        );
+        assert_eq!(
+            fetcher.closed.load(Ordering::Relaxed),
+            opened,
+            "every stream opened must also be closed"
+        );
+    })
+    .unwrap()
 }
 
 /// An index that cannot fill the page hands the rest of the scan to a full
 /// read, rather than reporting a short page as the whole answer.
-#[tokio::test]
-async fn an_exhausted_index_falls_back_to_the_collection() {
-    // The index holds a fraction of the collection, as it does when vectors are
-    // null or the index was created over existing documents.
-    let fetcher = Arc::new(WideningFetcher {
-        indexed: 8,
-        ..WideningFetcher::default()
-    });
-    let mut node = ScanNode::new(collection(), mapping())
-        .with_fetcher(fetcher.clone())
-        .with_vector_route(VectorRoute {
-            index_id: 0,
-            query_vector: vec![1.0],
-            k: (CORPUS as usize) + 8,
+#[test]
+fn an_exhausted_index_falls_back_to_the_collection() {
+    workers::block_on(async {
+        // The index holds a fraction of the collection, as it does when vectors are
+        // null or the index was created over existing documents.
+        let fetcher = Arc::new(WideningFetcher {
+            indexed: 8,
+            ..WideningFetcher::default()
         });
+        let mut node = ScanNode::new(collection(), mapping())
+            .with_fetcher(fetcher.clone())
+            .with_vector_route(VectorRoute {
+                index_id: 0,
+                query_vector: vec![1.0],
+                k: (CORPUS as usize) + 8,
+            });
 
-    let rows = drain(&mut node).await;
+        let rows = drain(&mut node).await;
 
-    assert_eq!(
-        rows, CORPUS as usize,
-        "the fallback must supply every document the index could not"
-    );
-    assert_eq!(
-        fetcher.closed.load(Ordering::Relaxed),
-        fetcher.opened.load(Ordering::Relaxed),
-        "every stream opened, fallback included, must be closed"
-    );
+        assert_eq!(
+            rows, CORPUS as usize,
+            "the fallback must supply every document the index could not"
+        );
+        assert_eq!(
+            fetcher.closed.load(Ordering::Relaxed),
+            fetcher.opened.load(Ordering::Relaxed),
+            "every stream opened, fallback included, must be closed"
+        );
+    })
+    .unwrap()
+}
+
+fn definition(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
 }

@@ -101,7 +101,7 @@ impl DefraQueryHandler {
             SqlStatement::SyntheticQuery { columns } => encode::encode_synthetic_response(&columns),
             SqlStatement::Begin => self.handle_begin_single(client).await,
             SqlStatement::Commit => self.handle_commit_single(client).await,
-            SqlStatement::Rollback => self.handle_rollback_single(client).await,
+            SqlStatement::Rollback => self.handle_discard_single(client).await,
             SqlStatement::CreateTable {
                 sdl,
                 table_name,
@@ -341,7 +341,7 @@ impl DefraQueryHandler {
         })?;
 
         debug!(sdl, "Creating collection from DDL");
-        mgr.add_schema(sdl)
+        mgr.add_collection(sdl)
             .await
             .map_err(|e| pg_error("42000", e))?;
 

@@ -2,7 +2,7 @@
 //!
 //! A collection version gets local part IDs when it is created (see
 //! `collection::parts`), and its documents are then stored in the field format
-//! (`document::stored`), which merges field operands and answers projected
+//! (`crdt::stored`), which merges field operands and answers projected
 //! reads. A version created by an earlier release has no part IDs, so its
 //! documents stay one CBOR value forever: every update rewrites the whole
 //! value and every read validates all of it.
@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
+use crdt::stored::StoredDocument;
 use datastore::BasicTxn;
-use document::stored::StoredDocument;
 use document::Document;
 use schema::CollectionVersion;
 use storage::corekv::{
@@ -165,7 +165,7 @@ where
     fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let mut txn = BasicTxn::from_retry_attempt_io(io, 0);
+            let mut txn = BasicTxn::from_retry_attempt_io(io, 0, self.store.crdts().clone());
             let page = match &self.work {
                 Work::PartIds => assign_part_ids(self.store.as_ref(), &mut txn).await,
                 Work::Page(collection) => convert_page(collection, &mut txn).await,
@@ -260,8 +260,12 @@ async fn convert_page(collection: &Collection, txn: &mut BasicTxn) -> Result<Pag
         {
             continue;
         }
-        let before = Document::from_storage_cbor(&pair.value)
-            .map_err(|error| Error::document_at_key(&pair.key, error))?;
+        let before = crdt::stored::document_from_storage(
+            &pair.value,
+            collection.schema_arc(),
+            collection.crdts(),
+        )
+        .map_err(|error| Error::document_at_key(&pair.key, error))?;
         match collection
             .put_document_value(&datastore, doc_short_id, &before, false, None)
             .await
@@ -280,8 +284,12 @@ async fn convert_page(collection: &Collection, txn: &mut BasicTxn) -> Result<Pag
             .await
             .map_err(Error::Storage)?
             .ok_or_else(|| Error::Other("a converted document disappeared".into()))?;
-        let after = Document::from_storage_cbor(&written)
-            .map_err(|error| Error::document_at_key(&pair.key, error))?;
+        let after = crdt::stored::document_from_storage(
+            &written,
+            collection.schema_arc(),
+            collection.crdts(),
+        )
+        .map_err(|error| Error::document_at_key(&pair.key, error))?;
         if reads_equal(&before, &after) {
             page.converted += 1;
         } else {

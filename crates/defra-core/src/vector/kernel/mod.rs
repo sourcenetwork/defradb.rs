@@ -103,6 +103,42 @@ pub fn squared_euclidean<T: Element>(a: &[T], b: &[T]) -> f64 {
     unsafe { T::squared_euclidean_with(Tier::active(), a, b) }
 }
 
+/// Squared euclidean distance from `a` to each of `wide`, on the best tier this
+/// machine has.
+///
+/// Each `wide[k]` is an `f32` vector widened to `f64`, which is exact, and each
+/// result is bit-equal to [`squared_euclidean`] on `a` and that vector, over the
+/// prefix they all share. It is faster than `B` calls: `a` is read and widened
+/// once for the block, and the block's sums run side by side.
+#[inline]
+pub fn squared_euclidean_block<const B: usize>(a: &[f32], wide: [&[f64]; B]) -> [f64; B] {
+    // SAFETY: `Tier::active` only ever returns an available tier.
+    unsafe { squared_euclidean_block_with(Tier::active(), a, wide) }
+}
+
+/// # Safety
+/// `tier.is_available()` must be true.
+#[inline]
+unsafe fn squared_euclidean_block_with<const B: usize>(
+    tier: Tier,
+    a: &[f32],
+    wide: [&[f64]; B],
+) -> [f64; B] {
+    match tier {
+        Tier::Scalar => scalar::squared_euclidean_f32_block(a, wide),
+        #[cfg(target_arch = "x86_64")]
+        Tier::Sse2 => x86::sse2::squared_euclidean_f32_block(a, wide),
+        #[cfg(target_arch = "x86_64")]
+        Tier::Avx2 => x86::avx2::squared_euclidean_f32_block(a, wide),
+        #[cfg(target_arch = "x86_64")]
+        Tier::Avx512 => x86::avx512::squared_euclidean_f32_block(a, wide),
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        Tier::Neon => neon::squared_euclidean_f32_block(a, wide),
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        Tier::Simd128 => wasm::squared_euclidean_f32_block(a, wide),
+    }
+}
+
 /// The oracle every other tier is tested against, and the floor on
 /// architectures with no SIMD module.
 mod scalar {
@@ -125,6 +161,24 @@ mod scalar {
                 d * d
             })
             .sum()
+    }
+
+    #[inline]
+    pub(super) fn squared_euclidean_f32_block<const B: usize>(
+        a: &[f32],
+        wide: [&[f64]; B],
+    ) -> [f64; B] {
+        let n = wide.iter().fold(a.len(), |n, w| n.min(w.len()));
+        wide.map(|w| {
+            a[..n]
+                .iter()
+                .zip(&w[..n])
+                .map(|(p, q)| {
+                    let d = p.widen() - q;
+                    d * d
+                })
+                .sum()
+        })
     }
 }
 

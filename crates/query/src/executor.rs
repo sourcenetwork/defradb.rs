@@ -28,6 +28,10 @@ pub type ResponseCallback = Box<dyn Respond>;
 pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
 pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 
+/// The storage operation failed with a typed disk-full cause. Commit outcome
+/// remains unknown; clients must not infer that replaying a mutation is safe.
+pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
+
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
 
@@ -286,13 +290,17 @@ impl QueryResponseError {
             .map(|extensions| extensions.code.as_str())
     }
 
-    /// Convert a query error while retaining retryable conflict metadata.
+    /// Convert a query error while retaining machine-readable failure metadata.
     pub fn from_query_error(error: crate::error::QueryError) -> Self {
         let is_transaction_conflict =
             matches!(&error, crate::error::QueryError::TransactionConflict(_));
         let is_transaction_retry_exhausted = matches!(
             &error,
             crate::error::QueryError::TransactionRetryExhausted(_)
+        );
+        let is_storage_full = matches!(
+            &error,
+            crate::error::QueryError::Storage(cause) if cause.is_storage_full()
         );
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
@@ -303,6 +311,8 @@ impl QueryResponseError {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
         } else if is_transaction_retry_exhausted {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
+        } else if is_storage_full {
+            response_error.with_code(STORAGE_FULL_ERROR_CODE)
         } else {
             response_error
         };
@@ -361,7 +371,7 @@ pub struct ErrorLocation {
 ///
 /// 1. Call `begin_txn()` to start a new transaction
 /// 2. Execute queries with `execute_in_txn()` using the returned transaction ID
-/// 3. Call `commit_txn()` or `rollback_txn()` to end the transaction
+/// 3. Call `commit_txn()` or `discard_txn()` to end the transaction
 ///
 /// # Example
 ///
@@ -386,7 +396,7 @@ pub struct ErrorLocation {
 ///     for query in queries {
 ///         let resp = executor.execute_in_txn(query, &handle).await;
 ///         if resp.has_errors() {
-///             executor.rollback_txn_as(&context, &handle).await.ok();
+///             executor.discard_txn_as(&context, &handle).await.ok();
 ///             return Err(TransactionError::execution("query failed"));
 ///         }
 ///         responses.push(resp);
@@ -450,10 +460,30 @@ pub trait QueryExecutor: MaybeSendSync {
         handle: &TransactionHandle,
     ) -> QueryResponse;
 
+    /// Observe owners of known documents through the existing transaction's
+    /// actor, read gates and actually bound local authorization snapshot.
+    /// Missing, hidden or unregistered entries return no owner. Unsupported
+    /// transaction-bound authorization is an error, never an empty inventory.
+    /// `context` owns the transaction handle; `identity` selects document-read
+    /// permissions as in QueryRequest and cannot change that transaction actor.
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        let _ = (context, handle, collection, doc_ids, identity);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound document owner observations are unsupported",
+        ))
+    }
+
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.
-    /// The transaction remains active until `commit_txn()` or `rollback_txn()` is called.
+    /// The transaction remains active until `commit_txn()` or `discard_txn()` is called.
     ///
     /// # Arguments
     /// * `readonly` - If true, the transaction cannot perform write operations
@@ -495,23 +525,23 @@ pub trait QueryExecutor: MaybeSendSync {
         context.mirror(self.commit_txn(handle)).await
     }
 
-    /// Rollback a transaction.
+    /// Discard a transaction.
     ///
     /// All operations performed within the transaction are discarded.
-    /// After rollback, the transaction handle is no longer valid.
-    async fn rollback_txn(
+    /// After discard, the transaction handle is no longer valid.
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError>;
 
-    /// [`Self::rollback_txn`] for the request `context` serves. The default
-    /// runs `rollback_txn` inside [`RequestContext::mirror`].
-    async fn rollback_txn_as(
+    /// [`Self::discard_txn`] for the request `context` serves. The default
+    /// runs `discard_txn` inside [`RequestContext::mirror`].
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        context.mirror(self.rollback_txn(handle)).await
+        context.mirror(self.discard_txn(handle)).await
     }
 
     /// Remove an abandoned transaction without committing or spawning cleanup.

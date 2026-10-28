@@ -297,6 +297,11 @@ impl AppendLog {
         )
     }
 
+    /// The key of the entry at `position`, as the engine writes it.
+    pub fn entry_key(&self, position: u64) -> Vec<u8> {
+        [self.entry_prefix(), format!("{position:020}").as_bytes()].concat()
+    }
+
     /// The shared layout, as the engine takes it.
     pub(crate) fn keys(&self) -> &Arc<LogKeys> {
         &self.0

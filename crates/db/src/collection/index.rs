@@ -83,9 +83,22 @@ impl Collection {
         // Get old document for index update
         let old_doc = match update {
             Some((changed, _, run)) => {
-                let fields = run.written(&self.def, index_manager.get_indexes(), changed, |name| {
-                    doc.get_counter_delta(name).is_some()
-                });
+                // A causal field's operation counts in its old value, so the
+                // write decides on it like on a set.
+                let fields = run.written(
+                    &self.crdts,
+                    &self.def,
+                    index_manager.get_indexes(),
+                    changed,
+                    |name| {
+                        doc.pending_op(name).is_some()
+                            && self
+                                .def
+                                .field_by_name(name)
+                                .and_then(|field| self.crdts.field(field.crdt_type))
+                                .is_none_or(|crdt| crdt.blind_op())
+                    },
+                );
                 self.get_with_datastore_fields(datastore, doc_short_id, doc_id, &fields)
                     .await?
             }
@@ -117,7 +130,7 @@ impl Collection {
                     if changed.contains(&field.name) {
                         continue;
                     }
-                    indexed_new_doc.set(
+                    indexed_new_doc.set_unchecked(
                         field.name.clone(),
                         old_doc
                             .get(&field.name)
@@ -203,7 +216,8 @@ impl Collection {
         // Get the document for index cleanup
         let doc = match datastore.get(&key).await.map_err(Error::Storage)? {
             Some(bytes) => {
-                let mut d = Document::from_storage_cbor(&bytes)?;
+                let mut d =
+                    crdt::stored::document_from_storage(&bytes, self.schema_arc(), &self.crdts)?;
                 d.set_id(doc_id.clone());
                 d
             }

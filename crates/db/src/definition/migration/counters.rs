@@ -16,9 +16,9 @@
 
 use rapidhash::RapidHashMap;
 
+use crdt::stored::{StoredDocument, StoredField, ValueKind};
 use datastore::NamespaceView;
-use document::stored::{StoredDocument, StoredField, ValueKind};
-use document::{Document, NormalValue};
+use document::NormalValue;
 use storage::corekv::{IterOptions, Store};
 
 use crate::collection::Collection;
@@ -166,7 +166,7 @@ async fn plan_move(
         let collection =
             crate::definition::loader::get_collection_by_version_id(systemstore, version)
                 .await?
-                .map(Collection::new);
+                .map(|schema| Collection::new(schema, systemstore.crdts().clone()));
         versions.insert(version.to_owned(), collection);
     }
     let Some(collection) = versions.get(version).and_then(Option::as_ref) else {
@@ -175,7 +175,7 @@ async fn plan_move(
     let Some(field) = collection.schema().field_by_name(field_name) else {
         return Ok(None);
     };
-    let Some(kind) = crate::collection::value::counter_kind(field) else {
+    let Some(kind) = crdt::field::counter_kind(field) else {
         return Ok(None);
     };
     let accumulated = datastore
@@ -214,7 +214,10 @@ async fn plan_move(
                 .ok_or_else(|| {
                     Error::InvalidDocument(format!("missing part ID for counter {field_name}"))
                 })?;
-            let current = stored.fields.get(&part).and_then(StoredField::materialize);
+            let current = stored
+                .fields
+                .get(&part)
+                .and_then(|field| field.materialize(systemstore.crdts()));
             let target = settle(increment_only, accumulated, current.as_ref());
             if current.as_ref() == Some(&target) {
                 return Ok(Some(Move::Drop));
@@ -222,19 +225,24 @@ async fn plan_move(
             let priority = stored.fields.get(&part).map_or(1, |part| part.priority);
             stored.fields.insert(
                 part,
-                StoredField::counter(field_name.to_owned(), kind, priority, &target)?,
+                crdt::field::CounterField::stored(field_name.to_owned(), kind, priority, &target)
+                    .map_err(|error| Error::InvalidDocument(error.to_string()))?,
             );
             stored
                 .encode()
                 .ok_or_else(|| Error::InvalidDocument("invalid local document value".into()))?
         }
         None => {
-            let mut doc = Document::from_storage_cbor(&bytes)?;
+            let mut doc = crdt::stored::document_from_storage(
+                &bytes,
+                collection.schema_arc(),
+                collection.crdts(),
+            )?;
             let target = settle(increment_only, accumulated, doc.get(field_name));
             if doc.get(field_name) == Some(&target) {
                 return Ok(Some(Move::Drop));
             }
-            doc.set(field_name.to_owned(), target);
+            doc.set_unchecked(field_name.to_owned(), target);
             doc.to_cbor()?
         }
     };
@@ -276,7 +284,7 @@ fn decode(kind: ValueKind, bytes: &[u8]) -> Option<NormalValue> {
         priority: 0,
         value: bytes.to_vec(),
     }
-    .materialize()
+    .materialize(&crdt::Crdts::default())
 }
 
 /// `(version, doc ID, field)` of `/data/{version}/{doc}/{field}`; `None` for any

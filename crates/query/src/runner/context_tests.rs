@@ -37,6 +37,10 @@ fn drain<T: 'static>(queue: &SegQueue<T>) -> Vec<T> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocMutator for ContextMutator {
+    fn crdts(&self) -> crdt::Crdts {
+        crdt::Crdts::default()
+    }
+
     async fn create(&self, collection_name: &str, doc: Document) -> Result<CreateResult> {
         self.create_as(&RequestContext::ambient(), collection_name, doc)
             .await
@@ -96,8 +100,13 @@ fn users() -> CollectionVersion {
         "v1",
         "coll-user",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -106,61 +115,69 @@ fn assert_ok(response: &QueryResponse) {
     assert!(!response.has_errors(), "{:?}", response.errors);
 }
 
-#[tokio::test]
-async fn a_mutation_creates_as_its_caller_and_no_one_else() {
-    let mutator = Arc::new(ContextMutator::default());
-    let runner = QueryRunner::new(MockFetcher::new(), vec![users()]).with_mutator(mutator.clone());
-    let caller = Did::new(CALLER).unwrap();
+#[test]
+fn a_mutation_creates_as_its_caller_and_no_one_else() {
+    workers::block_on(async {
+        let mutator = Arc::new(ContextMutator::default());
+        let runner =
+            QueryRunner::new(MockFetcher::new(), vec![users()]).with_mutator(mutator.clone());
+        let caller = Did::new(CALLER).unwrap();
 
-    assert_ok(
-        &runner
-            .execute(
-                QueryRequest::new(
-                    r#"mutation { add_User(input: [{ name: "Alice" }]) { _docID } }"#,
+        assert_ok(
+            &runner
+                .execute(
+                    QueryRequest::new(
+                        r#"mutation { add_User(input: [{ name: "Alice" }]) { _docID } }"#,
+                    )
+                    .with_identity(Some(caller.clone())),
                 )
-                .with_identity(Some(caller.clone())),
-            )
-            .await,
-    );
-    assert_ok(
-        &runner
-            .execute(QueryRequest::new(
-                r#"mutation { add_User(input: [{ name: "Bob" }]) { _docID } }"#,
-            ))
-            .await,
-    );
+                .await,
+        );
+        assert_ok(
+            &runner
+                .execute(QueryRequest::new(
+                    r#"mutation { add_User(input: [{ name: "Bob" }]) { _docID } }"#,
+                ))
+                .await,
+        );
 
-    assert_eq!(
-        drain(&mutator.creators),
-        vec![Some(caller.to_string()), None],
-        "the caller of one mutation created the next one's documents"
-    );
+        assert_eq!(
+            drain(&mutator.creators),
+            vec![Some(caller.to_string()), None],
+            "the caller of one mutation created the next one's documents"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn each_create_carries_only_its_own_mutations_encryption() {
-    let mutator = Arc::new(ContextMutator::default());
-    let runner = QueryRunner::new(MockFetcher::new(), vec![users()]).with_mutator(mutator.clone());
+#[test]
+fn each_create_carries_only_its_own_mutations_encryption() {
+    workers::block_on(async {
+        let mutator = Arc::new(ContextMutator::default());
+        let runner =
+            QueryRunner::new(MockFetcher::new(), vec![users()]).with_mutator(mutator.clone());
 
-    runner
-        .execute_mutation(
-            r#"mutation {
+        runner
+            .execute_mutation(
+                r#"mutation {
                 sealed: add_User(input: { name: "Alice" }, encryptFields: ["name"]) { _docID }
                 plain: add_User(input: { name: "Bob" }) { _docID }
             }"#,
-        )
-        .await
-        .unwrap();
+            )
+            .await
+            .unwrap();
 
-    let encryptions = drain(&mutator.encryptions);
-    assert_eq!(encryptions.len(), 2);
-    assert!(encryptions[0]
-        .as_ref()
-        .is_some_and(|config| config.should_encrypt_field("name") && !config.encrypt_doc));
-    assert!(
-        encryptions[1].is_none(),
-        "an encrypted mutation's config reached the next mutation of its request"
-    );
+        let encryptions = drain(&mutator.encryptions);
+        assert_eq!(encryptions.len(), 2);
+        assert!(encryptions[0]
+            .as_ref()
+            .is_some_and(|config| config.should_encrypt_field("name") && !config.encrypt_doc));
+        assert!(
+            encryptions[1].is_none(),
+            "an encrypted mutation's config reached the next mutation of its request"
+        );
+    })
+    .unwrap()
 }
 
 /// Grants every create an access decision a remote signer signs under, and
@@ -265,95 +282,113 @@ impl defra_core::signing::RemoteSigner for UnusedSigner {
     }
 }
 
-#[tokio::test]
-async fn a_remote_signed_create_carries_its_access_decision_in_its_context() {
-    let mut notes = CollectionVersion::new(
-        "Note",
-        "v1",
-        "coll-note",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-        ],
-    );
-    notes.policy = Some(PolicyDescription::new("policy", "notes"));
-    let mutator = Arc::new(ContextMutator::default());
-    let runner = QueryRunner::new(MockFetcher::new(), vec![notes])
-        .with_mutator(mutator.clone())
-        .with_acp(Arc::new(PolicyAcp::default()));
-    let signing = defra_core::signing::SigningConfig {
-        key_type: defra_core::signing::SigningKeyType::Ed25519,
-        private_key_bytes: Vec::new(),
-        public_key_bytes: Vec::new(),
-        public_key_hex: "remote".to_string(),
-        remote_signer: Some(Arc::new(UnusedSigner)),
-        signing_authorization: None,
-    };
+#[test]
+fn a_remote_signed_create_carries_its_access_decision_in_its_context() {
+    workers::block_on(async {
+        let mut notes = CollectionVersion::new(
+            "Note",
+            "v1",
+            "coll-note",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        );
+        notes.policy = Some(PolicyDescription::new("policy", "notes"));
+        let mutator = Arc::new(ContextMutator::default());
+        let runner = QueryRunner::new(MockFetcher::new(), vec![notes])
+            .with_mutator(mutator.clone())
+            .with_acp(Arc::new(PolicyAcp::default()));
+        let signing = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: Vec::new(),
+            public_key_bytes: Vec::new(),
+            public_key_hex: "remote".to_string(),
+            remote_signer: Some(Arc::new(UnusedSigner)),
+            signing_authorization: None,
+        };
 
-    assert_ok(
-        &runner
-            .execute(
-                QueryRequest::new(r#"mutation { add_Note(input: { body: "a" }) { _docID } }"#)
-                    .with_identity(Some(Did::new(CALLER).unwrap()))
-                    .with_context(RequestContext::default().with_signing(Some(signing))),
-            )
-            .await,
-    );
+        assert_ok(
+            &runner
+                .execute(
+                    QueryRequest::new(r#"mutation { add_Note(input: { body: "a" }) { _docID } }"#)
+                        .with_identity(Some(Did::new(CALLER).unwrap()))
+                        .with_context(RequestContext::default().with_signing(Some(signing))),
+                )
+                .await,
+        );
 
-    assert_eq!(
-        drain(&mutator.authorizations),
-        vec![Some(defra_core::signing::SigningAuthorization::Decision {
-            decision_id: "decision-1".to_string(),
-        })]
-    );
+        assert_eq!(
+            drain(&mutator.authorizations),
+            vec![Some(defra_core::signing::SigningAuthorization::Decision {
+                decision_id: "decision-1".to_string(),
+            })]
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
-    let owner = Did::new(CALLER).unwrap();
-    let admin = Did::new(ADMIN).unwrap();
-    let mut company = CollectionVersion::new(
-        "Company",
-        "v1",
-        "coll-company",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-        ],
-    );
-    company.policy = Some(PolicyDescription::new("policy", "companies"));
-    let private = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
-    let fetcher = MockFetcher::new();
-    fetcher.add_doc(
-        "Company",
-        Document::from_json_str(&format!(r#"{{"_docID":"{private}","name":"Private"}}"#)).unwrap(),
-    );
-    let acp = Arc::new(PolicyAcp {
-        private_docs: RapidHashMap::from_iter([(private.to_string(), owner)]),
-    });
-    let runner = QueryRunner::new(fetcher, vec![company]).with_acp(acp);
-    let visible = |response: QueryResponse| {
-        assert_ok(&response);
-        response
-            .data
-            .and_then(|data| data["Company"].as_array().map(Vec::len))
-            .unwrap_or(0)
-    };
-    let read = |identity: Option<Did>, bypass: bool| {
-        runner.execute(
-            QueryRequest::new("{ Company { name } }")
-                .with_identity(identity)
-                .with_context(RequestContext::default().with_dac_bypass(bypass)),
-        )
-    };
+#[test]
+fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
+    workers::block_on(async {
+        let owner = Did::new(CALLER).unwrap();
+        let admin = Did::new(ADMIN).unwrap();
+        let mut company = CollectionVersion::new(
+            "Company",
+            "v1",
+            "coll-company",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        );
+        company.policy = Some(PolicyDescription::new("policy", "companies"));
+        let private = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+        let fetcher = MockFetcher::new();
+        fetcher.add_doc(
+            "Company",
+            crate::test_utils::doc_from_json(&format!(
+                r#"{{"_docID":"{private}","name":"Private"}}"#
+            )),
+        );
+        let acp = Arc::new(PolicyAcp {
+            private_docs: RapidHashMap::from_iter([(private.to_string(), owner)]),
+        });
+        let runner = QueryRunner::new(fetcher, vec![company]).with_acp(acp);
+        let visible = |response: QueryResponse| {
+            assert_ok(&response);
+            response
+                .data
+                .and_then(|data| data["Company"].as_array().map(Vec::len))
+                .unwrap_or(0)
+        };
+        let read = |identity: Option<Did>, bypass: bool| {
+            runner.execute(
+                QueryRequest::new("{ Company { name } }")
+                    .with_identity(identity)
+                    .with_context(RequestContext::default().with_dac_bypass(bypass)),
+            )
+        };
 
-    assert_eq!(visible(read(Some(admin.clone()), true).await), 1);
-    assert_eq!(visible(read(Some(admin), false).await), 0);
-    assert_eq!(
-        visible(read(None, true).await),
-        0,
-        "the bypass never lets an anonymous request read a private document"
-    );
+        assert_eq!(visible(read(Some(admin.clone()), true).await), 1);
+        assert_eq!(visible(read(Some(admin), false).await), 0);
+        assert_eq!(
+            visible(read(None, true).await),
+            0,
+            "the bypass never lets an anonymous request read a private document"
+        );
+    })
+    .unwrap()
 }
 
 /// Records the bearer each access check presents: the one of the request it
@@ -441,47 +476,54 @@ impl DocumentACP for BearerAcp {
     }
 }
 
-#[tokio::test]
-async fn each_read_checks_access_with_its_own_requests_bearer() {
-    let mut company = CollectionVersion::new(
-        "Company",
-        "v1",
-        "coll-company",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-        ],
-    );
-    company.policy = Some(PolicyDescription::new("policy", "companies"));
-    let fetcher = MockFetcher::new();
-    fetcher.add_doc(
-        "Company",
-        Document::from_json_str(
-            r#"{"_docID":"bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0","name":"Acme"}"#,
-        )
-        .unwrap(),
-    );
-    let acp = Arc::new(BearerAcp::default());
-    let runner = QueryRunner::new(fetcher, vec![company]).with_acp(acp.clone());
-    let read = |token: &str| {
-        runner.execute(
-            QueryRequest::new("{ Company { name } }")
-                .with_identity(Some(Did::new(CALLER).unwrap()))
-                .with_context(
-                    RequestContext::default()
-                        .with_bearer(Some(CALLER.to_string()), Some(token.to_string())),
+#[test]
+fn each_read_checks_access_with_its_own_requests_bearer() {
+    workers::block_on(async {
+        let mut company = CollectionVersion::new(
+            "Company",
+            "v1",
+            "coll-company",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
                 ),
-        )
-    };
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        );
+        company.policy = Some(PolicyDescription::new("policy", "companies"));
+        let fetcher = MockFetcher::new();
+        fetcher.add_doc(
+            "Company",
+            crate::test_utils::doc_from_json(
+                r#"{"_docID":"bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0","name":"Acme"}"#,
+            ),
+        );
+        let acp = Arc::new(BearerAcp::default());
+        let runner = QueryRunner::new(fetcher, vec![company]).with_acp(acp.clone());
+        let read = |token: &str| {
+            runner.execute(
+                QueryRequest::new("{ Company { name } }")
+                    .with_identity(Some(Did::new(CALLER).unwrap()))
+                    .with_context(
+                        RequestContext::default()
+                            .with_bearer(Some(CALLER.to_string()), Some(token.to_string())),
+                    ),
+            )
+        };
 
-    let (first, second) = tokio::join!(read("first"), read("second"));
-    assert_ok(&first);
-    assert_ok(&second);
+        let (first, second) = futures::join!(read("first"), read("second"));
+        assert_ok(&first);
+        assert_ok(&second);
 
-    let seen: std::collections::BTreeSet<_> = drain(&acp.seen).into_iter().collect();
-    assert_eq!(
-        seen,
-        [Some("first".to_string()), Some("second".to_string())].into(),
-        "a read checked access with another request's bearer, or none"
-    );
+        let seen: std::collections::BTreeSet<_> = drain(&acp.seen).into_iter().collect();
+        assert_eq!(
+            seen,
+            [Some("first".to_string()), Some("second".to_string())].into(),
+            "a read checked access with another request's bearer, or none"
+        );
+    })
+    .unwrap()
 }

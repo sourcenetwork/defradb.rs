@@ -11,24 +11,29 @@ pub mod composite;
 mod composite_fields;
 mod composite_heads;
 pub mod composite_persist;
-mod counter;
 mod definition;
 mod dispatch;
 mod doc_identity;
 mod encryption;
 pub(crate) mod error;
+mod field;
+mod field_causal;
+mod field_ops;
+mod field_state;
+mod field_tagged;
 mod frame_source;
+mod history;
 pub mod hook;
-mod lww;
 mod merge_keys;
+mod parked;
 mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
 pub(crate) use signature::verify_signature_data;
 
-pub use error::MergeError;
-pub(crate) use error::{CounterMergeResult, LwwMergeResult};
+pub use error::{HistoryRejection, MergeError};
+pub use field::FieldMergeResult;
 
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
@@ -38,15 +43,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use cid::Cid;
-use crdt::traits::{Context, ReplicatedData, ValueReader};
-use crdt::{Counter, CounterDelta, Lww, LwwDelta, NumericKind};
 use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
     IMMUTABLE_LINK_NAME,
 };
 use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
-use defra_core::types::DocId;
 use document::{DocID, Document, NormalValue};
 use events::{MergeCompleteData, Message, Update};
 use schema::{
@@ -105,6 +107,8 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     pub(crate) blockstore: Arc<B>,
     /// Shared parent-chain depth policy for identity and merge traversals.
     max_merge_depth: usize,
+    history_mode: bool,
+    single_history_turn: bool,
     /// Optional merge hook for policy-specific behavior around composite merges.
     composite_merge_hook: Arc<regolith::sync::OnceCell<Arc<dyn CompositeMergeHook>>>,
     /// Tracks composite CIDs that have already been merged, preventing
@@ -134,6 +138,9 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// Keys fetched before this merge's own transaction (see
     /// `merge_keys`): consulted before any request to the KMS.
     prepared_keys: Option<merge_keys::PreparedMergeKeys>,
+    /// Decrypt with keys this node holds only: a key held elsewhere is
+    /// unavailable, and no peer is asked.
+    local_keys_only: bool,
     /// Encryption CIDs with a background DEK prefetch currently in flight, so
     /// repeated deliveries of the same deferred field block
     /// (pushlog + gossip + retries) don't fan out duplicate cross-peer
@@ -159,6 +166,8 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             db: Arc::clone(&self.db),
             blockstore: Arc::clone(&self.blockstore),
             max_merge_depth: self.max_merge_depth,
+            history_mode: self.history_mode,
+            single_history_turn: self.single_history_turn,
             composite_merge_hook: Arc::clone(&self.composite_merge_hook),
             merged_composites: Arc::clone(&self.merged_composites),
             merged_collections: Arc::clone(&self.merged_collections),
@@ -169,6 +178,7 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             retry_decryption_keys: self.retry_decryption_keys.clone(),
             retry_prefetch_requested: self.retry_prefetch_requested.clone(),
             prepared_keys: self.prepared_keys.clone(),
+            local_keys_only: self.local_keys_only,
             prefetched_dek_cids: Arc::clone(&self.prefetched_dek_cids),
             deferred: Arc::clone(&self.deferred),
             rejected_governed: Arc::clone(&self.rejected_governed),
@@ -178,6 +188,15 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// Return a driver that commits at most one history page per call.
+    /// Callers must reschedule `MergeOutcome::Yielded`; ordinary handlers keep
+    /// working on the document's worker, yielding between committed pages.
+    pub fn with_single_history_turn(&self) -> Self {
+        let mut handler = self.clone();
+        handler.single_history_turn = true;
+        handler
+    }
+
     pub(super) fn with_retry_decryption_context(
         &self,
         keys: RetryDecryptionKeys,
@@ -213,7 +232,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         &self.db
     }
 
-    /// The active collection a block belongs to, by its schema version id,
+    /// The active collection a block belongs to, by its collection version id,
     /// else by the id its metadata carries. Either id may name a version or
     /// the collection itself: the two are equal for a collection's first
     /// version and differ after a patch, and metadata recovered from a block
@@ -223,10 +242,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// skipped on one.
     pub(crate) async fn block_collection(
         &self,
-        schema_version_id: &str,
+        collection_version_id: &str,
         fallback_collection_id: Option<&str>,
     ) -> std::result::Result<Option<Collection>, MergeError> {
-        let ids = || std::iter::once(schema_version_id).chain(fallback_collection_id);
+        let ids = || std::iter::once(collection_version_id).chain(fallback_collection_id);
         for id in ids() {
             if let Some(collection) = self.db.get_collection_by_version_id(id)? {
                 return Ok(Some(collection));
@@ -277,6 +296,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             db,
             blockstore,
             max_merge_depth,
+            history_mode: false,
+            single_history_turn: false,
             composite_merge_hook: Arc::new(regolith::sync::OnceCell::new()),
             merged_composites: Arc::new(cid_set()),
             merged_collections: Arc::new(cid_set()),
@@ -287,6 +308,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             retry_decryption_keys: None,
             retry_prefetch_requested: None,
             prepared_keys: None,
+            local_keys_only: false,
             prefetched_dek_cids: Arc::new(cid_set()),
             deferred: Arc::new(Default::default()),
             rejected_governed: Arc::new(cid_set()),

@@ -14,16 +14,20 @@ use crate::DB;
 const KEY: &str = "users-collection:v2";
 
 fn users_v2() -> Collection {
-    Collection::new(schema::CollectionVersion::new(
-        "Users",
-        "v2",
-        "users-collection",
-        vec![schema::FieldDescription::new(
-            "1",
-            "name",
-            schema::FieldKind::string(),
-        )],
-    ))
+    Collection::new(
+        schema::CollectionVersion::new(
+            "Users",
+            "v2",
+            "users-collection",
+            vec![schema::FieldDescription::new(
+                "1",
+                "name",
+                schema::FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 /// A history no stored version backs: served only from the cache, so a load
@@ -41,42 +45,48 @@ async fn fetcher() -> LensedDocFetcher<RegolithStore> {
     LensedDocFetcher::new(db, txn, Arc::new(lens::MemoryTransformStore::new()))
 }
 
-#[tokio::test]
-async fn a_stream_clone_serves_the_history_its_fetcher_cached() {
-    let fetcher = fetcher().await;
-    fetcher
-        .insert_history(KEY.to_string(), seeded_history())
-        .await;
+#[test]
+fn a_stream_clone_serves_the_history_its_fetcher_cached() {
+    workers::block_on(async {
+        let fetcher = fetcher().await;
+        fetcher
+            .insert_history(KEY.to_string(), seeded_history())
+            .await;
 
-    let clone = fetcher.stream_clone();
-    let served = clone.load_collection_history(&users_v2()).await.unwrap();
+        let clone = fetcher.stream_clone();
+        let served = clone.load_collection_history(&users_v2()).await.unwrap();
 
-    assert!(served.contains_key("v1"));
-    drop(clone);
-    fetcher.take_txn().await.unwrap().discard().unwrap();
+        assert!(served.contains_key("v1"));
+        drop(clone);
+        fetcher.take_txn().await.unwrap().discard().unwrap();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_schema_change_drops_the_history_for_the_fetcher_and_its_clones() {
-    let fetcher = fetcher().await;
-    fetcher
-        .insert_history(KEY.to_string(), seeded_history())
-        .await;
-    let clone = fetcher.stream_clone();
-    assert!(clone.load_collection_history(&users_v2()).await.is_ok());
+#[test]
+fn a_schema_change_drops_the_history_for_the_fetcher_and_its_clones() {
+    workers::block_on(async {
+        let fetcher = fetcher().await;
+        fetcher
+            .insert_history(KEY.to_string(), seeded_history())
+            .await;
+        let clone = fetcher.stream_clone();
+        assert!(clone.load_collection_history(&users_v2()).await.is_ok());
 
-    fetcher.invalidate_migration_cache();
+        fetcher.invalidate_migration_cache();
 
-    for reader in [&fetcher, &clone] {
-        let error = reader
-            .load_collection_history(&users_v2())
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("no versions found"),
-            "a dropped history must be reloaded from storage: {error}"
-        );
-    }
-    drop(clone);
-    fetcher.take_txn().await.unwrap().discard().unwrap();
+        for reader in [&fetcher, &clone] {
+            let error = reader
+                .load_collection_history(&users_v2())
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("no versions found"),
+                "a dropped history must be reloaded from storage: {error}"
+            );
+        }
+        drop(clone);
+        fetcher.take_txn().await.unwrap().discard().unwrap();
+    })
+    .unwrap()
 }

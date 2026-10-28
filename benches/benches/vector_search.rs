@@ -138,10 +138,36 @@ fn kernel_tiers(c: &mut Criterion) {
     group.finish();
 }
 
+/// One query through `VectorIndex` on a regolith store, the way a collection
+/// runs it: a fresh engine per call, so the codebook decode is part of it.
+fn search_through_index(c: &mut Criterion) {
+    use storage::corekv::Store;
+
+    let rt = common::owned_runtime();
+    let dimensions = 768;
+    let (store, index) = rt.block_on(common::vector::trained_ivfpq(dimensions));
+    let query = Corpus::new(SEED ^ 0x1FA).vector(dimensions);
+
+    let mut group = c.benchmark_group("search_through_index");
+    group.bench_function(BenchmarkId::new("ivfpq", dimensions), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut txn = store.new_txn(true).await.expect("a transaction");
+            let hits = index
+                .search(&mut txn, black_box(&query), K, None)
+                .await
+                .expect("search");
+            txn.discard();
+            black_box(hits.len())
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     queries,
     search,
     search_by_corpus_size,
+    search_through_index,
     kernels,
     kernel_tiers
 );

@@ -161,7 +161,7 @@ impl<S: Store + 'static> CollectionManagementOperations for CollectionManagement
                 .map_err(|e| format!("{}", e))
         })
         .await
-        .map_err(|_| "the node is shutting down; try again".to_string())?
+        .map_err(|error| error.report("collection version read").to_string())?
     }
 
     async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String> {

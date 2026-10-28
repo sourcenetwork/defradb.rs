@@ -346,7 +346,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         self.fetch_full_document(collection, doc_id, identity).await
     }
 
-    async fn create_document(
+    async fn add_document(
         &self,
         collection: &str,
         data: JsonValue,
@@ -373,7 +373,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         Ok(doc)
     }
 
-    async fn create_documents(
+    async fn add_many_documents(
         &self,
         collection: &str,
         data: Vec<JsonValue>,

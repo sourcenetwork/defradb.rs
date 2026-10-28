@@ -20,9 +20,10 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled — 27 families (bounded model claims)
+### Modeled: 51 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
@@ -43,12 +44,36 @@ section is the **diff**: what is proven vs. the accepted gap.
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
 | Order-preserving key encoding | Lean | storage |
+| DiskANN resident code table | Lean | db-index |
+| DiskANN walk cutoff | Lean | db-index (vector) |
+| PQ distance four sums | Lean | db-index (vector) |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
+| DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
+| DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
+| RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
+| DiskANN back-edges in place | Lean | db-index (vector) |
 | Retry input and marker fencing | TLA+ | db, query, storage |
 | Collection schema-version OCC | TLA+ | db |
+| Schema publication completion | TLA+ / Lean | storage, db |
+| Peer connection observation | TLA+ / Lean | p2p |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
+| Engine ticker export | TLA+ & Lean | telemetry, storage |
+| Worker pool CPU ledger | TLA+ & Lean | workers |
+| Worker default pool | TLA+ & Lean | workers |
+| Node shutdown order | TLA+ | defra-node, embedded, edge, acp |
+| Inbound stream admission | TLA+, Lean | p2p |
+| Vector index link maintenance | TLA+ | storage, db-index |
+| Peer fetch stats | Lean | p2p |
+| Gossip connection ownership | TLA+, Lean | p2p |
+| Iroh service records | TLA+, Lean | p2p |
+| Iroh solicited replies | TLA+ | p2p |
+| Reply-driven DAG fetch | TLA+ | p2p |
+| Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
+| JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
+| Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
+| Document create pipeline | TLA+ | db, db-block-builder |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -114,8 +139,8 @@ Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-d
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/db (merge)/.../lww.rs`
-(`seed_lww_from_existing_doc` re-seeds the datastore LWW from the authoritative
+after a restart — which is now **fixed** in `crates/db (merge)/.../field_state.rs`
+(`reseed_from_document` re-seeds the datastore LWW from the authoritative
 headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 
 | Family | Binding | Where |
@@ -141,6 +166,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
+| DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)

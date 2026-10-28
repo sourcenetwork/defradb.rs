@@ -25,8 +25,10 @@
 //! pending set meanwhile does not abort it.
 //!
 //! Unlike the paper the pending set is not an in-memory graph: it lives in the
-//! store, which keeps it transactional and durable without a redo log, and is
-//! scanned by code between merges.
+//! store, which keeps it transactional and durable without a redo log. Every
+//! pending write also appends to a commit-ordered log, so searches share an
+//! in-memory copy of the set and catch it up from the log rather than scan it
+//! ([`pending_cache`]).
 //!
 //! ADC ranks by squared distance, which orders cosine only on unit vectors and
 //! Euclidean by definition, so the engine refuses only a dot-product metric.
@@ -39,6 +41,7 @@ pub mod codec;
 mod graph;
 mod merge;
 mod params;
+mod pending_cache;
 
 #[cfg(test)]
 pub(crate) use cache::BUILT as CODE_CACHES_BUILT;
@@ -48,6 +51,9 @@ pub use merge::MergePlan;
 pub use params::{
     DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_PLAN_PENDING,
     MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
+};
+pub use pending_cache::{
+    Copy, PendingCache, Segment, Tag, ENTRY_OVERHEAD, MAX_PENDING_CACHE_BYTES,
 };
 
 use std::sync::Arc;
@@ -72,9 +78,13 @@ pub struct DiskAnn<S> {
     /// Fixed once trained. Shared so a write can hold it while borrowing the
     /// store mutably.
     quantizer: TrainedCache<Arc<ProductQuantizer>>,
-    /// Where a resident-codes search reads codes; without it each code is a
-    /// point read.
+    /// Where a resident-codes search reads codes, and where every search
+    /// finds the copy of the pending list; without it each code is a point
+    /// read and the pending list is scanned.
     codes: Option<Arc<CodeCache>>,
+    /// Where the quantizer is shared between transactions; without it each
+    /// engine reads and rebuilds it from the codebooks.
+    shared: Option<Arc<CodeCache>>,
 }
 
 impl<S: VectorNodeStore> DiskAnn<S> {
@@ -92,11 +102,20 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             seed,
             quantizer: TrainedCache::new(),
             codes: None,
+            shared: None,
         })
     }
 
     pub fn with_codes(mut self, codes: Arc<CodeCache>) -> Self {
+        self.shared = Some(codes.clone());
         self.codes = Some(codes);
+        self
+    }
+
+    /// Shares the quantizer through `cache` and nothing else: what a write,
+    /// which neither walks nor scans, needs of it.
+    pub fn with_shared_quantizer(mut self, cache: Arc<CodeCache>) -> Self {
+        self.shared = Some(cache);
         self
     }
 
@@ -145,6 +164,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if let Some(quantizer) = self.quantizer.get() {
             return Ok(quantizer.clone());
         }
+        let shared = self.shared.as_ref().zip(trained.training);
+        if let Some(quantizer) = shared.and_then(|(cache, training)| cache.quantizer(training)) {
+            return Ok(self.quantizer.get_or_init_racy(|| quantizer).clone());
+        }
         let mut books = Vec::with_capacity(trained.m as usize);
         for sub in 0..trained.m {
             let bytes = self
@@ -158,6 +181,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             trained.dimensions as usize,
             books,
         )?);
+        if let Some((cache, training)) = shared {
+            quantizer.prepare_encode();
+            cache.share_quantizer(training, quantizer.clone());
+        }
         Ok(self.quantizer.get_or_init_racy(|| quantizer).clone())
     }
 }
@@ -173,9 +200,9 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
     /// samples, what re-ranking reads, and what keeps the index exact until
     /// training.
     ///
-    /// Once trained it joins the pending set with its code. The writes that
-    /// clear a tombstone are blind, so an insert reads nothing a merge writes
-    /// but the node itself.
+    /// Once trained it joins the pending set with its code: one append to the
+    /// pending log. The writes are blind, so an insert reads nothing a merge
+    /// writes but the node itself.
     async fn insert<E: Element>(&mut self, id: NodeId, vector: &[E]) -> Result<()> {
         self.params.validate_dimensions(vector.len())?;
         let Some(trained) = self.trained().await? else {
@@ -191,16 +218,21 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         let pq = self.quantizer(&trained).await?;
         let mut code = vec![0u8; pq.code_len()];
         pq.encode(&self.metric.prepare(vector), &mut code);
-        let key = codec::record_key(id);
-        self.store_mut().delete_aux(codec::DELETED, &key).await?;
-        self.store_mut().put_aux(codec::PENDING, &key, &code).await
+        self.store_mut()
+            .delete_aux(codec::DELETED, &codec::record_key(id))
+            .await?;
+        self.store_mut()
+            .append_pending_log(&codec::encode_log_entry(id, &code))
+            .await
     }
 
-    /// Tombstones the node: it leaves the pending set and joins the delete
-    /// list, and any record it has stays for walks to pass through until a
-    /// merge consolidates it.
+    /// Tombstones the node: it joins the delete list, and any record it has
+    /// stays for walks to pass through until a merge consolidates it.
     ///
-    /// Both writes are blind. Merges rewrite graph records they do not own, so
+    /// A pending insert of it stays in the log: searches and merges read the
+    /// vector of every pending candidate, and drop it there.
+    ///
+    /// The write is blind. Merges rewrite graph records they do not own, so
     /// reading this node's record would let any overlapping merge fail the
     /// delete; a tombstone with no record is dropped by the next consolidation.
     async fn delete(&mut self, id: NodeId) -> Result<bool> {
@@ -208,9 +240,9 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
             return Ok(false);
         }
         if self.trained().await?.is_some() {
-            let key = codec::record_key(id);
-            self.store_mut().delete_aux(codec::PENDING, &key).await?;
-            self.store_mut().put_aux(codec::DELETED, &key, b"").await?;
+            self.store_mut()
+                .put_aux(codec::DELETED, &codec::record_key(id), b"")
+                .await?;
         }
         Ok(true)
     }

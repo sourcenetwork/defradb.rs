@@ -285,3 +285,78 @@ fn robust_prune_slack_keeps_more_edges() {
         tight.len()
     );
 }
+
+/// RobustPrune as the paper writes it: each candidate, nearest first, checked
+/// against every edge kept so far. The selector checks in blocks and must keep
+/// exactly these edges.
+fn robust_prune_one_at_a_time(
+    alpha: f64,
+    base: &[f32],
+    candidates: &[Candidate],
+    max: usize,
+) -> Vec<NodeId> {
+    let alpha_squared = alpha * alpha;
+    let mut pool: Vec<(f64, &Candidate)> = candidates
+        .iter()
+        .map(|c| (squared_euclidean(base, &c.vector), c))
+        .collect();
+    pool.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
+    let mut kept: Vec<&Candidate> = Vec::new();
+    for (to_base, candidate) in pool {
+        if kept.len() >= max {
+            break;
+        }
+        if !kept.iter().any(|edge| {
+            alpha_squared * squared_euclidean(&edge.vector, &candidate.vector) <= to_base
+        }) {
+            kept.push(candidate);
+        }
+    }
+    kept.into_iter().map(|c| c.id).collect()
+}
+
+#[test]
+fn robust_prune_keeps_the_edges_one_at_a_time_checking_keeps() {
+    let mut corpus = crate::support::Corpus::new(0xB10C);
+    for (count, dims) in [
+        (0, 8),
+        (1, 8),
+        (5, 3),
+        (6, 16),
+        (7, 16),
+        (13, 33),
+        (94, 64),
+        (300, 16),
+    ] {
+        let base = unit(&corpus.vectors(1, dims)[0]);
+        let mut vectors: Vec<Vec<f32>> = corpus
+            .vectors(count, dims)
+            .iter()
+            .map(|v| unit(v))
+            .collect();
+        if count > 2 {
+            // Ties: the same vector under two ids, and a candidate at the base.
+            vectors[1] = vectors[0].clone();
+            vectors[2] = base.clone();
+        }
+        let candidates: Vec<Candidate> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| candidate(i as u64 + 1, v, &base))
+            .collect();
+        for alpha in [1.0, 1.2, 2.0] {
+            for max in [1, 5, 6, 7, 32, 64, 400] {
+                let blocked: Vec<NodeId> = RobustPrune::new(alpha)
+                    .select(Metric::Cosine, &base, &candidates, max)
+                    .into_iter()
+                    .map(|c| c.id)
+                    .collect();
+                assert_eq!(
+                    blocked,
+                    robust_prune_one_at_a_time(alpha, &base, &candidates, max),
+                    "count={count} dims={dims} alpha={alpha} max={max}"
+                );
+            }
+        }
+    }
+}

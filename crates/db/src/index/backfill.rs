@@ -37,7 +37,7 @@ use crate::{BackfillSource, DB};
 
 type History = RapidHashMap<String, TargetedHistoryLink>;
 
-/// Documents per backfill transaction at most ([`PAGE_ITEMS`]).
+/// Documents per backfill transaction at most (`PAGE_ITEMS`).
 pub const BACKFILL_BATCH_DOCS: usize = PAGE_ITEMS;
 
 /// What a backfill needs to know to run or resume.
@@ -274,7 +274,8 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
     ) -> storage::corekv::RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+            let txn =
+                datastore::BasicTxn::from_retry_attempt_io(io, 0, self.collection.crdts().clone());
             let datastore = txn.datastore();
             let systemstore = txn.systemstore();
             let built: Result<()> = async move {

@@ -187,6 +187,34 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.delete_aux(kind, key).await
     }
 
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], mut visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend,
@@ -201,104 +229,110 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn ivfpq_build_streams_two_passes_over_live_nodes() {
-    use db::index::vector::engine::ivf::pq::{IvfPq, IvfPqParams};
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-    let counting = Counting::new(KvNodeStore::new(&mut txn, 1, 1, 0));
-    let mut index = IvfPq::try_new(
-        counting,
-        Metric::Euclidean,
-        IvfPqParams {
-            nlist: 2,
-            nprobe: 2,
-            m: 2,
-            sample_bytes: 16 * 4 * 32,
-            ..IvfPqParams::default()
-        },
-        GRAPH_SEED,
-    )
-    .unwrap();
-    let vectors = Corpus::new(CORPUS_SEED).vectors(100, 16);
-    for (id, vector) in vectors.iter().enumerate() {
-        index.insert(NodeId(id as u64), vector).await.unwrap();
-    }
-    index.delete(NodeId(0)).await.unwrap();
-    let report = index.build().await.unwrap();
-    assert_eq!(report.indexed, 99);
-    assert_eq!(report.sampled, 32);
-    assert!(report.sample_bytes <= 16 * 4 * 32);
-    assert_eq!(index.store().node_passes.load(Ordering::Relaxed), 2);
-    assert_eq!(index.store().node_visits.load(Ordering::Relaxed), 198);
-    let hits = index.search(&vectors[10], 100, None).await.unwrap();
-    assert_eq!(hits.len(), 99);
-    assert!(hits.iter().all(|hit| hit.id != NodeId(0)));
+#[test]
+fn ivfpq_build_streams_two_passes_over_live_nodes() {
+    workers::block_on(async {
+        use db::index::vector::engine::ivf::pq::{IvfPq, IvfPqParams};
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+        let counting = Counting::new(KvNodeStore::new(&mut txn, 1, 1, 0));
+        let mut index = IvfPq::try_new(
+            counting,
+            Metric::Euclidean,
+            IvfPqParams {
+                nlist: 2,
+                nprobe: 2,
+                m: 2,
+                sample_bytes: 16 * 4 * 32,
+                ..IvfPqParams::default()
+            },
+            GRAPH_SEED,
+        )
+        .unwrap();
+        let vectors = Corpus::new(CORPUS_SEED).vectors(100, 16);
+        for (id, vector) in vectors.iter().enumerate() {
+            index.insert(NodeId(id as u64), vector).await.unwrap();
+        }
+        index.delete(NodeId(0)).await.unwrap();
+        let report = index.build().await.unwrap();
+        assert_eq!(report.indexed, 99);
+        assert_eq!(report.sampled, 32);
+        assert!(report.sample_bytes <= 16 * 4 * 32);
+        assert_eq!(index.store().node_passes.load(Ordering::Relaxed), 2);
+        assert_eq!(index.store().node_visits.load(Ordering::Relaxed), 198);
+        let hits = index.search(&vectors[10], 100, None).await.unwrap();
+        assert_eq!(hits.len(), 99);
+        assert!(hits.iter().all(|hit| hit.id != NodeId(0)));
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn cost_against_a_kv_store() {
-    const K: usize = 10;
-    const QUERIES: usize = 50;
+fn cost_against_a_kv_store() {
+    workers::block_on(async {
+        const K: usize = 10;
+        const QUERIES: usize = 50;
 
-    println!(
-        "{:>7} {:>4} {:>4} {:>9} {:>9} {:>7} {:>10} {:>10}",
-        "N", "dim", "ef", "reads/q", "distinct", "repeat", "writes/ins", "reads/ins"
-    );
+        println!(
+            "{:>7} {:>4} {:>4} {:>9} {:>9} {:>7} {:>10} {:>10}",
+            "N", "dim", "ef", "reads/q", "distinct", "repeat", "writes/ins", "reads/ins"
+        );
 
-    for (count, dimensions) in [(1_000usize, 16usize), (5_000, 16), (5_000, 128)] {
-        let mut corpus = Corpus::new(CORPUS_SEED);
-        let vectors = corpus.vectors(count, dimensions);
+        for (count, dimensions) in [(1_000usize, 16usize), (5_000, 16), (5_000, 128)] {
+            let mut corpus = Corpus::new(CORPUS_SEED);
+            let vectors = corpus.vectors(count, dimensions);
 
-        let store = RegolithStore::in_memory().unwrap();
-        let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-        let (insert_reads, insert_writes, _) = {
-            let mut index = Hnsw::new(
-                Counting::new(KvNodeStore::new(&mut write, 1, 1, 0)),
+            let store = RegolithStore::in_memory().unwrap();
+            let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+            let (insert_reads, insert_writes, _) = {
+                let mut index = Hnsw::new(
+                    Counting::new(KvNodeStore::new(&mut write, 1, 1, 0)),
+                    Metric::Cosine,
+                    Params::new(DEFAULT_M),
+                    GRAPH_SEED,
+                );
+                for (i, vector) in vectors.iter().enumerate() {
+                    index.insert(NodeId(i as u64), vector).await.unwrap();
+                }
+                index.store().take()
+            };
+            write.commit().await.unwrap();
+
+            let mut read: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+            let index = Hnsw::new(
+                Counting::new(KvNodeStore::new(&mut read, 1, 1, 0)),
                 Metric::Cosine,
                 Params::new(DEFAULT_M),
                 GRAPH_SEED,
             );
-            for (i, vector) in vectors.iter().enumerate() {
-                index.insert(NodeId(i as u64), vector).await.unwrap();
-            }
-            index.store().take()
-        };
-        write.commit().await.unwrap();
 
-        let mut read: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-        let index = Hnsw::new(
-            Counting::new(KvNodeStore::new(&mut read, 1, 1, 0)),
-            Metric::Cosine,
-            Params::new(DEFAULT_M),
-            GRAPH_SEED,
-        );
-
-        for ef in [32usize, 64] {
-            let mut queries = Corpus::new(QUERY_SEED);
-            let (mut reads, mut distinct) = (0usize, 0usize);
-            index.store().take();
-            for _ in 0..QUERIES {
-                let query = queries.vector(dimensions);
-                index.search_with_ef(&query, K, ef).await.unwrap();
-                // Per query, so a repeat read within one search is visible and
-                // a node touched by two different searches is not miscounted
-                // as one.
-                let (query_reads, _, query_distinct) = index.store().take();
-                reads += query_reads;
-                distinct += query_distinct;
+            for ef in [32usize, 64] {
+                let mut queries = Corpus::new(QUERY_SEED);
+                let (mut reads, mut distinct) = (0usize, 0usize);
+                index.store().take();
+                for _ in 0..QUERIES {
+                    let query = queries.vector(dimensions);
+                    index.search_with_ef(&query, K, ef).await.unwrap();
+                    // Per query, so a repeat read within one search is visible and
+                    // a node touched by two different searches is not miscounted
+                    // as one.
+                    let (query_reads, _, query_distinct) = index.store().take();
+                    reads += query_reads;
+                    distinct += query_distinct;
+                }
+                println!(
+                    "{count:>7} {dimensions:>4} {ef:>4} {:>9.0} {:>9.0} {:>6.0}% {:>10.1} {:>10.1}",
+                    reads as f64 / QUERIES as f64,
+                    distinct as f64 / QUERIES as f64,
+                    100.0 * (1.0 - distinct as f64 / reads as f64),
+                    insert_writes as f64 / count as f64,
+                    insert_reads as f64 / count as f64,
+                );
             }
-            println!(
-                "{count:>7} {dimensions:>4} {ef:>4} {:>9.0} {:>9.0} {:>6.0}% {:>10.1} {:>10.1}",
-                reads as f64 / QUERIES as f64,
-                distinct as f64 / QUERIES as f64,
-                100.0 * (1.0 - distinct as f64 / reads as f64),
-                insert_writes as f64 / count as f64,
-                insert_reads as f64 / count as f64,
-            );
         }
-    }
+    })
+    .unwrap()
 }
 
 /// IVF_FLAT's build cost: whether it holds anything sized by the corpus.
@@ -311,62 +345,66 @@ async fn cost_against_a_kv_store() {
 /// plus one state marker (linear in the corpus, never more), and no single
 /// write handed to the store ever exceeds one vector's encoded width, at any
 /// corpus size or dimension.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn ivfflat_build_holds_nothing_corpus_sized() {
-    println!(
-        "{:>7} {:>4} {:>6} {:>12} {:>12} {:>14} {:>14}",
-        "N", "dim", "nlist", "expect_writes", "writes", "max_write(B)", "vector(B)"
-    );
-
-    for (count, dimensions, nlist) in [(200usize, 16usize, 8u32), (2_000, 16, 32), (2_000, 256, 32)]
-    {
-        let mut corpus = Corpus::new(CORPUS_SEED);
-        let vectors = corpus.vectors(count, dimensions);
-
-        let store = RegolithStore::in_memory().unwrap();
-        let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-        let params = IvfFlatParams {
-            nlist,
-            nprobe: nlist,
-            ..IvfFlatParams::default()
-        };
-        let mut index = IvfFlat::try_new(
-            Counting::new(KvNodeStore::new(&mut write, 1, 1, 0)),
-            Metric::Cosine,
-            params,
-            GRAPH_SEED,
-        )
-        .unwrap();
-        for (i, vector) in vectors.iter().enumerate() {
-            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
-        }
-        // Discard the insert phase's own counts: only the build matters here.
-        index.store().take();
-        index.store().take_aux();
-
-        let report = index.build().await.unwrap();
-        let (_reads, actual_writes, _distinct) = index.store().take();
-        let (_visited, max_write) = index.store().take_aux();
-
-        let expected_writes = report.state.nlist as usize + report.indexed as usize + 1;
-        let one_vector_bytes = dimensions * 4;
-
+fn ivfflat_build_holds_nothing_corpus_sized() {
+    workers::block_on(async {
         println!(
-            "{count:>7} {dimensions:>4} {nlist:>6} {expected_writes:>12} {actual_writes:>12} \
+            "{:>7} {:>4} {:>6} {:>12} {:>12} {:>14} {:>14}",
+            "N", "dim", "nlist", "expect_writes", "writes", "max_write(B)", "vector(B)"
+        );
+
+        for (count, dimensions, nlist) in
+            [(200usize, 16usize, 8u32), (2_000, 16, 32), (2_000, 256, 32)]
+        {
+            let mut corpus = Corpus::new(CORPUS_SEED);
+            let vectors = corpus.vectors(count, dimensions);
+
+            let store = RegolithStore::in_memory().unwrap();
+            let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+            let params = IvfFlatParams {
+                nlist,
+                nprobe: nlist,
+                ..IvfFlatParams::default()
+            };
+            let mut index = IvfFlat::try_new(
+                Counting::new(KvNodeStore::new(&mut write, 1, 1, 0)),
+                Metric::Cosine,
+                params,
+                GRAPH_SEED,
+            )
+            .unwrap();
+            for (i, vector) in vectors.iter().enumerate() {
+                index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
+            }
+            // Discard the insert phase's own counts: only the build matters here.
+            index.store().take();
+            index.store().take_aux();
+
+            let report = index.build().await.unwrap();
+            let (_reads, actual_writes, _distinct) = index.store().take();
+            let (_visited, max_write) = index.store().take_aux();
+
+            let expected_writes = report.state.nlist as usize + report.indexed as usize + 1;
+            let one_vector_bytes = dimensions * 4;
+
+            println!(
+                "{count:>7} {dimensions:>4} {nlist:>6} {expected_writes:>12} {actual_writes:>12} \
              {max_write:>14} {one_vector_bytes:>14}"
-        );
-        assert_eq!(
-            actual_writes, expected_writes,
-            "build performed {actual_writes} aux writes, expected exactly \
+            );
+            assert_eq!(
+                actual_writes, expected_writes,
+                "build performed {actual_writes} aux writes, expected exactly \
              nlist + corpus + 1 = {expected_writes}: a build is not linear in the corpus"
-        );
-        assert_eq!(
-            max_write, one_vector_bytes,
-            "the largest single aux write was {max_write}B, expected exactly one \
+            );
+            assert_eq!(
+                max_write, one_vector_bytes,
+                "the largest single aux write was {max_write}B, expected exactly one \
              encoded vector ({one_vector_bytes}B): some write scaled with the corpus"
-        );
-    }
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// IVF_FLAT's search cost: whether a probe reads only the lists it probed,
@@ -377,85 +415,88 @@ async fn ivfflat_build_holds_nothing_corpus_sized() {
 /// document, since every document lives in exactly one list; probing fewer
 /// must visit strictly fewer than the whole corpus, or the entire premise of
 /// probing a handful of lists instead of scanning everything does not hold.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn ivfflat_search_reads_only_the_probed_lists() {
-    const COUNT: usize = 3_000;
-    const DIMENSIONS: usize = 32;
-    const NLIST: u32 = 24;
-    const K: usize = 10;
-    const QUERIES: usize = 30;
+fn ivfflat_search_reads_only_the_probed_lists() {
+    workers::block_on(async {
+        const COUNT: usize = 3_000;
+        const DIMENSIONS: usize = 32;
+        const NLIST: u32 = 24;
+        const K: usize = 10;
+        const QUERIES: usize = 30;
 
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(COUNT, DIMENSIONS);
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(COUNT, DIMENSIONS);
 
-    let store = RegolithStore::in_memory().unwrap();
-    let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-    {
-        let params = IvfFlatParams {
-            nlist: NLIST,
-            nprobe: NLIST,
-            ..IvfFlatParams::default()
-        };
-        let mut index = IvfFlat::try_new(
-            KvNodeStore::new(&mut write, 2, 2, 0),
-            Metric::Cosine,
-            params,
-            GRAPH_SEED,
-        )
-        .unwrap();
-        for (i, vector) in vectors.iter().enumerate() {
-            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
-        }
-        index.build().await.unwrap();
-    }
-    write.commit().await.unwrap();
-
-    println!("{:>6} {:>12} {:>10}", "nprobe", "visited/q", "of_corpus");
-
-    for nprobe in [1u32, 4, 12, NLIST] {
-        let mut read: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-        let params = IvfFlatParams {
-            nlist: NLIST,
-            nprobe,
-            ..IvfFlatParams::default()
-        };
-        let index = IvfFlat::try_new(
-            Counting::new(KvNodeStore::new(&mut read, 2, 2, 0)),
-            Metric::Cosine,
-            params,
-            GRAPH_SEED,
-        )
-        .unwrap();
-
-        let mut queries = Corpus::new(QUERY_SEED);
-        let mut visited_total = 0usize;
-        for _ in 0..QUERIES {
-            let query = queries.vector(DIMENSIONS);
-            index.store().take_aux();
-            let hits = index.search(&query, K, None).await.unwrap();
-            assert!(!hits.is_empty(), "nprobe={nprobe}: an empty answer");
-
-            let (visited, _) = index.store().take_aux();
-            if nprobe >= NLIST {
-                assert_eq!(
-                    visited, COUNT,
-                    "probing every list must visit exactly one entry per live document"
-                );
-            } else {
-                assert!(
-                    visited < COUNT,
-                    "nprobe={nprobe} visited {visited} of {COUNT}: the probe did not narrow \
-                     the scan below the whole corpus"
-                );
+        let store = RegolithStore::in_memory().unwrap();
+        let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+        {
+            let params = IvfFlatParams {
+                nlist: NLIST,
+                nprobe: NLIST,
+                ..IvfFlatParams::default()
+            };
+            let mut index = IvfFlat::try_new(
+                KvNodeStore::new(&mut write, 2, 2, 0),
+                Metric::Cosine,
+                params,
+                GRAPH_SEED,
+            )
+            .unwrap();
+            for (i, vector) in vectors.iter().enumerate() {
+                index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
             }
-            visited_total += visited;
+            index.build().await.unwrap();
         }
+        write.commit().await.unwrap();
 
-        let visited_per_query = visited_total as f64 / QUERIES as f64;
-        println!(
-            "{nprobe:>6} {visited_per_query:>12.1} {:>9.1}%",
-            100.0 * visited_per_query / COUNT as f64
-        );
-    }
+        println!("{:>6} {:>12} {:>10}", "nprobe", "visited/q", "of_corpus");
+
+        for nprobe in [1u32, 4, 12, NLIST] {
+            let mut read: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+            let params = IvfFlatParams {
+                nlist: NLIST,
+                nprobe,
+                ..IvfFlatParams::default()
+            };
+            let index = IvfFlat::try_new(
+                Counting::new(KvNodeStore::new(&mut read, 2, 2, 0)),
+                Metric::Cosine,
+                params,
+                GRAPH_SEED,
+            )
+            .unwrap();
+
+            let mut queries = Corpus::new(QUERY_SEED);
+            let mut visited_total = 0usize;
+            for _ in 0..QUERIES {
+                let query = queries.vector(DIMENSIONS);
+                index.store().take_aux();
+                let hits = index.search(&query, K, None).await.unwrap();
+                assert!(!hits.is_empty(), "nprobe={nprobe}: an empty answer");
+
+                let (visited, _) = index.store().take_aux();
+                if nprobe >= NLIST {
+                    assert_eq!(
+                        visited, COUNT,
+                        "probing every list must visit exactly one entry per live document"
+                    );
+                } else {
+                    assert!(
+                        visited < COUNT,
+                        "nprobe={nprobe} visited {visited} of {COUNT}: the probe did not narrow \
+                     the scan below the whole corpus"
+                    );
+                }
+                visited_total += visited;
+            }
+
+            let visited_per_query = visited_total as f64 / QUERIES as f64;
+            println!(
+                "{nprobe:>6} {visited_per_query:>12.1} {:>9.1}%",
+                100.0 * visited_per_query / COUNT as f64
+            );
+        }
+    })
+    .unwrap()
 }

@@ -3,7 +3,8 @@ use integration_test::{workspace_root, TestCluster};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-const RAW_SCHEMA: &str = "type Metric { label: String  ts: DateTime  value: Int }";
+const RAW_SCHEMA: &str =
+    "type Metric { label: String  note: String @immutable  host: String  secret: String  ts: DateTime  value: Int }";
 const ROLLUP2_SDL: &str = r#"
 type Metric2Rollup @downsample(interval: "1000ms", timeField: "ts", retention: "1400ms") {
   label: String
@@ -137,6 +138,22 @@ fn query_metric(client: &integration_test::DefraClient, doc_id: &str) -> Value {
     rows[0].clone()
 }
 
+fn field_commit_cids(
+    client: &integration_test::DefraClient,
+    filter: &str,
+    field_name: &str,
+) -> Vec<String> {
+    let data = client
+        .query(&format!(
+            r#"query {{ _commits({filter}, filter: {{ fieldName: {{ _eq: "{field_name}" }} }}) {{ cid }} }}"#
+        ))
+        .expect("query field commits");
+    extract_rows(&data, "_commits")
+        .iter()
+        .map(|commit| commit["cid"].as_str().expect("cid").to_string())
+        .collect()
+}
+
 fn aggregate_commit_field(
     client: &integration_test::DefraClient,
     doc_id: &str,
@@ -250,7 +267,9 @@ async fn run_view_gc(api_url: &str, name: &str) {
     );
 }
 
-async fn downsample_gc_test(cluster: TestCluster) {
+/// With `encrypt_secret`, every `secret` block inherits the encryption block
+/// its first write created, and pruning that write must leave it in place.
+async fn downsample_gc_test(cluster: TestCluster, encrypt_secret: bool) {
     let client = cluster.client(0);
 
     client.schema_add(RAW_SCHEMA).expect("add raw schema");
@@ -279,18 +298,28 @@ async fn downsample_gc_test(cluster: TestCluster) {
     let t4 = base + ChronoDuration::milliseconds(BUCKET_MS + (BUCKET_MS / 2));
     let second_window_end = base + ChronoDuration::milliseconds(PARENT_BUCKET_MS);
 
+    let encrypt_fields = if encrypt_secret {
+        r#", encryptFields: ["secret"]"#
+    } else {
+        ""
+    };
     let create = client
         .query(&format!(
-            r#"mutation {{ add_Metric(input: {{label: "cpu", ts: "{}", value: 10}}) {{ _docID }} }}"#,
+            r#"mutation {{ add_Metric(input: {{label: "cpu", note: "host-a", secret: "s1", ts: "{}", value: 10}}{encrypt_fields}) {{ _docID }} }}"#,
             format_timestamp(t1)
         ))
         .expect("create metric");
     let source_doc_id = extract_doc_id(&create, "add_Metric");
 
-    for (timestamp, value) in [(t2, 20), (t3, 30), (t4, 40)] {
+    // `host` is written only by the retained commits, so its field heights
+    // (1, 2) coincide with the pruned composite heights.
+    for (timestamp, value, host) in [(t2, 20, None), (t3, 30, Some("a")), (t4, 40, Some("b"))] {
+        let host = host
+            .map(|host| format!(r#", host: "{host}", secret: "s-{host}""#))
+            .unwrap_or_default();
         client
             .query(&format!(
-                r#"mutation {{ update_Metric(docID: "{source_doc_id}", input: {{ts: "{}", value: {value}}}) {{ _docID }} }}"#,
+                r#"mutation {{ update_Metric(docID: "{source_doc_id}", input: {{ts: "{}", value: {value}{host}}}) {{ _docID }} }}"#,
                 format_timestamp(timestamp)
             ))
             .expect("update metric");
@@ -358,7 +387,27 @@ async fn downsample_gc_test(cluster: TestCluster) {
     assert_eq!(rollup2_history["total"].as_i64(), Some(100));
     assert_eq!(rollup2_history["maxValue"].as_i64(), Some(70));
 
+    let doc_filter = format!(r#"docID: ["{source_doc_id}"]"#);
+    let note_cids = field_commit_cids(&client, &doc_filter, "note");
+    assert_eq!(note_cids.len(), 1);
+    let host_cids = field_commit_cids(&client, &doc_filter, "host");
+    assert_eq!(host_cids.len(), 2);
+
     run_view_gc(cluster.api_url(0), "Metric2Rollup").await;
+
+    assert_eq!(
+        field_commit_cids(&client, &format!(r#"cid: "{}""#, note_cids[0]), "note"),
+        note_cids,
+        "the immutable field's head block survives pruning of the commit that wrote it"
+    );
+    assert_eq!(field_commit_cids(&client, &doc_filter, "note"), note_cids);
+    for cid in &host_cids {
+        assert_eq!(
+            field_commit_cids(&client, &format!(r#"cid: "{cid}""#), "host"),
+            vec![cid.clone()],
+            "a retained commit's field block survives at a pruned composite height"
+        );
+    }
 
     let raw_history_after_gc = aggregate_commit_field(&client, &source_doc_id, "value");
     assert_eq!(raw_history_after_gc["count"].as_i64(), Some(2));
@@ -418,6 +467,22 @@ async fn downsample_gc_test(cluster: TestCluster) {
         10,
         40,
     );
+
+    // A further write inherits the head's encryption block and must load it.
+    client
+        .query(&format!(
+            r#"mutation {{ update_Metric(docID: "{source_doc_id}", input: {{secret: "s-c"}}) {{ _docID }} }}"#
+        ))
+        .expect("update metric after gc");
+    let data = client
+        .query(&format!(
+            r#"query {{ Metric(docID: "{source_doc_id}") {{ secret }} }}"#
+        ))
+        .expect("query secret");
+    assert_eq!(
+        extract_rows(&data, "Metric")[0]["secret"].as_str(),
+        Some("s-c")
+    );
 }
 
 #[tokio::test]
@@ -428,5 +493,16 @@ async fn rust_downsample_gc_prunes_retained_source_history() {
         .build()
         .await
         .expect("build cluster");
-    downsample_gc_test(cluster).await;
+    downsample_gc_test(cluster, false).await;
+}
+
+#[tokio::test]
+async fn rust_downsample_gc_keeps_encrypted_source_writable() {
+    let _root = workspace_root();
+    let cluster = TestCluster::builder()
+        .rust_nodes(1)
+        .build()
+        .await
+        .expect("build cluster");
+    downsample_gc_test(cluster, true).await;
 }

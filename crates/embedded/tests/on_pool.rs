@@ -13,26 +13,29 @@ fn off_pool_calls(node: &EmbeddedNode<EmbeddedStore>) -> u64 {
         .off_pool_calls
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn api_calls_make_no_storage_call_off_the_pool() {
-    let node = NodeBuilder::default().build().await.unwrap();
-    let before = off_pool_calls(&node);
+#[test]
+fn api_calls_make_no_storage_call_off_the_pool() {
+    workers::block_on(async {
+        let node = NodeBuilder::default().build().await.unwrap();
+        let before = off_pool_calls(&node);
 
-    node.add_schema("type Note { title: String }")
-        .await
-        .unwrap();
-    let added = node
-        .execute(r#"mutation { add_Note(input: { title: "first" }) { _docID } }"#)
-        .await;
-    assert!(added.errors.is_empty(), "{:?}", added.errors);
-    let read = node.execute("query { Note { title } }").await;
-    assert!(read.errors.is_empty(), "{:?}", read.errors);
-    node.add_encrypted_index("Note", "title").await.unwrap();
+        node.add_collection("type Note { title: String }")
+            .await
+            .unwrap();
+        let added = node
+            .execute(r#"mutation { add_Note(input: { title: "first" }) { _docID } }"#)
+            .await;
+        assert!(added.errors.is_empty(), "{:?}", added.errors);
+        let read = node.execute("query { Note { title } }").await;
+        assert!(read.errors.is_empty(), "{:?}", read.errors);
+        node.add_encrypted_index("Note", "title").await.unwrap();
 
-    assert_eq!(
-        off_pool_calls(&node),
-        before,
-        "an API call reached the store from a thread off the pool"
-    );
-    node.shutdown().await;
+        assert_eq!(
+            off_pool_calls(&node),
+            before,
+            "an API call reached the store from a thread off the pool"
+        );
+        node.shutdown().await;
+    })
+    .unwrap()
 }

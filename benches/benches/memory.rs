@@ -55,9 +55,14 @@ fn collection_version() -> CollectionVersion {
         "bafkmemory",
         "memory",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "note", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "note", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -84,9 +89,11 @@ async fn run_case(profile: &str, workload: &str) {
         .expect("the collection to register");
     let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
     for seq in 0..DOCS {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String(format!("name-{seq}")));
-        doc.set("note", NormalValue::String(format!("note-{seq}")));
+        let mut doc = Document::new(collection_version());
+        doc.set("name", NormalValue::String(format!("name-{seq}")))
+            .unwrap();
+        doc.set("note", NormalValue::String(format!("note-{seq}")))
+            .unwrap();
         mutator
             .create(COLLECTION, doc)
             .await

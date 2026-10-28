@@ -204,6 +204,19 @@ pub async fn get_doc_id(systemstore: &NamespaceView, doc_short_id: u64) -> Resul
     }
 }
 
+pub(crate) async fn resolve_doc_id_pairs(
+    systemstore: &NamespaceView,
+    doc_short_ids: &[u64],
+) -> Result<Vec<(String, u64)>> {
+    let mut pairs = Vec::with_capacity(doc_short_ids.len());
+    for &short_id in doc_short_ids {
+        if let Some(doc_id) = get_doc_id(systemstore, short_id).await? {
+            pairs.push((doc_id, short_id));
+        }
+    }
+    Ok(pairs)
+}
+
 /// Resolve doc short IDs to public DocIDs, preserving order and skipping
 /// IDs with no mapping (index scan read path).
 pub async fn resolve_doc_ids(
@@ -387,13 +400,11 @@ pub async fn resolve_block_doc_ids(
     cid: &cid::Cid,
     block: &defra_core::Block,
 ) -> Result<Option<Vec<String>>> {
-    let is_doc_delta = matches!(
-        block.delta,
-        defra_core::CrdtDelta::Lww(_)
-            | defra_core::CrdtDelta::Counter(_)
-            | defra_core::CrdtDelta::Immutable(_)
-            | defra_core::CrdtDelta::Composite(_)
-    );
+    let is_doc_delta = block.delta.field().is_some()
+        || matches!(
+            block.delta,
+            defra_core::CrdtDelta::Immutable(_) | defra_core::CrdtDelta::Composite(_)
+        );
     if !is_doc_delta {
         return Ok(Some(Vec::new()));
     }

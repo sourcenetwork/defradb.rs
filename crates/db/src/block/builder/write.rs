@@ -148,7 +148,7 @@ async fn inherited_encryption(
 pub(crate) async fn inherited_encryption_policy(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     fields: &[String],
 ) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
     let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
@@ -281,7 +281,7 @@ async fn encrypt_with_new_key(
 /// * `blockstore` - Transaction blockstore view
 /// * `headstore` - Transaction headstore view
 /// * `doc` - The document to build blocks from
-/// * `schema_version_id` - The schema version ID for CRDT deltas
+/// * `collection_version_id` - The collection version ID for CRDT deltas
 /// * `modified_fields` - Optional set of field names that were modified.
 ///   If Some, only these fields will have new blocks created.
 ///   If None (for create operations), all fields get new blocks.
@@ -295,7 +295,7 @@ pub async fn write_document_blocks(
     headstore: &NamespaceView,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
@@ -328,7 +328,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
     headstore: &NamespaceView,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
@@ -337,9 +337,9 @@ pub(crate) async fn write_document_blocks_with_inputs(
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
     heads: Option<DocHeadsSnapshot>,
 ) -> Result<BlockResult, BuildError> {
-    let schema_version_id = schema.version_id.as_str();
+    let collection_version_id = schema.version_id.as_str();
     let immutable_fields = immutable_field_names(schema);
-    let doc_ref_bytes = identity.doc_ref_bytes();
+    let doc_ref_bytes = identity.encode();
 
     let mut field_links: Vec<DAGLink> = Vec::new();
     let mut field_cids: Vec<Cid> = Vec::new();
@@ -434,13 +434,17 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     + 1
             };
 
-            let cbor_value = if let Some(delta) = doc.get_counter_delta(field_name) {
-                delta
-            } else {
-                field_value.value()
+            let crdt = field_crdt_of(blockstore.crdts(), doc, field_name)?;
+            if is_create {
+                crdt.op(field_value.value().clone(), true)
+                    .map_err(|error| error.to_string())?;
+            }
+            let Some(value_bytes) = crdt
+                .block_data(field_value.value(), doc.pending_op(field_name))
+                .map_err(|error| error.to_string())?
+            else {
+                continue;
             };
-
-            let value_bytes = encode_value_as_cbor(cbor_value)?;
 
             let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
             let (value_bytes, encryption_cid) = if let Some(enc) = explicit {
@@ -496,62 +500,29 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 (value_bytes, None)
             };
 
-            let is_counter = doc
-                .fields()
-                .get(field_name)
-                .map(|f| f.crdt_type().is_counter())
-                .unwrap_or(false)
-                || doc.get_counter_delta(field_name).is_some();
-
-            let nonce: i64 = if is_counter && !is_create {
-                if let Some(inputs) = prepared_inputs {
-                    let exact = serde_json::to_vec(&(
+            let nonce = if crdt.replicates_ops() && !is_create {
+                fresh_nonce(
+                    prepared_inputs,
+                    (
                         "counter-nonce-v1",
                         &doc_ref_bytes,
                         field_name,
                         field_priority,
                         &heads,
                         &value_bytes,
-                    ))
-                    .map_err(|error| BuildError::Message(error.to_string()))?;
-                    let request = query::prepared::PreparedInputRequest::new(
-                        query::prepared::PreparedInputKind::Encryption,
-                        exact,
-                    );
-                    let nonce = match inputs.get(&request) {
-                        Some(nonce) => nonce,
-                        None => {
-                            let nonce: i64 = rand::random();
-                            inputs
-                                .insert(request, std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()))
-                        }
-                    };
-                    i64::from_be_bytes(nonce.as_ref().try_into().map_err(|_| {
-                        BuildError::Message("invalid prepared counter nonce".into())
-                    })?)
-                } else {
-                    rand::random()
-                }
+                    ),
+                )?
             } else {
                 0
             };
 
-            let delta = if is_counter {
-                CrdtDelta::Counter(CounterDeltaPayload {
-                    field_name: field_name.clone(),
-                    priority: field_priority,
-                    nonce,
-                    schema_version_id: schema_version_id.to_string(),
-                    data: value_bytes,
-                })
-            } else {
-                CrdtDelta::Lww(LwwDeltaPayload {
-                    field_name: field_name.clone(),
-                    priority: field_priority,
-                    schema_version_id: schema_version_id.to_string(),
-                    data: value_bytes,
-                })
-            };
+            let delta = crdt.delta(crdt::DeltaParts {
+                field_name,
+                priority: field_priority,
+                collection_version_id,
+                nonce,
+                data: value_bytes,
+            });
 
             let mut field_block =
                 Block::new_with_options(delta, heads.clone(), vec![], encryption_cid, None);
@@ -622,7 +593,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
             tracing::debug!(
                 field_name = %field_name,
                 cid = %field_cid,
-                is_counter = is_counter,
+                crdt = %crdt.ctype(),
                 has_prev_head = !heads.is_empty(),
                 "Stored field block and head"
             );
@@ -664,7 +635,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
     }
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority: composite_priority,
         status: 1,
     };
@@ -770,7 +741,7 @@ pub async fn write_delete_block(
     headstore: &NamespaceView,
     doc_id: &str,
     doc_short_id: u64,
-    schema_version_id: &str,
+    collection_version_id: &str,
     signing_config: Option<&SigningConfig>,
 ) -> Result<BlockResult, String> {
     write_delete_block_with_inputs(
@@ -778,7 +749,7 @@ pub async fn write_delete_block(
         headstore,
         doc_id,
         doc_short_id,
-        schema_version_id,
+        collection_version_id,
         signing_config,
         None,
         None,
@@ -794,7 +765,7 @@ pub(crate) async fn write_delete_block_with_inputs(
     headstore: &NamespaceView,
     doc_id: &str,
     doc_short_id: u64,
-    schema_version_id: &str,
+    collection_version_id: &str,
     signing_config: Option<&SigningConfig>,
     batch_session: Option<&str>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
@@ -810,7 +781,7 @@ pub(crate) async fn write_delete_block_with_inputs(
     let composite_heads = snapshot.field_heads("C");
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority,
         status: 2,
     };
@@ -887,4 +858,37 @@ fn encrypt_retry_delta(
         Some(inputs) => encrypt_delta_prepared(plaintext, key, inputs),
         None => encrypt_delta(plaintext, key),
     }
+}
+
+/// A fresh nonce for an update of an operation-based field, so equal
+/// operations stay distinct blocks. Drawn once per exact block input and
+/// memoized, so an attempt that runs again writes the same block.
+pub(crate) fn fresh_nonce<I>(
+    prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
+    block_input: I,
+) -> Result<i64, BuildError>
+where
+    I: serde::Serialize,
+{
+    let Some(inputs) = prepared_inputs else {
+        return Ok(rand::random());
+    };
+    let exact =
+        serde_json::to_vec(&block_input).map_err(|error| BuildError::Message(error.to_string()))?;
+    let request = query::prepared::PreparedInputRequest::new(
+        query::prepared::PreparedInputKind::Encryption,
+        exact,
+    );
+    let nonce = match inputs.get(&request) {
+        Some(nonce) => nonce,
+        None => {
+            let nonce: i64 = rand::random();
+            inputs.insert(request, std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()))
+        }
+    };
+    nonce
+        .as_ref()
+        .try_into()
+        .map(i64::from_be_bytes)
+        .map_err(|_| BuildError::Message("invalid prepared counter nonce".into()))
 }

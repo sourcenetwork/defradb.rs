@@ -2,7 +2,16 @@
 
 use cid::Cid;
 use defra_core::merge::MergeErrorDisposition;
-use document::NormalValue;
+
+/// A rejected history attempt and the exact cursor incarnation it observed.
+#[derive(Debug, thiserror::Error)]
+#[error("history {root} rejected: {reason}")]
+pub struct HistoryRejection {
+    pub(super) root: Cid,
+    pub(super) context: [u8; 32],
+    pub(super) generation: [u8; 16],
+    pub(super) reason: String,
+}
 
 /// Error type for database merge operations.
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +86,14 @@ pub enum MergeError {
     #[error("block signature verification failed for cid={cid}: {reason}")]
     SignatureVerificationFailed { cid: Cid, reason: String },
 
+    /// The caller must discard its shared transaction and resume per root.
+    #[error("history requires a resumable merge turn")]
+    HistoryRequired,
+
+    /// Discard the data attempt before recording a history's rejection.
+    #[error(transparent)]
+    HistoryAborted(Box<HistoryRejection>),
+
     /// DAG traversal depth limit exceeded.
     ///
     /// A maliciously crafted deeply-nested DAG could otherwise consume unbounded resources.
@@ -93,6 +110,33 @@ impl MergeError {
     /// Construct a `DepthExceeded` error.
     pub(crate) fn depth_exceeded(cid: &Cid, depth: usize) -> Self {
         MergeError::DepthExceeded { cid: *cid, depth }
+    }
+
+    /// Whether a parked block's replay failed for a reason of the block's
+    /// own, so the block fails and the replay goes on. A store error keeps
+    /// its class through the database and index errors that wrap it, and
+    /// stops the replay until the next build; a key this node does not hold
+    /// leaves the block parked ([`MergeError::needs_key`]).
+    pub fn fails_block(&self) -> bool {
+        match self {
+            MergeError::Storage(_) => false,
+            MergeError::Database(error) => !matches!(
+                error,
+                crate::error::Error::Storage(_) | crate::error::Error::Datastore(_)
+            ),
+            error => !error.needs_key(),
+        }
+    }
+
+    /// Whether merging a block needs a key this node does not hold: a parked
+    /// block stays parked, and the rest of the replay goes on.
+    pub fn needs_key(&self) -> bool {
+        matches!(
+            self,
+            MergeError::Kms(_)
+                | MergeError::NeedsDecryptionKey(_)
+                | MergeError::NeedsBatchDecryptionKey { .. }
+        )
     }
 
     /// Classify failures that cannot change while replaying the same block.
@@ -112,40 +156,10 @@ impl MergeError {
             | Self::Storage(_)
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
-            | Self::NeedsBatchDecryptionKey { .. } => MergeErrorDisposition::Retryable,
+            | Self::NeedsBatchDecryptionKey { .. }
+            | Self::HistoryRequired
+            | Self::HistoryAborted(_) => MergeErrorDisposition::Retryable,
         }
-    }
-}
-
-/// Result of processing an LWW delta, including whether it was applied
-/// and the value to use for document reconstruction.
-pub(crate) struct LwwMergeResult {
-    pub(crate) raw_value: Vec<u8>,
-    pub(crate) priority: u64,
-    /// Whether the merge was applied (vs rejected/skipped)
-    pub(crate) applied: bool,
-    /// The winning value for document reconstruction (if applied, use incoming; else read from store)
-    pub(crate) value: Option<NormalValue>,
-}
-
-/// Result of processing a Counter delta, including whether it was applied
-/// and the accumulated value for document reconstruction.
-pub struct CounterMergeResult {
-    /// Whether the merge was applied (vs skipped as already applied)
-    pub(crate) applied: bool,
-    /// The counter value after the merge
-    pub(crate) value: Option<NormalValue>,
-}
-
-impl CounterMergeResult {
-    /// True when the delta was applied rather than skipped as already applied.
-    pub fn applied(&self) -> bool {
-        self.applied
-    }
-
-    /// The counter's value after the merge, as the merging transaction sees it.
-    pub fn value(&self) -> Option<&NormalValue> {
-        self.value.as_ref()
     }
 }
 

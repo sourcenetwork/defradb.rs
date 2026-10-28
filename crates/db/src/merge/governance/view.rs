@@ -171,11 +171,10 @@ where
                     );
                     continue;
                 }
-                Some(field) => match &field.delta {
-                    CrdtDelta::Lww(payload) => decode(&payload.data),
-                    CrdtDelta::Counter(payload) => decode(&payload.data),
-                    _ => FieldValue::Undecodable,
-                },
+                Some(field) => field
+                    .delta
+                    .field()
+                    .map_or(FieldValue::Undecodable, |delta| decode(delta.data)),
             };
             fields.push((link.name.clone(), value));
         }

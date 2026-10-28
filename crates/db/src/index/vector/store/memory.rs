@@ -7,6 +7,7 @@
 
 use bytes::Bytes;
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 
 use defra_core::thread_bounds::MaybeSend;
 
@@ -19,6 +20,10 @@ pub struct MemoryNodeStore {
     nodes: BTreeMap<NodeId, Node>,
     meta: Option<Meta>,
     aux: BTreeMap<(u8, Vec<u8>), Bytes>,
+    /// The pending log's entries still held, by position.
+    log: BTreeMap<u64, Bytes>,
+    /// The newest position the log has given out.
+    head: u64,
 }
 
 impl MemoryNodeStore {
@@ -74,6 +79,7 @@ impl VectorNodeStore for MemoryNodeStore {
         self.nodes.clear();
         self.meta = None;
         self.aux.clear();
+        self.log.clear();
         Ok(())
     }
 
@@ -120,5 +126,45 @@ impl VectorNodeStore for MemoryNodeStore {
             visit(key, value)?;
         }
         Ok(())
+    }
+
+    /// One writer and no transactions: every append is committed at once, so
+    /// a store never has appends of its own to hand back.
+    async fn pending_log_head(&self) -> Result<u64> {
+        Ok(self.head)
+    }
+
+    async fn append_pending_log(&mut self, entry: &[u8]) -> Result<()> {
+        self.head += 1;
+        self.log.insert(self.head, Bytes::copy_from_slice(entry));
+        Ok(())
+    }
+
+    async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>> {
+        Ok(self.log.get(&position).cloned())
+    }
+
+    async fn iterate_pending_log<F>(&self, mut visit: F) -> Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> Result<ControlFlow<()>> + MaybeSend,
+    {
+        for (position, entry) in &self.log {
+            if visit(*position, entry)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn truncate_pending_log(&mut self, from: u64, through: u64) -> Result<()> {
+        if from <= through {
+            self.log
+                .retain(|position, _| !(from..=through).contains(position));
+        }
+        Ok(())
+    }
+
+    async fn pending_log_tail(&self) -> Result<Option<u64>> {
+        Ok(self.log.keys().next().copied())
     }
 }

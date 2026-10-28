@@ -4,6 +4,9 @@ use cid::Cid;
 
 use crate::ExplicitReplayAuthorization;
 
+/// The channel the sync coordinator emits its [`SyncEvent`]s on.
+pub type SyncEventReceiver = tokio::sync::mpsc::Receiver<SyncEvent>;
+
 /// Events emitted by the SyncManager for higher layers to process.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

@@ -336,7 +336,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             | TransportEvent::GossipRawMessage {
                 propagation_source, ..
             } => Err(Self::saturated_error(&propagation_source)),
-            TransportEvent::SEQueryRequest { peer_id, request } => {
+            TransportEvent::SEQueryRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply = crate::message::QuerySEArtifactsReply::error(
                     &request.message_id,
@@ -345,28 +349,36 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_se_query_response(&peer_id, reply)
+                    .send_se_query_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send SE query capacity nack");
                 }
                 Err(error)
             }
-            TransportEvent::ManageRequest { peer_id, request } => {
+            TransportEvent::ManageRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply =
                     crate::message::ManageReply::error(&request.message_id, AT_CAPACITY_MESSAGE);
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_manage_response(&peer_id, reply)
+                    .send_manage_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send management capacity nack");
                 }
                 Err(error)
             }
-            TransportEvent::ManageQueryRequest { peer_id, request } => {
+            TransportEvent::ManageQueryRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply = crate::message::ManageQueryReply::error(
                     &request.message_id,
@@ -375,7 +387,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_manage_query_response(&peer_id, reply)
+                    .send_manage_query_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send management query capacity nack");
@@ -904,7 +916,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"value".to_vec(),
             }),
             vec![],
@@ -918,7 +930,7 @@ mod tests {
     fn create_composite_block(_doc_id: &str, field_name: &str, field_cid: Cid) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority: 1,
                 status: 1,
             }),

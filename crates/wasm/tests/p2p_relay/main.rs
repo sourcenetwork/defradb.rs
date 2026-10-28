@@ -28,7 +28,7 @@ const SCHEMA: &str = "type Note { text: String }";
 
 #[wasm_bindgen_test]
 async fn a_browser_and_a_node_replicate_through_the_hosted_relay() {
-    node::add_schema(SCHEMA, None).await;
+    node::add_collection(SCHEMA, None).await;
     node::graphql(
         r#"mutation { create_Note(input: {text: "from-node"}) { _docID } }"#,
         None,

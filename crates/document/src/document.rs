@@ -2,8 +2,10 @@
 
 use cid::Cid;
 use rapidhash::{HashMapExt, RapidHashMap};
+use std::sync::Arc;
+
 use schema::{CType, CollectionVersion};
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 
 use crate::encoding::{
     canonical_cbor_key_order, cbor_to_normal_value, json_to_normal_value, normal_value_to_cbor,
@@ -11,7 +13,7 @@ use crate::encoding::{
 };
 use crate::error::{Error, Result};
 use crate::field::special::DOC_ID;
-use crate::{DocID, Field, FieldValue, NormalValue};
+use crate::{DocID, FieldOp, FieldValue, NormalValue};
 
 /// A document in DefraDB.
 ///
@@ -22,15 +24,11 @@ use crate::{DocID, Field, FieldValue, NormalValue};
 /// - A head CID representing the current state
 /// - Dirty tracking for unsaved changes
 /// - Schema version tracking for lens migrations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Document {
     /// The document ID (content-addressed)
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<DocID>,
-
-    /// Field definitions (name -> Field)
-    #[serde(skip)]
-    fields: RapidHashMap<String, Field>,
 
     /// Field values (field name -> FieldValue)
     values: RapidHashMap<String, FieldValue>,
@@ -43,11 +41,12 @@ pub struct Document {
     #[serde(skip)]
     is_dirty: bool,
 
-    /// The collection schema this document belongs to
+    /// The collection definition this document is built against. Field CRDT
+    /// types come only from here.
     #[serde(skip)]
-    collection: Option<CollectionVersion>,
+    collection: Arc<CollectionVersion>,
 
-    /// The schema version ID this document was stored with.
+    /// The collection version ID this document was stored with.
     ///
     /// This tracks which collection schema version was active when the document
     /// was created or last migrated. Used by the lens system to determine if
@@ -55,17 +54,17 @@ pub struct Document {
     ///
     /// Stored in the datastore at key `/{collectionShortID}/v/{docID}/v`.
     #[serde(skip)]
-    schema_version_id: Option<String>,
+    collection_version_id: Option<String>,
 
     /// Whether this document has been soft-deleted (marked with DeletedObjectMarker).
     #[serde(skip)]
     deleted: bool,
 
-    /// Raw counter increment deltas for update operations.
-    /// For counter CRDT fields, the block builder needs the raw increment
-    /// (not the accumulated value). Populated during UpdateInput::apply_to.
+    /// Operations a write applies on top of the field's stored state, keyed by
+    /// field. The block builder needs the operation itself (a counter's
+    /// increment), not the value it materializes to.
     #[serde(skip)]
-    counter_deltas: RapidHashMap<String, NormalValue>,
+    pending_ops: RapidHashMap<String, FieldOp>,
 
     #[serde(skip)]
     write_preparation: Option<std::sync::Arc<crate::WritePreparation>>,
@@ -86,71 +85,49 @@ impl Document {
         self.write_preparation = None;
     }
 
-    /// Create a new empty document.
-    pub fn new() -> Self {
+    /// Create a new empty document for a collection.
+    pub fn new(collection: impl Into<Arc<CollectionVersion>>) -> Self {
         Self {
             id: None,
-            fields: RapidHashMap::new(),
             values: RapidHashMap::new(),
             head: None,
             is_dirty: true,
-            collection: None,
-            schema_version_id: None,
+            collection: collection.into(),
+            collection_version_id: None,
             deleted: false,
-            counter_deltas: RapidHashMap::new(),
-            write_preparation: None,
-        }
-    }
-
-    /// Create a new document with a specific collection schema.
-    pub fn with_collection(collection: CollectionVersion) -> Self {
-        let version_id = collection.version_id.clone();
-        Self {
-            id: None,
-            fields: RapidHashMap::new(),
-            values: RapidHashMap::new(),
-            head: None,
-            is_dirty: true,
-            collection: Some(collection),
-            schema_version_id: Some(version_id),
-            deleted: false,
-            counter_deltas: RapidHashMap::new(),
+            pending_ops: RapidHashMap::new(),
             write_preparation: None,
         }
     }
 
     /// Create a new document with a specific ID.
-    pub fn with_id(id: DocID) -> Self {
-        Self {
-            id: Some(id),
-            fields: RapidHashMap::new(),
-            values: RapidHashMap::new(),
-            head: None,
-            is_dirty: true,
-            collection: None,
-            schema_version_id: None,
-            deleted: false,
-            counter_deltas: RapidHashMap::new(),
-            write_preparation: None,
-        }
+    pub fn with_id(id: DocID, collection: impl Into<Arc<CollectionVersion>>) -> Self {
+        let mut doc = Self::new(collection);
+        doc.id = Some(id);
+        doc
     }
 
     /// Create a document from a JSON byte slice.
-    pub fn from_json(json: &[u8]) -> Result<Self> {
+    pub fn from_json(json: &[u8], collection: impl Into<Arc<CollectionVersion>>) -> Result<Self> {
         let map: RapidHashMap<String, serde_json::Value> = serde_json::from_slice(json)?;
-        Self::from_map(map)
+        Self::from_map(map, collection)
     }
 
     /// Create a document from a JSON string.
-    pub fn from_json_str(json: &str) -> Result<Self> {
-        Self::from_json(json.as_bytes())
+    pub fn from_json_str(
+        json: &str,
+        collection: impl Into<Arc<CollectionVersion>>,
+    ) -> Result<Self> {
+        Self::from_json(json.as_bytes(), collection)
     }
 
     /// Create a document from a map of values.
-    pub fn from_map(mut map: RapidHashMap<String, serde_json::Value>) -> Result<Self> {
-        let mut doc = Document::new();
+    pub fn from_map(
+        mut map: RapidHashMap<String, serde_json::Value>,
+        collection: impl Into<Arc<CollectionVersion>>,
+    ) -> Result<Self> {
+        let mut doc = Document::new(collection);
 
-        // Check for special _docID field
         if let Some(id_value) = map.remove(DOC_ID) {
             if let Some(id_str) = id_value.as_str() {
                 doc.id = Some(DocID::from_string(id_str)?);
@@ -162,12 +139,8 @@ impl Document {
             }
         }
 
-        // Convert remaining fields
         for (key, value) in map {
-            let normal_value = json_to_normal_value(value)?;
-            let field = Field::lww(&key)?;
-            doc.fields.insert(key.clone(), field);
-            doc.values.insert(key, FieldValue::new_lww(normal_value));
+            doc.set(key, json_to_normal_value(value)?)?;
         }
 
         Ok(doc)
@@ -193,32 +166,32 @@ impl Document {
         self.head = Some(cid);
     }
 
-    /// Get the collection schema.
-    pub fn collection(&self) -> Option<&CollectionVersion> {
-        self.collection.as_ref()
+    /// Get the collection definition.
+    pub fn collection(&self) -> &Arc<CollectionVersion> {
+        &self.collection
     }
 
-    /// Set the collection schema.
-    pub fn set_collection(&mut self, collection: CollectionVersion) {
-        self.collection = Some(collection);
+    /// The CRDT type the collection definition gives a field.
+    pub fn crdt_type(&self, field: &str) -> Option<CType> {
+        self.collection.field_by_name(field).map(|f| f.crdt_type)
     }
 
-    /// Get the schema version ID this document was stored with.
+    /// Get the collection version ID this document was stored with.
     ///
     /// This is used by the lens migration system to determine if a document
     /// needs to be transformed to match the current collection schema version.
-    pub fn schema_version_id(&self) -> Option<&str> {
-        self.schema_version_id.as_deref()
+    pub fn collection_version_id(&self) -> Option<&str> {
+        self.collection_version_id.as_deref()
     }
 
-    /// Set the schema version ID.
+    /// Set the collection version ID.
     ///
     /// This should be called when:
     /// - Creating a new document (set to current collection version)
     /// - Loading a document from storage (set to stored version)
     /// - After migrating a document (set to target version)
-    pub fn set_schema_version_id(&mut self, version_id: impl Into<String>) {
-        self.schema_version_id = Some(version_id.into());
+    pub fn set_collection_version_id(&mut self, version_id: impl Into<String>) {
+        self.collection_version_id = Some(version_id.into());
     }
 
     /// Check if this document needs migration to the target schema version.
@@ -226,7 +199,7 @@ impl Document {
     /// Returns `true` if the document has a schema version that differs from
     /// the target, indicating lens transforms should be applied.
     pub fn needs_migration(&self, target_version_id: &str) -> bool {
-        match &self.schema_version_id {
+        match &self.collection_version_id {
             Some(version) => version != target_version_id,
             // If no version is set, assume it's already at target (legacy behavior)
             None => false,
@@ -283,53 +256,47 @@ impl Document {
         Some(value)
     }
 
-    /// Set a field value.
-    pub fn set(&mut self, field: impl Into<String>, value: impl Into<NormalValue>) {
+    /// Set a field value. The field must exist in the collection definition,
+    /// which also gives the field its CRDT type. A relation is set from its
+    /// primary side only, as in Go.
+    pub fn set(&mut self, field: impl Into<String>, value: impl Into<NormalValue>) -> Result<()> {
         let field_name = field.into();
-        let normal_value = value.into();
-
-        // Create or update the field
-        if !self.fields.contains_key(&field_name) {
-            self.fields
-                .insert(field_name.clone(), Field::lww_unchecked(&field_name));
+        let definition = self
+            .collection
+            .field_by_name(&field_name)
+            .ok_or_else(|| Error::FieldNotExist(field_name.clone()))?;
+        if definition.kind.is_relation() && !definition.is_primary {
+            return Err(Error::CannotSetRelationFromSecondarySide(field_name));
         }
-
-        // Set the value
-        if let Some(fv) = self.values.get_mut(&field_name) {
-            fv.set_value(normal_value);
-        } else {
-            self.values
-                .insert(field_name, FieldValue::new_lww(normal_value));
-        }
-
-        self.is_dirty = true;
-    }
-
-    /// Set a field value with a specific CRDT type.
-    ///
-    /// Returns an error if:
-    /// - The field name is empty
-    /// - The value type is incompatible with the CRDT type
-    pub fn set_with_crdt(
-        &mut self,
-        field: impl Into<String>,
-        crdt_type: CType,
-        value: impl Into<NormalValue>,
-    ) -> Result<()> {
-        let field_name = field.into();
-        let normal_value = value.into();
-
-        let field_def = Field::new(&field_name, crdt_type)?;
-        let field_value = FieldValue::new(crdt_type, normal_value)?;
-        self.fields.insert(field_name.clone(), field_def);
+        let crdt_type = definition.crdt_type;
+        let field_value = FieldValue::new(crdt_type, value.into())?;
+        self.pending_ops.remove(&field_name);
         self.values.insert(field_name, field_value);
         self.is_dirty = true;
         Ok(())
     }
 
+    /// Insert a value decoded from storage. Reads never fail on a field the
+    /// current definition lacks (data written under an older schema version);
+    /// such a field is kept by name with no CRDT type.
+    pub fn load(&mut self, field: String, value: NormalValue) {
+        let crdt_type = self.crdt_type(&field).unwrap_or(CType::None);
+        self.values
+            .insert(field, FieldValue::loaded(crdt_type, value));
+    }
+
+    /// Set a value the definition has not vouched for, as a lens or a
+    /// migration produces it: kept dirty, never checked against the definition.
+    pub fn set_unchecked(&mut self, field: String, value: NormalValue) {
+        self.load(field.clone(), value);
+        if let Some(fv) = self.values.get_mut(&field) {
+            fv.mark_dirty();
+        }
+        self.is_dirty = true;
+    }
+
     /// Remove a field from the document.
     pub fn remove(&mut self, field: &str) -> Option<FieldValue> {
-        self.fields.remove(field);
         let result = self.values.remove(field);
         if result.is_some() {
             self.is_dirty = true;
@@ -342,24 +309,38 @@ impl Document {
         self.values.keys().map(|s| s.as_str())
     }
 
-    /// Get all fields.
-    pub fn fields(&self) -> &RapidHashMap<String, Field> {
-        &self.fields
-    }
-
     /// Get all values.
     pub fn values(&self) -> &RapidHashMap<String, FieldValue> {
         &self.values
     }
 
-    /// Store a raw counter increment delta for a field.
-    pub fn set_counter_delta(&mut self, field: String, value: NormalValue) {
-        self.counter_deltas.insert(field, value);
+    /// Express an operation on a field. The field must exist in the collection
+    /// definition. `Set` writes the value, as [`Document::set`] does. Any other
+    /// operation follows the field's pending operation ([`FieldOp::then`]) and
+    /// leaves its value alone: the caller holds the type's arithmetic and sets the value the
+    /// operation materializes to.
+    pub fn edit(&mut self, field: impl Into<String>, op: FieldOp) -> Result<()> {
+        let field = field.into();
+        match op {
+            FieldOp::Set(value) => self.set(field, value),
+            op => {
+                if self.crdt_type(&field).is_none() {
+                    return Err(Error::FieldNotExist(field));
+                }
+                let op = match self.pending_ops.remove(&field) {
+                    Some(pending) => pending.then(op),
+                    None => op,
+                };
+                self.pending_ops.insert(field, op);
+                self.is_dirty = true;
+                Ok(())
+            }
+        }
     }
 
-    /// Get the raw counter increment delta for a field (if any).
-    pub fn get_counter_delta(&self, field: &str) -> Option<&NormalValue> {
-        self.counter_deltas.get(field)
+    /// The operation this write applies to a field on top of its stored state.
+    pub fn pending_op(&self, field: &str) -> Option<&FieldOp> {
+        self.pending_ops.get(field)
     }
 
     /// Get all dirty fields.
@@ -432,7 +413,7 @@ impl Document {
     ///
     /// This decodes only the values. The document will have no ID, head, or collection set.
     /// The document is marked as clean (not dirty) since it was loaded from storage.
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
+    pub fn from_cbor(bytes: &[u8], collection: impl Into<Arc<CollectionVersion>>) -> Result<Self> {
         let cbor_map: ciborium::Value =
             ciborium::from_reader(bytes).map_err(|e| Error::CborDecode(e.to_string()))?;
 
@@ -441,7 +422,7 @@ impl Document {
             _ => return Err(Error::CborDecode("expected CBOR map".into())),
         };
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(collection);
         doc.is_dirty = false; // Loaded from storage, not dirty
 
         for (k, v) in map {
@@ -451,13 +432,10 @@ impl Document {
             };
 
             let normal_value = cbor_to_normal_value(v)?;
-            // Data from storage was previously validated
-            let field = Field::lww_unchecked(&key);
-            doc.fields.insert(key.clone(), field);
-            doc.values
-                .insert(key, FieldValue::new_clean_lww(normal_value));
+            doc.load(key, normal_value);
         }
 
+        doc.clean();
         Ok(doc)
     }
 
@@ -477,9 +455,14 @@ impl Document {
     }
 }
 
-impl Default for Document {
-    fn default() -> Self {
-        Self::new()
+impl<'de> Deserialize<'de> for Document {
+    fn deserialize<D>(_: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Err(de::Error::custom(
+            "a document is built against its collection definition and cannot be deserialized without one",
+        ))
     }
 }
 

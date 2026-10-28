@@ -5,7 +5,7 @@ use super::*;
 use events::{Message, Update};
 use storage::corekv::OnCommit;
 
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 use query::runner::DocFetcher;
 
 struct UpdateRetryAttempt<S: Store> {
@@ -207,7 +207,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let io = retry
             .begin_attempt_io()
             .map_err(|error| crate::error::commit_query_error(error.into()))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
         let txn = self.db.new_db_txn(basic_txn);
         let collection = txn
             .load_collection_for_write_attempt(&attempt.collection_name, &attempt.collection)
@@ -229,10 +229,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // its writes decide on in this run.
         let run = query::update_parts::Run::after(lost.as_ref());
         let mut dependencies = run.written(
+            collection.crdts(),
             collection.schema(),
             collection.write_indexes(),
             &attempt.modified_fields,
-            |field| attempt.input.get_counter_delta(field).is_some(),
+            |field| attempt.input.pending_op(field).is_some(),
         );
         dependencies.extend(attempt.expected_fields.iter().flatten().cloned());
         let projected = attempt.expected.is_none() || attempt.expected_fields.is_some();
@@ -292,16 +293,20 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let unchanged_skips = attempt.context.encryption().is_none() && !downsample_source;
         if unchanged_skips {
             modified_fields.retain(|field| {
-                attempt.input.get_counter_delta(field).is_some()
+                attempt.input.pending_op(field).is_some()
                     || (projected && !dependencies.contains(field))
                     || attempt.input.get(field) != current_doc.get(field)
             });
         }
         for field in &modified_fields {
-            if let Some(delta) = attempt.input.get_counter_delta(field).cloned() {
-                current_doc.set_counter_delta(field.clone(), delta);
+            if let Some(op) = attempt.input.pending_op(field).cloned() {
+                current_doc
+                    .edit(field.clone(), op)
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
             } else if let Some(value) = attempt.input.get(field).cloned() {
-                current_doc.set(field.clone(), value);
+                current_doc
+                    .set(field.clone(), value)
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
             }
         }
         if let Some(prepared) = attempt.input.write_preparation().cloned() {
@@ -356,6 +361,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         .map_err(|error| {
             query::error::QueryError::execution(format!("failed to create index manager: {error}"))
         })?;
+        let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
         let result: query::error::Result<(Document, usize, Cid, Bytes, Option<(Cid, Bytes)>)> =
             async {
                 self.db
@@ -387,7 +393,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     &headstore,
                     &current_doc,
                     collection.schema(),
-                    DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id),
+                    DocRef::new(collection.resolved_root_id(), doc_short_id),
                     Some(&modified_fields),
                     attempt.context.encryption(),
                     attempt.context.signing(),

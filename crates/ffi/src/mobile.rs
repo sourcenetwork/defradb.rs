@@ -14,7 +14,7 @@ use crate::nac_check::check_nac_for_node;
 use crate::node::{new_node, node_close};
 use crate::p2p::{
     new_node_with_p2p, p2p_add_replicator_with_filter, p2p_connect, p2p_disconnect,
-    p2p_notify_network_change, p2p_peer_info, p2p_shareable_address,
+    p2p_notify_network_change, p2p_peer_details, p2p_peer_info, p2p_shareable_address,
     p2p_sync_branchable_collection, p2p_sync_collection_versions, p2p_sync_documents,
     p2p_sync_status,
 };
@@ -539,6 +539,19 @@ pub extern "C" fn defra_mobile_sync_status(node_ptr: usize) -> FfiResult {
             Err(error) => return FfiResult::error(error),
         };
         unsafe { p2p_sync_status(node_ptr, c_string_ptr(&identity)) }
+    }
+}
+
+/// Return everything the node knows about one peer as JSON.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn defra_mobile_peer_details(node_ptr: usize, peer_id: *const c_char) -> FfiResult {
+    ffi_entry! {
+        let identity = match default_identity_cstring(node_ptr) {
+            Ok(value) => value,
+            Err(error) => return FfiResult::error(error),
+        };
+        unsafe { p2p_peer_details(node_ptr, c_string_ptr(&identity), peer_id) }
     }
 }
 

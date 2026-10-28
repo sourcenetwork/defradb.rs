@@ -45,7 +45,7 @@ pub(super) fn normal_value_to_time(value: &NormalValue) -> Option<DateTime<Fixed
         .or_else(|| value.as_str().and_then(document::parse_rfc3339))
 }
 
-fn decode_commit_delta_value(commit: &document::Document) -> Option<NormalValue> {
+fn decode_commit_delta_value(commit: &document::CommitRow) -> Option<NormalValue> {
     use base64::Engine;
 
     let delta_base64 = commit.get("delta")?.as_str()?;
@@ -59,14 +59,14 @@ pub(super) fn scalar_kind_name(kind: ScalarKind) -> &'static str {
     match kind.base_kind() {
         ScalarKind::None => "None",
         ScalarKind::DocID => "DocID",
-        ScalarKind::Bool => "Bool",
-        ScalarKind::Int => "Int",
-        ScalarKind::Float64 => "Float",
-        ScalarKind::Float32 => "Float32",
-        ScalarKind::DateTime => "DateTime",
-        ScalarKind::String => "String",
-        ScalarKind::Blob => "Blob",
-        ScalarKind::Json => "JSON",
+        ScalarKind::NillableBool => "Bool",
+        ScalarKind::NillableInt => "Int",
+        ScalarKind::NillableFloat64 => "Float",
+        ScalarKind::NillableFloat32 => "Float32",
+        ScalarKind::NillableDateTime => "DateTime",
+        ScalarKind::NillableString => "String",
+        ScalarKind::NillableBlob => "Blob",
+        ScalarKind::NillableJson => "JSON",
         _ => unreachable!(),
     }
 }
@@ -300,7 +300,7 @@ pub(super) fn parse_downsample_source_query(
 }
 
 pub(super) fn group_commit_values_by_height(
-    commits: Vec<document::Document>,
+    commits: Vec<document::CommitRow>,
     fields: &RapidHashSet<&str>,
 ) -> BTreeMap<u64, RapidHashMap<String, NormalValue>> {
     let mut values_by_height: BTreeMap<u64, RapidHashMap<String, NormalValue>> = BTreeMap::new();
@@ -343,15 +343,15 @@ pub(super) fn numeric_value_to_normal_value(
         ))
     })?;
     match field.kind.as_scalar().map(ScalarKind::base_kind) {
-        Some(ScalarKind::Int) => match value {
+        Some(ScalarKind::NillableInt) => match value {
             NumericValue::Int(value) => Ok(NormalValue::Int(value)),
             NumericValue::Float(_) => Err(Error::Other(format!(
                 "downsample field '{}.{}' can not store floating-point values",
                 collection.name, field_name
             ))),
         },
-        Some(ScalarKind::Float32) => Ok(NormalValue::Float32(value.as_f64() as f32)),
-        Some(ScalarKind::Float64) => Ok(NormalValue::Float64(value.as_f64())),
+        Some(ScalarKind::NillableFloat32) => Ok(NormalValue::Float32(value.as_f64() as f32)),
+        Some(ScalarKind::NillableFloat64) => Ok(NormalValue::Float64(value.as_f64())),
         _ => Err(Error::Other(format!(
             "downsample field '{}.{}' must be numeric",
             collection.name, field_name
@@ -371,8 +371,8 @@ pub(super) fn average_value_to_normal_value(
         ))
     })?;
     match field.kind.as_scalar().map(ScalarKind::base_kind) {
-        Some(ScalarKind::Float32) => Ok(NormalValue::Float32(value as f32)),
-        Some(ScalarKind::Float64) => Ok(NormalValue::Float64(value)),
+        Some(ScalarKind::NillableFloat32) => Ok(NormalValue::Float32(value as f32)),
+        Some(ScalarKind::NillableFloat64) => Ok(NormalValue::Float64(value)),
         _ => Err(Error::Other(format!(
             "downsample field '{}.{}' must be Float or Float32",
             collection.name, field_name

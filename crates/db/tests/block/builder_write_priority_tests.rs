@@ -19,69 +19,72 @@ async fn block(blockstore: &NamespaceView, cid: &Cid) -> Block {
     Block::from_dag_cbor(&bytes).unwrap()
 }
 
-#[tokio::test]
-async fn field_priority_is_independent_of_sibling_updates() {
-    let store = RegolithStore::in_memory().unwrap();
-    let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
-    let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
-    let headstore = NamespaceView::new(shared, Namespace::Headstore);
-    let identity = DocStorageIdentity::new(1, 1);
+#[test]
+fn field_priority_is_independent_of_sibling_updates() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(false).await.unwrap();
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
+        let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
+        let headstore = NamespaceView::new(shared, Namespace::Headstore);
+        let identity = DocRef::new(1, 1);
 
-    let mut doc = Document::new();
-    doc.set("a", NormalValue::Int(1));
-    doc.set("b", NormalValue::Int(1));
-    let created = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
+        let mut doc = Document::new(crate::common::schema::open_collection(&["a", "b"]));
+        doc.set("a", NormalValue::Int(1)).unwrap();
+        doc.set("b", NormalValue::Int(1)).unwrap();
+        let created = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
 
-    doc.set("a", NormalValue::Int(2));
-    write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        Some(&RapidHashSet::from_iter(["a".to_string()])),
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+        doc.set("a", NormalValue::Int(2)).unwrap();
+        write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            Some(&RapidHashSet::from_iter(["a".to_string()])),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-    doc.set("b", NormalValue::Int(2));
-    let updated = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        Some(&RapidHashSet::from_iter(["b".to_string()])),
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+        doc.set("b", NormalValue::Int(2)).unwrap();
+        let updated = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            Some(&RapidHashSet::from_iter(["b".to_string()])),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(
-        block(&blockstore, &updated.field_cids[0])
-            .await
-            .delta
-            .priority(),
-        2
-    );
-    assert_eq!(block(&blockstore, &updated.cid).await.delta.priority(), 3);
+        assert_eq!(
+            block(&blockstore, &updated.field_cids[0])
+                .await
+                .delta
+                .priority(),
+            2
+        );
+        assert_eq!(block(&blockstore, &updated.cid).await.delta.priority(), 3);
+    })
+    .unwrap()
 }

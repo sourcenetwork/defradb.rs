@@ -82,192 +82,219 @@ pub fn all(count: usize) -> RapidHashSet<u64> {
     (1..=count as u64).collect()
 }
 
-#[tokio::test]
-async fn an_untrained_index_is_exact() {
-    let (vectors, queries) = corpus();
-    let small = &vectors[..200];
-    let mut index = index();
-    for (i, vector) in small.iter().enumerate() {
-        index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
-    }
-    assert!(!index.should_build().await.unwrap());
-    assert!(index.state().await.unwrap().is_none());
-    assert_eq!(
-        recall(&index, small, &all(small.len()), &queries).await,
-        1.0
-    );
+#[test]
+fn an_untrained_index_is_exact() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let small = &vectors[..200];
+        let mut index = index();
+        for (i, vector) in small.iter().enumerate() {
+            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
+        }
+        assert!(!index.should_build().await.unwrap());
+        assert!(index.state().await.unwrap().is_none());
+        assert_eq!(
+            recall(&index, small, &all(small.len()), &queries).await,
+            1.0
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_trained_graph_meets_the_recall_gate() {
-    let (vectors, queries) = corpus();
-    let index = built(&vectors).await;
-    let state = index.state().await.unwrap().expect("trained");
-    assert_eq!(state.live, CORPUS as u64);
-    assert_eq!(state.m, 8);
+#[test]
+fn a_trained_graph_meets_the_recall_gate() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let index = built(&vectors).await;
+        let state = index.state().await.unwrap().expect("trained");
+        assert_eq!(state.live, CORPUS as u64);
+        assert_eq!(state.m, 8);
 
-    let recall = recall(&index, &vectors, &all(CORPUS), &queries).await;
-    assert!(recall >= 0.9, "recall@{K} is {recall}");
+        let recall = recall(&index, &vectors, &all(CORPUS), &queries).await;
+        assert!(recall >= 0.9, "recall@{K} is {recall}");
+    })
+    .unwrap()
 }
 
 /// The memory bound rests on this: a record never holds more than the slack
 /// limit of edges, so one read and one record's codes rank any hop. Back-edges
 /// may grow a record past `R` without a re-prune, which is what keeps an insert
 /// from pruning every full neighbour it links to.
-#[tokio::test]
-async fn records_stay_within_the_slack_limit() {
-    let (vectors, _) = corpus();
-    let index = built(&vectors).await;
-    let m = index.state().await.unwrap().unwrap().m as usize;
-    let limit = params().slack_limit();
-    let r = params().r as usize;
-    assert!(limit > r);
-    let (mut records, mut over_r) = (0, 0);
-    index
-        .store()
-        .iterate_aux(codec::GRAPH, b"", |_, value| {
-            let record = codec::decode_record(value, m)?;
-            assert!(record.neighbors.len() <= limit);
-            assert!(
-                !record.neighbors.is_empty(),
-                "an isolated node is unreachable"
-            );
-            records += 1;
-            over_r += usize::from(record.neighbors.len() > r);
-            Ok(())
-        })
-        .await
-        .unwrap();
-    assert_eq!(records, CORPUS);
-    assert!(over_r > 0, "no record used its slack");
+#[test]
+fn records_stay_within_the_slack_limit() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let index = built(&vectors).await;
+        let m = index.state().await.unwrap().unwrap().m as usize;
+        let limit = params().slack_limit();
+        let r = params().r as usize;
+        assert!(limit > r);
+        let (mut records, mut over_r) = (0, 0);
+        index
+            .store()
+            .iterate_aux(codec::GRAPH, b"", |_, value| {
+                let record = codec::decode_record(value, m)?;
+                assert!(record.neighbors.len() <= limit);
+                assert!(
+                    !record.neighbors.is_empty(),
+                    "an isolated node is unreachable"
+                );
+                records += 1;
+                over_r += usize::from(record.neighbors.len() > r);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(records, CORPUS);
+        assert!(over_r > 0, "no record used its slack");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_insert_after_training_is_found() {
-    let (vectors, _) = corpus();
-    let mut index = built(&vectors).await;
-    let fresh = crate::support::Corpus::new(0xF2E5).vector(DIMENSIONS);
-    let id = NodeId(CORPUS as u64 + 1);
-    index.insert(id, &fresh).await.unwrap();
+#[test]
+fn an_insert_after_training_is_found() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let mut index = built(&vectors).await;
+        let fresh = crate::support::Corpus::new(0xF2E5).vector(DIMENSIONS);
+        let id = NodeId(CORPUS as u64 + 1);
+        index.insert(id, &fresh).await.unwrap();
 
-    let hits = index.search(fresh.as_slice(), K, None).await.unwrap();
-    assert_eq!(hits[0].id, id, "a vector is nearest itself");
-    assert_eq!(
-        index.state().await.unwrap().unwrap().live,
-        CORPUS as u64,
-        "the insert is pending, not in the graph yet"
-    );
-    assert_eq!(count(&index, codec::PENDING).await, 1);
+        let hits = index.search(fresh.as_slice(), K, None).await.unwrap();
+        assert_eq!(hits[0].id, id, "a vector is nearest itself");
+        assert_eq!(
+            index.state().await.unwrap().unwrap().live,
+            CORPUS as u64,
+            "the insert is pending, not in the graph yet"
+        );
+        assert_eq!(pending(&index).await, 1);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_reinsert_replaces_the_vector() {
-    let (vectors, _) = corpus();
-    let mut index = built(&vectors).await;
-    let moved = crate::support::Corpus::new(0x40FE).vector(DIMENSIONS);
-    index.insert(NodeId(7), &moved).await.unwrap();
+#[test]
+fn a_reinsert_replaces_the_vector() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let mut index = built(&vectors).await;
+        let moved = crate::support::Corpus::new(0x40FE).vector(DIMENSIONS);
+        index.insert(NodeId(7), &moved).await.unwrap();
 
-    let hits = index.search(moved.as_slice(), 1, None).await.unwrap();
-    assert_eq!(hits[0].id, NodeId(7));
-    assert_eq!(
-        index.state().await.unwrap().unwrap().live,
-        CORPUS as u64,
-        "a re-insert is not a new node"
-    );
+        let hits = index.search(moved.as_slice(), 1, None).await.unwrap();
+        assert_eq!(hits[0].id, NodeId(7));
+        assert_eq!(
+            index.state().await.unwrap().unwrap().live,
+            CORPUS as u64,
+            "a re-insert is not a new node"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn deletes_are_never_returned_and_consolidate() {
-    let (vectors, queries) = corpus();
-    let mut index = built(&vectors).await;
-    let mut live = all(CORPUS);
-    for id in (1..=CORPUS as u64).step_by(5) {
-        assert!(index.delete(NodeId(id)).await.unwrap());
-        live.remove(&id);
-    }
-    for query in &queries {
-        for hit in index.search(query.as_slice(), K, None).await.unwrap() {
-            assert!(live.contains(&hit.id.0), "returned deleted {:?}", hit.id);
+#[test]
+fn deletes_are_never_returned_and_consolidate() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let mut index = built(&vectors).await;
+        let mut live = all(CORPUS);
+        for id in (1..=CORPUS as u64).step_by(5) {
+            assert!(index.delete(NodeId(id)).await.unwrap());
+            live.remove(&id);
         }
-    }
+        for query in &queries {
+            for hit in index.search(query.as_slice(), K, None).await.unwrap() {
+                assert!(live.contains(&hit.id.0), "returned deleted {:?}", hit.id);
+            }
+        }
 
-    assert!(
-        index.should_build().await.unwrap(),
-        "a fifth deleted is due"
-    );
-    index.build().await.unwrap();
-    let state = index.state().await.unwrap().unwrap();
-    assert_eq!(state.live, live.len() as u64);
-    assert_eq!(count(&index, codec::DELETED).await, 0);
-    assert!(!index.should_build().await.unwrap());
+        assert!(
+            index.should_build().await.unwrap(),
+            "a fifth deleted is due"
+        );
+        index.build().await.unwrap();
+        let state = index.state().await.unwrap().unwrap();
+        assert_eq!(state.live, live.len() as u64);
+        assert_eq!(count(&index, codec::DELETED).await, 0);
+        assert!(!index.should_build().await.unwrap());
 
-    let recall = recall(&index, &vectors, &live, &queries).await;
-    assert!(recall >= 0.9, "recall@{K} after consolidation is {recall}");
+        let recall = recall(&index, &vectors, &live, &queries).await;
+        assert!(recall >= 0.9, "recall@{K} after consolidation is {recall}");
+    })
+    .unwrap()
 }
 
 /// FreshVamana's claim (paper Fig. 2): with `alpha > 1`, recall holds across
 /// repeated cycles of deleting and re-inserting a slice of the index.
-#[tokio::test]
-async fn recall_is_stable_across_update_cycles() {
-    let (vectors, queries) = corpus();
-    let mut index = built(&vectors).await;
-    let live = all(CORPUS);
-    let first = recall(&index, &vectors, &live, &queries).await;
+#[test]
+fn recall_is_stable_across_update_cycles() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let mut index = built(&vectors).await;
+        let live = all(CORPUS);
+        let first = recall(&index, &vectors, &live, &queries).await;
 
-    for cycle in 0..5u64 {
-        let slice: Vec<u64> = (1..=CORPUS as u64)
-            .filter(|id| (id + cycle) % 10 == 0)
-            .collect();
-        for id in &slice {
-            index.delete(NodeId(*id)).await.unwrap();
+        for cycle in 0..5u64 {
+            let slice: Vec<u64> = (1..=CORPUS as u64)
+                .filter(|id| (id + cycle) % 10 == 0)
+                .collect();
+            for id in &slice {
+                index.delete(NodeId(*id)).await.unwrap();
+            }
+            index.build().await.unwrap();
+            for id in &slice {
+                index
+                    .insert(NodeId(*id), &vectors[*id as usize - 1])
+                    .await
+                    .unwrap();
+            }
+            let now = recall(&index, &vectors, &live, &queries).await;
+            assert!(
+                now >= first - 0.05,
+                "cycle {cycle}: recall fell from {first} to {now}"
+            );
         }
-        index.build().await.unwrap();
-        for id in &slice {
-            index
-                .insert(NodeId(*id), &vectors[*id as usize - 1])
+    })
+    .unwrap()
+}
+
+#[test]
+fn filtered_search_returns_only_admitted_nodes() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let index = built(&vectors).await;
+        let even = |id: NodeId| id.0.is_multiple_of(2);
+        for query in &queries {
+            let hits = index
+                .search_where(query.as_slice(), K, None, &even)
                 .await
                 .unwrap();
+            assert_eq!(hits.len(), K);
+            assert!(hits.iter().all(|hit| even(hit.id)));
         }
-        let now = recall(&index, &vectors, &live, &queries).await;
-        assert!(
-            now >= first - 0.05,
-            "cycle {cycle}: recall fell from {first} to {now}"
-        );
-    }
-}
 
-#[tokio::test]
-async fn filtered_search_returns_only_admitted_nodes() {
-    let (vectors, queries) = corpus();
-    let index = built(&vectors).await;
-    let even = |id: NodeId| id.0.is_multiple_of(2);
-    for query in &queries {
+        // Too selective for the walk to fill `K`: the exact scan answers instead.
+        let only = |id: NodeId| id.0 == 42;
         let hits = index
-            .search_where(query.as_slice(), K, None, &even)
+            .search_where(queries[0].as_slice(), K, None, &only)
             .await
             .unwrap();
-        assert_eq!(hits.len(), K);
-        assert!(hits.iter().all(|hit| even(hit.id)));
-    }
-
-    // Too selective for the walk to fill `K`: the exact scan answers instead.
-    let only = |id: NodeId| id.0 == 42;
-    let hits = index
-        .search_where(queries[0].as_slice(), K, None, &only)
-        .await
-        .unwrap();
-    assert_eq!(hits.iter().map(|h| h.id).collect::<Vec<_>>(), [NodeId(42)]);
+        assert_eq!(hits.iter().map(|h| h.id).collect::<Vec<_>>(), [NodeId(42)]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_query_of_the_wrong_width_is_refused() {
-    let (vectors, _) = corpus();
-    let index = built(&vectors).await;
-    let err = index
-        .search(&[1.0f32; DIMENSIONS + 1], K, None)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("dimension"), "got: {err}");
+#[test]
+fn a_query_of_the_wrong_width_is_refused() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let index = built(&vectors).await;
+        let err = index
+            .search(&[1.0f32; DIMENSIONS + 1], K, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("dimension"), "got: {err}");
+    })
+    .unwrap()
 }
 
 #[test]
@@ -348,6 +375,34 @@ impl VectorNodeStore for Counting {
     async fn delete_aux(&mut self, kind: u8, key: &[u8]) -> db::index::error::Result<()> {
         self.inner.delete_aux(kind, key).await
     }
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(
         &self,
         kind: u8,
@@ -364,89 +419,92 @@ impl VectorNodeStore for Counting {
 /// A walk's memory must not grow with the corpus. Rewire the graph into a
 /// chain where each node's only edge leads somewhere nearer the query: an
 /// unbounded walk follows it through every node even at `L = 1`.
-#[tokio::test]
-async fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
-    use db::index::vector::engine::ivf;
-    use db::index::vector::quantize::{ProductQuantizer, Quantizer};
-    use std::sync::atomic::Ordering;
+#[test]
+fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
+    workers::block_on(async {
+        use db::index::vector::engine::ivf;
+        use db::index::vector::quantize::{ProductQuantizer, Quantizer};
+        use std::sync::atomic::Ordering;
 
-    let (vectors, queries) = corpus();
-    let store = Counting {
-        inner: MemoryNodeStore::new(),
-        record_reads: Default::default(),
-    };
-    let mut index = DiskAnn::try_new(store, Metric::Cosine, params(), SEED).unwrap();
-    for (i, vector) in vectors.iter().enumerate() {
-        index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
-    }
-    index.build().await.unwrap();
-    let mut state = index.state().await.unwrap().unwrap();
-    let m = state.m as usize;
-
-    let mut books = Vec::new();
-    for sub in 0..state.m {
-        let bytes = index
-            .store()
-            .get_aux(codec::CODEBOOK, &sub.to_be_bytes())
-            .await
-            .unwrap()
-            .unwrap();
-        books.push(ivf::decode_centroids(&bytes).unwrap());
-    }
-    let pq = ProductQuantizer::from_books(DIMENSIONS, books).unwrap();
-    let query = Metric::Cosine.prepare(&queries[0]);
-    let table = pq.distance_table(&query);
-
-    let mut codes = Vec::new();
-    index
-        .store()
-        .iterate_aux(codec::GRAPH, b"", |key, value| {
-            let record = codec::decode_record(value, m)?;
-            codes.push((codec::id_from_key(key)?, record.code));
-            Ok(())
-        })
-        .await
-        .unwrap();
-    // Farthest first, so every hop is an improvement and the walk never stops
-    // on its own.
-    codes.sort_by(|a, b| {
-        pq.distance(&table, &b.1)
-            .total_cmp(&pq.distance(&table, &a.1))
-    });
-    for pair in codes.windows(2) {
-        let record = codec::Record {
-            code: pair[0].1.clone(),
-            neighbors: vec![(pair[1].0, pair[1].1.clone())],
+        let (vectors, queries) = corpus();
+        let store = Counting {
+            inner: MemoryNodeStore::new(),
+            record_reads: Default::default(),
         };
+        let mut index = DiskAnn::try_new(store, Metric::Cosine, params(), SEED).unwrap();
+        for (i, vector) in vectors.iter().enumerate() {
+            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
+        }
+        index.build().await.unwrap();
+        let mut state = index.state().await.unwrap().unwrap();
+        let m = state.m as usize;
+
+        let mut books = Vec::new();
+        for sub in 0..state.m {
+            let bytes = index
+                .store()
+                .get_aux(codec::CODEBOOK, &sub.to_be_bytes())
+                .await
+                .unwrap()
+                .unwrap();
+            books.push(ivf::decode_centroids(&bytes).unwrap());
+        }
+        let pq = ProductQuantizer::from_books(DIMENSIONS, books).unwrap();
+        let query = Metric::Cosine.prepare(&queries[0]);
+        let table = pq.distance_table(&query);
+
+        let mut codes = Vec::new();
+        index
+            .store()
+            .iterate_aux(codec::GRAPH, b"", |key, value| {
+                let record = codec::decode_record(value, m)?;
+                codes.push((codec::id_from_key(key)?, record.code));
+                Ok(())
+            })
+            .await
+            .unwrap();
+        // Farthest first, so every hop is an improvement and the walk never stops
+        // on its own.
+        codes.sort_by(|a, b| {
+            pq.distance(&table, &b.1)
+                .total_cmp(&pq.distance(&table, &a.1))
+        });
+        for pair in codes.windows(2) {
+            let record = codec::Record {
+                code: pair[0].1.clone(),
+                neighbors: vec![(pair[1].0, pair[1].1.clone())],
+            };
+            index
+                .store_mut()
+                .put_aux(
+                    codec::GRAPH,
+                    &codec::record_key(pair[0].0),
+                    &codec::encode_record(&record),
+                )
+                .await
+                .unwrap();
+        }
+        state.entry = Some(codes[0].0);
         index
             .store_mut()
             .put_aux(
-                codec::GRAPH,
-                &codec::record_key(pair[0].0),
-                &codec::encode_record(&record),
+                codec::GRAPH_STATE,
+                b"",
+                &codec::encode_graph_state(&state.graph()),
             )
             .await
             .unwrap();
-    }
-    state.entry = Some(codes[0].0);
-    index
-        .store_mut()
-        .put_aux(
-            codec::GRAPH_STATE,
-            b"",
-            &codec::encode_graph_state(&state.graph()),
-        )
-        .await
-        .unwrap();
 
-    index.store().record_reads.store(0, Ordering::Relaxed);
-    index.search(query.as_slice(), 1, Some(1)).await.unwrap();
-    let reads = index.store().record_reads.load(Ordering::Relaxed);
-    let budget = params().walk_budget(1);
-    assert!(
-        reads <= budget + 1,
-        "a walk at L = 1 read {reads} records of {CORPUS}; its budget is {budget}"
-    );
+        index.store().record_reads.store(0, Ordering::Relaxed);
+        index.search(query.as_slice(), 1, Some(1)).await.unwrap();
+        let reads = index.store().record_reads.load(Ordering::Relaxed);
+        let budget = params().walk_budget(1);
+        assert!(
+            reads <= budget + 1,
+            "a walk at L = 1 read {reads} records of {CORPUS}; its budget is {budget}"
+        );
+    })
+    .unwrap()
 }
 
 /// Entries of one aux kind: graph records, pending inserts, or tombstones.
@@ -457,6 +515,20 @@ pub async fn count(index: &DiskAnn<MemoryNodeStore>, kind: u8) -> usize {
         .iterate_aux(kind, b"", |_, _| {
             n += 1;
             Ok(())
+        })
+        .await
+        .unwrap();
+    n
+}
+
+/// How many entries the pending log holds: one per insert since the last merge.
+pub async fn pending(index: &DiskAnn<MemoryNodeStore>) -> usize {
+    let mut n = 0;
+    index
+        .store()
+        .iterate_pending_log(|_, _| {
+            n += 1;
+            Ok(std::ops::ControlFlow::Continue(()))
         })
         .await
         .unwrap();

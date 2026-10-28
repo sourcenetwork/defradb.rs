@@ -3,6 +3,8 @@
 //! but for a `reader` grant to the peer's node identity.
 #![cfg(feature = "iroh")]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 mod support;
@@ -12,29 +14,39 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use blockstore::Blockstore;
+use clock::sleep;
 use embedded::{EmbeddedNodeConfig, IrohConfig, SigningConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
-use tokio::time::{sleep, Instant};
+use std::time::Instant;
 
 use support::{
-    add_policy, add_schema, grant_collection_reader, new_identity, users_as, wait_for_fred, Node,
+    add_collection, add_policy, grant_collection_reader, new_identity, users_as, wait_for_fred,
+    Node,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_granted_iroh_peer_obtains_the_key() -> Result<()> {
-    let pair = Pair::start(true).await?;
-    let result = wait_for_fred(&pair.peer, &pair.jack).await;
-    pair.shutdown().await;
-    result
+#[test]
+fn a_granted_iroh_peer_obtains_the_key() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let pair = Pair::start(true).await?;
+            let result = wait_for_fred(&pair.peer, &pair.jack).await;
+            pair.shutdown().await;
+            result
+        })
+        .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key() -> Result<()> {
-    let pair = Pair::start(false).await?;
-    let result = assert_blocks_without_plaintext(&pair).await;
-    pair.shutdown().await;
-    result
+#[test]
+fn an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let pair = Pair::start(false).await?;
+            let result = assert_blocks_without_plaintext(&pair).await;
+            pair.shutdown().await;
+            result
+        })
+        .unwrap()
 }
 
 struct Pair {
@@ -90,8 +102,8 @@ async fn replicate_encrypted_doc(
     let sdl = format!(
         r#"type Users @branchable @policy(id: "{policy_id}", resource: "users") {{ name: String  age: Int }}"#
     );
-    add_schema(node0, &sdl, jack).await?;
-    add_schema(peer, &sdl, jack).await?;
+    add_collection(node0, &sdl, jack).await?;
+    add_collection(peer, &sdl, jack).await?;
 
     if let Some(grantee) = grantee {
         let collection_id = node0

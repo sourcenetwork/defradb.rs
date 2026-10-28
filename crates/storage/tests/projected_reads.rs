@@ -29,16 +29,19 @@ async fn check_projection(store: impl Store) {
     }
 }
 
-#[tokio::test]
-async fn projected_reads_through_store_wrappers() {
-    check_projection(RegolithStore::in_memory().unwrap()).await;
-    check_projection(storage::stores::datastore::Datastore::new(Arc::new(
-        RegolithStore::in_memory().unwrap(),
-    )))
-    .await;
-    check_projection(storage::stores::blockstore::Blockstore::new(
-        Arc::new(RegolithStore::in_memory().unwrap()),
-        false,
-    ))
-    .await;
+#[test]
+fn projected_reads_through_store_wrappers() {
+    workers::block_on(async {
+        check_projection(RegolithStore::in_memory().unwrap()).await;
+        check_projection(storage::stores::datastore::Datastore::new(Arc::new(
+            RegolithStore::in_memory().unwrap(),
+        )))
+        .await;
+        check_projection(storage::stores::blockstore::Blockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            false,
+        ))
+        .await;
+    })
+    .unwrap()
 }

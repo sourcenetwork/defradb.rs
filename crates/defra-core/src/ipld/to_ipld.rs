@@ -6,8 +6,9 @@ use ipld_core::ipld::Ipld;
 
 use crate::block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
-    CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, FieldDefinitionDeltaPayload,
-    ImmutableDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
+    CounterDeltaPayload, CrdtDelta, CustomDeltaPayload, DAGLink, Encryption,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
+    Signature, SignatureHeader, SignatureType, TextDeltaPayload,
 };
 use crate::{Error, Result};
 
@@ -84,6 +85,15 @@ impl TryFrom<&CrdtDelta> for Ipld {
             CrdtDelta::Immutable(payload) => {
                 map.insert("immutable".to_string(), Ipld::from(payload));
             }
+            CrdtDelta::Text(payload) => {
+                map.insert("text".to_string(), Ipld::from(payload));
+            }
+            CrdtDelta::Json(payload) => {
+                map.insert("json".to_string(), Ipld::from(payload));
+            }
+            CrdtDelta::Custom(payload) => {
+                map.insert("custom".to_string(), Ipld::from(payload));
+            }
             CrdtDelta::Collection(payload) => {
                 map.insert("collection".to_string(), Ipld::from(payload));
             }
@@ -122,7 +132,71 @@ impl From<&LwwDeltaPayload> for Ipld {
         );
         map.insert(
             "schemaVersionID".to_string(),
-            Ipld::String(payload.schema_version_id.clone()),
+            Ipld::String(payload.collection_version_id.clone()),
+        );
+        map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
+        Ipld::Map(map)
+    }
+}
+
+impl From<&CustomDeltaPayload> for Ipld {
+    fn from(payload: &CustomDeltaPayload) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert("crdt".to_string(), Ipld::String(payload.crdt.clone()));
+        map.insert(
+            "fieldName".to_string(),
+            Ipld::String(payload.field_name.clone()),
+        );
+        map.insert(
+            "priority".to_string(),
+            Ipld::Integer(payload.priority as i128),
+        );
+        if let Some(nonce) = payload.nonce {
+            map.insert("nonce".to_string(), Ipld::Integer(nonce as i128));
+        }
+        map.insert(
+            "schemaVersionID".to_string(),
+            Ipld::String(payload.collection_version_id.clone()),
+        );
+        map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
+        Ipld::Map(map)
+    }
+}
+
+impl From<&TextDeltaPayload> for Ipld {
+    fn from(payload: &TextDeltaPayload) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "fieldName".to_string(),
+            Ipld::String(payload.field_name.clone()),
+        );
+        map.insert(
+            "priority".to_string(),
+            Ipld::Integer(payload.priority as i128),
+        );
+        map.insert(
+            "schemaVersionID".to_string(),
+            Ipld::String(payload.collection_version_id.clone()),
+        );
+        map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
+        Ipld::Map(map)
+    }
+}
+
+impl From<&JsonDeltaPayload> for Ipld {
+    fn from(payload: &JsonDeltaPayload) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "fieldName".to_string(),
+            Ipld::String(payload.field_name.clone()),
+        );
+        map.insert(
+            "priority".to_string(),
+            Ipld::Integer(payload.priority as i128),
+        );
+        map.insert(
+            "schemaVersionID".to_string(),
+            Ipld::String(payload.collection_version_id.clone()),
         );
         map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
         Ipld::Map(map)
@@ -143,7 +217,7 @@ impl From<&ImmutableDeltaPayload> for Ipld {
         );
         map.insert(
             "schemaVersionID".to_string(),
-            Ipld::String(payload.schema_version_id.clone()),
+            Ipld::String(payload.collection_version_id.clone()),
         );
         map.insert("fields".to_string(), Ipld::Map(fields));
         Ipld::Map(map)
@@ -164,7 +238,7 @@ impl From<&CounterDeltaPayload> for Ipld {
         map.insert("nonce".to_string(), Ipld::Integer(payload.nonce as i128));
         map.insert(
             "schemaVersionID".to_string(),
-            Ipld::String(payload.schema_version_id.clone()),
+            Ipld::String(payload.collection_version_id.clone()),
         );
         map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
         Ipld::Map(map)
@@ -176,7 +250,7 @@ impl From<&CompositeDeltaPayload> for Ipld {
         let mut map = BTreeMap::new();
         map.insert(
             "schemaVersionID".to_string(),
-            Ipld::String(payload.schema_version_id.clone()),
+            Ipld::String(payload.collection_version_id.clone()),
         );
         map.insert(
             "priority".to_string(),
@@ -192,7 +266,7 @@ impl From<&CollectionDeltaPayload> for Ipld {
         let mut map = BTreeMap::new();
         map.insert(
             "schemaVersionID".to_string(),
-            Ipld::String(payload.schema_version_id.clone()),
+            Ipld::String(payload.collection_version_id.clone()),
         );
         map.insert(
             "priority".to_string(),
@@ -214,6 +288,9 @@ impl From<&FieldDefinitionDeltaPayload> for Ipld {
         }
         if let Some(crdt) = payload.crdt {
             map.insert("crdt".to_string(), Ipld::Integer(crdt as i128));
+        }
+        if let Some(ref name) = payload.custom_crdt {
+            map.insert("customCrdt".to_string(), Ipld::String(name.clone()));
         }
         if let Some(sk) = payload.scalar_kind {
             map.insert("scalarKind".to_string(), Ipld::Integer(sk as i128));

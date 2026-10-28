@@ -49,7 +49,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             && !field
                                 .kind
                                 .as_scalar()
-                                .is_some_and(|kind| kind.base_kind() == ScalarKind::Json)
+                                .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
                     })
                     .map(|field| field.name.as_str())
                     .collect()
@@ -77,7 +77,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Phase 1: decode/decrypt every linked field ONCE and validate @immutable
         // BEFORE persisting anything, so a rejected composite leaves no partial write.
         // One entry per link: an Immutable block carries several field deltas.
-        let mut pending: Vec<(Cid, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
+        let mut pending: Vec<(Cid, Vec<Cid>, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
         for dag_link in links {
             let link_name = &dag_link.name;
             let link_cid = &dag_link.link;
@@ -140,90 +140,102 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 other => vec![other],
             };
             for effective in &deltas {
-                let field_name = match effective {
-                    CrdtDelta::Lww(payload) => payload.field_name.as_str(),
-                    _ => link_name.as_str(),
-                };
+                let field_name = effective
+                    .field()
+                    .map_or(link_name.as_str(), |delta| delta.field_name);
                 if immutable_fields.contains(field_name) {
                     if let Some(baseline) = immutable_baseline.as_ref() {
-                        Self::check_immutable_delta(baseline, field_name, effective)?;
+                        Self::check_immutable_delta(
+                            self.db.crdts(),
+                            baseline,
+                            field_name,
+                            effective,
+                        )?;
                     }
                 }
             }
-            pending.push((*link_cid, deltas));
+            pending.push((
+                *link_cid,
+                linked_block.heads.clone().unwrap_or_default(),
+                deltas,
+            ));
         }
 
         // Phase 2: persist the decoded deltas.
-        for (link_cid, deltas) in pending {
+        for (link_cid, parents, deltas) in pending {
+            let mut parked = false;
             for effective in deltas {
-                match effective {
-                    CrdtDelta::Lww(lww_payload) => {
-                        state
-                            .field_block_priorities
-                            .insert(link_cid, lww_payload.priority);
-                        let result = self
-                            .process_lww_delta_in_txn(
-                                datastore,
-                                headstore,
-                                &link_cid,
-                                &lww_payload,
-                                context.metadata.collection_id,
-                                context.doc_id_str,
-                                context.doc_short_id,
-                                &mut state.reads,
-                            )
-                            .await?;
-                        state.field_priorities.insert(
-                            lww_payload.field_name.clone(),
-                            crate::collection::value::FieldOrder {
-                                priority: result.priority,
-                                raw_value: Some(result.raw_value),
-                            },
-                        );
-                        if result.applied {
-                            state.any_field_applied = true;
-                        }
-                        if let Some(value) = result.value {
-                            state
-                                .field_values
-                                .insert(lww_payload.field_name.clone(), value);
-                        }
+                let Some(delta) = effective.field() else {
+                    return Err(MergeError::UnsupportedDelta(format!(
+                        "Unexpected delta type in linked block: {:?}",
+                        std::mem::discriminant(&effective)
+                    )));
+                };
+                let field_name = delta.field_name.to_owned();
+                state
+                    .field_block_priorities
+                    .insert(link_cid, delta.priority);
+                let result = self
+                    .merge_field_delta_in_txn(
+                        datastore,
+                        headstore,
+                        &link_cid,
+                        &effective,
+                        context.metadata.collection_id,
+                        context.doc_id_str,
+                        context.doc_short_id,
+                        Some(&parents),
+                        Some(context.metadata),
+                        &mut state.reads,
+                        false,
+                    )
+                    .await?;
+                if let Some(crdt) = result.parked {
+                    let collection = context
+                        .collection
+                        .as_ref()
+                        .map(|collection| collection.collection_id())
+                        .or(context.metadata.collection_id)
+                        .unwrap_or(delta.collection_version_id);
+                    self.park(
+                        datastore,
+                        crdt,
+                        &link_cid,
+                        super::parked::Place {
+                            collection,
+                            doc_id: context.doc_id_str,
+                            doc_short_id: context.doc_short_id,
+                            field: delta.field_name,
+                            collection_id: context.metadata.collection_id,
+                            priority: delta.priority,
+                        },
+                    )
+                    .await?;
+                    parked = true;
+                    state.parked_fields = true;
+                    continue;
+                }
+                match result.order {
+                    Some(order) => {
+                        state.field_priorities.insert(field_name.clone(), order);
                     }
-                    CrdtDelta::Counter(counter_payload) => {
-                        state
-                            .field_block_priorities
-                            .insert(link_cid, counter_payload.priority);
-                        let result = self
-                            .process_counter_delta_in_txn(
-                                datastore,
-                                headstore,
-                                &link_cid,
-                                &counter_payload,
-                                context.metadata.collection_id,
-                                context.doc_id_str,
-                                context.doc_short_id,
-                            )
-                            .await?;
-                        // A counter's increment is an operand on the stored value.
-                        state.reads.wrote_document();
-                        if result.applied {
-                            state.any_field_applied = true;
-                        }
-                        if let Some(value) = result.value {
-                            state
-                                .field_values
-                                .insert(counter_payload.field_name.clone(), value);
-                        }
-                    }
-                    other => {
-                        return Err(MergeError::UnsupportedDelta(format!(
-                            "Unexpected delta type in linked block: {:?}",
-                            std::mem::discriminant(&other)
-                        )));
-                    }
+                    // An operation is an operand on the stored value.
+                    None => state.reads.wrote_document(),
+                }
+                if result.applied {
+                    state.any_field_applied = true;
+                }
+                if let Some(op) = result.op {
+                    state.field_ops.insert(field_name.clone(), op);
+                }
+                if let Some(value) = result.value {
+                    state.field_values.insert(field_name, value);
                 }
             }
-            state.linked_field_cids.push(link_cid);
+            // A parked block's head is published when it merges.
+            if !parked {
+                state.linked_field_cids.push(link_cid);
+            }
         }
 
         Ok(None)
@@ -238,6 +250,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// immutable field merges, so rejecting first-set would false-reject the
     /// legitimate block.
     fn check_immutable_delta(
+        crdts: &crdt::Crdts,
         baseline: &Document,
         field_name: &str,
         effective: &CrdtDelta,
@@ -245,11 +258,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let Some(prior) = baseline.get(field_name) else {
             return Ok(());
         };
-        let CrdtDelta::Lww(payload) = effective else {
+        // An operation never restates a value, so only a state can be checked.
+        let Some(delta) = effective.field() else {
             return Ok(());
         };
-        let preserves_prior = !payload.data.is_empty()
-            && ciborium::from_reader::<NormalValue, _>(payload.data.as_slice())
+        if crdts
+            .delta(effective, CType::None)
+            .ok()
+            .is_none_or(|crdt| crdt.replicates_ops())
+        {
+            return Ok(());
+        }
+        let data = delta.data;
+        let preserves_prior = !data.is_empty()
+            && ciborium::from_reader::<NormalValue, _>(data)
                 .map(|incoming| incoming == *prior)
                 .unwrap_or(false);
         if !preserves_prior {
@@ -284,73 +306,43 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        let effective_linked_delta = match &linked_block.delta {
-            CrdtDelta::Lww(payload) if linked_block.encryption.is_some() => {
+        let mut effective_linked_delta = linked_block.delta.clone();
+        if linked_block.encryption.is_some() {
+            if let Some(data) = effective_linked_delta.field_data_mut() {
                 match self
                     .decrypt_block_data(
-                        &payload.data,
+                        data,
                         linked_block.encryption.as_ref(),
                         Some(context.metadata),
                     )
                     .await
                 {
-                    Ok(decrypted) => {
-                        let mut decrypted_payload = payload.clone();
-                        decrypted_payload.data = decrypted;
-                        CrdtDelta::Lww(decrypted_payload)
+                    Ok(decrypted) => *data = decrypted,
+                    Err(error @ (MergeError::NeedsDecryptionKey(_) | MergeError::Kms(_)))
+                        if !matches!(error, MergeError::Kms(kms::Error::AccessDenied { .. })) =>
+                    {
+                        return Err(error)
                     }
-                    Err(error @ MergeError::Kms(kms::Error::AccessDenied { .. })) => {
-                        tracing::debug!(
-                            error = %error,
-                            "Cannot decrypt LWW field block, skipping field (canRead=false)"
-                        );
-                        return Ok(EffectiveLinkedDelta::SkipField);
+                    Err(MergeError::Storage(_))
+                        if matches!(
+                            context.mode,
+                            super::composite::CompositeMergeMode::History
+                        ) =>
+                    {
+                        return Ok(EffectiveLinkedDelta::Skip(MergeOutcome::retryable_skip(
+                            "history encrypted fields are not yet readable",
+                        )));
                     }
-                    Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
-                    Err(error @ MergeError::Kms(_)) => return Err(error),
                     Err(error) => {
                         tracing::debug!(
                             error = %error,
-                            "Cannot decrypt LWW field block, skipping field (canRead=false)"
+                            "Cannot decrypt field block, skipping field (canRead=false)"
                         );
                         return Ok(EffectiveLinkedDelta::SkipField);
                     }
                 }
             }
-            CrdtDelta::Counter(payload) if linked_block.encryption.is_some() => {
-                match self
-                    .decrypt_block_data(
-                        &payload.data,
-                        linked_block.encryption.as_ref(),
-                        Some(context.metadata),
-                    )
-                    .await
-                {
-                    Ok(decrypted) => {
-                        let mut decrypted_payload = payload.clone();
-                        decrypted_payload.data = decrypted;
-                        CrdtDelta::Counter(decrypted_payload)
-                    }
-                    Err(error @ MergeError::Kms(kms::Error::AccessDenied { .. })) => {
-                        tracing::debug!(
-                            error = %error,
-                            "Cannot decrypt Counter field block, skipping field (canRead=false)"
-                        );
-                        return Ok(EffectiveLinkedDelta::SkipField);
-                    }
-                    Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
-                    Err(error @ MergeError::Kms(_)) => return Err(error),
-                    Err(error) => {
-                        tracing::debug!(
-                            error = %error,
-                            "Cannot decrypt Counter field block, skipping field (canRead=false)"
-                        );
-                        return Ok(EffectiveLinkedDelta::SkipField);
-                    }
-                }
-            }
-            other => other.clone(),
-        };
+        }
 
         Ok(EffectiveLinkedDelta::Delta(Box::new(
             effective_linked_delta,

@@ -8,66 +8,86 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-#[tokio::test]
-async fn replay_push_gate_caps_concurrent_sends() {
-    let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig {
-        max_concurrent_document_tasks: 8,
-        max_concurrent_outbound_pushes: 2,
-        per_peer_rate_limit_burst: 100,
-        per_peer_rate_limit_rate: 100.0,
-        send_timeout: Duration::from_secs(1),
-        ..Default::default()
-    }));
-    let current = Arc::new(AtomicUsize::new(0));
-    let max_seen = Arc::new(AtomicUsize::new(0));
-    let peer = PeerId::new("peer-1".to_string());
-
-    let mut handles = Vec::new();
-    for _ in 0..8 {
-        let gate = gate.clone();
-        let current = current.clone();
-        let max_seen = max_seen.clone();
-        let peer = peer.clone();
-        handles.push(tokio::spawn(async move {
-            gate.send_pushlog(&peer, async move {
-                let active = current.fetch_add(1, Ordering::SeqCst) + 1;
-                record_max(&max_seen, active);
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                current.fetch_sub(1, Ordering::SeqCst);
-                Ok(PushLogReply::success("message"))
+#[test]
+fn replay_push_gate_caps_concurrent_sends() {
+    workers::block_on(async {
+        let gate = Arc::new(
+            ReplayPushGate::new(ReplayPushConfig {
+                max_concurrent_document_tasks: 8,
+                max_concurrent_outbound_pushes: 2,
+                per_peer_rate_limit_burst: 100,
+                per_peer_rate_limit_rate: 100.0,
+                send_timeout: Duration::from_secs(1),
+                ..Default::default()
             })
-            .await
-            .unwrap();
-        }));
-    }
+            .on(p2p::network::Network::on(edge::testing::edge())),
+        );
+        let current = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let peer = PeerId::new("peer-1".to_string());
 
-    for handle in handles {
-        handle.await.unwrap();
-    }
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let gate = gate.clone();
+            let current = current.clone();
+            let max_seen = max_seen.clone();
+            let peer = peer.clone();
+            handles.push(
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        gate.send_pushlog(&peer, async move {
+                            let active = current.fetch_add(1, Ordering::SeqCst) + 1;
+                            record_max(&max_seen, active);
+                            workers::delay(Duration::from_millis(50))
+                                .unwrap()
+                                .await
+                                .unwrap();
+                            current.fetch_sub(1, Ordering::SeqCst);
+                            Ok(PushLogReply::success("message"))
+                        })
+                        .await
+                        .unwrap();
+                    },
+                )
+                .unwrap(),
+            );
+        }
 
-    assert_eq!(max_seen.load(Ordering::SeqCst), 2);
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(max_seen.load(Ordering::SeqCst), 2);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn replay_push_gate_paces_after_peer_burst() {
-    let gate = ReplayPushGate::new(ReplayPushConfig {
-        max_concurrent_document_tasks: 1,
-        max_concurrent_outbound_pushes: 1,
-        per_peer_rate_limit_burst: 1,
-        per_peer_rate_limit_rate: 10.0,
-        send_timeout: Duration::from_secs(1),
-        ..Default::default()
-    });
-    let peer = PeerId::new("peer-1".to_string());
+#[test]
+fn replay_push_gate_paces_after_peer_burst() {
+    workers::block_on(async {
+        let gate = ReplayPushGate::new(ReplayPushConfig {
+            max_concurrent_document_tasks: 1,
+            max_concurrent_outbound_pushes: 1,
+            per_peer_rate_limit_burst: 1,
+            per_peer_rate_limit_rate: 10.0,
+            send_timeout: Duration::from_secs(1),
+            ..Default::default()
+        })
+        .on(p2p::network::Network::on(edge::testing::edge()));
+        let peer = PeerId::new("peer-1".to_string());
 
-    let start = Instant::now();
-    for _ in 0..3 {
-        gate.send_pushlog(&peer, async { Ok(PushLogReply::success("message")) })
-            .await
-            .unwrap();
-    }
+        let start = Instant::now();
+        for _ in 0..3 {
+            gate.send_pushlog(&peer, async { Ok(PushLogReply::success("message")) })
+                .await
+                .unwrap();
+        }
 
-    assert!(start.elapsed() >= Duration::from_millis(150));
+        assert!(start.elapsed() >= Duration::from_millis(150));
+    })
+    .unwrap()
 }
 
 fn record_max(max_seen: &AtomicUsize, value: usize) {
@@ -80,287 +100,667 @@ fn record_max(max_seen: &AtomicUsize, value: usize) {
     }
 }
 
-#[tokio::test]
-async fn replay_hint_defers_following_sends_without_polling_transport() {
-    let gate = ReplayPushGate::new(ReplayPushConfig::default());
-    let peer = PeerId::new("limited".into());
-    let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
-    reply.retry_after_ms = Some(45_000);
-    gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
-    let result = gate
-        .send_pushlog(&peer, async { panic!("must defer to durable owner") })
-        .await;
-    assert!(
-        matches!(result, Err(ReplayPushSendError::Backpressure { retry_after }) if retry_after > Duration::from_secs(44))
-    );
-    gate.send_pushlog(&PeerId::new("healthy".into()), async {
-        Ok(PushLogReply::success("ok"))
+#[test]
+fn replay_hint_defers_following_sends_without_polling_transport() {
+    workers::block_on(async {
+        let gate = ReplayPushGate::new(ReplayPushConfig::default())
+            .on(p2p::network::Network::on(edge::testing::edge()));
+        let peer = PeerId::new("limited".into());
+        let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
+        reply.retry_after_ms = Some(45_000);
+        gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
+        let result = gate
+            .send_pushlog(&peer, async { panic!("must defer to durable owner") })
+            .await;
+        let Err(ReplayPushSendError::Backpressure { retry_after }) = result else {
+            panic!("expected backpressure, got {result:?}");
+        };
+        assert!(retry_after > Duration::from_secs(44));
+        gate.send_pushlog(&PeerId::new("healthy".into()), async {
+            Ok(PushLogReply::success("ok"))
+        })
+        .await
+        .unwrap();
     })
-    .await
-    .unwrap();
+    .unwrap()
 }
 
-#[tokio::test]
-async fn replay_hint_is_durable_while_another_send_is_still_pending() {
-    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
-    let peerstore = storage::stores::Peerstore::new(store);
-    let peer = PeerId::new("peer".into());
-    peerstore
-        .create_replicator(peer.as_str(), b"replicator")
-        .await
-        .unwrap();
-    for doc in ["slow", "limited"] {
+#[test]
+fn replay_hint_is_durable_while_another_send_is_still_pending() {
+    workers::block_on(async {
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store);
+        let peer = PeerId::new("peer".into());
         peerstore
-            .observe_push_head(peer.as_str(), doc, "collection")
+            .create_replicator(peer.as_str(), b"replicator")
             .await
             .unwrap();
-    }
-    let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig::default()));
-    let (started, ready) = tokio::sync::oneshot::channel();
-    let (release, wait) = tokio::sync::oneshot::channel();
-    let slow_gate = gate.clone();
-    let slow_peer = peer.clone();
-    let slow = tokio::spawn(async move {
-        slow_gate
-            .send_pushlog(&slow_peer, async {
-                started.send(()).unwrap();
-                wait.await.unwrap();
-                Ok(PushLogReply::success("slow"))
+        for doc in ["slow", "limited"] {
+            peerstore
+                .observe_push_head(peer.as_str(), doc, "collection")
+                .await
+                .unwrap();
+        }
+        let gate = Arc::new(
+            ReplayPushGate::new(ReplayPushConfig::default())
+                .on(p2p::network::Network::on(edge::testing::edge())),
+        );
+        let (started, ready) = regolith::sync::bounded(1);
+        let (release, wait) = regolith::sync::bounded(1);
+        let slow_gate = gate.clone();
+        let slow_peer = peer.clone();
+        let slow = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                slow_gate
+                    .send_pushlog(&slow_peer, async {
+                        started.try_send(()).ok().unwrap();
+                        wait.recv_async().await.unwrap();
+                        Ok(PushLogReply::success("slow"))
+                    })
+                    .await
+                    .unwrap();
+            },
+        )
+        .unwrap();
+        ready.recv_async().await.unwrap();
+        let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
+        reply.retry_after_ms = Some(45_000);
+        let reply = gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
+        persist_retry_after(&peerstore, &peer, &reply)
+            .await
+            .unwrap();
+        assert!(!slow.is_finished());
+        assert!(
+            remaining_retry_after(&peerstore, &peer)
+                .await
+                .unwrap()
+                .unwrap()
+                > Duration::from_secs(44)
+        );
+        assert_eq!(
+            peerstore
+                .get_retry_documents(peer.as_str())
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        release.try_send(()).ok().unwrap();
+        slow.await.unwrap();
+    })
+    .unwrap()
+}
+
+#[test]
+fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
+    workers::block_on(async {
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let peerstore = Arc::new(storage::stores::Peerstore::new(store));
+        let peer = PeerId::new("peer".into());
+        peerstore
+            .create_replicator(peer.as_str(), b"replicator")
+            .await
+            .unwrap();
+        peerstore
+            .observe_push_head(peer.as_str(), "doc", "collection")
+            .await
+            .unwrap();
+        let gate = Arc::new(
+            ReplayPushGate::new(ReplayPushConfig {
+                max_concurrent_outbound_pushes: 1,
+                ..Default::default()
             })
+            .on(p2p::network::Network::on(edge::testing::edge())),
+        );
+        let (started, ready) = regolith::sync::bounded(1);
+        let (release, wait) = regolith::sync::bounded(1);
+        let first_gate = gate.clone();
+        let first_peer = peer.clone();
+        let first = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                first_gate
+                    .send_pushlog(&first_peer, async {
+                        started.try_send(()).ok().unwrap();
+                        wait.recv_async().await.unwrap();
+                        Ok(PushLogReply::success("first"))
+                    })
+                    .await
+                    .unwrap();
+            },
+        )
+        .unwrap();
+        ready.recv_async().await.unwrap();
+        let waiting_gate = gate.clone();
+        let waiting_store = peerstore.clone();
+        let waiting_peer = peer.clone();
+        let (entered, entered_rx) = regolith::sync::bounded(1);
+        let waiting = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let attempt = waiting_gate.send_pushlog_with_admission(
+                    &waiting_peer,
+                    check_retry_admission(&waiting_store, &waiting_peer),
+                    async { panic!("hint installed while queued must prevent transport dispatch") },
+                );
+                let mut attempt = std::pin::pin!(attempt);
+                assert!(futures::poll!(&mut attempt).is_pending());
+                entered.try_send(()).ok().unwrap();
+                attempt.await
+            },
+        )
+        .unwrap();
+        entered_rx.recv_async().await.unwrap();
+        let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
+        reply.retry_after_ms = Some(45_000);
+        persist_retry_after(&peerstore, &peer, &reply)
             .await
             .unwrap();
-    });
-    ready.await.unwrap();
-    let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
-    reply.retry_after_ms = Some(45_000);
-    let reply = gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
-    persist_retry_after(&peerstore, &peer, &reply)
+        release.try_send(()).ok().unwrap();
+        first.await.unwrap();
+        assert!(matches!(
+            waiting.await.unwrap(),
+            Err(ReplayPushSendError::Backpressure { .. })
+        ));
+    })
+    .unwrap()
+}
+
+#[test]
+fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
+    workers::block_on(async {
+        use storage::RegolithStore;
+
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store.clone())
+            .with_retry_schedule(storage::stores::RetrySchedule::new(vec![3600]).unwrap());
+        let peer = PeerId::new("peer-durable".to_string());
+        let info = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["collection".to_string()],
+            Vec::new(),
+        );
+        peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            &[ReplayDocumentFailure {
+                doc_id: "doc-1".to_string(),
+                collection_id: "collection".to_string(),
+            }],
+        )
         .await
         .unwrap();
-    assert!(!slow.is_finished());
-    assert!(
-        remaining_retry_after(&peerstore, &peer)
+
+        let retries = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
+        assert_eq!(retries.len(), 1);
+        assert_eq!(retries[0].doc_id, "doc-1");
+        assert_eq!(retries[0].scope, storage::stores::RetryScope::Document);
+        assert!(!retries[0].is_collection_commit());
+        assert!(!retries[0].retry_info.is_due());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(retries[0].retry_info.next_retry_unix >= before + 1800);
+        assert!(retries[0].retry_info.next_retry_unix <= now + 3600);
+        let saved = peerstore
+            .get_replicator(peer.as_str())
             .await
             .unwrap()
-            .unwrap()
-            > Duration::from_secs(44)
-    );
-    assert_eq!(
+            .unwrap();
+        let saved = p2p::ReplicatorInfo::from_bytes(&saved).unwrap();
+        assert_eq!(saved.status, p2p::ReplicatorStatus::Inactive);
+    })
+    .unwrap()
+}
+
+#[test]
+fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
+    workers::block_on(async {
+        use storage::RegolithStore;
+
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        let peer = PeerId::new("peer-durable".to_string());
+        let info = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["collection".to_string()],
+            Vec::new(),
+        );
         peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+
+        let persistence_peer = peer.clone();
+        let persistence_store = storage::stores::Peerstore::new(store.clone());
+        let failures = [ReplayDocumentFailure {
+            doc_id: "doc-1".to_string(),
+            collection_id: "collection".to_string(),
+        }];
+        let (persisted, deleted) = futures::join!(
+            persist_replay_failures(&persistence_store, &persistence_peer, &failures),
+            peerstore.delete_replicator(peer.as_str()),
+        );
+        persisted.unwrap();
+        deleted.unwrap();
+        assert!(!peerstore.has_replicator(peer.as_str()).await.unwrap());
+        assert!(peerstore
             .get_retry_documents(peer.as_str())
             .await
             .unwrap()
-            .len(),
-        2
-    );
-    release.send(()).unwrap();
-    slow.await.unwrap();
-}
-
-#[tokio::test]
-async fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
-    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
-    let peerstore = Arc::new(storage::stores::Peerstore::new(store));
-    let peer = PeerId::new("peer".into());
-    peerstore
-        .create_replicator(peer.as_str(), b"replicator")
-        .await
-        .unwrap();
-    peerstore
-        .observe_push_head(peer.as_str(), "doc", "collection")
-        .await
-        .unwrap();
-    let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig {
-        max_concurrent_outbound_pushes: 1,
-        ..Default::default()
-    }));
-    let (started, ready) = tokio::sync::oneshot::channel();
-    let (release, wait) = tokio::sync::oneshot::channel();
-    let first_gate = gate.clone();
-    let first_peer = peer.clone();
-    let first = tokio::spawn(async move {
-        first_gate
-            .send_pushlog(&first_peer, async {
-                started.send(()).unwrap();
-                wait.await.unwrap();
-                Ok(PushLogReply::success("first"))
-            })
+            .is_empty());
+        assert!(peerstore
+            .get_retry_info(peer.as_str())
             .await
-            .unwrap();
-    });
-    ready.await.unwrap();
-    let waiting_gate = gate.clone();
-    let waiting_store = peerstore.clone();
-    let waiting_peer = peer.clone();
-    let (entered, entered_rx) = tokio::sync::oneshot::channel();
-    let waiting = tokio::spawn(async move {
-        let attempt = waiting_gate.send_pushlog_with_admission(
-            &waiting_peer,
-            check_retry_admission(&waiting_store, &waiting_peer),
-            async { panic!("hint installed while queued must prevent transport dispatch") },
-        );
-        tokio::pin!(attempt);
-        assert!(futures::poll!(&mut attempt).is_pending());
-        entered.send(()).unwrap();
-        attempt.await
-    });
-    entered_rx.await.unwrap();
-    let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
-    reply.retry_after_ms = Some(45_000);
-    persist_retry_after(&peerstore, &peer, &reply)
-        .await
-        .unwrap();
-    release.send(()).unwrap();
-    first.await.unwrap();
-    assert!(matches!(
-        waiting.await.unwrap(),
-        Err(ReplayPushSendError::Backpressure { .. })
-    ));
-}
-
-#[tokio::test]
-async fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
-    use storage::RegolithStore;
-
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let peerstore = storage::stores::Peerstore::new(store.clone())
-        .with_retry_schedule(storage::stores::RetrySchedule::new(vec![3600]).unwrap());
-    let peer = PeerId::new("peer-durable".to_string());
-    let info =
-        p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["collection".to_string()], Vec::new());
-    peerstore
-        .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
-        .await
-        .unwrap();
-
-    let before = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    persist_replay_failures(
-        &peerstore,
-        &peer,
-        &[ReplayDocumentFailure {
-            doc_id: "doc-1".to_string(),
-            collection_id: "collection".to_string(),
-        }],
-    )
-    .await
-    .unwrap();
-
-    let retries = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
-    assert_eq!(retries.len(), 1);
-    assert_eq!(retries[0].doc_id, "doc-1");
-    assert_eq!(retries[0].scope, storage::stores::RetryScope::Document);
-    assert!(!retries[0].is_collection_commit());
-    assert!(!retries[0].retry_info.is_due());
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    assert!(retries[0].retry_info.next_retry_unix >= before + 1800);
-    assert!(retries[0].retry_info.next_retry_unix <= now + 3600);
-    let saved = peerstore
-        .get_replicator(peer.as_str())
-        .await
-        .unwrap()
-        .unwrap();
-    let saved = p2p::ReplicatorInfo::from_bytes(&saved).unwrap();
-    assert_eq!(saved.status, p2p::ReplicatorStatus::Inactive);
-}
-
-#[tokio::test]
-async fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
-    use storage::RegolithStore;
-
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let peerstore = storage::stores::Peerstore::new(store.clone());
-    let peer = PeerId::new("peer-durable".to_string());
-    let info =
-        p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["collection".to_string()], Vec::new());
-    peerstore
-        .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
-        .await
-        .unwrap();
-
-    let persistence_peer = peer.clone();
-    let persistence_store = storage::stores::Peerstore::new(store.clone());
-    let failures = [ReplayDocumentFailure {
-        doc_id: "doc-1".to_string(),
-        collection_id: "collection".to_string(),
-    }];
-    let (persisted, deleted) = tokio::join!(
-        persist_replay_failures(&persistence_store, &persistence_peer, &failures),
-        peerstore.delete_replicator(peer.as_str()),
-    );
-    persisted.unwrap();
-    deleted.unwrap();
-    assert!(!peerstore.has_replicator(peer.as_str()).await.unwrap());
-    assert!(peerstore
-        .get_retry_documents(peer.as_str())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(peerstore
-        .get_retry_info(peer.as_str())
-        .await
-        .unwrap()
-        .is_none());
+            .unwrap()
+            .is_none());
+    })
+    .unwrap()
 }
 
 /// The first history replay has a replicator row but no retry schedule yet.
 /// A backpressure hint arriving then must still land: reschedule reports
 /// "nothing written", and the hint is seeded as the initial schedule instead
 /// of being dropped. A gone replicator stays a success with no row written.
-#[tokio::test]
-async fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
-    use storage::stores::Peerstore;
-    use storage::RegolithStore;
+#[test]
+fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
+    workers::block_on(async {
+        use storage::stores::Peerstore;
+        use storage::RegolithStore;
 
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let peerstore = Peerstore::new(store.clone());
-    let peer = PeerId::new("peer-seed".to_string());
-    peerstore
-        .create_replicator("peer-seed", b"replicator")
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let peerstore = Peerstore::new(store.clone());
+        let peer = PeerId::new("peer-seed".to_string());
+        peerstore
+            .create_replicator("peer-seed", b"replicator")
+            .await
+            .unwrap();
+
+        // retry_after only fires on a backpressure reply, never on plain success.
+        let mut reply = PushLogReply::success("message");
+        reply.err_message = Some(p2p::error::RATE_LIMITED_MESSAGE.to_string());
+        reply.retry_after_ms = Some(45_000);
+        persist_retry_after(&peerstore, &peer, &reply)
+            .await
+            .unwrap();
+
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            &[ReplayDocumentFailure {
+                doc_id: "doc-seed".into(),
+                collection_id: "collection-seed".into(),
+            }],
+        )
         .await
         .unwrap();
+        peerstore.activate_retry_peer(peer.as_str()).await.unwrap();
+        let remaining = remaining_retry_after(&peerstore, &peer)
+            .await
+            .unwrap()
+            .expect("the hint landed as a schedule");
+        assert!(
+            remaining > Duration::from_secs(40),
+            "the seeded deadline honors the hint; got {remaining:?}"
+        );
 
-    // retry_after only fires on a backpressure reply, never on plain success.
-    let mut reply = PushLogReply::success("message");
-    reply.err_message = Some(p2p::error::RATE_LIMITED_MESSAGE.to_string());
-    reply.retry_after_ms = Some(45_000);
-    persist_retry_after(&peerstore, &peer, &reply)
-        .await
-        .unwrap();
+        // A replicator that is gone: no row written, still a success.
+        let gone = PeerId::new("peer-gone".to_string());
+        persist_retry_after(&peerstore, &gone, &reply)
+            .await
+            .unwrap();
+        assert!(peerstore
+            .get_retry_info("peer-gone")
+            .await
+            .unwrap()
+            .is_none());
+    })
+    .unwrap()
+}
 
-    persist_replay_failures(
-        &peerstore,
-        &peer,
-        &[ReplayDocumentFailure {
-            doc_id: "doc-seed".into(),
-            collection_id: "collection-seed".into(),
-        }],
-    )
-    .await
-    .unwrap();
-    peerstore.activate_retry_peer(peer.as_str()).await.unwrap();
-    let remaining = remaining_retry_after(&peerstore, &peer)
-        .await
-        .unwrap()
-        .expect("the hint landed as a schedule");
-    assert!(
-        remaining > Duration::from_secs(40),
-        "the seeded deadline honors the hint; got {remaining:?}"
-    );
+#[derive(Clone)]
+pub(super) struct ConnectedPeerTransport {
+    local: PeerId,
+    remote: PeerId,
+    replies: Option<(bool, regolith::sync::BoundedSender<p2p::PushLogRequest>)>,
+    remove_on_reply: Option<Arc<storage::stores::Peerstore<storage::RegolithStore>>>,
+    require_selected_authority: Option<Arc<storage::stores::Peerstore<storage::RegolithStore>>>,
+    before_reply:
+        Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
+    retry_after_ms: Option<u64>,
+}
 
-    // A replicator that is gone: no row written, still a success.
-    let gone = PeerId::new("peer-gone".to_string());
-    persist_retry_after(&peerstore, &gone, &reply)
+impl ConnectedPeerTransport {
+    pub(super) fn new(local: &str, remote: &str) -> Self {
+        Self {
+            local: PeerId::new(local.to_string()),
+            remote: PeerId::new(remote.to_string()),
+            replies: None,
+            remove_on_reply: None,
+            require_selected_authority: None,
+            before_reply: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub(super) fn with_replies(
+        mut self,
+        acknowledged: bool,
+        requests: regolith::sync::BoundedSender<p2p::PushLogRequest>,
+    ) -> Self {
+        self.replies = Some((acknowledged, requests));
+        self
+    }
+
+    pub(super) fn removing_subscription_on_reply(
+        mut self,
+        store: Arc<storage::stores::Peerstore<storage::RegolithStore>>,
+    ) -> Self {
+        self.remove_on_reply = Some(store);
+        self
+    }
+
+    pub(super) fn requiring_selected_authority(
+        mut self,
+        store: Arc<storage::stores::Peerstore<storage::RegolithStore>>,
+    ) -> Self {
+        self.require_selected_authority = Some(store);
+        self
+    }
+
+    pub(super) fn with_reply_hook(
+        mut self,
+        hook: Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
+    ) -> Self {
+        self.before_reply = Some(hook);
+        self
+    }
+
+    pub(super) fn with_retry_after(mut self, millis: u64) -> Self {
+        self.retry_after_ms = Some(millis);
+        self
+    }
+}
+
+fn unreachable_transport() -> p2p::Error {
+    p2p::Error::Transport("not reached before the replicator guard in this test".to_string())
+}
+
+#[async_trait::async_trait]
+impl p2p::P2PTransport for ConnectedPeerTransport {
+    type ResponseToken = ();
+
+    fn local_peer_id(&self) -> &PeerId {
+        &self.local
+    }
+
+    fn local_public_key_proto(&self) -> &[u8] {
+        &[]
+    }
+
+    fn sign(&self, _data: &[u8]) -> p2p::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+
+    async fn dial(
+        &self,
+        _peer_id: &PeerId,
+        _addrs: Vec<p2p::transport::PeerAddr>,
+    ) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn disconnect(&self, _peer_id: &PeerId) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn listen(&self, _addr: p2p::transport::PeerAddr) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn connected_peers(&self) -> p2p::Result<Vec<PeerId>> {
+        Ok(vec![self.remote.clone()])
+    }
+
+    async fn listen_addresses(&self) -> p2p::Result<Vec<p2p::transport::PeerAddr>> {
+        Ok(Vec::new())
+    }
+
+    async fn poll_until_connected(&self, _peer_id: &PeerId, _timeout: Duration) -> p2p::Result<()> {
+        Ok(())
+    }
+
+    async fn peer_addresses(&self) -> p2p::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn subscribe(&self, _topic: p2p::DefraTopic) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn unsubscribe(&self, _topic: p2p::DefraTopic) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn publish(
+        &self,
+        _topic: p2p::DefraTopic,
+        _msg: p2p::PushLogBroadcast,
+    ) -> p2p::Result<p2p::transport::MessageId> {
+        Err(unreachable_transport())
+    }
+
+    async fn topic_peers(&self, _topic: p2p::DefraTopic) -> p2p::Result<Vec<PeerId>> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_pushlog_response(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: PushLogReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_two_stream_request(
+        &self,
+        _peer_id: &PeerId,
+        req: p2p::PushLogRequest,
+    ) -> p2p::Result<PushLogReply> {
+        let Some((acknowledged, requests)) = &self.replies else {
+            return Err(unreachable_transport());
+        };
+        if let Some(store) = &self.require_selected_authority {
+            assert!(store
+                .selected_car_root_allowed(self.remote.as_str(), &req.cid)
+                .await
+                .unwrap());
+        }
+        let doc_id = req.doc_id.clone();
+        requests
+            .try_send(req)
+            .expect("bounded test request capture");
+        if let Some(hook) = &self.before_reply {
+            hook(doc_id).await;
+        }
+        if let Some(store) = &self.remove_on_reply {
+            store.delete_replicator(self.remote.as_str()).await.unwrap();
+        }
+        let mut reply = if *acknowledged {
+            PushLogReply::success("selected-transfer")
+        } else {
+            PushLogReply::error("selected-transfer", "receiver refused the head")
+        };
+        reply.retry_after_ms = self.retry_after_ms;
+        Ok(reply)
+    }
+
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: PushLogReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::DocSyncRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: p2p::message::DocSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::BranchableSyncRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: p2p::message::BranchableSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: cid::Cid) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_car_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _car_data: Vec<u8>,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_doc_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: p2p::message::DocSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_branchable_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: p2p::message::BranchableSyncReply,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn send_se_artifacts(
+        &self,
+        _peer_id: &PeerId,
+        _req: p2p::message::PushSEArtifactsRequest,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn sync_blocks(
+        &self,
+        _root: cid::Cid,
+        _providers: Vec<PeerId>,
+        _missing: Vec<cid::Cid>,
+    ) -> p2p::Result<p2p::QueryId> {
+        Err(unreachable_transport())
+    }
+
+    async fn cancel_sync(&self, _query_id: p2p::QueryId) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn create_replicator(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn delete_replicator(&self, _peer_id: &PeerId) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+
+    async fn list_replicators(&self) -> p2p::Result<Vec<p2p::ReplicatorInfo>> {
+        Err(unreachable_transport())
+    }
+
+    async fn get_replicator(&self, _peer_id: &PeerId) -> p2p::Result<Option<p2p::ReplicatorInfo>> {
+        Err(unreachable_transport())
+    }
+
+    async fn remove_replicator_collections(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> p2p::Result<bool> {
+        Err(unreachable_transport())
+    }
+
+    async fn shutdown(&self) -> p2p::Result<()> {
+        Err(unreachable_transport())
+    }
+}
+
+#[test]
+fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
+    workers::block_on(async {
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let db = Arc::new(db::DB::from_arc(store).unwrap());
+        let transport = ConnectedPeerTransport::new("local", "peer-gone");
+        let peer = PeerId::new("peer-gone".to_string());
+
+        let error = db::merge::push_existing_docs(
+            &transport,
+            &db,
+            None,
+            &peer,
+            &["Collection".to_string()],
+            &p2p::ReplicationFilters::new(),
+            db::merge::PushExistingDocsSeOptions::default(),
+            &p2p::EqOnlyFilterMatcher,
+            &p2p::sync::HeadHintCarAuthority::default(),
+        )
         .await
-        .unwrap();
-    assert!(peerstore
-        .get_retry_info("peer-gone")
-        .await
-        .unwrap()
-        .is_none());
+        .unwrap_err();
+
+        assert!(
+            error.contains("removed before existing-document replay"),
+            "unexpected error: {error}"
+        );
+    })
+    .unwrap()
 }

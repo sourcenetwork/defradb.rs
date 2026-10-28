@@ -8,7 +8,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// Generate a group key from commit field values.
     /// Format matches Go DefraDB: `{index}_{value}_` for each field.
     pub(super) fn generate_commit_group_key(
-        commit: &document::Document,
+        commit: &document::CommitRow,
         fields: &[String],
     ) -> String {
         let mut key = String::new();
@@ -79,7 +79,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     /// Convert a commit document to a fields array for filter evaluation.
     pub(super) fn commit_to_fields(
-        commit: &document::Document,
+        commit: &document::CommitRow,
         _mapping: &crate::document::DocumentMapping,
     ) -> Vec<Option<JsonValue>> {
         let field_names = [

@@ -47,7 +47,7 @@ pub extern "C" fn poll_subscription(subscription_handle: usize) -> PollSubscript
                         // Check collection filter
                         if let Some(ref filter) = state.collection_filter {
                             if let Some(update) = message.as_update() {
-                                // Filter by collection name (collection_id contains the schema version ID,
+                                // Filter by collection name (collection_id contains the collection version ID,
                                 // but we match against collection name for user convenience)
                                 // The collection_id format is typically the collection name
                                 if !update.collection_id.contains(filter.as_str()) {

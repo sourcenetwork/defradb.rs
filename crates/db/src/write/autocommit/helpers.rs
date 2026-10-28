@@ -1,6 +1,7 @@
 use super::*;
 use bytes::Bytes;
 use defra_core::cid_encoding::CidText;
+use document::{FieldOp, NormalValue};
 
 use crate::block::builder::BlockResult;
 use crate::collection::Collection;
@@ -64,7 +65,17 @@ pub(crate) async fn write_local_update(
     embedding_config: &crate::search::EmbeddingClientConfig,
     prepared_inputs: &query::prepared::PreparedInputMemo,
 ) -> query::error::Result<()> {
-    set_incremented_counters(datastore, collection, doc, doc_short_id).await?;
+    apply_field_ops(datastore, collection, doc, doc_short_id, modified_fields).await?;
+    prepare_tagged_writes(
+        datastore,
+        collection,
+        doc,
+        doc_short_id,
+        modified_fields,
+        heads,
+        prepared_inputs,
+    )
+    .await?;
     let generated = crate::search::embedding::set_embedding_from_inputs(
         &collection.schema().vector_embeddings,
         doc,
@@ -231,47 +242,233 @@ pub(crate) async fn register_block_doc_id_mappings(
     Ok(())
 }
 
-/// Give each counter this update increments its value after the increment as
-/// this transaction sees it: the stored value plus the delta. The increment
-/// itself stays a blind operand. The stored value is read without validation:
-/// whatever rests on the result validates its own dependency (an index on the
-/// counter reads its part with validation, a whole-document put is validated
-/// as a write).
-async fn set_incremented_counters(
+/// Give each field this update writes through an operation the value it
+/// takes, as this transaction sees it: the operation applied to the stored
+/// value. An increment stays a blind operand, so its stored value is read
+/// without validation: whatever rests on the result validates its own
+/// dependency (an index on the counter reads its part with validation, a
+/// whole-document put is validated as a write).
+///
+/// A causal field's operation counts in the stored value, so that value is
+/// read validated: a concurrent write of the field conflicts, and the attempt
+/// runs again against the value that won. A write that sets such a field is
+/// expressed as the operation from the stored value to the new one.
+///
+/// A document stored at an older version was read through its lens, and this
+/// write moves it to the current one. A causal value is the replay of its
+/// blocks, so a lens change to a causal field the write does not name reaches
+/// the stored value here, as the edits from the stored value in this write's
+/// block; such a field joins `modified_fields`.
+async fn apply_field_ops(
     datastore: &NamespaceView,
     collection: &Collection,
     doc: &mut Document,
     doc_short_id: u64,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
 ) -> query::error::Result<()> {
-    let increments: Vec<_> = collection
-        .schema()
-        .fields
-        .iter()
-        .filter_map(|field| {
-            let kind = crate::collection::value::counter_kind(field)?;
-            Some((
-                field.name.as_str(),
-                kind,
-                doc.get_counter_delta(&field.name)?.clone(),
-            ))
-        })
-        .collect();
-    if increments.is_empty() {
+    let execution =
+        |error: &dyn std::fmt::Display| query::error::QueryError::execution(error.to_string());
+    let mut blind = Vec::new();
+    let mut causal = Vec::new();
+    let mut unnamed = Vec::new();
+    for field in &collection.schema().fields {
+        let Some(crdt) = collection
+            .crdts()
+            .field(field.crdt_type)
+            .filter(|crdt| crdt.tagged().is_none())
+        else {
+            continue;
+        };
+        let op = doc.pending_op(&field.name).cloned();
+        match crdt.causal() {
+            Some(replay) if op.is_some() || modified_fields.contains(&field.name) => {
+                causal.push((field, crdt, replay, op, true))
+            }
+            None => blind.extend(op.map(|op| (field, crdt, op))),
+            Some(replay) if doc.get(&field.name).is_some() => {
+                unnamed.push((field, crdt, replay, None, false))
+            }
+            Some(_) => {}
+        }
+    }
+    if !unnamed.is_empty()
+        && collection
+            .load_version(datastore, doc_short_id)
+            .await
+            .map_err(|e| execution(&e))?
+            .as_deref()
+            != Some(collection.version_id())
+    {
+        causal.extend(unnamed);
+    }
+    if !blind.is_empty() {
+        let stored = collection
+            .read_document_unvalidated(datastore, doc_short_id)
+            .await
+            .map_err(|e| execution(&e))?;
+        for (field, crdt, op) in blind {
+            let value = crdt
+                .apply(
+                    field,
+                    stored.as_ref().and_then(|stored| stored.get(&field.name)),
+                    &op,
+                )
+                .map_err(|e| execution(&e))?;
+            doc.set(field.name.clone(), value)
+                .map_err(|e| execution(&e))?;
+            doc.edit(field.name.clone(), op)
+                .map_err(|e| execution(&e))?;
+        }
+    }
+    if causal.is_empty() {
         return Ok(());
     }
+    let doc_id = doc
+        .id()
+        .cloned()
+        .ok_or_else(|| query::error::QueryError::execution("update without a DocID"))?;
+    let names = causal
+        .iter()
+        .map(|(field, ..)| field.name.clone())
+        .collect();
     let stored = collection
-        .read_document_unvalidated(datastore, doc_short_id)
+        .get_with_datastore_fields(datastore, doc_short_id, &doc_id, &names)
         .await
-        .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-    for (name, kind, delta) in increments {
-        let value = document::stored::add_counter(
-            name,
-            kind,
-            stored.as_ref().and_then(|stored| stored.get(name)),
-            &delta,
+        .map_err(|e| execution(&e))?;
+    for (field, crdt, replay, op, named) in causal {
+        let current = stored.as_ref().and_then(|stored| stored.get(&field.name));
+        if !named {
+            if current == doc.get(&field.name) {
+                continue;
+            }
+            modified_fields.insert(field.name.clone());
+        }
+        // A write of a whole value keeps that value, null included, and is
+        // expressed as the edits that make it from the stored one.
+        let (value, op) = match op {
+            Some(op) => (
+                crdt.apply(field, current, &op).map_err(|e| execution(&e))?,
+                op,
+            ),
+            None => {
+                let value = doc.get(&field.name).cloned().unwrap_or(NormalValue::Null);
+                let op = replay.diff(current, &value).map_err(|e| execution(&e))?;
+                (value, op)
+            }
+        };
+        doc.set(field.name.clone(), value)
+            .map_err(|e| execution(&e))?;
+        // Setting the value drops the pending op; the block still carries it.
+        doc.edit(field.name.clone(), op)
+            .map_err(|e| execution(&e))?;
+    }
+    Ok(())
+}
+
+/// Prepare each write of a tagged field against its stored state, read
+/// without validation: the write's block acts only on the operations that
+/// state records, all in its past, so it decides nothing on the state and
+/// a concurrent writer of the field never conflicts with it. A write that
+/// names no operation sets the field's value. The block's parents are the
+/// field's heads in `heads`, the snapshot the update builds its blocks from,
+/// one priority above them. The document then holds the value the write
+/// leaves and the prepared write ([`FieldOp::Operand`]).
+///
+/// A document stored at an older version was read through its lens, and this
+/// write moves it to the current one. A lens change to a tagged field the
+/// write does not name reaches the stored state here, as a set in this
+/// write's block, since a tagged state only changes through blocks every peer
+/// merges; such a field joins `modified_fields`.
+///
+/// Each write's data carries a nonce, drawn once per document, field and
+/// heads and memoized in `prepared_inputs`, so an attempt that runs again
+/// writes the same block, and two peers' equal writes stay two operations.
+async fn prepare_tagged_writes(
+    datastore: &NamespaceView,
+    collection: &Collection,
+    doc: &mut Document,
+    doc_short_id: u64,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
+    heads: &crate::block::builder::DocHeadsSnapshot,
+    prepared_inputs: &query::prepared::PreparedInputMemo,
+) -> query::error::Result<()> {
+    let execution =
+        |error: &dyn std::fmt::Display| query::error::QueryError::execution(error.to_string());
+    let tagged_fields = collection.schema().fields.iter().filter_map(|field| {
+        Some((
+            field,
+            collection
+                .crdts()
+                .field(field.crdt_type)
+                .and_then(|crdt| crdt.tagged())?,
+        ))
+    });
+    let migrating = tagged_fields.clone().any(|(field, _)| {
+        doc.pending_op(&field.name).is_none() && !modified_fields.contains(&field.name)
+    }) && collection
+        .load_version(datastore, doc_short_id)
+        .await
+        .map_err(|e| execution(&e))?
+        .as_deref()
+        != Some(collection.version_id());
+    for (field, tagged) in tagged_fields {
+        let named = doc.pending_op(&field.name).is_some() || modified_fields.contains(&field.name);
+        if !named && !(migrating && doc.get(&field.name).is_some()) {
+            continue;
+        }
+        let state = collection
+            .read_part_unvalidated(datastore, doc_short_id, &field.name)
+            .await
+            .map_err(|e| execution(&e))?;
+        let op = match doc.pending_op(&field.name) {
+            Some(op) => op.clone(),
+            None => FieldOp::Set(doc.get(&field.name).cloned().unwrap_or(NormalValue::Null)),
+        };
+        if !named {
+            let stored = state
+                .as_ref()
+                .and_then(|state| tagged.materialize(state.part()));
+            if stored.as_ref() == doc.get(&field.name) {
+                continue;
+            }
+            modified_fields.insert(field.name.clone());
+        }
+        let parents: Vec<Vec<u8>> = heads
+            .field_heads(&field.name)
+            .iter()
+            .map(Cid::to_bytes)
+            .collect();
+        let priority = heads.field_max_priority(&field.name) + 1;
+        let nonce = crate::block::builder::fresh_nonce(
+            Some(prepared_inputs),
+            (
+                "json-nonce-v1",
+                collection.collection_id(),
+                doc_short_id,
+                &field.name,
+                priority,
+                &parents,
+            ),
         )
-        .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        doc.set(name.to_owned(), value);
+        .map_err(|e| execution(&e))?;
+        let write = crdt::field::tagged::local_write(
+            tagged,
+            field,
+            state.as_ref(),
+            &op,
+            priority,
+            &parents,
+            nonce,
+        )
+        .map_err(|e| execution(&e))?;
+        let prepared = write
+            .op()
+            .ok_or_else(|| execution(&"the prepared operand does not encode"))?;
+        doc.set(field.name.clone(), write.value)
+            .map_err(|e| execution(&e))?;
+        // Setting the value drops the pending op; the block still carries it.
+        doc.edit(field.name.clone(), prepared)
+            .map_err(|e| execution(&e))?;
     }
     Ok(())
 }

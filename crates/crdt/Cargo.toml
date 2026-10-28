@@ -7,33 +7,20 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["serde_json", "thiserror"]
-
 [lib]
 bench = false
 
 [dependencies]
-bytes.workspace = true
+ciborium = "0.2"
 defra-core = { path = "../defra-core" }
-storage = { path = "../storage" }
 document = { path = "../document" }
 rapidhash.workspace = true
-
-# Async
-async-trait.workspace = true
-
-# Serialization
-serde.workspace = true
+schema = { path = "../schema" }
 serde_json.workspace = true
-
-# Error handling
 thiserror.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 
 [lints]
 workspace = true

@@ -65,22 +65,35 @@ impl Fixture {
                 "v1",
                 "col-users",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             )
             .with_policy(PolicyDescription::new("policy-1", "users")),
         )
         .await
         .unwrap();
+        let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
         let handler = AcpMergeHandler::new(Arc::new(DbMergeHandler::new(db, blockstore.clone())))
             .with_document_acp(acp.clone());
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(users);
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -129,7 +142,7 @@ impl Fixture {
     ) -> (Cid, Vec<u8>) {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
                 status,
             }),
@@ -180,198 +193,219 @@ impl Fixture {
     }
 }
 
-#[tokio::test]
-async fn explicit_replay_does_not_bypass_update_permission() {
-    for strict in [false, true] {
-        let owner = signer();
-        let attacker = signer();
-        let fixture = Fixture::new(&owner, strict).await;
+#[test]
+fn explicit_replay_does_not_bypass_update_permission() {
+    workers::block_on(async {
+        for strict in [false, true] {
+            let owner = signer();
+            let attacker = signer();
+            let fixture = Fixture::new(&owner, strict).await;
 
-        let hijack = fixture.update(vec![fixture.genesis], 2, &attacker).await;
+            let hijack = fixture.update(vec![fixture.genesis], 2, &attacker).await;
 
-        assert_eq!(
-            fixture.merge(&hijack, &owner.did, true).await,
-            fixture.denied(&attacker)
-        );
-    }
+            assert_eq!(
+                fixture.merge(&hijack, &owner.did, true).await,
+                fixture.denied(&attacker)
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn ancestor_is_judged_by_its_own_signer() {
-    for strict in [false, true] {
-        let owner = signer();
-        let attacker = signer();
-        let fixture = Fixture::new(&owner, strict).await;
+#[test]
+fn ancestor_is_judged_by_its_own_signer() {
+    workers::block_on(async {
+        for strict in [false, true] {
+            let owner = signer();
+            let attacker = signer();
+            let fixture = Fixture::new(&owner, strict).await;
 
-        let (ancestor, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
-        let child = fixture.update(vec![ancestor], 3, &owner).await;
-        assert_eq!(
-            fixture.merge(&child, &owner.did, false).await,
-            fixture.denied(&attacker)
-        );
+            let (ancestor, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
+            let child = fixture.update(vec![ancestor], 3, &owner).await;
+            assert_eq!(
+                fixture.merge(&child, &owner.did, false).await,
+                fixture.denied(&attacker)
+            );
 
-        let sanctioned = fixture.update(vec![fixture.genesis], 2, &owner).await;
-        assert_eq!(
-            fixture.merge(&sanctioned, &owner.did, false).await,
-            MergeOutcome::Merged
-        );
-    }
+            let sanctioned = fixture.update(vec![fixture.genesis], 2, &owner).await;
+            assert_eq!(
+                fixture.merge(&sanctioned, &owner.did, false).await,
+                MergeOutcome::Merged
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn composite_linked_from_collection_block_is_judged_by_its_own_signer() {
-    for strict in [false, true] {
-        let owner = signer();
-        let attacker = signer();
-        let fixture = Fixture::new(&owner, strict).await;
+#[test]
+fn composite_linked_from_collection_block_is_judged_by_its_own_signer() {
+    workers::block_on(async {
+        for strict in [false, true] {
+            let owner = signer();
+            let attacker = signer();
+            let fixture = Fixture::new(&owner, strict).await;
 
-        let (hijack, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
-        let payload = CollectionDeltaPayload {
-            schema_version_id: "v1".to_string(),
-            priority: 1,
-        };
-        let carrier = Block::new(
-            CrdtDelta::Collection(payload.clone()),
-            vec![],
-            vec![DAGLink::new(&fixture.doc_id, hijack)],
-        );
-        let carrier_cid = carrier.generate_cid().unwrap();
-        let mut metadata = BlockMetadata::normal(
-            &fixture.doc_id,
-            "col-users",
-            &owner.did,
-            Some("peer"),
-            false,
-        );
-        metadata.verified_creator = Some(owner.did.clone());
+            let (hijack, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
+            let payload = CollectionDeltaPayload {
+                collection_version_id: "v1".to_string(),
+                priority: 1,
+            };
+            let carrier = Block::new(
+                CrdtDelta::Collection(payload.clone()),
+                vec![],
+                vec![DAGLink::new(&fixture.doc_id, hijack)],
+            );
+            let carrier_cid = carrier.generate_cid().unwrap();
+            let mut metadata = BlockMetadata::normal(
+                &fixture.doc_id,
+                "col-users",
+                &owner.did,
+                Some("peer"),
+                false,
+            );
+            metadata.verified_creator = Some(owner.did.clone());
 
-        let outcome = fixture
-            .handler
-            .inner()
-            .process_collection_delta(&carrier_cid, &carrier, &payload, &metadata, 0)
-            .await
-            .unwrap();
+            let outcome = fixture
+                .handler
+                .inner()
+                .process_collection_delta(&carrier_cid, &carrier, &payload, &metadata, 0)
+                .await
+                .unwrap();
 
-        assert_eq!(outcome, fixture.denied(&attacker));
-    }
+            assert_eq!(outcome, fixture.denied(&attacker));
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_ancestor_is_judged_by_its_own_signer() {
-    for strict in [false, true] {
-        let owner = signer();
-        let attacker = signer();
-        let fixture = Fixture::new(&owner, strict).await;
+#[test]
+fn batch_ancestor_is_judged_by_its_own_signer() {
+    workers::block_on(async {
+        for strict in [false, true] {
+            let owner = signer();
+            let attacker = signer();
+            let fixture = Fixture::new(&owner, strict).await;
 
-        let (ancestor, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
-        let (cid, bytes) = fixture.update(vec![ancestor], 3, &owner).await;
-        let results = fixture
-            .handler
-            .handle_block_batch(&[MergeBlock {
-                cid,
-                block_data: bytes::Bytes::from(bytes),
-                doc_id: fixture.doc_id.clone(),
-                collection_id: "col-users".to_string(),
-                creator: owner.did.clone(),
-                sender_peer: Some("peer".to_string()),
-                is_explicit_replicator: false,
-                explicit_replay_authorization: None,
-                verified_creator: None,
-            }])
-            .await;
+            let (ancestor, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
+            let (cid, bytes) = fixture.update(vec![ancestor], 3, &owner).await;
+            let results = fixture
+                .handler
+                .handle_block_batch(&[MergeBlock {
+                    cid,
+                    block_data: bytes::Bytes::from(bytes),
+                    doc_id: fixture.doc_id.clone(),
+                    collection_id: "col-users".to_string(),
+                    creator: owner.did.clone(),
+                    sender_peer: Some("peer".to_string()),
+                    is_explicit_replicator: false,
+                    explicit_replay_authorization: None,
+                    verified_creator: None,
+                }])
+                .await;
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results.into_iter().next().unwrap().unwrap(),
-            fixture.denied(&attacker)
-        );
-    }
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results.into_iter().next().unwrap().unwrap(),
+                fixture.denied(&attacker)
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn strict_unsigned_update_and_delete_are_refused() {
-    for status in [1, 2] {
+#[test]
+fn strict_unsigned_update_and_delete_are_refused() {
+    workers::block_on(async {
+        for status in [1, 2] {
+            let owner = signer();
+            let fixture = Fixture::new(&owner, true).await;
+            let block = Block::new(
+                CrdtDelta::Composite(CompositeDeltaPayload {
+                    collection_version_id: "v1".into(),
+                    priority: 2,
+                    status,
+                }),
+                vec![fixture.genesis],
+                vec![],
+            );
+            let permission = if status == 2 { "delete" } else { "update" };
+            assert_eq!(
+                fixture
+                    .merge(
+                        &(block.generate_cid().unwrap(), block.to_dag_cbor().unwrap()),
+                        &owner.did,
+                        true,
+                    )
+                    .await,
+                MergeOutcome::rejected(format!(
+                    "signer unsigned lacks {permission} permission on protected document {}",
+                    fixture.doc_id
+                ))
+            );
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn strict_recovered_update_uses_verified_signer_not_claimed_creator() {
+    workers::block_on(async {
         let owner = signer();
+        let attacker = signer();
         let fixture = Fixture::new(&owner, true).await;
-        let block = Block::new(
-            CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
-                priority: 2,
-                status,
-            }),
-            vec![fixture.genesis],
-            vec![],
+        let hijack = fixture.update(vec![fixture.genesis], 2, &attacker).await;
+        let recovered = fixture
+            .handler
+            .recover_block_metadata(&hijack.0, &hijack.1)
+            .await
+            .unwrap()
+            .expect("recover signed composite");
+        assert_eq!(
+            recovered.verified_creator.as_deref(),
+            Some(attacker.did.as_str())
         );
-        let permission = if status == 2 { "delete" } else { "update" };
         assert_eq!(
             fixture
-                .merge(
-                    &(block.generate_cid().unwrap(), block.to_dag_cbor().unwrap()),
-                    &owner.did,
-                    true,
+                .handler
+                .handle_block(
+                    &hijack.0,
+                    &hijack.1,
+                    BlockMetadata::recovered(
+                        &recovered.doc_id,
+                        &recovered.collection_id,
+                        &recovered.creator,
+                        recovered.verified_creator.clone(),
+                    ),
                 )
-                .await,
+                .await
+                .unwrap(),
+            fixture.denied(&attacker)
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn strict_signed_delete_checks_delete_permission() {
+    workers::block_on(async {
+        let owner = signer();
+        let attacker = signer();
+        let fixture = Fixture::new(&owner, true).await;
+        let denied = fixture
+            .composite(vec![fixture.genesis], 2, 2, &attacker)
+            .await;
+        assert_eq!(
+            fixture.merge(&denied, &owner.did, true).await,
             MergeOutcome::rejected(format!(
-                "signer unsigned lacks {permission} permission on protected document {}",
-                fixture.doc_id
+                "signer {} lacks delete permission on protected document {}",
+                attacker.did, fixture.doc_id,
             ))
         );
-    }
-}
-
-#[tokio::test]
-async fn strict_recovered_update_uses_verified_signer_not_claimed_creator() {
-    let owner = signer();
-    let attacker = signer();
-    let fixture = Fixture::new(&owner, true).await;
-    let hijack = fixture.update(vec![fixture.genesis], 2, &attacker).await;
-    let recovered = fixture
-        .handler
-        .recover_block_metadata(&hijack.0, &hijack.1)
-        .await
-        .unwrap()
-        .expect("recover signed composite");
-    assert_eq!(
-        recovered.verified_creator.as_deref(),
-        Some(attacker.did.as_str())
-    );
-    assert_eq!(
-        fixture
-            .handler
-            .handle_block(
-                &hijack.0,
-                &hijack.1,
-                BlockMetadata::recovered(
-                    &recovered.doc_id,
-                    &recovered.collection_id,
-                    &recovered.creator,
-                    recovered.verified_creator.clone(),
-                ),
-            )
-            .await
-            .unwrap(),
-        fixture.denied(&attacker)
-    );
-}
-
-#[tokio::test]
-async fn strict_signed_delete_checks_delete_permission() {
-    let owner = signer();
-    let attacker = signer();
-    let fixture = Fixture::new(&owner, true).await;
-    let denied = fixture
-        .composite(vec![fixture.genesis], 2, 2, &attacker)
-        .await;
-    assert_eq!(
-        fixture.merge(&denied, &owner.did, true).await,
-        MergeOutcome::rejected(format!(
-            "signer {} lacks delete permission on protected document {}",
-            attacker.did, fixture.doc_id,
-        ))
-    );
-    let allowed = fixture.composite(vec![fixture.genesis], 2, 2, &owner).await;
-    assert_eq!(
-        fixture.merge(&allowed, &owner.did, false).await,
-        MergeOutcome::Merged
-    );
+        let allowed = fixture.composite(vec![fixture.genesis], 2, 2, &owner).await;
+        assert_eq!(
+            fixture.merge(&allowed, &owner.did, false).await,
+            MergeOutcome::Merged
+        );
+    })
+    .unwrap()
 }

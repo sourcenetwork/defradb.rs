@@ -71,7 +71,7 @@ type Book {
 The generator added three authors and three books, updated one author's age
 and tags, incremented another's counter twice (once with a rating change), and
 deleted one book. `legacy_expected.json` holds each query
-`legacy_store_rewrite.rs` runs and the answer main gave on these stores; the two
-stores answered identically. The generator was a test file added to a scratch
+`legacy_store_rewrite.rs` runs and their expected current results. The two
+stores contain identical documents. The generator was a test file added to a scratch
 checkout of main for the purpose and is not kept in the tree; each archive is
 `tar --sort=name --mtime=@0 -C <store> -cf - . | zstd -19 | base64 -w 76`.

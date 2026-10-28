@@ -38,6 +38,7 @@ pub async fn schema(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(crate::error::ErrorResponse {
                     error: "Failed to retrieve schema".to_string(),
+                    code: None,
                 }),
             )
                 .into_response())

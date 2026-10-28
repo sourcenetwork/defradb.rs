@@ -154,8 +154,10 @@ pub struct EmbeddedNodeConfig {
     pub peer_keyring: Option<PeerKeyring>,
     pub persistence: Persistence,
     pub transport: TransportConfig,
-    /// The network runtime the transport runs on. A node with a transport
-    /// needs one; a node without networking starts none.
+    /// The network runtime the node's networking runs on: its transport,
+    /// its database's network work and the pool's stuck-poll monitor. A node
+    /// with a transport that names none runs them on the process's own
+    /// ([`edge::on_demand`]); a node without networking starts none.
     pub edge: Option<edge::Edge>,
     pub signing: SigningConfig,
     pub document_acp: DocumentAcpConfig,
@@ -319,6 +321,12 @@ impl storage::corekv::private::Sealed for EmbeddedStore {}
 
 #[async_trait]
 impl storage::Store for EmbeddedStore {
+    fn crdts(&self) -> &storage::Crdts {
+        match self {
+            Self::Regolith(store) => storage::Store::crdts(store),
+        }
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         match self {
             Self::Regolith(store) => store.allocate(key, count).await,

@@ -559,7 +559,8 @@ fn test_filter_to_scan_top_level_json_lte_null_uses_index() {
     let fields = vec![FieldDescription::new(
         "custom",
         "custom",
-        FieldKind::Scalar(ScalarKind::Json),
+        FieldKind::Scalar(ScalarKind::NillableJson),
+        schema::CType::LwwRegister,
     )];
 
     let params = filter_to_index_scan(&filter, &index, None, &fields, None, 0).unwrap();
@@ -664,4 +665,49 @@ fn test_select_best_index_with_partial_estimates_uses_shape() {
     let counts = estimates(&[("hour_idx", 3)]);
     let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
     assert_eq!(best.name, "market_idx");
+}
+
+#[test]
+fn ordering_skips_only_equality_fixed_index_fields() {
+    let index = composite_index(&["node", "session", "sequence", "key"]);
+    for (filter, order, expected) in [
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}]",
+            (true, true),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: ASC}]",
+            (true, false),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}, {key: ASC}]",
+            (false, false),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_gt: "s"}}"#,
+            "[{sequence: DESC}]",
+            (false, false),
+        ),
+        (
+            r#"{node: {_in: ["n"]}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}]",
+            (false, false),
+        ),
+    ] {
+        let query = format!("{{ Events(filter: {filter}, order: {order}) {{ sequence }} }}");
+        let selects = crate::query_parse::parse_query(&query).unwrap();
+        let select = &selects[0];
+        assert_eq!(
+            can_be_ordered_by_filtered_index(
+                select.order_by.as_ref().unwrap(),
+                &index,
+                select.filter.as_ref().unwrap(),
+            ),
+            expected,
+            "{query}"
+        );
+    }
 }

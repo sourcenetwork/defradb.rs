@@ -29,7 +29,7 @@ const DOC_COUNTS: &[usize] = &[1, 50, 500];
 /// History depths [`bench_catch_up_by_history_depth`] is run against.
 ///
 /// A depth of one thousand cannot currently be measured: catching up on a DAG that deep
-/// overflows the stack of a tokio worker thread and aborts the process, which points at an
+/// overflows the stack of a runtime thread and aborts the process, which points at an
 /// unbounded recursive walk somewhere in the fetch-and-merge path. This should be extended
 /// once that walk is bounded or made iterative.
 const CATCH_UP_DEPTHS: &[usize] = &[10, 100, 500];
@@ -112,7 +112,9 @@ async fn build_bench_node() -> EmbeddedNode {
         .build()
         .await
         .expect("build P2P node");
-    node.add_schema(BENCH_SDL).await.expect("add bench schema");
+    node.add_collection(BENCH_SDL)
+        .await
+        .expect("add bench schema");
 
     node
 }
@@ -133,7 +135,7 @@ async fn listen_addr(node: &EmbeddedNode) -> String {
             Instant::now() < deadline,
             "node never exposed a P2P listen address"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -153,7 +155,7 @@ async fn await_connected_peer(node: &EmbeddedNode) {
             Instant::now() < deadline,
             "node never reported a connected peer"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -268,7 +270,7 @@ async fn await_user_count(node: &EmbeddedNode, expected: usize) {
             Instant::now() < deadline,
             "receiving node reached only {count} of {expected} documents within {CONVERGENCE_TIMEOUT:?}"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -347,14 +349,18 @@ fn report(doc_count: usize, spans: &ReplicationSpans) {
 
 /// Measures write-to-remote-visible latency and replication throughput for the live push
 /// path, across [`DOC_COUNTS`].
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per document count"]
-async fn bench_two_node_push_replication() {
-    println!("two-node push replication (poll resolution {POLL_INTERVAL:?})");
-    for &doc_count in DOC_COUNTS {
-        let spans = measure_replication(doc_count).await;
-        report(doc_count, &spans);
-    }
+fn bench_two_node_push_replication() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("two-node push replication (poll resolution {POLL_INTERVAL:?})");
+            for &doc_count in DOC_COUNTS {
+                let spans = measure_replication(doc_count).await;
+                report(doc_count, &spans);
+            }
+        })
+        .unwrap()
 }
 
 /// Measures how long a receiving node takes to catch up on a document whose history was
@@ -365,15 +371,21 @@ async fn bench_two_node_push_replication() {
 /// receiving node starting to connect through to it reading the final value, and so
 /// includes connection establishment - unlike the push benchmark, that setup is part of
 /// what a late-joining node has to pay.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per history depth"]
-async fn bench_catch_up_by_history_depth() {
-    println!("catch-up by history depth (poll resolution {POLL_INTERVAL:?})");
-    for &depth in CATCH_UP_DEPTHS {
-        let latency = measure_catch_up(depth).await;
-        let updates_per_sec = depth as f64 / latency.as_secs_f64();
-        println!("updates={depth:<5} catch_up={latency:>9.2?}  {updates_per_sec:>9.1} updates/s");
-    }
+fn bench_catch_up_by_history_depth() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("catch-up by history depth (poll resolution {POLL_INTERVAL:?})");
+            for &depth in CATCH_UP_DEPTHS {
+                let latency = measure_catch_up(depth).await;
+                let updates_per_sec = depth as f64 / latency.as_secs_f64();
+                println!(
+                    "updates={depth:<5} catch_up={latency:>9.2?}  {updates_per_sec:>9.1} updates/s"
+                );
+            }
+        })
+        .unwrap()
 }
 
 /// Returns the time taken for a receiving node to converge on a document that already has
@@ -415,10 +427,24 @@ async fn measure_catch_up(update_count: usize) -> Duration {
     connect_and_replicate(&sender, &receiver).await;
     await_user_age(&receiver, update_count as i64).await;
     let elapsed = start.elapsed();
+    print_peer_fetches(&receiver).await;
 
     shutdown_nodes(&sender, &receiver).await;
 
     elapsed
+}
+
+/// Prints what the node measured about its fetches from each peer.
+async fn print_peer_fetches(node: &EmbeddedNode) {
+    let status = node
+        .p2p()
+        .expect("p2p")
+        .sync_status()
+        .await
+        .expect("sync status");
+    for peer in status["peer_fetches"].as_array().into_iter().flatten() {
+        println!("  peer_fetches {peer}");
+    }
 }
 
 /// Polls the node until its single `User` document reports `expected` as its age.
@@ -448,7 +474,7 @@ async fn await_user_age(node: &EmbeddedNode, expected: i64) {
             Instant::now() < deadline,
             "receiving node reached age {age:?} rather than {expected} within {CONVERGENCE_TIMEOUT:?}"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -522,7 +548,7 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
     let settle_deadline = Instant::now() + PULL_SETTLE_WINDOW;
     let mut settled = arrived;
     while settled < doc_count && Instant::now() < settle_deadline {
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
         settled = user_count(&receiver).await;
     }
 
@@ -543,9 +569,10 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
 /// Iroh implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
 /// document count on the receiving node - not the return value - is what says whether the
 /// pull worked.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per document count"]
-async fn bench_pull_by_document_count() {
+fn bench_pull_by_document_count() {
+    edge::testing::edge().block_on(async {
     println!("document pull via sync_documents (poll resolution {POLL_INTERVAL:?})");
     for &doc_count in PULL_DOC_COUNTS {
         let outcome = measure_pull(doc_count).await;
@@ -561,4 +588,114 @@ async fn bench_pull_by_document_count() {
             outcome.call, outcome.arrived, outcome.settled
         );
     }
+})
+    .unwrap()
+}
+
+/// Provider counts [`bench_pull_from_providers`] is run against.
+const PROVIDER_COUNTS: &[usize] = &[1, 2, 4];
+
+/// Updates in the history every provider holds.
+const PROVIDER_HISTORY_DEPTH: usize = 200;
+
+/// What one pull from several providers cost.
+struct ProviderPull {
+    elapsed: Duration,
+    /// CAR bytes received from each provider, finished fetches and in-flight ones.
+    bytes: Vec<u64>,
+    /// CAR fetches made to each provider.
+    fetches: Vec<u64>,
+}
+
+/// Pulls one document's history onto a fresh node connected to `providers` nodes that
+/// all hold it, and records the bytes each provider sent.
+async fn measure_pull_from_providers(providers: usize) -> ProviderPull {
+    let origin = build_bench_node().await;
+    let response = origin
+        .execute(r#"mutation { add_User(input: {name: "Shared", age: 0}) { _docID } }"#)
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let doc_id = created_doc_id(&response);
+    for age in 1..=PROVIDER_HISTORY_DEPTH {
+        let response = origin
+            .execute(&format!(
+                r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: {age}}}) {{ _docID }} }}"#
+            ))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+    }
+
+    let mut nodes = vec![origin];
+    for _ in 1..providers {
+        let replica = build_bench_node().await;
+        connect_and_replicate(&nodes[0], &replica).await;
+        await_user_age(&replica, PROVIDER_HISTORY_DEPTH as i64).await;
+        nodes.push(replica);
+    }
+
+    let receiver = build_bench_node().await;
+    for provider in &nodes {
+        connect_only(provider, &receiver).await;
+    }
+
+    let start = Instant::now();
+    receiver
+        .p2p()
+        .expect("receiver P2P should be enabled")
+        .sync_documents("User", vec![doc_id], None)
+        .await
+        .expect("sync_documents");
+    await_user_age(&receiver, PROVIDER_HISTORY_DEPTH as i64).await;
+    let elapsed = start.elapsed();
+
+    let status = receiver
+        .p2p()
+        .expect("p2p")
+        .sync_status()
+        .await
+        .expect("sync status");
+    let bytes = status["peer_fetches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|peer| {
+            peer["bytes"].as_u64().unwrap_or(0) + peer["in_flight_bytes"].as_u64().unwrap_or(0)
+        })
+        .collect();
+    let fetches = status["peer_fetches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|peer| peer["fetches"].as_u64().unwrap_or(0))
+        .collect();
+
+    receiver.shutdown().await;
+    for node in &nodes {
+        node.shutdown().await;
+    }
+    ProviderPull {
+        elapsed,
+        bytes,
+        fetches,
+    }
+}
+
+/// Measures whether pulling from more providers costs more bytes than the history is
+/// worth: each block sync asks every provider for the same CAR and keeps the first.
+#[test]
+#[ignore = "benchmark: spins up several networked nodes per provider count"]
+fn bench_pull_from_providers() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("pull of a {PROVIDER_HISTORY_DEPTH}-update history from N providers");
+            for &providers in PROVIDER_COUNTS {
+                let pull = measure_pull_from_providers(providers).await;
+                let total: u64 = pull.bytes.iter().sum();
+                println!(
+                    "providers={providers} elapsed={:>9.2?} total_bytes={total:>9} bytes={:?} fetches={:?}",
+                    pull.elapsed, pull.bytes, pull.fetches
+                );
+            }
+        })
+        .unwrap()
 }

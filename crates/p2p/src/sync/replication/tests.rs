@@ -27,6 +27,9 @@ use std::time::Duration;
 use storage::RegolithStore;
 use tokio::sync::mpsc;
 
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
+
 fn test_cid() -> Cid {
     Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap()
 }
@@ -114,6 +117,7 @@ struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
+    sync_blocks_calls: Arc<AtomicUsize>,
     replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
     pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
@@ -124,6 +128,7 @@ impl NoopTransport {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
+            sync_blocks_calls: Arc::new(AtomicUsize::new(0)),
             replicators: Arc::new(kovan::Atom::new(Vec::new())),
             pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
@@ -799,6 +804,7 @@ impl P2PTransport for NoopTransport {
         _providers: Vec<PeerId>,
         _missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
+        self.sync_blocks_calls.fetch_add(1, Ordering::SeqCst);
         Ok(QueryId(0))
     }
 
@@ -841,6 +847,9 @@ impl P2PTransport for NoopTransport {
 
 struct RetryThenMergeHandler {
     call_count: AtomicUsize,
+    yielding_root: Option<Cid>,
+    yield_turns: usize,
+    yielded_calls: AtomicUsize,
 }
 
 struct ErrorThenMergeHandler {
@@ -861,6 +870,17 @@ impl RetryThenMergeHandler {
     fn new() -> Self {
         Self {
             call_count: AtomicUsize::new(0),
+            yielding_root: None,
+            yield_turns: 0,
+            yielded_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn yielding(root: Cid, turns: usize) -> Self {
+        Self {
+            yielding_root: Some(root),
+            yield_turns: turns,
+            ..Self::new()
         }
     }
 }
@@ -898,11 +918,20 @@ impl MergeHandler for RetryThenMergeHandler {
 
     async fn handle_block(
         &self,
-        _cid: &Cid,
+        cid: &Cid,
         _block_data: &[u8],
         _metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
         let attempt = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(root) = self.yielding_root {
+            return if *cid == root
+                && self.yielded_calls.fetch_add(1, Ordering::SeqCst) < self.yield_turns
+            {
+                Ok(MergeOutcome::Yielded)
+            } else {
+                Ok(MergeOutcome::Merged)
+            };
+        }
         if attempt == 0 {
             Ok(MergeOutcome::retryable_skip("pending ACP"))
         } else {
@@ -1925,7 +1954,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -1936,7 +1965,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2069,7 +2098,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -2079,7 +2108,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
     let child_cid = child_block.generate_cid().unwrap();
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2262,7 +2291,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_string(),
             priority: 1,
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             data: b"current".to_vec(),
         }),
         vec![],
@@ -2274,7 +2303,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2285,7 +2314,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let composite_cid = composite.generate_cid().unwrap();
     let root = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
         }),
         vec![],
@@ -3035,7 +3064,7 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
     let head = |priority| {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema".to_string(),
+                collection_version_id: "schema".to_string(),
                 priority,
                 status: 1,
             }),
@@ -3340,4 +3369,194 @@ async fn test_default_batch_mixed_skip_and_merge() {
     for result in &results {
         assert!(result.as_ref().unwrap().is_skipped());
     }
+}
+
+async fn coordinator_with_block(
+    cid: Cid,
+) -> crate::sync::coordinator::SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport> {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    blockstore.put(&cid, b"test data").await.unwrap();
+    let (coordinator, _events) = crate::sync::coordinator::SyncCoordinator::with_access_control(
+        NoopTransport::new(),
+        blockstore,
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(crate::ReplicatorRegistry::new()),
+        Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    coordinator
+}
+
+fn blocks_received<B, T>(
+    coordinator: &crate::sync::coordinator::SyncCoordinator<B, T>,
+    sender: &str,
+) -> crate::sync::SyncOutcomes
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    coordinator
+        .peer_state()
+        .history(sender)
+        .map(|history| history.blocks_received)
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn merged_block_records_block_received_from_sender() {
+    let cid = test_cid();
+    let coordinator = coordinator_with_block(cid).await;
+    let config = ReplicationConfig {
+        rebroadcast_on_merge: false,
+        ..ReplicationConfig::default()
+    };
+
+    let result = handle_block_received(
+        &coordinator,
+        &TestMergeHandler::new(true, false),
+        &config,
+        cid,
+        BlockMetadata::normal("doc1", "col1", "peer1", Some("sender1"), true),
+    )
+    .await;
+
+    assert!(matches!(result, ReplicationResult::Merged { .. }));
+    let received = blocks_received(&coordinator, "sender1");
+    assert_eq!((received.succeeded, received.failed), (1, 0));
+    let status = coordinator.sync_status().await;
+    let summary = status
+        .peers
+        .iter()
+        .find(|peer| peer.peer_id == "sender1")
+        .expect("sender is summarized");
+    assert_eq!(summary.last_block_received_at, received.last_succeeded_at);
+    assert_eq!(summary.last_head_acked_at, None);
+
+    let details = coordinator
+        .peer_details(&PeerId::new("sender1".to_string()))
+        .await;
+    assert_eq!(details.history.blocks_received, received);
+    assert!(details.connection.is_none());
+    assert!(details.source_errors.is_empty());
+}
+
+#[tokio::test]
+async fn failed_merge_records_the_merge_error() {
+    let cid = test_cid();
+    let coordinator = coordinator_with_block(cid).await;
+
+    let result = handle_block_received(
+        &coordinator,
+        &TestMergeHandler::new(false, false),
+        &ReplicationConfig::default(),
+        cid,
+        BlockMetadata::normal("doc1", "col1", "peer1", Some("sender1"), true),
+    )
+    .await;
+
+    assert!(matches!(result, ReplicationResult::Failed { .. }));
+    let received = blocks_received(&coordinator, "sender1");
+    assert_eq!((received.succeeded, received.failed), (0, 1));
+    assert_eq!(received.last_succeeded_at, None);
+    assert_eq!(
+        received.last_failure.map(|failure| failure.error),
+        Some("TestError: merge failed".to_string())
+    );
+}
+
+#[tokio::test]
+async fn batched_merge_records_each_outcome_for_sender() {
+    let cid = test_cid();
+    let config = ReplicationConfig {
+        rebroadcast_on_merge: false,
+        ..ReplicationConfig::default()
+    };
+    let event = || SyncEvent::BlockReceived {
+        cid,
+        doc_id: "doc1".to_string(),
+        collection_id: "col1".to_string(),
+        creator: "peer1".to_string(),
+        sender_peer: Some("sender1".to_string()),
+        is_explicit_replicator: false,
+        explicit_replay_authorization: None,
+    };
+
+    let failing = coordinator_with_block(cid).await;
+    process_merge_batch(
+        &failing,
+        vec![event()],
+        &TestMergeHandler::new(false, false),
+        &config,
+    )
+    .await;
+    let received = blocks_received(&failing, "sender1");
+    assert_eq!((received.succeeded, received.failed), (0, 1));
+
+    let merging = coordinator_with_block(cid).await;
+    let results = process_merge_batch(
+        &merging,
+        vec![event()],
+        &TestMergeHandler::new(true, false),
+        &config,
+    )
+    .await;
+    assert!(matches!(results[0], ReplicationResult::Merged { .. }));
+    let received = blocks_received(&merging, "sender1");
+    assert_eq!((received.succeeded, received.failed), (1, 0));
+}
+
+#[tokio::test]
+async fn peer_details_follows_a_pending_root_into_quarantine() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let cid = test_cid();
+    blockstore.put(&cid, b"test data").await.unwrap();
+    let (coordinator, _pending_store) = coordinator_with_live_pending_dag(blockstore, cid).await;
+    coordinator.manager().resync_persisted_pending_dags().await;
+    coordinator
+        .replicators()
+        .set_peer_collections("sender1", &["col1".to_string()]);
+    let sender = PeerId::new("sender1".to_string());
+
+    let pending = coordinator.peer_details(&sender).await;
+    assert_eq!(pending.pending_fetch_count, 1);
+    assert_eq!(pending.pending_fetches[0].root_cid, cid.to_string());
+    assert_eq!(pending.pending_fetches[0].doc_id, "doc1");
+    assert_eq!(pending.replicated_collections, vec!["col1".to_string()]);
+    assert!(pending.quarantined.is_empty());
+
+    handle_block_received(
+        &coordinator,
+        &RejectingMergeHandler::new("unique constraint violation"),
+        &ReplicationConfig::default(),
+        cid,
+        BlockMetadata::normal("doc1", "col1", "peer1", Some("sender1"), true),
+    )
+    .await;
+
+    let quarantined = coordinator.peer_details(&sender).await;
+    assert_eq!(quarantined.pending_fetch_count, 0);
+    assert_eq!(quarantined.quarantined.len(), 1);
+    assert_eq!(quarantined.quarantined[0].root_cid, cid.to_string());
+    assert_eq!(
+        quarantined.quarantined[0].reason,
+        "unique constraint violation"
+    );
+    assert!(quarantined.quarantined[0].quarantined_at.is_some());
+    let received = quarantined.history.blocks_received;
+    assert_eq!(received.failed, 1);
+    assert_eq!(
+        received.last_failure.map(|failure| failure.error),
+        Some("quarantined: unique constraint violation".to_string())
+    );
+
+    let other = coordinator
+        .peer_details(&PeerId::new("other".to_string()))
+        .await;
+    assert!(other.quarantined.is_empty());
+    assert_eq!(other.history, crate::sync::PeerHistory::default());
 }

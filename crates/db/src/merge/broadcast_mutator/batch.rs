@@ -288,6 +288,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
     for BroadcastBatchMutator<S, B, T>
 {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn engine_retries_batches(&self) -> bool {
         self.inner.engine_retries_batches()
     }
@@ -682,9 +686,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
         Ok(())
     }
 
-    async fn rollback(&self) -> query::error::Result<()> {
-        let rollback_result = self.inner_controller.rollback().await;
+    async fn discard(&self) -> query::error::Result<()> {
+        let discard_result = self.inner_controller.discard().await;
         self.drain_pending_broadcasts();
-        rollback_result
+        discard_result
     }
 }

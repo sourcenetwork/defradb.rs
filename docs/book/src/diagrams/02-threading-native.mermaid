@@ -1,0 +1,51 @@
+flowchart TB
+    classDef net fill:#e8e8e8,stroke:#666666,color:#000
+    classDef chan fill:#ffffff,stroke:#999999,color:#000
+    classDef worker fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef io fill:#fff3cd,stroke:#b8860b,color:#000
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+
+    subgraph NET["network edge: one tokio runtime, held in one place"]
+        H["HTTP, pg-compat and embedded API tasks"]
+        P["P2P tasks"]
+        RI["remote inputs: KMS keys, signatures, Vera decisions,<br/>embeddings: single-flight, batched, cached,<br/>resolved before the transaction"]
+        RT["routing at the edge:<br/>an explicit transaction goes to its owner core;<br/>one document's writes and merges go to the document's core;<br/>read-only queries go to the least-loaded core"]
+    end
+
+    IN["one bounded lock-free inbox per core, drained in batches"]
+
+    subgraph POOL["defradb.rs thread-per-core: one pinned async executor per core, no task stealing"]
+        C1["core 1: local executor, spawn_local;<br/>a task never moves to another core;<br/>one task per document at a time;<br/>owns its transactions by value"]
+        C2["core 2: its own copies of schema,<br/>ACP snapshot and lens stores;<br/>a deadline queue for sweeps,<br/>backfills and epoch ticks"]
+        CN["core N: a long task yields after a page;<br/>an input that depends on the transaction<br/>ends the attempt, which re-runs<br/>once the edge has it"]
+    end
+
+    subgraph RG["regolith: every call runs inline on the calling core"]
+        CALLS["read path: wait-free view, lock-free block cache,<br/>per-thread snapshot slots, per-core statistics;<br/>commit: group commit, then the lock-free pipeline"]
+        Q["one IoQueue per core: a CacheOnly miss or a pending ticket<br/>becomes a unit on the caller's own queue"]
+        U["claimable units: a block read, single-flight per block;<br/>a commit group's fsync. The first interested core<br/>claims a unit with one CAS when it polls between tasks"]
+        CW["compaction worker: flush, compaction, disk check;<br/>the only thread regolith starts, never on a caller"]
+    end
+
+    DONE["each waiting core gets one completion on its own queue;<br/>a busy core is never woken. The IoWait or CommitTicket is ready,<br/>the task resumes on its own core, and its response<br/>returns to the edge in a batch"]
+
+    H --> RT
+    P --> RT
+    RI --> RT
+    RT --> IN
+    IN --> C1
+    IN --> C2
+    IN --> CN
+    C1 -->|"inline calls"| CALLS
+    C2 -->|"inline calls"| CALLS
+    CN -->|"inline calls"| CALLS
+    CW -.-> CALLS
+    CALLS --> Q
+    Q --> U
+    U --> DONE
+
+    class H,P,RI,RT net
+    class IN,DONE chan
+    class C1,C2,CN worker
+    class Q,U io
+    class CALLS,CW rego

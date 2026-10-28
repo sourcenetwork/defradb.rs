@@ -115,6 +115,7 @@ pub use backends::{with_worker_io, RegolithStore, RegolithStoreOptions, WorkerIo
 pub use corekv::{
     Error, IterOptions, Iterator, KvPair, Reader, ReaderWriter, Result, Store, Txn, Writer,
 };
+pub use crdt::Crdts;
 pub use dyn_store::DynStore;
 
 pub use backends::{TransactionStatsHandle, TransactionStatsSnapshot};

@@ -1,10 +1,11 @@
 use defra_node::{EmbeddedNode, QueryRequest};
 use serde_json::json;
 
-#[tokio::test]
-async fn update_and_upsert_resolve_object_variables() {
+#[test]
+fn update_and_upsert_resolve_object_variables() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Probe { key: String @index(unique: true) label: String payload: JSON }")
+    node.add_collection("type Probe { key: String @index(unique: true) label: String payload: JSON }")
         .await
         .unwrap();
     let created = node
@@ -42,4 +43,6 @@ async fn update_and_upsert_resolve_object_variables() {
         json!({"label": "after", "payload": {"nested": [1, null, true]}})
     );
     node.shutdown().await;
+})
+    .unwrap()
 }

@@ -63,6 +63,7 @@ fn test_context_with_admission(
         ),
         failure_tx: Arc::new(AtomOption::some(tx)),
         send_timeout,
+        peer_state: Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
     });
     (context, rx)
 }
@@ -102,7 +103,7 @@ fn versioned_job(peer: &str, priority: u64) -> PushJobSpec {
     let doc_id = "doc-versioned";
     let block = Block::new_with_options(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority,
             status: 1,
         }),
@@ -281,7 +282,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     let dependency_cid = defra_core::block::generate_cid_from_bytes(&dependency).unwrap();
     let root = Block::new_with_options(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -332,7 +333,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -390,7 +391,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_string(),
             priority: 1,
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             data: b"current".to_vec(),
         }),
         vec![],
@@ -401,7 +402,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -640,4 +641,61 @@ async fn workers_exit_on_close() {
     let started = n0_future::time::Instant::now();
     shutdown.shutdown().await;
     assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+fn heads_pushed(
+    context: &PushWorkerContext<TestTransport>,
+    peer: &str,
+) -> crate::sync::SyncOutcomes {
+    context
+        .peer_state
+        .history(peer)
+        .map(|history| history.heads_pushed)
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn acknowledged_push_records_head_acked() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let (context, _failures) = test_context(
+        TestTransport::new(Vec::new()),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"acked")).await;
+    let active = backlog.next_job().await.unwrap();
+
+    assert_eq!(
+        run_push_job(&context, &active).await,
+        JobCompletion::Succeeded
+    );
+    let pushed = heads_pushed(&context, "peer");
+    assert_eq!((pushed.succeeded, pushed.failed), (1, 0));
+    assert!(pushed.last_succeeded_at.is_some());
+    backlog.job_done(&active, JobCompletion::Succeeded).await;
+    backlog.close();
+}
+
+#[tokio::test]
+async fn rejected_push_records_the_peer_error() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let reply = crate::message::PushLogReply::error("rejected", "merge failed");
+    let (context, _failures) = test_context(
+        TestTransport::new(vec![reply]),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"rejected")).await;
+    let active = backlog.next_job().await.unwrap();
+
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    let pushed = heads_pushed(&context, "peer");
+    assert_eq!((pushed.succeeded, pushed.failed), (0, 1));
+    assert_eq!(pushed.last_succeeded_at, None);
+    assert_eq!(
+        pushed.last_failure.map(|failure| failure.error),
+        Some("rejected by peer: merge failed".to_string())
+    );
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
 }

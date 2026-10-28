@@ -26,15 +26,15 @@
 //! # Example
 //!
 //! ```javascript
-//! import init, { DefraClient, verify_merkle_proof } from 'defra-wasm';
+//! import init, { DefraClient, verifyEd25519Signature } from 'defra-wasm';
 //!
 //! await init();
 //!
 //! // Create client
-//! const client = await DefraClient.create({ db_name: 'defradb' });
+//! const client = await DefraClient.create({ dbName: 'defradb' });
 //!
 //! // Add schema
-//! await client.add_schema(`
+//! await client.addCollection(`
 //!   type Account {
 //!     address: String
 //!     balance: Int
@@ -42,11 +42,11 @@
 //! `);
 //!
 //! // Query data
-//! const result = await client.query('{ Account { address balance } }');
-//! console.log(result);
+//! const { gql } = await client.execRequest('{ Account { address balance } }');
+//! console.log(gql.data);
 //!
-//! // Verify a proof from the indexer
-//! const isValid = verify_merkle_proof(proofJson);
+//! // Verify a signature
+//! const isValid = verifyEd25519Signature(publicKeyHex, message, signatureHex);
 //!
 //! // Cleanup
 //! await client.close();

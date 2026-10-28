@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crdt::stored::StoredDocument;
 use db::definition::migration::document_parts::{CURRENT_DOCUMENT_FORMAT, DOCUMENT_FORMAT_KEY};
 use db::{AutoCommitMutator, DB};
-use document::stored::StoredDocument;
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use storage::corekv::{
@@ -82,12 +82,16 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         .await
         .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
     let mut ids = Vec::new();
     for i in 0..DOCUMENTS {
-        let doc = Document::from_json_str(&format!(
-            r#"{{"name": "user {i}", "age": {i}, "bio": "{}", "tags": ["t{i}", "x"]}}"#,
-            "b".repeat(8 << 10)
-        ))
+        let doc = Document::from_json_str(
+            &format!(
+                r#"{{"name": "user {i}", "age": {i}, "bio": "{}", "tags": ["t{i}", "x"]}}"#,
+                "b".repeat(8 << 10)
+            ),
+            users.clone(),
+        )
         .unwrap();
         ids.push(mutator.create("Users", doc).await.unwrap().doc_id);
     }
@@ -100,7 +104,9 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         txn.delete(&key).await.unwrap();
     }
     for (key, value) in raw(&store, b"d/d/").await {
-        let doc = Document::from_storage_cbor(&value).unwrap();
+        let doc =
+            crdt::stored::document_from_storage(&value, users.clone(), &crdt::Crdts::default())
+                .unwrap();
         txn.set(&key, &doc.to_cbor().unwrap()).await.unwrap();
     }
     txn.delete(&[b"s", DOCUMENT_FORMAT_KEY].concat())
@@ -130,27 +136,30 @@ async fn assert_migrated(store: &RegolithStore) {
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn documents_written_before_part_ids_get_field_operands_and_read_the_same() {
-    let dir = tempfile::tempdir().unwrap();
-    let (ids, before) = legacy_store(dir.path()).await;
-    let store = RegolithStore::open(dir.path()).unwrap();
-    assert!(raw(&store, b"d/d/")
-        .await
-        .iter()
-        .all(|(_, value)| !StoredDocument::is_field_format(value)));
+#[test]
+fn documents_written_before_part_ids_get_field_operands_and_read_the_same() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let (ids, before) = legacy_store(dir.path()).await;
+        let store = RegolithStore::open(dir.path()).unwrap();
+        assert!(raw(&store, b"d/d/")
+            .await
+            .iter()
+            .all(|(_, value)| !StoredDocument::is_field_format(value)));
 
-    let db = Arc::new(DB::open(store.clone()).await.unwrap());
-    assert_eq!(read_all(&db, &ids).await, before);
-    drop(db);
-    assert_migrated(&store).await;
+        let db = Arc::new(DB::open(store.clone()).await.unwrap());
+        assert_eq!(read_all(&db, &ids).await, before);
+        drop(db);
+        assert_migrated(&store).await;
 
-    // Opening again changes nothing.
-    let entries = raw(&store, b"").await;
-    let db = Arc::new(DB::open(store.clone()).await.unwrap());
-    assert_eq!(read_all(&db, &ids).await, before);
-    drop(db);
-    assert!(raw(&store, b"").await == entries);
+        // Opening again changes nothing.
+        let entries = raw(&store, b"").await;
+        let db = Arc::new(DB::open(store.clone()).await.unwrap());
+        assert_eq!(read_all(&db, &ids).await, before);
+        drop(db);
+        assert!(raw(&store, b"").await == entries);
+    })
+    .unwrap()
 }
 
 /// A store whose engine-retried transactions stop after `left` commits, as a
@@ -164,6 +173,10 @@ impl Sealed for CutAfter {}
 
 #[async_trait]
 impl Store for CutAfter {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -212,69 +225,86 @@ fn copy_dir(from: &Path, to: &Path) {
 /// A power cut before each transaction the open commits: after the part IDs,
 /// after each page, before the stamp. The next open finishes the migration
 /// from the cursor, and every document reads as before.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_power_cut_between_any_two_pages_resumes_and_reads_the_same() {
-    let dir = tempfile::tempdir().unwrap();
-    let original = dir.path().join("legacy");
-    let (ids, before) = legacy_store(&original).await;
-    for left in 0.. {
-        let path = dir.path().join(format!("cut-{left}"));
-        copy_dir(&original, &path);
-        let cut = CutAfter {
-            inner: RegolithStore::open(&path).unwrap(),
-            left: AtomicUsize::new(left),
-        };
-        let finished = match DB::open(cut).await {
-            Ok(db) => {
-                db.close().await.unwrap();
-                true
+#[test]
+fn a_power_cut_between_any_two_pages_resumes_and_reads_the_same() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("legacy");
+        let (ids, before) = legacy_store(&original).await;
+        for left in 0.. {
+            let path = dir.path().join(format!("cut-{left}"));
+            copy_dir(&original, &path);
+            let cut = CutAfter {
+                inner: RegolithStore::open(&path).unwrap(),
+                left: AtomicUsize::new(left),
+            };
+            let finished = match DB::open(cut).await {
+                Ok(db) => {
+                    db.close().await.unwrap();
+                    true
+                }
+                Err(error) => {
+                    assert!(error.to_string().contains("power cut"), "{error}");
+                    false
+                }
+            };
+            let store = RegolithStore::open(&path).unwrap();
+            let db = Arc::new(DB::open(store.clone()).await.unwrap());
+            assert_eq!(
+                read_all(&db, &ids).await,
+                before,
+                "cut after {left} commits"
+            );
+            drop(db);
+            assert_migrated(&store).await;
+            store.close().await.unwrap();
+            if finished {
+                assert!(left > 3, "the open committed only {left} transactions");
+                break;
             }
-            Err(error) => {
-                assert!(error.to_string().contains("power cut"), "{error}");
-                false
-            }
-        };
-        let store = RegolithStore::open(&path).unwrap();
-        let db = Arc::new(DB::open(store.clone()).await.unwrap());
-        assert_eq!(
-            read_all(&db, &ids).await,
-            before,
-            "cut after {left} commits"
-        );
-        drop(db);
-        assert_migrated(&store).await;
-        store.close().await.unwrap();
-        if finished {
-            assert!(left > 3, "the open committed only {left} transactions");
-            break;
         }
-    }
+    })
+    .unwrap()
 }
 
 /// A whole value the field format would not read back the same (here a field
 /// the schema does not have) is left whole, and still reads the same.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_document_that_would_read_differently_stays_whole() {
-    let dir = tempfile::tempdir().unwrap();
-    let (ids, _) = legacy_store(dir.path()).await;
-    let store = RegolithStore::open(dir.path()).unwrap();
-    let (key, value) = raw(&store, b"d/d/").await.remove(0);
-    let mut doc = Document::from_storage_cbor(&value).unwrap();
-    doc.set("retired", NormalValue::String("kept".into()));
-    let whole = doc.to_cbor().unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    txn.set(&key, &whole).await.unwrap();
-    txn.commit().await.unwrap();
+#[test]
+fn a_document_that_would_read_differently_stays_whole() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let (ids, _) = legacy_store(dir.path()).await;
+        let store = RegolithStore::open(dir.path()).unwrap();
+        let (key, value) = raw(&store, b"d/d/").await.remove(0);
+        let scratch = DB::open(RegolithStore::in_memory().unwrap()).await.unwrap();
+        scratch
+            .create_collections_atomic(query::parse_sdl(SDL).unwrap())
+            .await
+            .unwrap();
+        let users = scratch
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let mut doc =
+            crdt::stored::document_from_storage(&value, users, &crdt::Crdts::default()).unwrap();
+        doc.set_unchecked("retired".to_string(), NormalValue::String("kept".into()));
+        let whole = doc.to_cbor().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        txn.set(&key, &whole).await.unwrap();
+        txn.commit().await.unwrap();
 
-    drop(DB::open(store.clone()).await.unwrap());
-    let documents = raw(&store, b"d/d/").await;
-    let (_, kept) = documents.iter().find(|(stored, _)| *stored == key).unwrap();
-    assert_eq!(*kept, whole);
-    assert_eq!(
-        documents
-            .iter()
-            .filter(|(_, value)| StoredDocument::is_field_format(value))
-            .count(),
-        ids.len() - 1
-    );
+        drop(DB::open(store.clone()).await.unwrap());
+        let documents = raw(&store, b"d/d/").await;
+        let (_, kept) = documents.iter().find(|(stored, _)| *stored == key).unwrap();
+        assert_eq!(*kept, whole);
+        assert_eq!(
+            documents
+                .iter()
+                .filter(|(_, value)| StoredDocument::is_field_format(value))
+                .count(),
+            ids.len() - 1
+        );
+    })
+    .unwrap()
 }

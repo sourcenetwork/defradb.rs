@@ -100,7 +100,8 @@ tools/
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
-└── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+└── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
@@ -400,9 +401,10 @@ that is correct but slower is not done.
 
 ## Build Dependencies
 
-- **Rust** (1.98+): `rustup`
+- **Rust** (1.99+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
+- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` keeps tests that start nodes serial
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.7`
 
 ## Common Commands
@@ -411,18 +413,18 @@ that is correct but slower is not done.
 
 ```bash
 # Run all integration tests
-cargo test -p integration-test
+cargo nextest run -p integration-test
 
 # Run a specific area
-cargo test -p integration-test --test acp
-cargo test -p integration-test --test p2p
-cargo test -p integration-test --test basic
+cargo nextest run -p integration-test --test acp
+cargo nextest run -p integration-test --test p2p
+cargo nextest run -p integration-test --test basic
 
 # Run a specific submodule within an area
-cargo test -p integration-test --test acp -- negative::
+cargo nextest run -p integration-test --test acp -- negative::
 
 # Run a specific test
-cargo test -p integration-test --test acp -- basic::rust_acp_basic
+cargo nextest run -p integration-test --test acp -- basic::rust_acp_basic
 ```
 
 Integration tests live in `tools/integration-test/tests/` and exercise the full
@@ -430,12 +432,12 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 
 | Area | Binary | Modules |
 |------|--------|---------|
-| Basic | `--test basic` | batch_mutations, collection_delete_4657, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
+| Basic | `--test basic` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
 | Query | `--test query` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
 | ACP | `--test acp` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
 | P2P Iroh | `--test p2p_iroh` | acp, connection, peer, replication, schema, sync |
 | NAC | `--test nac` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
-| P2P | `--test p2p` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
+| P2P | `--test p2p` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
 | FTS | `--test fts` | basic, edge_cases, lifecycle, relation_paths, scoring |
 | Vector | `--test vector` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `--test encryption` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
@@ -464,8 +466,8 @@ Single-purpose binaries, each its own `[[test]]` with no submodules:
 ### Rust Commands
 
 ```bash
-cargo test                         # Run all unit tests
-cargo test -p crdt                 # Test specific crate
+cargo nextest run                  # Run all unit tests (cargo test --doc for doctests)
+cargo nextest run -p crdt          # Test specific crate
 cargo clippy --all --all-targets -- -D warnings  # Lint, benches included
 just check-node-graph              # Feature-graph contracts for defra-node
 cargo fmt --all                    # Format
@@ -530,10 +532,10 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 
 ## Before Committing
 
-1. `cargo test` passes
+1. `cargo nextest run` and `cargo test --doc` pass
 2. `cargo clippy --all --all-targets -- -D warnings` clean
 3. `cargo fmt --all` applied
-4. If touching core behavior: `cargo test -p integration-test` passes
+4. If touching core behavior: `cargo nextest run -p integration-test` passes
 
 ## ACP / Searchable Encryption
 

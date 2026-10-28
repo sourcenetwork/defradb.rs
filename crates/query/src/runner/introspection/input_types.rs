@@ -210,14 +210,14 @@ pub(super) fn get_filter_type_for_field(
     match kind {
         FieldKind::Scalar(scalar) => match scalar.base_kind() {
             ScalarKind::DocID => "IDOperatorBlock".to_string(),
-            ScalarKind::String => "StringOperatorBlock".to_string(),
-            ScalarKind::Int => "IntOperatorBlock".to_string(),
-            ScalarKind::Float64 => "Float64OperatorBlock".to_string(),
-            ScalarKind::Float32 => "Float32OperatorBlock".to_string(),
-            ScalarKind::Bool => "BooleanOperatorBlock".to_string(),
-            ScalarKind::DateTime => "DateTimeOperatorBlock".to_string(),
-            ScalarKind::Json => "JSON".to_string(),
-            ScalarKind::Blob | ScalarKind::None => "StringOperatorBlock".to_string(),
+            ScalarKind::NillableString => "StringOperatorBlock".to_string(),
+            ScalarKind::NillableInt => "IntOperatorBlock".to_string(),
+            ScalarKind::NillableFloat64 => "Float64OperatorBlock".to_string(),
+            ScalarKind::NillableFloat32 => "Float32OperatorBlock".to_string(),
+            ScalarKind::NillableBool => "BooleanOperatorBlock".to_string(),
+            ScalarKind::NillableDateTime => "DateTimeOperatorBlock".to_string(),
+            ScalarKind::NillableJson => "JSON".to_string(),
+            ScalarKind::NillableBlob | ScalarKind::None => "StringOperatorBlock".to_string(),
             _ => "StringOperatorBlock".to_string(),
         },
         FieldKind::ScalarArray(arr) => match arr {

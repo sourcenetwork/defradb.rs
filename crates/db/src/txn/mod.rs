@@ -97,6 +97,9 @@ pub struct DbTxn<S: Store> {
     /// loads with the same definition reuses the cached handle's decoded state.
     shared_collections: Option<Arc<crate::collection::epoch::EpochedCollections>>,
     statement_savepoint: Option<catalog::Snapshot>,
+    /// The CRDT types of the node whose store the transaction runs on, kept
+    /// past the commit for the collections it hands out.
+    crdts: crdt::Crdts,
     /// Phantom data for the store type.
     _marker: std::marker::PhantomData<S>,
 }
@@ -145,6 +148,7 @@ impl<S: Store> DbTxn<S> {
 
     fn with_codes(txn: BasicTxn, explicit: bool, vector_codes: Arc<CodeCaches>) -> Self {
         Self {
+            crdts: txn.crdts().clone(),
             txn: Some(txn),
             explicit,
             catalog: Catalog::new(),
@@ -153,6 +157,11 @@ impl<S: Store> DbTxn<S> {
             statement_savepoint: None,
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &crdt::Crdts {
+        &self.crdts
     }
 
     pub(crate) fn vector_codes(&self) -> &Arc<CodeCaches> {
@@ -459,7 +468,7 @@ impl<S: Store> DbTxn<S> {
                                 )
                             })?;
                         populate_collection_root_id(&systemstore, &mut schema).await?;
-                        let collection = Collection::new(schema);
+                        let collection = Collection::new(schema, self.crdts.clone());
                         self.catalog.add(collection.clone());
                         return Ok(Some(collection));
                     }
@@ -490,7 +499,7 @@ impl<S: Store> DbTxn<S> {
                 )
             })?;
             populate_collection_root_id(&systemstore, &mut schema).await?;
-            let collection = Collection::new(schema);
+            let collection = Collection::new(schema, self.crdts.clone());
             self.catalog.add(collection.clone());
             return Ok(Some(collection));
         }
@@ -585,7 +594,7 @@ impl<S: Store> DbTxn<S> {
             let mut schema = schema;
             populate_collection_root_id(&systemstore, &mut schema).await?;
 
-            collections.push(Collection::new(schema));
+            collections.push(Collection::new(schema, self.crdts.clone()));
         }
 
         iter.close().await.map_err(|e| {
@@ -612,7 +621,7 @@ impl<S: Store> DbTxn<S> {
                     })?;
                     let mut schema = schema;
                     populate_collection_root_id(&systemstore, &mut schema).await?;
-                    collections.push(Collection::new(schema));
+                    collections.push(Collection::new(schema, self.crdts.clone()));
                 }
                 Ok(None) => {
                     tracing::warn!(
@@ -772,7 +781,11 @@ impl<S: Store> DbTxn<S> {
             let statuses =
                 crate::collection::IndexStatuses::load_actions_for(&systemstore, &persisted_schema)
                     .await?;
-            Collection::with_index_actions_unwired(persisted_schema, &statuses)
+            Collection::with_index_actions_unwired(
+                persisted_schema,
+                &statuses,
+                systemstore.crdts().clone(),
+            )
         };
         if !persisted.same_index_statuses(collection) {
             return Err(Error::Other(format!(

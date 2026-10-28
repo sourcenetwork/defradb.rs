@@ -22,7 +22,7 @@ const DID_B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 async fn node_with_protected_users() -> (EmbeddedNode, String) {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
     .await
@@ -79,217 +79,247 @@ async fn visible_users(node: &EmbeddedNode, identity: Option<identity::Did>) -> 
     response.data.unwrap()["Users"].as_array().unwrap().len()
 }
 
-#[tokio::test]
-async fn add_dac_policy_rejects_empty_identity_and_policy() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    let err = node.add_dac_policy("", POLICY_YAML).await.unwrap_err();
-    assert_eq!(err.to_string(), "policy creator can not be empty");
-    let err = node.add_dac_policy(DID_A, "").await.unwrap_err();
-    assert_eq!(err.to_string(), "policy data can not be empty");
-    node.shutdown().await;
+#[test]
+fn add_dac_policy_rejects_empty_identity_and_policy() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let err = node.add_dac_policy("", POLICY_YAML).await.unwrap_err();
+        assert_eq!(err.to_string(), "policy creator can not be empty");
+        let err = node.add_dac_policy(DID_A, "").await.unwrap_err();
+        assert_eq!(err.to_string(), "policy data can not be empty");
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn add_dac_policy_returns_id_and_validates_policy() {
+#[test]
+fn add_dac_policy_returns_id_and_validates_policy() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
     assert!(!policy_id.is_empty());
     let bad = "name: Bad\nresources:\n  - name: users\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: undeclared\n";
     assert!(node.add_dac_policy(DID_A, bad).await.is_err());
     node.shutdown().await;
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn add_schema_rejects_unregistered_policy_id() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    let err = node
-        .add_schema("type Users @policy(id: \"deadbeef\", resource: \"users\") { name: String }")
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("schema policy validation error"),
-        "{err:#}"
-    );
-
-    node.add_schema("type Plain { name: String }")
-        .await
-        .expect("a schema without @policy must not need the policy store");
-    node.shutdown().await;
-}
-
-#[tokio::test]
-async fn add_view_rejects_unregistered_policy_id() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Plain { name: String }")
-        .await
-        .unwrap();
-
-    let err = node
-        .add_view(
-            "Plain { name }",
-            "type PlainView @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("schema policy validation error"),
-        "{err:#}"
-    );
-    node.shutdown().await;
-}
-
-#[tokio::test]
-async fn dac_share_journey_grant_and_revoke() {
-    let (node, doc_id) = node_with_protected_users().await;
-    let did_b = identity::Did::new(DID_B).unwrap();
-
-    assert_eq!(visible_users(&node, Some(did_b.clone())).await, 0);
-    assert_eq!(visible_users(&node, None).await, 0);
-
-    let mut updates = node.subscribe(&[events::EventName::Update]);
-    let existed = node
-        .add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
-        .await
-        .unwrap();
-    assert!(!existed, "first grant must be newly added");
-    let message = tokio::time::timeout(std::time::Duration::from_secs(2), updates.recv())
-        .await
-        .expect("new grant must publish a doc-update event")
-        .expect("event bus closed");
-    let update = message.as_update().expect("document update");
-    assert_eq!(update.doc_id, doc_id);
-    assert!(!update.block.is_empty());
-    assert_eq!(visible_users(&node, Some(did_b.clone())).await, 1);
-
-    assert!(
-        node.add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+#[test]
+fn add_collection_rejects_unregistered_policy_id() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let err = node
+            .add_collection(
+                "type Users @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
+            )
             .await
-            .unwrap(),
-        "second grant reports existed_already"
-    );
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(500), updates.recv())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("schema policy validation error"),
+            "{err:#}"
+        );
+
+        node.add_collection("type Plain { name: String }")
             .await
-            .is_err(),
-        "an existed-already grant must not publish a doc-update event"
-    );
+            .expect("a schema without @policy must not need the policy store");
+        node.shutdown().await;
+    })
+    .unwrap()
+}
 
-    assert!(node
-        .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
-        .await
-        .unwrap());
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(500), updates.recv())
+#[test]
+fn add_view_rejects_unregistered_policy_id() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        node.add_collection("type Plain { name: String }")
             .await
-            .is_err(),
-        "a revoke must not publish a doc-update event"
-    );
-    assert_eq!(visible_users(&node, Some(did_b)).await, 0);
-    assert!(!node
-        .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
-        .await
-        .unwrap());
-    node.shutdown().await;
+            .unwrap();
+
+        let err = node
+            .add_view(
+                "Plain { name }",
+                "type PlainView @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("schema policy validation error"),
+            "{err:#}"
+        );
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn dac_relationship_rejects_owner_relation() {
-    let (node, doc_id) = node_with_protected_users().await;
+#[test]
+fn dac_share_journey_grant_and_revoke() {
+    workers::block_on(async {
+        let (node, doc_id) = node_with_protected_users().await;
+        let did_b = identity::Did::new(DID_B).unwrap();
 
-    let add = node
-        .add_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        add.to_string(),
-        "OPERATION_FORBIDDEN: cannot add owner relation"
-    );
-    let delete = node
-        .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        delete.to_string(),
-        "OPERATION_FORBIDDEN: cannot delete owner relation"
-    );
-    node.shutdown().await;
+        assert_eq!(visible_users(&node, Some(did_b.clone())).await, 0);
+        assert_eq!(visible_users(&node, None).await, 0);
+
+        let mut updates = node.subscribe(&[events::EventName::Update]);
+        let existed = node
+            .add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+            .await
+            .unwrap();
+        assert!(!existed, "first grant must be newly added");
+        let message = workers::timeout(std::time::Duration::from_secs(2), updates.recv())
+            .await
+            .expect("new grant must publish a doc-update event")
+            .expect("event bus closed");
+        let update = message.as_update().expect("document update");
+        assert_eq!(update.doc_id, doc_id);
+        assert!(!update.block.is_empty());
+        assert_eq!(visible_users(&node, Some(did_b.clone())).await, 1);
+
+        assert!(
+            node.add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+                .await
+                .unwrap(),
+            "second grant reports existed_already"
+        );
+        assert!(
+            workers::timeout(std::time::Duration::from_millis(500), updates.recv())
+                .await
+                .is_err(),
+            "an existed-already grant must not publish a doc-update event"
+        );
+
+        assert!(node
+            .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+            .await
+            .unwrap());
+        assert!(
+            workers::timeout(std::time::Duration::from_millis(500), updates.recv())
+                .await
+                .is_err(),
+            "a revoke must not publish a doc-update event"
+        );
+        assert_eq!(visible_users(&node, Some(did_b)).await, 0);
+        assert!(!node
+            .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+            .await
+            .unwrap());
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn dac_wildcard_grant_opens_document_to_every_actor() {
-    let (node, doc_id) = node_with_protected_users().await;
+#[test]
+fn dac_relationship_rejects_owner_relation() {
+    workers::block_on(async {
+        let (node, doc_id) = node_with_protected_users().await;
 
-    assert!(!node
-        .add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", "*")
-        .await
-        .unwrap());
-    assert_eq!(visible_users(&node, None).await, 1);
-    node.shutdown().await;
+        let add = node
+            .add_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            add.to_string(),
+            "OPERATION_FORBIDDEN: cannot add owner relation"
+        );
+        let delete = node
+            .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            delete.to_string(),
+            "OPERATION_FORBIDDEN: cannot delete owner relation"
+        );
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn dac_relationship_requires_a_collection_policy() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Plain { name: String }")
-        .await
-        .unwrap();
+#[test]
+fn dac_wildcard_grant_opens_document_to_every_actor() {
+    workers::block_on(async {
+        let (node, doc_id) = node_with_protected_users().await;
 
-    let add = node
-        .add_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        add.to_string(),
-        "operation requires ACP, but collection has no policy"
-    );
-    let delete = node
-        .delete_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        delete.to_string(),
-        "operation requires ACP, but collection has no policy"
-    );
-    node.shutdown().await;
+        assert!(!node
+            .add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", "*")
+            .await
+            .unwrap());
+        assert_eq!(visible_users(&node, None).await, 1);
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn document_acp_handle_registers_and_checks_a_document() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
-    let did_a = identity::Did::new(DID_A).unwrap();
+#[test]
+fn dac_relationship_requires_a_collection_policy() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        node.add_collection("type Plain { name: String }")
+            .await
+            .unwrap();
 
-    let document_acp = node.document_acp();
-    document_acp
-        .register_doc_object(&did_a, &policy_id, "users", "doc-x")
-        .await
-        .unwrap();
-
-    assert!(document_acp
-        .check_doc_access(
-            &acp::Identity::Authenticated(did_a),
-            acp::DocumentPermission::Read,
-            &policy_id,
-            "users",
-            "doc-x",
-        )
-        .await
-        .unwrap());
-    assert!(!document_acp
-        .check_doc_access(
-            &acp::Identity::Anonymous,
-            acp::DocumentPermission::Read,
-            &policy_id,
-            "users",
-            "doc-x",
-        )
-        .await
-        .unwrap());
-    node.shutdown().await;
+        let add = node
+            .add_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            add.to_string(),
+            "operation requires ACP, but collection has no policy"
+        );
+        let delete = node
+            .delete_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            delete.to_string(),
+            "operation requires ACP, but collection has no policy"
+        );
+        node.shutdown().await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn node_identity_does_not_bypass_protected_history_reads() {
+#[test]
+fn document_acp_handle_registers_and_checks_a_document() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+        let did_a = identity::Did::new(DID_A).unwrap();
+
+        let document_acp = node.document_acp();
+        document_acp
+            .register_doc_object(&did_a, &policy_id, "users", "doc-x")
+            .await
+            .unwrap();
+
+        assert!(document_acp
+            .check_doc_access(
+                &acp::Identity::Authenticated(did_a),
+                acp::DocumentPermission::Read,
+                &policy_id,
+                "users",
+                "doc-x",
+            )
+            .await
+            .unwrap());
+        assert!(!document_acp
+            .check_doc_access(
+                &acp::Identity::Anonymous,
+                acp::DocumentPermission::Read,
+                &policy_id,
+                "users",
+                "doc-x",
+            )
+            .await
+            .unwrap());
+        node.shutdown().await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn node_identity_does_not_bypass_protected_history_reads() {
+    workers::block_on(async {
     let _serial = SIGNING_STORE_GUARD.lock().await;
     defra_core::signing::clear_identity_store();
     let node_did = register_local_node_identity();
@@ -302,7 +332,7 @@ async fn node_identity_does_not_bypass_protected_history_reads() {
         .await
         .unwrap();
     let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
     .await
@@ -355,32 +385,37 @@ async fn node_identity_does_not_bypass_protected_history_reads() {
 
     node.shutdown().await;
     defra_core::signing::clear_identity_store();
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn add_dac_policy_is_gated_by_node_access_control() {
-    let _serial = SIGNING_STORE_GUARD.lock().await;
-    defra_core::signing::clear_identity_store();
-    let node_did = register_local_node_identity();
+#[test]
+fn add_dac_policy_is_gated_by_node_access_control() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let node_did = register_local_node_identity();
 
-    let node = EmbeddedNode::builder()
-        .with_node_identity_did(&node_did)
-        .with_node_acp_enabled()
-        .build()
-        .await
-        .unwrap();
+        let node = EmbeddedNode::builder()
+            .with_node_identity_did(&node_did)
+            .with_node_acp_enabled()
+            .build()
+            .await
+            .unwrap();
 
-    let err = node.add_dac_policy(DID_B, POLICY_YAML).await.unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "not authorized to perform operation. Permission: add-dac-policy"
-    );
-    node.add_dac_policy(&node_did, POLICY_YAML)
-        .await
-        .expect("node identity must bypass NAC");
+        let err = node.add_dac_policy(DID_B, POLICY_YAML).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "not authorized to perform operation. Permission: add-dac-policy"
+        );
+        node.add_dac_policy(&node_did, POLICY_YAML)
+            .await
+            .expect("node identity must bypass NAC");
 
-    node.shutdown().await;
-    defra_core::signing::clear_identity_store();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
 }
 
 /// Local ACP policy ids are salted with a per-process counter, so a peer
@@ -388,8 +423,9 @@ async fn add_dac_policy_is_gated_by_node_access_control() {
 /// creator's policy id through add_dac_policy — and a policy-bound SDL
 /// (which embeds the id) would then derive a different collection id. The
 /// explicit-counter variant makes the id reproducible and idempotent.
-#[tokio::test]
-async fn policy_id_reproducible_with_explicit_counter() {
+#[test]
+fn policy_id_reproducible_with_explicit_counter() {
+    workers::block_on(async {
     let creator = EmbeddedNode::builder().build().await.unwrap();
     let follower = EmbeddedNode::builder().build().await.unwrap();
     let id = creator.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
@@ -414,51 +450,59 @@ async fn policy_id_reproducible_with_explicit_counter() {
     assert_eq!(again, id);
 
     follower
-        .add_schema(&format!(
+        .add_collection(&format!(
             "type Users @policy(id: \"{reproduced}\", resource: \"users\") {{ name: String }}"
         ))
         .await
         .unwrap();
     creator.shutdown().await;
     follower.shutdown().await;
+})
+    .unwrap()
 }
 
 /// N identical policies added at once through the embedded API get N distinct
 /// IDs, and IDs stay distinct after the node restarts over the same store.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_identical_policy_adds_get_distinct_ids_across_a_restart() {
-    const ADDS: usize = 8;
-    let dir = tempfile::tempdir().unwrap();
-    let mut ids = Vec::new();
-    {
-        let node = std::sync::Arc::new(
-            EmbeddedNode::builder()
-                .data_path(dir.path())
-                .build()
-                .await
-                .unwrap(),
-        );
-        let adds: Vec<_> = (0..ADDS)
-            .map(|_| {
-                let node = std::sync::Arc::clone(&node);
-                tokio::spawn(async move { node.add_dac_policy(DID_A, POLICY_YAML).await })
-            })
-            .collect();
-        for add in adds {
-            ids.push(add.await.unwrap().unwrap());
+#[test]
+fn concurrent_identical_policy_adds_get_distinct_ids_across_a_restart() {
+    workers::block_on(async {
+        const ADDS: usize = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let mut ids = Vec::new();
+        {
+            let node = std::sync::Arc::new(
+                EmbeddedNode::builder()
+                    .data_path(dir.path())
+                    .build()
+                    .await
+                    .unwrap(),
+            );
+            let adds: Vec<_> = (0..ADDS)
+                .map(|_| {
+                    let node = std::sync::Arc::clone(&node);
+                    workers::spawn(None, "test", move || async move {
+                        node.add_dac_policy(DID_A, POLICY_YAML).await
+                    })
+                    .unwrap()
+                })
+                .collect();
+            for add in adds {
+                ids.push(add.await.unwrap().unwrap());
+            }
+            node.shutdown().await;
         }
+        let node = EmbeddedNode::builder()
+            .data_path(dir.path())
+            .build()
+            .await
+            .unwrap();
+        ids.push(node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap());
         node.shutdown().await;
-    }
-    let node = EmbeddedNode::builder()
-        .data_path(dir.path())
-        .build()
-        .await
-        .unwrap();
-    ids.push(node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap());
-    node.shutdown().await;
 
-    let mut distinct = ids.clone();
-    distinct.sort();
-    distinct.dedup();
-    assert_eq!(distinct.len(), ADDS + 1, "repeated policy IDs: {ids:?}");
+        let mut distinct = ids.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), ADDS + 1, "repeated policy IDs: {ids:?}");
+    })
+    .unwrap()
 }

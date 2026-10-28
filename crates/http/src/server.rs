@@ -26,9 +26,9 @@ use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    SchemaOperations, TransactionOperations, ViewOperations,
+    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
+    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
+    P2POperations, TransactionOperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -104,7 +104,7 @@ pub struct Server {
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    schema: Option<Arc<dyn SchemaOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
     lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
@@ -117,6 +117,18 @@ pub struct Server {
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
     dev_mode: bool,
+    extra_routes: Option<Router>,
+}
+
+/// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
+/// listener. Call it on the network runtime.
+pub async fn serve_router(listener: std::net::TcpListener, router: Router) -> std::io::Result<()> {
+    axum::serve(adopt(listener)?, router).await
+}
+
+fn adopt(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
+    listener.set_nonblocking(true)?;
+    TcpListener::from_std(listener)
 }
 
 impl Server {
@@ -175,7 +187,14 @@ impl Server {
             node_options: None,
             node_identity_did: None,
             dev_mode: false,
+            extra_routes: None,
         }
+    }
+
+    /// Serve `routes` beside the API's own.
+    pub fn with_extra_routes(mut self, routes: Router) -> Self {
+        self.extra_routes = Some(routes);
+        self
     }
 
     /// Serve HTTPS using a previously validated certificate and private key.
@@ -211,8 +230,8 @@ impl Server {
     /// When P2P operations are configured, the server enables additional endpoints:
     /// - `GET /api/v0/p2p/info` - Get P2P node info (peer ID, addresses)
     /// - `GET /api/v0/p2p/shareable-address` - Get the single best shareable P2P address
-    /// - `GET /api/v0/p2p/peers` - List connected peers
-    /// - `POST /api/v0/p2p/peers` - Connect to a peer
+    /// - `GET /api/v0/p2p/active-peers` - List connected peers
+    /// - `POST /api/v0/p2p/connect` - Connect to peers
     /// - And other P2P management endpoints
     pub fn with_p2p<P: P2POperations + 'static>(mut self, p2p: P) -> Self {
         self.p2p = Some(Arc::new(p2p));
@@ -270,14 +289,14 @@ impl Server {
     /// Set schema operations for schema management endpoints.
     ///
     /// When schema operations are configured, the server enables:
-    /// - `POST /api/v0/schema` - Add schema from SDL
-    pub fn with_schema<S: SchemaOperations + 'static>(mut self, schema: S) -> Self {
+    /// - `POST /api/v0/collections` - Add schema from SDL
+    pub fn with_schema<S: CollectionOperations + 'static>(mut self, schema: S) -> Self {
         self.schema = Some(Arc::new(schema));
         self
     }
 
     /// Set schema operations from an Arc.
-    pub fn with_schema_arc(mut self, schema: Arc<dyn SchemaOperations>) -> Self {
+    pub fn with_schema_arc(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
         self
     }
@@ -285,7 +304,7 @@ impl Server {
     /// Set lens operations for schema migration endpoints.
     ///
     /// When lens operations are configured, the server enables:
-    /// - `POST /api/v0/lens/set` - Set a migration between schema versions
+    /// - `POST /api/v0/collections/migrations` - Set a migration between schema versions
     /// - `POST /api/v0/lens/reload` - Reload all lens modules
     pub fn with_lens<L: LensOperations + 'static>(mut self, lens: L) -> Self {
         self.lens = Some(Arc::new(lens));
@@ -615,30 +634,30 @@ impl Server {
         Ok(valid_origins)
     }
 
-    /// Run the server (blocks until shutdown).
+    /// Binds the configured address and serves until shutdown. Call it on
+    /// the network runtime.
     pub async fn run(self) -> Result<()> {
-        let router = self.router()?;
-        let listener = TcpListener::bind(self.config.address).await.map_err(|e| {
-            let hint = match e.kind() {
-                std::io::ErrorKind::AddrInUse => "port is already in use",
-                std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
-                std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
-                _ => "check network configuration",
-            };
-            tracing::error!(
-                address = %self.config.address,
-                error = %e,
-                hint = hint,
-                "Failed to bind HTTP server"
-            );
-            crate::error::HttpError::Internal(format!(
-                "failed to bind to {}: {} ({})",
-                self.config.address, e, hint
-            ))
-        })?;
+        let listener = TcpListener::bind(self.config.address)
+            .await
+            .map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
 
+    /// Serves on `listener`, already bound by the caller, until shutdown.
+    /// Call it on the network runtime.
+    pub async fn serve_on(self, listener: std::net::TcpListener) -> Result<()> {
+        let listener = adopt(listener).map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
+
+    async fn serve(self, listener: TcpListener) -> Result<()> {
+        let mut router = self.router()?;
+        if let Some(extra) = self.extra_routes {
+            router = router.merge(extra);
+        }
+        let address = listener.local_addr().unwrap_or(self.config.address);
         let scheme = if self.tls.is_some() { "https" } else { "http" };
-        tracing::info!("Providing HTTP API at {scheme}://{}", self.config.address);
+        tracing::info!("Providing HTTP API at {scheme}://{address}");
 
         let result = match self.tls {
             Some(tls) => tls.serve(listener, router).await,
@@ -650,6 +669,25 @@ impl Server {
         })?;
 
         Ok(())
+    }
+
+    fn bind_error(&self, e: std::io::Error) -> crate::error::HttpError {
+        let hint = match e.kind() {
+            std::io::ErrorKind::AddrInUse => "port is already in use",
+            std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
+            std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
+            _ => "check network configuration",
+        };
+        tracing::error!(
+            address = %self.config.address,
+            error = %e,
+            hint = hint,
+            "Failed to bind HTTP server"
+        );
+        crate::error::HttpError::Internal(format!(
+            "failed to bind to {}: {} ({})",
+            self.config.address, e, hint
+        ))
     }
 
     /// Get the configured address.

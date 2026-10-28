@@ -9,43 +9,56 @@ use schema::FieldKind;
 use std::sync::Arc;
 use storage::RegolithStore;
 
-#[tokio::test]
-async fn load_document_head_blocks_returns_current_composite_block() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-            FieldDescription::new("3", "idx", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let mutator = AutoCommitMutator::new(db.clone());
-    let result = mutator
-        .create_many("Transcript", vec![make_transcript("first", 1)])
+#[test]
+fn load_document_head_blocks_returns_current_composite_block() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        db.create_collection(CollectionVersion::new(
+            "Transcript",
+            "v1",
+            "col-transcript",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "idx", FieldKind::int(), schema::CType::LwwRegister),
+            ],
+        ))
         .await
-        .unwrap()
-        .pop()
         .unwrap();
 
-    let doc_id = result.doc_id.to_string();
-    let commit_cid = result.commit_cid.expect("commit cid");
-    let commit_block = result.commit_block.expect("commit block");
+        let mutator = AutoCommitMutator::new(db.clone());
+        let result = mutator
+            .create_many("Transcript", vec![make_transcript(&db, "first", 1)])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
 
-    let blocks = load_document_head_blocks(&db, &doc_id).await.unwrap();
+        let doc_id = result.doc_id.to_string();
+        let commit_cid = result.commit_cid.expect("commit cid");
+        let commit_block = result.commit_block.expect("commit block");
 
-    assert_eq!(blocks, vec![(commit_cid, commit_block)]);
+        let blocks = load_document_head_blocks(&db, &doc_id).await.unwrap();
+
+        assert_eq!(blocks, vec![(commit_cid, commit_block)]);
+    })
+    .unwrap()
 }
 
-fn make_transcript(body: &str, idx: i64) -> Document {
-    let mut doc = Document::new();
-    doc.set("body", body.to_string());
-    doc.set("idx", idx);
+fn make_transcript(db: &Arc<DB<RegolithStore>>, body: &str, idx: i64) -> Document {
+    let transcript = db
+        .get_collection("Transcript")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    let mut doc = Document::new(transcript);
+    doc.set("body", body.to_string()).unwrap();
+    doc.set("idx", idx).unwrap();
     doc
 }

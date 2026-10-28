@@ -6,6 +6,8 @@
 //! it, as Go does (`cbindings/node_new.go` sets it independently of signing).
 #![cfg(feature = "libp2p")]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 mod support;
@@ -13,21 +15,28 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use clock::sleep;
 use embedded::{EmbeddedNodeConfig, Libp2pConfig, SigningConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
-use tokio::time::{sleep, Instant};
+use std::time::Instant;
 
-use support::{add_policy, add_schema, grant_collection_reader, new_identity, wait_for_fred, Node};
+use support::{
+    add_collection, add_policy, grant_collection_reader, new_identity, wait_for_fred, Node,
+};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
-    run_scenario(false).await
+#[test]
+fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async { run_scenario(false).await })
+        .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn branchable_grant_syncs_encrypted_doc_to_peer() -> Result<()> {
-    run_scenario(true).await
+#[test]
+fn branchable_grant_syncs_encrypted_doc_to_peer() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async { run_scenario(true).await })
+        .unwrap()
 }
 
 async fn run_scenario(encrypt: bool) -> Result<()> {
@@ -64,8 +73,8 @@ async fn scenario(
     let sdl = format!(
         r#"type Users @branchable @policy(id: "{policy_id}", resource: "users") {{ name: String  age: Int }}"#
     );
-    add_schema(node0, &sdl, jack).await?;
-    add_schema(node1, &sdl, jack).await?;
+    add_collection(node0, &sdl, jack).await?;
+    add_collection(node1, &sdl, jack).await?;
 
     let collection_id = node0
         .database

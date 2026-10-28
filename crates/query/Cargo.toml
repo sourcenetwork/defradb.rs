@@ -31,6 +31,7 @@ inputs = { path = "../inputs" }
 cursor = { path = "../cursor" }
 defra-core = { path = "../defra-core" }
 document = { path = "../document" }
+crdt = { path = "../crdt" }
 storage = { path = "../storage" }
 schema = { path = "../schema" }
 identity = { path = "../identity" }
@@ -74,16 +75,11 @@ async-graphql = "7"
 # Time handling (for DateTime parsing in mutations)
 chrono = { version = "0.4", features = ["serde"] }
 
-# Query timeouts are native-only.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.35", default-features = false, features = ["rt", "time"] }
-
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 defra-core = { path = "../defra-core", features = ["ambient"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]
 workspace = true

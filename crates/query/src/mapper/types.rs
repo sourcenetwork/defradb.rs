@@ -467,8 +467,11 @@ pub struct Select {
     pub doc_ids: Option<Vec<String>>,
     /// CID filter (for versioned queries)
     pub cid: Option<Vec<String>>,
+    /// The collection `_documentArrivals` or `_jsonConflicts` reads.
     pub arrival_collection: Option<String>,
     pub arrival_after: u64,
+    /// The Json field `_jsonConflicts` reads.
+    pub json_field: Option<String>,
     /// Depth for commits queries (how deep to traverse the DAG)
     pub depth: Option<u64>,
     /// Whether to include deleted documents
@@ -511,6 +514,7 @@ impl Select {
             depth: None,
             arrival_collection: None,
             arrival_after: 0,
+            json_field: None,
             show_deleted: false,
             is_encrypted: false,
             selection_type: SelectionType::Object,

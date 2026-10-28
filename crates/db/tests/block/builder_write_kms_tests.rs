@@ -77,188 +77,203 @@ fn expected_field_cid() -> Cid {
     generate_cid_from_bytes(&bytes).unwrap()
 }
 
-#[tokio::test]
-async fn kms_write_path_links_field_block_to_kms_encryption_cid() {
-    let store = RegolithStore::in_memory().unwrap();
-    let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
-    let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
-    let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
+#[test]
+fn kms_write_path_links_field_block_to_kms_encryption_cid() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(false).await.unwrap();
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
+        let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
+        let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
 
-    let mut doc = Document::new();
-    doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
-    let enc = EncryptionConfig {
-        encrypt_doc: false,
-        encrypt_fields: vec!["secret".to_string()],
-    };
+        let enc = EncryptionConfig {
+            encrypt_doc: false,
+            encrypt_fields: vec!["secret".to_string()],
+        };
 
-    let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
+        let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
 
-    let result = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        DocStorageIdentity::new(1, 1),
-        None,
-        Some(&enc),
-        None,
-        Some(&kms),
-    )
-    .await
-    .expect("KMS write path should succeed");
-
-    assert_eq!(result.field_cids.len(), 1);
-    let field_cid = result.field_cids[0];
-    let field_bytes = blockstore
-        .get(&field_cid.to_bytes())
+        let result = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            DocRef::new(1, 1),
+            None,
+            Some(&enc),
+            None,
+            Some(&kms),
+        )
         .await
-        .unwrap()
-        .expect("field block stored");
-    let field_block = Block::from_dag_cbor(&field_bytes).unwrap();
+        .expect("KMS write path should succeed");
 
-    let expected = expected_field_cid();
-    assert_eq!(
-        field_block.encryption,
-        Some(expected),
-        "field block must link to the KMS-generated encryption CID"
-    );
+        assert_eq!(result.field_cids.len(), 1);
+        let field_cid = result.field_cids[0];
+        let field_bytes = blockstore
+            .get(&field_cid.to_bytes())
+            .await
+            .unwrap()
+            .expect("field block stored");
+        let field_block = Block::from_dag_cbor(&field_bytes).unwrap();
+
+        let expected = expected_field_cid();
+        assert_eq!(
+            field_block.encryption,
+            Some(expected),
+            "field block must link to the KMS-generated encryption CID"
+        );
+    })
+    .unwrap()
 }
 
 /// Inheritance must resolve the previous block's key through the KMS when
 /// one is configured. A `KeyStore` is only promised local persistence, not
 /// persistence into the encstore or blockstore, so reading those alone
 /// fails an update that carries no config of its own.
-#[tokio::test]
-async fn inheritance_resolves_the_key_through_the_kms() {
-    let store = RegolithStore::in_memory().unwrap();
-    let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
-    let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
-    let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
-    let identity = DocStorageIdentity::new(1, 1);
+#[test]
+fn inheritance_resolves_the_key_through_the_kms() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(false).await.unwrap();
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
+        let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
+        let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
+        let identity = DocRef::new(1, 1);
 
-    let mut doc = Document::new();
-    doc.set("secret", NormalValue::String("classified".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", NormalValue::String("classified".to_string()))
+            .unwrap();
 
-    let enc = EncryptionConfig {
-        encrypt_doc: false,
-        encrypt_fields: vec!["secret".to_string()],
-    };
+        let enc = EncryptionConfig {
+            encrypt_doc: false,
+            encrypt_fields: vec!["secret".to_string()],
+        };
 
-    let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
+        let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
 
-    let created = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        None,
-        Some(&enc),
-        None,
-        Some(&kms),
-    )
-    .await
-    .expect("KMS create should succeed");
-
-    doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-    doc.set(
-        "secret",
-        NormalValue::String("still classified".to_string()),
-    );
-    let modified: rapidhash::RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
-
-    let updated = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        Some(&modified),
-        None,
-        None,
-        Some(&kms),
-    )
-    .await
-    .expect("update must resolve the inherited key through the KMS");
-
-    let field_bytes = blockstore
-        .get(&updated.field_cids[0].to_bytes())
+        let created = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            None,
+            Some(&enc),
+            None,
+            Some(&kms),
+        )
         .await
-        .unwrap()
-        .expect("field block stored");
-    assert_eq!(
-        Block::from_dag_cbor(&field_bytes).unwrap().encryption,
-        Some(expected_field_cid()),
-        "update must inherit the KMS-generated encryption link"
-    );
+        .expect("KMS create should succeed");
+
+        doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
+        doc.set(
+            "secret",
+            NormalValue::String("still classified".to_string()),
+        )
+        .unwrap();
+        let modified: rapidhash::RapidHashSet<String> =
+            ["secret".to_string()].into_iter().collect();
+
+        let updated = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            Some(&modified),
+            None,
+            None,
+            Some(&kms),
+        )
+        .await
+        .expect("update must resolve the inherited key through the KMS");
+
+        let field_bytes = blockstore
+            .get(&updated.field_cids[0].to_bytes())
+            .await
+            .unwrap()
+            .expect("field block stored");
+        assert_eq!(
+            Block::from_dag_cbor(&field_bytes).unwrap().encryption,
+            Some(expected_field_cid()),
+            "update must inherit the KMS-generated encryption link"
+        );
+    })
+    .unwrap()
 }
 
 /// The document-level policy fallback must mint through the KMS as well. A
 /// field introduced by an update on an `encrypt_doc` document has no head to
 /// inherit from, so it takes the generate path — and on a KMS-configured node
 /// that key belongs in the KMS, not in an inline block.
-#[tokio::test]
-async fn document_policy_fallback_mints_through_the_kms() {
-    let store = RegolithStore::in_memory().unwrap();
-    let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
-    let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
-    let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
-    let identity = DocStorageIdentity::new(2, 2);
+#[test]
+fn document_policy_fallback_mints_through_the_kms() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(false).await.unwrap();
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
+        let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
+        let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
+        let identity = DocRef::new(2, 2);
 
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "bio"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
 
-    let enc = EncryptionConfig {
-        encrypt_doc: true,
-        encrypt_fields: vec![],
-    };
+        let enc = EncryptionConfig {
+            encrypt_doc: true,
+            encrypt_fields: vec![],
+        };
 
-    let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
+        let kms: Arc<dyn kms::KmsService> = Arc::new(StubKms);
 
-    let created = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        None,
-        Some(&enc),
-        None,
-        Some(&kms),
-    )
-    .await
-    .expect("KMS create should succeed");
-
-    doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-    doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()));
-    let modified: rapidhash::RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
-
-    let updated = write_document_blocks(
-        &blockstore,
-        &headstore,
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        identity,
-        Some(&modified),
-        None,
-        None,
-        Some(&kms),
-    )
-    .await
-    .expect("update should succeed");
-
-    let bio_bytes = blockstore
-        .get(&updated.field_cids[0].to_bytes())
+        let created = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            None,
+            Some(&enc),
+            None,
+            Some(&kms),
+        )
         .await
-        .unwrap()
-        .expect("field block stored");
-    assert_eq!(
-        Block::from_dag_cbor(&bio_bytes).unwrap().encryption,
-        Some(expected_field_cid()),
-        "the new field's key must come from the KMS, not from an inline block"
-    );
+        .expect("KMS create should succeed");
+
+        doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
+        doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()))
+            .unwrap();
+        let modified: rapidhash::RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
+
+        let updated = write_document_blocks(
+            &blockstore,
+            &headstore,
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            identity,
+            Some(&modified),
+            None,
+            None,
+            Some(&kms),
+        )
+        .await
+        .expect("update should succeed");
+
+        let bio_bytes = blockstore
+            .get(&updated.field_cids[0].to_bytes())
+            .await
+            .unwrap()
+            .expect("field block stored");
+        assert_eq!(
+            Block::from_dag_cbor(&bio_bytes).unwrap().encryption,
+            Some(expected_field_cid()),
+            "the new field's key must come from the KMS, not from an inline block"
+        );
+    })
+    .unwrap()
 }

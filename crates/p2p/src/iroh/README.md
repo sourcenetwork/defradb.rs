@@ -6,7 +6,7 @@ wire mechanics are intentionally different where Iroh has different primitives.
 ## One connection per peer
 
 Every Defra protocol shares a single QUIC connection, negotiated on the mux
-ALPN `/defra-iroh/mux/0.1`. A stream names its protocol in-band: the first
+ALPN `/defra-iroh/mux/0.2`. A stream names its protocol in-band: the first
 frame it writes is a one-byte length followed by a tag such as
 `/defra-iroh/docsync/0.1`, and `endpoint_streams::dispatch_stream` routes on
 that tag. `protocols.rs` holds the ALPN, the tags, and the frame helpers.
@@ -25,8 +25,13 @@ Two consequences worth knowing:
   failure therefore must not evict it — `evict_if_closed` drops a cached entry
   only once QUIC itself reports the connection closed, since every other
   protocol is still using it.
-- `iroh-gossip` keeps its own ALPN. It owns that handshake and takes whole
-  connections, so a gossiping node holds two connections to a peer, not one.
+- Gossip rides the same connection. `gossip/` runs iroh-gossip's protocol
+  state (not its networking) over one uni stream per direction, tagged
+  `/defra-iroh/gossip/0.1`, each frame a four-byte length and a postcard
+  message. Gossip never dials or closes a connection: it asks for the normal
+  dial, so revoking a peer (which closes its connections) also ends its gossip.
+- Peers on the older `/defra-iroh/mux/0.1` still connect and use every protocol
+  but gossip. Both versions are offered on dial and accepted.
 
 DocSync and BranchableSync ride these streams rather than the `pubsub_rpc` layer
 introduced for libp2p in #828. The `pubsub_rpc` topic model is tied to libp2p

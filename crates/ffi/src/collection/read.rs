@@ -86,15 +86,15 @@ pub unsafe extern "C" fn has_collection(
     }
 }
 
-/// Find a collection by its collection ID (schema version ID).
+/// Find a collection by its collection ID (collection version ID).
 ///
-/// This is useful for P2P sync where we receive blocks with schema_version_id
+/// This is useful for P2P sync where we receive blocks with collection_version_id
 /// and need to find the corresponding collection.
 ///
 /// # Arguments
 ///
 /// * `node_ptr` - Handle to the node
-/// * `collection_id` - The collection ID (schema version ID)
+/// * `collection_id` - The collection ID (collection version ID)
 ///
 /// # Returns
 ///

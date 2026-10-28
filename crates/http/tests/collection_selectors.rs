@@ -48,6 +48,7 @@ fn version(name: &str, version_id: &str, collection_id: &str, active: bool) -> C
             "field-id",
             "title",
             schema::FieldKind::string(),
+            schema::CType::LwwRegister,
         )],
     );
     version.is_active = active;

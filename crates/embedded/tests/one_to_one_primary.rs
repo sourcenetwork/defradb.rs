@@ -58,7 +58,7 @@ async fn primary_side_commits(signing: bool) {
     .build()
     .await
     .expect("node starts");
-    node.add_schema(SDL).await.expect("schema added");
+    node.add_collection(SDL).await.expect("schema added");
     if let Some(did) = node.node_identity_did.clone() {
         defra_core::signing::set_signing_config(defra_core::signing::get_identity(&did));
     }
@@ -90,12 +90,18 @@ async fn primary_side_commits(signing: bool) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_primary_side_create_commits() {
-    primary_side_commits(false).await;
+#[test]
+fn a_primary_side_create_commits() {
+    workers::block_on(async {
+        primary_side_commits(false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signed_primary_side_create_commits() {
-    primary_side_commits(true).await;
+#[test]
+fn a_signed_primary_side_create_commits() {
+    workers::block_on(async {
+        primary_side_commits(true).await;
+    })
+    .unwrap()
 }

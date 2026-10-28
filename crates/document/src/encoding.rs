@@ -161,14 +161,14 @@ pub fn json_to_normal_value_for_kind(
     use serde_json::Value as JsonValue;
 
     match kind.base_kind() {
-        ScalarKind::Int => value.as_i64().map(NormalValue::Int),
-        ScalarKind::Float64 => value.as_f64().map(NormalValue::Float64),
-        ScalarKind::Float32 => value.as_f64().map(|f| NormalValue::Float32(f as f32)),
-        ScalarKind::Bool => value.as_bool().map(NormalValue::Bool),
-        ScalarKind::String | ScalarKind::DocID | ScalarKind::Blob => {
+        ScalarKind::NillableInt => value.as_i64().map(NormalValue::Int),
+        ScalarKind::NillableFloat64 => value.as_f64().map(NormalValue::Float64),
+        ScalarKind::NillableFloat32 => value.as_f64().map(|f| NormalValue::Float32(f as f32)),
+        ScalarKind::NillableBool => value.as_bool().map(NormalValue::Bool),
+        ScalarKind::NillableString | ScalarKind::DocID | ScalarKind::NillableBlob => {
             value.as_str().map(|s| NormalValue::String(s.to_string()))
         }
-        ScalarKind::DateTime => match value {
+        ScalarKind::NillableDateTime => match value {
             JsonValue::String(s) => crate::rfc3339::parse_rfc3339(s).map(NormalValue::Time),
             JsonValue::Number(n) => n.as_i64().and_then(|ts| {
                 DateTime::from_timestamp(ts, 0).map(|dt| {
@@ -177,7 +177,7 @@ pub fn json_to_normal_value_for_kind(
             }),
             _ => None,
         },
-        ScalarKind::Json | ScalarKind::None => None,
+        ScalarKind::NillableJson | ScalarKind::None => None,
         _ => None,
     }
 }
@@ -328,10 +328,12 @@ pub fn json_to_normal_value_for_array_kind(
 pub fn coerce_stored_value_for_kind(value: NormalValue, kind: &schema::ScalarKind) -> NormalValue {
     use schema::ScalarKind;
     match (kind.base_kind(), &value) {
-        (ScalarKind::DateTime, NormalValue::String(s)) => match DateTime::parse_from_rfc3339(s) {
-            Ok(dt) => NormalValue::Time(dt),
-            Err(_) => value,
-        },
+        (ScalarKind::NillableDateTime, NormalValue::String(s)) => {
+            match DateTime::parse_from_rfc3339(s) {
+                Ok(dt) => NormalValue::Time(dt),
+                Err(_) => value,
+            }
+        }
         _ => value,
     }
 }

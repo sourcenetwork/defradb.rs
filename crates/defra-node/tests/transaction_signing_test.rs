@@ -26,8 +26,9 @@ fn register_local_node_identity() -> (String, String) {
     (did, public_key_hex)
 }
 
-#[tokio::test]
-async fn embedded_transaction_mutation_uses_node_signer() {
+#[test]
+fn embedded_transaction_mutation_uses_node_signer() {
+    workers::block_on(async {
     defra_core::signing::clear_identity_store();
     let (did, expected_identity) = register_local_node_identity();
 
@@ -36,7 +37,7 @@ async fn embedded_transaction_mutation_uses_node_signer() {
         .build()
         .await
         .expect("build signed node");
-    node.add_schema("type Widget { name: String }")
+    node.add_collection("type Widget { name: String }")
         .await
         .expect("add schema");
 
@@ -177,9 +178,9 @@ async fn embedded_transaction_mutation_uses_node_signer() {
         "configured transactional execute must fail closed when its signer disappears: {:?}",
         create_in_txn_without_signer.errors
     );
-    node.rollback_transaction(&txn_without_signer)
+    node.discard_transaction(&txn_without_signer)
         .await
-        .expect("rollback txn");
+        .expect("discard txn");
 
     node.shutdown().await;
 
@@ -187,7 +188,7 @@ async fn embedded_transaction_mutation_uses_node_signer() {
         .build()
         .await
         .expect("build unsigned node");
-    node.add_schema("type UnsignedWidget { name: String }")
+    node.add_collection("type UnsignedWidget { name: String }")
         .await
         .expect("add schema");
 
@@ -245,4 +246,6 @@ async fn embedded_transaction_mutation_uses_node_signer() {
     );
 
     node.shutdown().await;
+})
+    .unwrap()
 }

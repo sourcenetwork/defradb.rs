@@ -33,7 +33,7 @@
 /// let txn = db.new_txn(false).await?;
 ///
 /// // Create a collection
-/// let col = Collection::new(schema);
+/// let col = Collection::new(schema, db.crdts().clone());
 ///
 /// // Documents are written through the mutator APIs, which allocate the
 /// // node-local short ID and derive the public DocID from the genesis
@@ -125,3 +125,18 @@ pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacMana
 pub use datastore::{BasicTxn, NamespaceView};
 pub use document::{DocID, Document, NormalValue};
 pub use schema::CollectionVersion;
+
+#[cfg(test)]
+#[path = "../tests/common/worker_io.rs"]
+mod worker_io;
+
+#[cfg(test)]
+#[path = "../tests/common/schema.rs"]
+#[allow(dead_code)]
+mod test_schemas;
+
+#[cfg(test)]
+mod common {
+    pub(crate) use super::test_schemas as schema;
+    pub(crate) use super::worker_io;
+}
