@@ -240,6 +240,57 @@ impl QueryExecutor for PooledExecutor {
         self.inner.set_migration_as(context, config).await
     }
 
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        self.inner.add_lens_as(context, config).await
+    }
+
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        self.inner.list_lenses_as(context).await
+    }
+
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .delete_collections_as(context, targets, active_only)
+            .await
+    }
+
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        self.inner
+            .set_collection_active_as(context, version_id, is_active)
+            .await
+    }
+
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .verify_block_signature_as(context, document_acp, cid, public_key, key_type, caller)
+            .await
+    }
+
     fn abandon_txn(&self, handle: &TransactionHandle) {
         self.inner.abandon_txn(handle);
     }

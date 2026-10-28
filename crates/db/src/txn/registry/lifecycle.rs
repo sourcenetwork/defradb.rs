@@ -232,6 +232,88 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        let id = context_txn(context)?;
+        self.add_lens_in_txn_as(context, &id, config)
+            .await
+            .map(|transform| transform.to_string())
+            .map_err(operation_error)
+    }
+
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        let id = context_txn(context)?;
+        let lenses = self
+            .list_lenses_in_txn_as(context, &id)
+            .await
+            .map_err(operation_error)?;
+        serde_json::to_string(&lenses)
+            .map_err(|e| TransactionError::operation(format!("failed to serialize lenses: {e}")))
+    }
+
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.delete_collections_in_txn_as(context, &id, targets, active_only)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        let id = context_txn(context)?;
+        self.set_collection_active_in_txn_as(context, &id, version_id, is_active)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        let key_type = match key_type {
+            "ed25519" => crypto::KeyType::Ed25519,
+            "secp256k1" => crypto::KeyType::Secp256k1,
+            "secp256r1" => crypto::KeyType::Secp256r1,
+            other => {
+                return Err(TransactionError::operation(format!(
+                    "unsupported key type: {other}"
+                )))
+            }
+        };
+        self.verify_block_signature_in_txn_as(
+            context,
+            &id,
+            document_acp,
+            cid,
+            public_key,
+            key_type,
+            caller,
+        )
+        .await
+        .map_err(operation_error)
+    }
+
     async fn discard(
         &self,
         handle: &TransactionHandle,
