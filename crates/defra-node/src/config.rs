@@ -335,8 +335,7 @@ impl Default for P2PConfig {
     }
 }
 
-/// Node assembly configuration: what [`crate::build_with_store`] takes, and
-/// what [`crate::NodeBuilder`]'s setters fill in.
+/// Node assembly configuration: what [`crate::NodeBuilder`]'s setters fill in.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NodeConfig {
     /// Optional application-owned keyring for the transport identity.

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use blockstore::Blockstore;
 use clock::sleep;
-use defra_node::{NodeConfig, NodeSigning, P2PConfig, TransportConfig};
+use defra_node::{NodeBuilder, NodeConfig, NodeSigning, P2PConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
 use std::time::Instant;
@@ -204,7 +204,9 @@ async fn build_node(signing: NodeSigning) -> Result<Node> {
         signing,
         ..Default::default()
     };
-    defra_node::build_with_store(Arc::new(storage::RegolithStore::in_memory()?), config)
+    NodeBuilder::default()
+        .with_config(config)
+        .build()
         .await
         .map_err(Into::into)
 }

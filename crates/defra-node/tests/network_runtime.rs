@@ -7,31 +7,22 @@
 
 #![cfg(any(feature = "libp2p", feature = "p2p"))]
 
-use std::sync::Arc;
-
 #[path = "support/outcome.rs"]
 mod outcome;
 
-use defra_node::{NodeConfig, TransportConfig};
+use defra_node::{NodeBuilder, NodeConfig, TransportConfig};
 use outcome::Result;
-
-fn memory_store() -> Result<storage::RegolithStore> {
-    Ok(storage::RegolithStore::open_with_options(
-        "memory",
-        storage::RegolithStoreOptions::memory(),
-    )?)
-}
 
 async fn build_and_stop(config: NodeConfig) -> Result<()> {
     // The build fails when the transport does not start.
-    let node = defra_node::build_with_store(Arc::new(memory_store()?), config).await?;
+    let node = NodeBuilder::default().with_config(config).build().await?;
     node.shutdown().await;
     Ok(())
 }
 
 /// The network runtime the node's database runs its network work on.
 async fn database_edge(config: NodeConfig) -> Result<Option<edge::Edge>> {
-    let node = defra_node::build_with_store(Arc::new(memory_store()?), config).await?;
+    let node = NodeBuilder::default().with_config(config).build().await?;
     let edge = node.database().network().edge().cloned();
     node.shutdown().await;
     Ok(edge)

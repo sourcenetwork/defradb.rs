@@ -13,7 +13,7 @@ use outcome::Result;
 
 const TRAIN_THRESHOLD: usize = db::index::vector::engine::diskann::TRAIN_THRESHOLD as usize;
 
-async fn pending<S: storage::Store + 'static>(node: &Node<S>) -> usize {
+async fn pending(node: &Node) -> usize {
     let collection = node.database().get_collection("Note").unwrap().unwrap();
     let desc = collection
         .get_indexes()
