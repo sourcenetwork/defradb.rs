@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+pub mod actions;
 mod cross_runtime;
 mod feature_binaries;
 mod purge;
+pub mod test_case;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
 pub use feature_binaries::{build_cli_variant, vera_cli_binary};
