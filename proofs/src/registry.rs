@@ -776,6 +776,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // An explicit transaction's ID is `sequence * workers + worker`. The
+        // owner is the ID modulo the worker count and the sequence is the
+        // quotient, so the round trip is exact for every worker below the
+        // count, the owner is always a real worker, and two different
+        // (sequence, worker) pairs never share an ID.
+        family: "Explicit transactions in the request context",
+        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode",
+        axis: Lean,
+        anchor: "crates/db/src/txn/owner/id.rs TxnId::new, TxnId::owner; crates/db/src/txn/owner/tests.rs",
+        model_ref: "TxnId (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,

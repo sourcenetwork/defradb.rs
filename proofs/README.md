@@ -25,7 +25,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
-| Explicit transactions in the request context | TLA+ | client, db, query, http, ffi, wasm, defra-node |
+| Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
