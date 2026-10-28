@@ -555,8 +555,11 @@ feature flag selecting one.
 | `memory` | A regolith database kept in memory, which nothing outlives. |
 
 The names of the backends regolith replaced (`lark`, `redb`, `fjall`, `rocksdb`,
-`badger`) are still accepted and resolve to `regolith`, so an existing config
-file keeps loading.
+`leveldb`) are refused: a store written by one of them is in a format regolith
+cannot read, so opening its directory anyway would fail deeper in or open
+something the operator did not ask for. `badger` is accepted as `regolith`,
+because it is Go's name for its store and the cross-runtime tests pass one
+`--store` value to both binaries.
 
 Profiles come from regolith itself: `Options::default()` for a server,
 `Options::embedded()` for a 1-4 MiB working set, and `Options::wasm()` for a
