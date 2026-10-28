@@ -64,9 +64,15 @@ fn node_transaction_visibility_uses_actor_dac_and_node_nac() {
         let handle = node.runner().begin_txn_as(&node_context, true).await.unwrap();
         let allowed = node.observe_document_visibility_in_txn(&handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.unwrap();
         assert!(allowed[0].visible);
+        assert!(allowed[0].owner.is_none(), "delegated visibility exports no owner metadata");
         let missing = node.observe_document_visibility_in_txn(&handle, "Users", &["missing".into()], Did::new(B).unwrap()).await.unwrap();
         assert!(!missing[0].visible);
         node.runner().discard_txn_as(&node_context, &handle).await.unwrap();
+        let denied_context = actor(B);
+        let denied_handle = node.runner().begin_txn_as(&denied_context, true).await.unwrap();
+        let error = node.runner().observe_document_visibility_in_txn(denied_context.clone(), &denied_handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.unwrap_err();
+        assert!(error.to_string().contains("transaction principal is not authorized"), "{error}");
+        node.runner().discard_txn_as(&denied_context, &denied_handle).await.unwrap();
         node.shutdown().await;
     }).unwrap();
 }

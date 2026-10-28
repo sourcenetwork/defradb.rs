@@ -111,6 +111,11 @@ where
                     .and_then(|data| data.get(&collection))
                     .and_then(|rows| rows.as_array());
                 // Node denial uses an empty data object on the normal read path.
+                if node_authorized && rows.is_none() {
+                    return Err(QueryError::execution(
+                        "transaction principal is not authorized for document reads",
+                    ));
+                }
                 let visible: RapidHashSet<&str> = rows
                     .into_iter()
                     .flatten()
@@ -119,7 +124,7 @@ where
                 let mut result = Vec::with_capacity(doc_ids.len());
                 for doc_id in doc_ids {
                     let readable = visible.contains(doc_id.as_str());
-                    let owner = if readable {
+                    let owner = if readable && !node_authorized {
                         if let Some(policy) = &definition.policy {
                             if acp
                                 .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)
