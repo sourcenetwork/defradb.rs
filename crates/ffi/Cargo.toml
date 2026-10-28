@@ -37,7 +37,6 @@ rapidhash.workspace = true
 edge = { path = "../edge" }
 # The worker pool the node's data path runs on.
 workers = { path = "../workers" }
-async-trait.workspace = true
 
 # Serialization
 serde.workspace = true
