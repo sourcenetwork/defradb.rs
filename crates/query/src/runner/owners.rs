@@ -22,6 +22,7 @@ where
         collection: &str,
         doc_ids: &[String],
         identity: Option<identity::Did>,
+        node_authorized: bool,
     ) -> Result<Vec<DocumentOwnerObservation>> {
         let mut name = collection.chars();
         if !name
@@ -37,7 +38,22 @@ where
                 "choose a collection and between 1 and {MAX_OWNER_OBSERVATIONS} known document IDs",
             )));
         }
-        let context = context.or_ambient();
+        let context = if node_authorized {
+            context.with_dac_bypass(false)
+        } else {
+            context.or_ambient()
+        };
+        let nac_identity =
+            if node_authorized {
+                Some(
+                    Did::new(context.identity().ok_or_else(|| {
+                        QueryError::execution("transaction principal is required")
+                    })?)
+                    .map_err(|error| QueryError::execution(error.to_string()))?,
+                )
+            } else {
+                None
+            };
         let identity = match identity {
             Some(identity) => Some(identity),
             None => context
@@ -78,7 +94,7 @@ where
                 drop(ctx);
                 // The ordinary read path owns node, application, document and live
                 // membership gates. Both reads stay on this one transaction turn.
-                let response = match runner.run_turn(turn, request, PreparedInputMemo::default(), None).await {
+                let response = match runner.run_turn_with_nac_identity(turn, request, PreparedInputMemo::default(), None, nac_identity).await {
                 Turned::Done(response) => response,
                 Turned::NeedsInput(_, _) => return Err(QueryError::execution("owner observation requires an external input; use a local authorization snapshot")),
             };

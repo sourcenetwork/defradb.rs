@@ -32,6 +32,44 @@ fn actor(did: &str) -> RequestContext {
 }
 
 #[test]
+fn node_transaction_visibility_uses_actor_dac_and_node_nac() {
+    workers::block_on(async {
+        use crypto::Key;
+        use identity::Identity as _;
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let key = crypto::generate_ed25519().unwrap();
+        let identity = identity::RawIdentity::from_ed25519(key.clone()).unwrap();
+        let owner = identity.did().unwrap().to_string();
+        let public = identity.public_key_bytes();
+        defra_core::signing::store_identity(&owner, defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
+            public_key_bytes: public, remote_signer: None, signing_authorization: None,
+        });
+        let node = EmbeddedNode::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
+        let policy = node.add_dac_policy(&owner, POLICY).await.unwrap();
+        node.add_collection(&format!("type Users @branchable @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}")).await.unwrap();
+        let response = node.execute("mutation { add_Users(input: {name: \"private\"}) { _docID } }").await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let doc = response.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
+        let node_context = actor(&owner);
+        let handle = node.runner().begin_txn_as(&node_context, true).await.unwrap();
+        let denied = node.observe_document_visibility_in_txn(&handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.unwrap();
+        assert!(!denied[0].visible);
+        assert!(node.runner().observe_document_visibility_in_txn(actor(B), &handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.is_err());
+        node.runner().discard_txn_as(&node_context, &handle).await.unwrap();
+        node.add_dac_actor_relationship(&owner, "Users", &doc, "reader", B).await.unwrap();
+        let handle = node.runner().begin_txn_as(&node_context, true).await.unwrap();
+        let allowed = node.observe_document_visibility_in_txn(&handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.unwrap();
+        assert!(allowed[0].visible);
+        let missing = node.observe_document_visibility_in_txn(&handle, "Users", &["missing".into()], Did::new(B).unwrap()).await.unwrap();
+        assert!(!missing[0].visible);
+        node.runner().discard_txn_as(&node_context, &handle).await.unwrap();
+        node.shutdown().await;
+    }).unwrap();
+}
+
+#[test]
 fn owner_observation_preserves_actor_document_and_collection_boundaries() {
     workers::block_on(async {
         let (node, _, doc) = fixture().await;

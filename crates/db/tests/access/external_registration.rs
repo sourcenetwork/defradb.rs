@@ -292,6 +292,27 @@ fn a_failed_registration_keeps_the_document_private_until_a_redrive_settles_it()
         remote.down.store(true, Ordering::SeqCst);
 
         let doc_id = create_in_txn(&node.runner, alice(), "secret").await;
+        let node_context =
+            defra_core::RequestContext::default().with_identity(Some(alice().to_string()));
+        let handle = node.runner.begin_txn_as(&node_context, true).await.unwrap();
+        let visibility = node
+            .runner
+            .observe_document_visibility_in_txn(
+                node_context.clone(),
+                &handle,
+                "Users",
+                std::slice::from_ref(&doc_id),
+                mallory(),
+            )
+            .await;
+        assert!(
+            visibility.is_err(),
+            "an external ACP without a transaction-bound view must not certify visibility"
+        );
+        node.runner
+            .discard_txn_as(&node_context, &handle)
+            .await
+            .unwrap();
         let autocommit = node
             .runner
             .execute(request(
