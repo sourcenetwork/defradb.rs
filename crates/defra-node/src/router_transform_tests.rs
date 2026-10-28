@@ -11,7 +11,7 @@ use axum::{
     Router,
 };
 
-use crate::{EmbeddedNode, HttpConfig};
+use crate::{HttpConfig, Node};
 
 async fn filter(request: Request, next: Next) -> Response {
     if request
@@ -41,11 +41,7 @@ fn http_config_wraps_native_extra_and_fallback_routes_once() {
                     observed.fetch_add(1, Ordering::SeqCst);
                     router.layer(middleware::from_fn(filter))
                 }));
-            let node = EmbeddedNode::builder()
-                .with_http(config)
-                .build()
-                .await
-                .unwrap();
+            let node = Node::builder().with_http(config).build().await.unwrap();
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(5))

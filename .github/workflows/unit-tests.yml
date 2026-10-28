@@ -39,7 +39,7 @@ jobs:
             packages: -p p2p -p defra-p2p-adapter -p orbis
           - group: surfaces
             packages: >-
-              -p defra-http -p embedded -p cli -p ffi -p defra-node
+              -p defra-http -p cli -p ffi -p defra-node
               -p lens-host -p defra-wasm -p benches -p ffi-test
     steps:
       - uses: actions/checkout@v4

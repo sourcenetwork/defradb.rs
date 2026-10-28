@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use defra_node::{EmbeddedNode, P2PConfig};
+use defra_node::{Node, P2PConfig, PeerKeySource, SyncTuning};
 use serde_json::Value;
 
 use super::max_register::MaxRegister;
@@ -19,7 +19,7 @@ const COLLECTIONS: [&str; 2] = ["Score", "Note"];
 
 fn p2p_config() -> P2PConfig {
     P2PConfig {
-        port: 0,
+        port: Some(0),
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
@@ -27,18 +27,14 @@ fn p2p_config() -> P2PConfig {
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
         load_persisted_collections: false,
-        max_concurrent_dag_fetches: p2p::sync::DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
-        max_concurrent_push_tasks: p2p::sync::DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-        max_doc_sync_request_doc_ids: p2p::sync::DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
-        rate_limit_burst: p2p::sync::DEFAULT_RATE_LIMIT_BURST,
-        rate_limit_rate: p2p::sync::DEFAULT_RATE_LIMIT_RATE,
-        max_pending_dags: p2p::sync::DEFAULT_MAX_PENDING_DAGS,
+        peer_key: PeerKeySource::File,
+        sync: SyncTuning::default(),
         rebroadcast_on_merge: false,
     }
 }
 
-async fn node(with_type: bool, path: Option<&Path>) -> EmbeddedNode {
-    let builder = EmbeddedNode::builder().with_p2p(p2p_config());
+async fn node(with_type: bool, path: Option<&Path>) -> Node {
+    let builder = Node::builder().with_p2p(p2p_config());
     let builder = match path {
         Some(path) => builder.data_path(path),
         None => builder,
@@ -69,7 +65,7 @@ async fn sleep() {
         .await;
 }
 
-async fn address(node: &EmbeddedNode) -> String {
+async fn address(node: &Node) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(address) = node
@@ -88,7 +84,7 @@ async fn address(node: &EmbeddedNode) -> String {
 }
 
 /// Let `sender` push to the node at `receiver`, which `authorize` lets accept it.
-async fn replicate<F, Fut>(sender: &EmbeddedNode, receiver: &str, authorize: F)
+async fn replicate<F, Fut>(sender: &Node, receiver: &str, authorize: F)
 where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = ()>,
@@ -108,7 +104,7 @@ where
     .unwrap();
 }
 
-async fn authorize(receiver: &EmbeddedNode, sender: String) {
+async fn authorize(receiver: &Node, sender: String) {
     receiver
         .p2p()
         .unwrap()
@@ -123,7 +119,7 @@ async fn authorize(receiver: &EmbeddedNode, sender: String) {
         .unwrap();
 }
 
-async fn run(node: &EmbeddedNode, request: &str) -> Value {
+async fn run(node: &Node, request: &str) -> Value {
     let response = node.execute(request).await;
     assert!(!response.has_errors(), "{request}: {:?}", response.errors);
     response.data.unwrap()
@@ -144,7 +140,7 @@ where
 
 /// Whether `receiver` holds every document head `sender` has. Each document
 /// replicates on its own, so one arriving says nothing about another.
-async fn has_every_block(sender: &EmbeddedNode, receiver: &EmbeddedNode) -> bool {
+async fn has_every_block(sender: &Node, receiver: &Node) -> bool {
     let heads = r#"{ _commits(filter: {fieldName: {_eq: "_C"}}) { cid } }"#;
     let sent = run(sender, heads).await["_commits"].clone();
     let held = run(receiver, heads).await["_commits"].clone();
@@ -155,7 +151,7 @@ async fn has_every_block(sender: &EmbeddedNode, receiver: &EmbeddedNode) -> bool
         .all(|head| held.contains(head))
 }
 
-async fn best(node: &EmbeddedNode) -> Value {
+async fn best(node: &Node) -> Value {
     run(node, "{ Score { best } }").await["Score"][0]["best"].clone()
 }
 
@@ -218,7 +214,7 @@ fn a_node_without_the_type_parks_its_blocks_until_it_has_the_type() {
             b.shutdown().await;
             c.shutdown().await;
             drop(c);
-            let c = EmbeddedNode::builder()
+            let c = Node::builder()
                 .data_path(dir.path())
                 .with_crdt(MaxRegister::new())
                 .build()
@@ -285,7 +281,7 @@ fn a_parked_block_that_cannot_merge_does_not_hold_up_the_others() {
             drop(c);
             // This build's register refuses 12, the newest parked block: it
             // fails on its own and the older blocks merge without it.
-            let c = EmbeddedNode::builder()
+            let c = Node::builder()
                 .data_path(dir.path())
                 .with_crdt(MaxRegister::rejecting(12))
                 .build()
@@ -324,7 +320,7 @@ fn a_document_of_parked_fields_only_merges_once_the_node_has_the_type() {
             a.shutdown().await;
             c.shutdown().await;
             drop(c);
-            let c = EmbeddedNode::builder()
+            let c = Node::builder()
                 .data_path(dir.path())
                 .with_crdt(MaxRegister::new())
                 .build()

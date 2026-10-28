@@ -1,4 +1,4 @@
-use super::EmbeddedNode;
+use super::Node;
 use defra_core::RequestContext;
 use identity::Did;
 
@@ -6,8 +6,8 @@ const A: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
 
-async fn fixture() -> (EmbeddedNode, String, String) {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn fixture() -> (Node, String, String) {
+    let node = Node::builder().build().await.unwrap();
     let policy = node.add_dac_policy(A, POLICY).await.unwrap();
     node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();

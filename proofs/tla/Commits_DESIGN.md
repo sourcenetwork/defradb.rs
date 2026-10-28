@@ -41,7 +41,7 @@ property about the missing gate, not about CRDT merge details.
   strict replicated-doc access enabled, protected composites require local
   `DocumentPermission::Read` before merge.
 - Embedded setup wires that strict merge-side mode for Vera-backed ACP in
-  `crates/embedded/src/node.rs:496`.
+  `crates/defra-node/src/assemble.rs`.
 - P2P egress also installs a Bitswap peer-block request filter in
   `crates/p2p/src/behaviour.rs:287`, implemented in
   `crates/p2p/src/bitswap/filter.rs:45`.

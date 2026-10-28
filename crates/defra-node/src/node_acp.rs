@@ -1,12 +1,7 @@
-#[cfg(feature = "vera")]
 use crate::Error;
+use crate::Persistence;
 use crate::Result;
 use std::sync::Arc;
-
-pub(crate) enum Persistence {
-    Persistent,
-    Memory,
-}
 
 pub(crate) struct DocumentAcpSetup {
     pub document_acp: Arc<dyn acp::DocumentACP>,
@@ -122,6 +117,25 @@ where
         })
     });
     (gate, start)
+}
+
+/// The node's NAC manager. With `owner`, NAC is enabled at startup and owned
+/// by it; without, NAC stays off until enabled at runtime.
+pub(crate) async fn create_nac_manager<S>(
+    store: Arc<S>,
+    owner: Option<&identity::Did>,
+) -> Result<Arc<dyn db::NacManagerApi>>
+where
+    S: storage::corekv::Store + 'static,
+{
+    let nac_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
+    let mut nac_config = db::NacConfig::new().with_dev_mode();
+    if owner.is_some() {
+        nac_config = nac_config.with_enabled();
+    }
+    let manager = Arc::new(db::NacManager::new(nac_store, nac_config));
+    manager.initialize(owner).await.map_err(Error::NacInit)?;
+    Ok(manager)
 }
 
 fn local_document_acp_setup(

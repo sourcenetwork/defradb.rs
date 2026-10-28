@@ -12,33 +12,44 @@ test = false
 
 [features]
 default = ["native", "vera", "wasmtime-runtime"]
-http = ["dep:defra-http", "dep:axum"]
-# Iroh/QUIC only. Implies native. Does not enable libp2p.
+http = ["dep:axum"]
+# Iroh/QUIC. Implies native. Does not enable libp2p.
 p2p = [
     "native",
     "dep:p2p",
-    "dep:blockstore",
-    "dep:defra-http",
-    "dep:defra-p2p-adapter",
-    "dep:kms",
+    "dep:replication-filter",
     "p2p/iroh-transport",
     "p2p/kms",
     "defra-p2p-adapter/iroh",
     "defra-p2p-adapter/kms",
     "defra-p2p-adapter/native",
 ]
+# The iroh transport under its former `embedded` name.
+iroh = ["p2p"]
+# libp2p transport. Off by default: the default node's graph has no libp2p.
+libp2p = [
+    "native",
+    "dep:libp2p",
+    "dep:p2p",
+    "dep:replication-filter",
+    "db/p2p",
+    "p2p?/libp2p-transport",
+    "defra-p2p-adapter/libp2p",
+    "defra-p2p-adapter/native",
+]
+# Opt in only when the application uses the OS keyring backend.
+system-keyring = ["keyring/system"]
 # Native host (event channel). Default-on.
-native = ["db/native", ]
+native = ["db/native", "defra-p2p-adapter/native"]
 # Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
 sourcehub = ["vera"]
 # Lens WASM execution. Default-on; without it set_migration fails explicitly.
-# Weak-dep `?` forwards onto the optional adapter only when `p2p` enabled it.
 wasmtime-runtime = [
     "db/wasmtime-runtime",
     
     "lens/wasmtime-runtime",
-    "defra-p2p-adapter?/wasmtime-runtime",
+    "defra-p2p-adapter/wasmtime-runtime",
 ]
 # Compile in OpenTelemetry exporter support. Mirrors the CLI's `otel` feature
 # and the underlying `telemetry/otlp` gate. Off by default — embedded users
@@ -51,6 +62,13 @@ bench = false
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
+kms = { path = "../kms" }
+blockstore = { path = "../blockstore" }
+regolith.workspace = true
+crypto = { path = "../crypto" }
+hex.workspace = true
+keyring = { path = "../keyring", default-features = false }
+zeroize = "1"
 crdt = { path = "../crdt" }
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
@@ -81,14 +99,14 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# Optional — HTTP server
-defra-http = { path = "../http", optional = true }
+# The P2P operations trait and the replicator options a node hands out
+defra-http = { path = "../http" }
 
 # Optional — P2P replication (IROH transport)
-p2p = { path = "../p2p", optional = true, features = ["iroh-transport"] }
-kms = { path = "../kms", optional = true }
-blockstore = { path = "../blockstore", optional = true }
-defra-p2p-adapter = { workspace = true, optional = true, default-features = false, features = ["iroh"] }
+p2p = { path = "../p2p", optional = true }
+defra-p2p-adapter = { workspace = true, default-features = false }
+replication-filter = { path = "../replication-filter", optional = true }
+libp2p = { workspace = true, optional = true }
 
 # Optional — OpenTelemetry exporter (see the `otel` feature)
 telemetry = { path = "../telemetry", default-features = false }
@@ -103,14 +121,14 @@ document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 axum.workspace = true
-# The mock embedding server binds its listener through the HTTP crate.
-defra-http = { path = "../http" }
 futures.workspace = true
 kovan.workspace = true
 crypto = { path = "../crypto" }
-hex.workspace = true
-regolith.workspace = true
 tempfile = "3"
+cid.workspace = true
+base64 = { workspace = true }
+zstd = "0.13"
+tar = "0.4"
 
 [lints]
 workspace = true

@@ -1,7 +1,7 @@
 //! Tests for issue #859: collection patching, schema migration, and
-//! introspection exposed through [`EmbeddedNode`].
+//! introspection exposed through [`Node`].
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use defra_node::Result;
 #[cfg(feature = "wasmtime-runtime")]
 use defra_node::{LensConfig, LensModule};
@@ -15,7 +15,7 @@ type User {
 
 // Minimal valid WebAssembly module — just the 4-byte `\0asm` magic plus the
 // 4-byte version (`1`). Wasmtime accepts this as an empty module, which is
-// all we need to prove [`EmbeddedNode::set_migration`] wires through to the
+// all we need to prove [`Node::set_migration`] wires through to the
 // underlying lens store.
 #[cfg(feature = "wasmtime-runtime")]
 const EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
@@ -23,7 +23,7 @@ const EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 #[test]
 fn list_collections_reports_added_schema() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
 
         assert!(node.list_collections()?.is_empty());
 
@@ -39,7 +39,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 #[test]
 fn get_collection_returns_active_schema() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let collection = node
@@ -59,7 +59,7 @@ fn get_collection_returns_active_schema() -> Result<()> {
 #[test]
 fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original = node
@@ -88,7 +88,7 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
 #[test]
 fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let v0 = node
@@ -123,7 +123,7 @@ fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()>
 #[test]
 fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -156,7 +156,7 @@ fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
 #[test]
 fn get_all_collection_versions_returns_history() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let initial = node.get_all_collection_versions().await?;
@@ -181,7 +181,7 @@ fn get_all_collection_versions_returns_history() -> Result<()> {
 #[test]
 fn set_active_collection_version_round_trips_to_original() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -219,7 +219,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
 #[test]
 fn set_migration_registers_lens_between_versions() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -246,9 +246,9 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
 }
 
 #[test]
-fn materialize_collection_is_exposed_on_embedded_node() -> Result<()> {
+fn materialize_collection_is_exposed_on_node() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let patch =
@@ -267,7 +267,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
         // Demonstrates the idempotent bootstrap pattern the issue calls out:
         // the application checks whether a collection exists before falling
         // back to add_collection. Running twice must not error.
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
 
         ensure_user_schema(&node).await?;
         ensure_user_schema(&node).await?;
@@ -278,7 +278,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
     .unwrap()
 }
 
-async fn ensure_user_schema(node: &EmbeddedNode) -> Result<()> {
+async fn ensure_user_schema(node: &Node) -> Result<()> {
     if node.get_collection("User")?.is_none() {
         node.add_collection(USER_SDL).await?;
     }

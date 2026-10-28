@@ -1,4 +1,4 @@
-//! Type-erased document-ACP operations bridging DB to EmbeddedNode's public DAC API.
+//! Type-erased document-ACP operations bridging DB to Node's public DAC API.
 
 use crate::{Error, Result};
 use std::sync::Arc;

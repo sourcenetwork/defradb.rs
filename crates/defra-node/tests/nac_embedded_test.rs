@@ -1,4 +1,4 @@
-//! End-to-end proof that an embedded node acts as its own identity for
+//! End-to-end proof that a node acts as its own identity for
 //! DB-layer NAC enforcement.
 //!
 //! With NAC enabled, a node whose ambient identity were the wildcard would be
@@ -8,7 +8,7 @@
 
 use crypto::Key;
 use defra_core::signing::{SigningConfig, SigningKeyType};
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use identity::{Identity as _, RawIdentity};
 use regolith::sync::Mutex;
 
@@ -43,13 +43,13 @@ fn register_local_node_identity() -> String {
 }
 
 #[test]
-fn embedded_node_acts_as_self_with_nac_enabled() {
+fn node_acts_as_self_with_nac_enabled() {
     workers::block_on(async {
         let _serial = SIGNING_STORE_GUARD.lock().await;
         defra_core::signing::clear_identity_store();
         let did = register_local_node_identity();
 
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .with_node_identity_did(&did)
             .with_node_acp_enabled()
             .build()
@@ -99,7 +99,7 @@ fn embedded_multi_mutation_and_multi_doc_create_under_nac() {
         defra_core::signing::clear_identity_store();
         let did = register_local_node_identity();
 
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .with_node_identity_did(&did)
             .with_node_acp_enabled()
             .build()
@@ -172,11 +172,7 @@ fn node_acp_requires_node_identity() {
         let _serial = SIGNING_STORE_GUARD.lock().await;
         defra_core::signing::clear_identity_store();
 
-        let error = match EmbeddedNode::builder()
-            .with_node_acp_enabled()
-            .build()
-            .await
-        {
+        let error = match Node::builder().with_node_acp_enabled().build().await {
             Ok(_) => panic!("enabling NAC without a node identity must fail"),
             Err(error) => error,
         };

@@ -1,6 +1,5 @@
 //! Configuration types for the embedded DefraDB node.
 
-#[cfg(feature = "http")]
 use std::time::Duration;
 
 #[cfg(feature = "http")]
@@ -120,34 +119,86 @@ impl HttpConfig {
     }
 }
 
-/// Configuration for the optional P2P networking layer.
-///
-/// Iroh/QUIC only. Requires the `p2p` feature, which implies `native`.
-/// libp2p lives on CLI, FFI, and `embedded` — not this crate.
-#[cfg(feature = "p2p")]
-pub struct P2PConfig {
-    /// UDP port for QUIC listener.
-    pub port: u16,
-    /// Bind to a specific IP address. When set, IROH only listens on this
-    /// interface -- use the Tailscale IP to keep P2P within the mesh and
-    /// prevent IROH from advertising unreachable LAN addresses across sites.
-    /// None = 0.0.0.0 (all interfaces).
-    pub bind_addr: Option<std::net::IpAddr>,
-    /// Relay behavior for NAT traversal.
-    pub relay_mode: p2p::iroh::IrohRelayModeConfig,
-    /// Address publishing / lookup behavior.
-    pub discovery: p2p::iroh::IrohDiscoveryConfig,
-    /// Inbound-connection authorization. Defaults to accepting every peer;
-    /// restrict to an explicit set of iroh endpoint ids once this node is
-    /// reachable from the internet (relay-enabled).
-    pub allowlist: p2p::iroh::IrohAllowlistConfig,
-    /// Maximum concurrent QUIC paths per connection. None keeps iroh's default.
-    pub max_concurrent_multipath_paths: Option<u32>,
-    /// Path to persist secret key. None = ephemeral (new identity each restart).
-    pub secret_key_path: Option<std::path::PathBuf>,
-    /// Reload collection subscriptions persisted in the local store on startup.
-    /// When false, only explicit subscribe calls in the current process take effect.
-    pub load_persisted_collections: bool,
+/// Storage persistence hints for ACP/NAC setup.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Persistence {
+    #[default]
+    Memory,
+    Persistent,
+}
+
+/// Where a node's signing identity comes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NodeSigning {
+    #[default]
+    Disabled,
+    /// The node creates its identity, from `key` or freshly generated, and
+    /// registers it in the signing registry.
+    Enabled { key: Option<SigningKey> },
+    /// An identity already in the signing registry, by DID. It needs a local
+    /// key or a remote signer.
+    RegisteredIdentity { did: String },
+}
+
+/// Explicit node signing key material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SigningKey {
+    Secp256k1(Vec<u8>),
+    Secp256r1(Vec<u8>),
+    Ed25519(Vec<u8>),
+}
+
+/// The P2P transport a node runs.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub enum TransportConfig {
+    #[default]
+    None,
+    #[cfg(feature = "libp2p")]
+    Libp2p(Libp2pConfig),
+    #[cfg(feature = "p2p")]
+    Iroh(P2PConfig),
+}
+
+/// libp2p transport configuration.
+#[cfg(feature = "libp2p")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Libp2pConfig {
+    /// The addresses the host listens on; none leaves it dialing out only.
+    pub listen_addrs: Vec<String>,
+    /// Peers the host connects to once it listens.
+    pub bootstrap_peers: Vec<String>,
+    /// Run GossipSub, which document topics replicate over.
+    pub enable_pubsub: bool,
+    /// Run the relay client transport.
+    pub enable_relay: bool,
+    /// Seconds a block-sync stream may take; `None` keeps the host default.
+    pub stream_timeout_secs: Option<u64>,
+    /// Sync limits and the replicator retry ladder.
+    pub sync: SyncTuning,
+}
+
+#[cfg(feature = "libp2p")]
+impl Default for Libp2pConfig {
+    fn default() -> Self {
+        Self {
+            listen_addrs: Vec::new(),
+            bootstrap_peers: Vec::new(),
+            enable_pubsub: true,
+            enable_relay: true,
+            stream_timeout_secs: None,
+            sync: SyncTuning::default(),
+        }
+    }
+}
+
+/// Sync limits and the replicator retry ladder, for either transport.
+#[cfg(any(feature = "p2p", feature = "libp2p"))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncTuning {
     /// Maximum concurrent DAG fetch tasks. Lower values reduce resource pressure
     /// on constrained clients (mobile, embedded). Default: 4.
     pub max_concurrent_dag_fetches: usize,
@@ -164,10 +215,150 @@ pub struct P2PConfig {
     /// links; overflow is nacked back to the pusher. Each source peer may use
     /// at most one quarter of this capacity. Default: 1000.
     pub max_pending_dags: usize,
+    /// Seconds between replicator retries, the last one repeating; `None`
+    /// keeps the Go-compatible default ladder.
+    pub replicator_retry_intervals: Option<Vec<u64>>,
+}
+
+#[cfg(any(feature = "p2p", feature = "libp2p"))]
+impl Default for SyncTuning {
+    fn default() -> Self {
+        let defaults = p2p::sync::SyncConfig::default();
+        Self {
+            max_concurrent_dag_fetches: defaults.max_concurrent_dag_fetches,
+            max_concurrent_push_tasks: defaults.max_concurrent_push_tasks,
+            max_doc_sync_request_doc_ids: defaults.max_doc_sync_request_doc_ids,
+            rate_limit_burst: defaults.rate_limit_burst,
+            rate_limit_rate: defaults.rate_limit_rate,
+            max_pending_dags: defaults.max_pending_dags,
+            replicator_retry_intervals: None,
+        }
+    }
+}
+
+#[cfg(any(feature = "p2p", feature = "libp2p"))]
+impl SyncTuning {
+    pub(crate) fn sync_config(&self) -> p2p::sync::SyncConfig {
+        p2p::sync::SyncConfig {
+            max_concurrent_dag_fetches: self.max_concurrent_dag_fetches,
+            max_concurrent_push_tasks: self.max_concurrent_push_tasks,
+            max_doc_sync_request_doc_ids: self.max_doc_sync_request_doc_ids,
+            rate_limit_burst: self.rate_limit_burst,
+            rate_limit_rate: self.rate_limit_rate,
+            max_pending_dags: self.max_pending_dags,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn retry_schedule(&self) -> crate::Result<storage::stores::RetrySchedule> {
+        match &self.replicator_retry_intervals {
+            Some(intervals) => storage::stores::RetrySchedule::new(intervals.clone())
+                .map_err(crate::Error::InvalidRetrySchedule),
+            None => Ok(storage::stores::RetrySchedule::default()),
+        }
+    }
+}
+
+/// Where an iroh node keeps its secret key.
+#[cfg(feature = "p2p")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PeerKeySource {
+    /// In the file at [`P2PConfig::secret_key_path`], created there when
+    /// absent. With no path the key is new on every start.
+    #[default]
+    File,
+    /// In the node's store, one key shared with the libp2p transport, or in
+    /// the application keyring ([`NodeConfig::peer_keyring`]). Here
+    /// `secret_key_path` only names an iroh key file from before the node
+    /// shared one peer key: it is imported when the store has none and never
+    /// written.
+    Store,
+}
+
+/// Configuration for the optional P2P networking layer.
+///
+/// Iroh/QUIC. Requires the `p2p` feature, which implies `native`.
+#[cfg(feature = "p2p")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct P2PConfig {
+    /// UDP port for QUIC listener. `None` leaves the port to iroh.
+    pub port: Option<u16>,
+    /// Bind to a specific IP address. When set, IROH only listens on this
+    /// interface -- use the Tailscale IP to keep P2P within the mesh and
+    /// prevent IROH from advertising unreachable LAN addresses across sites.
+    /// None = 0.0.0.0 (all interfaces).
+    pub bind_addr: Option<std::net::IpAddr>,
+    /// Relay behavior for NAT traversal.
+    pub relay_mode: p2p::iroh::IrohRelayModeConfig,
+    /// Address publishing / lookup behavior.
+    pub discovery: p2p::iroh::IrohDiscoveryConfig,
+    /// Inbound-connection authorization. Defaults to accepting every peer;
+    /// restrict to an explicit set of iroh endpoint ids once this node is
+    /// reachable from the internet (relay-enabled).
+    pub allowlist: p2p::iroh::IrohAllowlistConfig,
+    /// Maximum concurrent QUIC paths per connection. None keeps iroh's default.
+    pub max_concurrent_multipath_paths: Option<u32>,
+    /// Path of the secret key file; what it means depends on `peer_key`.
+    pub secret_key_path: Option<std::path::PathBuf>,
+    /// Where the secret key lives.
+    pub peer_key: PeerKeySource,
+    /// Reload collection subscriptions persisted in the local store on startup.
+    /// When false, only explicit subscribe calls in the current process take effect.
+    pub load_persisted_collections: bool,
+    /// Sync limits and the replicator retry ladder.
+    pub sync: SyncTuning,
     /// Re-announce blocks merged from peers on their gossip topics, so
     /// subscribers with no transport route to the author still receive them
     /// through whichever peer merged them. Signatures are verified on merge,
     /// so a rebroadcasting node never vouches for content it did not verify.
     /// Default: false.
     pub rebroadcast_on_merge: bool,
+}
+
+#[cfg(feature = "p2p")]
+impl Default for P2PConfig {
+    fn default() -> Self {
+        Self {
+            port: None,
+            bind_addr: None,
+            relay_mode: p2p::iroh::IrohRelayModeConfig::default(),
+            discovery: p2p::iroh::IrohDiscoveryConfig::default(),
+            allowlist: p2p::iroh::IrohAllowlistConfig::default(),
+            max_concurrent_multipath_paths: None,
+            secret_key_path: None,
+            peer_key: PeerKeySource::default(),
+            load_persisted_collections: true,
+            sync: SyncTuning::default(),
+            rebroadcast_on_merge: false,
+        }
+    }
+}
+
+/// Node assembly configuration: what [`crate::build_with_store`] takes, and
+/// what [`crate::NodeBuilder`]'s setters fill in.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeConfig {
+    /// Optional application-owned keyring for the transport identity.
+    pub peer_keyring: Option<crate::PeerKeyring>,
+    pub persistence: Persistence,
+    pub transport: TransportConfig,
+    /// The network runtime the node's networking runs on: its transport,
+    /// its database's network work and the pool's stuck-poll monitor. A node
+    /// with a transport that names none runs them on the process's own
+    /// ([`edge::on_demand`]); a node without networking starts none.
+    pub edge: Option<edge::Edge>,
+    pub signing: NodeSigning,
+    pub document_acp: DocumentAcpConfig,
+    pub query_limits: query::QueryLimits,
+    /// Retries of a conflicting transaction; `None` keeps the database default.
+    pub max_txn_retries: Option<u32>,
+    /// Bytes per block chunk; `None` keeps the database default.
+    pub chunk_size: Option<usize>,
+    /// Enable node access control at startup, owned by the node identity.
+    pub node_acp_enabled: bool,
+    /// Per-query deadline; `None` keeps the engine default.
+    pub query_timeout: Option<Duration>,
+    /// The introspection cache; `None` keeps it on.
+    pub introspection_cache: Option<bool>,
 }

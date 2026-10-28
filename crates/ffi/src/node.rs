@@ -24,7 +24,7 @@ pub extern "C" fn new_node(options: NodeInitOptions) -> NewNodeResult {
 
         let result = crate::helpers::block_on(
             rt,
-            build_node_state(options, embedded::TransportConfig::None, rt.clone()),
+            build_node_state(options, defra_node::TransportConfig::None, rt.clone()),
         )
         .map(|state| NODES.insert(state));
 
@@ -38,51 +38,60 @@ pub extern "C" fn new_node(options: NodeInitOptions) -> NewNodeResult {
 /// Builds a node whose network work, P2P included, runs on `edge`.
 pub(crate) async fn build_node_state(
     options: NodeInitOptions,
-    transport: embedded::TransportConfig,
+    transport: defra_node::TransportConfig,
     edge: edge::Edge,
 ) -> Result<NodeState, String> {
     // The data path's worker pool comes before the store, which places its
     // compaction threads by the pool's plan.
-    let pool = embedded::start_node_pool(None, Some(&edge)).map_err(|error| error.to_string())?;
+    let pool = defra_node::start_node_pool(None, Some(&edge)).map_err(|error| error.to_string())?;
     let (store, persistence, db_path_opt) = resolve_store(&options, &pool)?;
     let mut config = resolve_embedded_config(&options, persistence)?;
     config.transport = with_derived_iroh_key_path(transport, &db_path_opt);
+    #[cfg(any(feature = "libp2p", feature = "iroh"))]
+    match &mut config.transport {
+        #[cfg(feature = "libp2p")]
+        defra_node::TransportConfig::Libp2p(libp2p) => libp2p.sync = sync_tuning(&options),
+        #[cfg(feature = "iroh")]
+        defra_node::TransportConfig::Iroh(iroh) => iroh.sync = sync_tuning(&options),
+        _ => {}
+    }
     config.edge = Some(edge);
 
-    let node = embedded::build_with_store_on_pool(store, config, pool)
+    let node = defra_node::build_with_store_on_pool(store, config, pool)
         .await
         .map_err(|error| error.to_string())?;
 
     Ok(NodeState {
-        database: node.database.clone(),
+        database: node.database().clone(),
         background_tasks: node.background_tasks(),
-        txn_registry: node.txn_registry.clone(),
-        query_runner: node.query_runner.clone(),
-        nac_manager: node.nac_manager.clone(),
-        document_acp: node.document_acp.clone(),
-        event_bus: node.event_bus.clone(),
+        txn_registry: node.txn_registry().clone(),
+        query_runner: node.runner().clone(),
+        nac_manager: node.nac_manager().clone(),
+        document_acp: node.document_acp(),
+        event_bus: node.event_bus().clone(),
         policy_store: Arc::new(PolicyStore::new()),
-        local_zanzibar_store: node.local_zanzibar_store.clone(),
+        local_zanzibar_store: node.local_zanzibar_store().cloned(),
         p2p: node
-            .p2p
-            .clone()
+            .p2p_system()
+            .cloned()
             .map(|system| Arc::new(P2PState::new(system))),
         node_identity_did: node
-            .node_identity_did
-            .clone()
+            .node_identity_did()
+            .map(str::to_owned)
             .map_or_else(AtomOption::none, AtomOption::some),
         signing_enabled: options.enable_signing != 0,
         #[cfg(feature = "vera")]
-        vera_acp: node.vera_acp.clone(),
-        query_limits: node.query_limits,
+        vera_acp: node.vera_acp().cloned(),
+        query_limits: node.query_limits(),
         se_encryption_key: AtomOption::none(),
+        _node: node,
     })
 }
 
 fn resolve_store(
     options: &NodeInitOptions,
     pool: &workers::Pool,
-) -> Result<(Arc<FfiStore>, embedded::Persistence, Option<String>), String> {
+) -> Result<(Arc<FfiStore>, defra_node::Persistence, Option<String>), String> {
     let backend_name = unsafe { c_str_to_string(options.datastore_backend) }
         .unwrap_or_default()
         .to_lowercase();
@@ -96,7 +105,7 @@ fn resolve_store(
                 )
                 .map_err(|error| format!("failed to open in-memory regolith store: {}", error))?,
             )),
-            embedded::Persistence::Memory,
+            defra_node::Persistence::Memory,
             None,
         ));
     }
@@ -121,13 +130,13 @@ fn resolve_store(
         .map_err(|error| format!("failed to open regolith store at '{}': {}", path, error))?,
     ));
 
-    Ok((store, embedded::Persistence::Persistent, Some(path)))
+    Ok((store, defra_node::Persistence::Persistent, Some(path)))
 }
 
 fn resolve_embedded_config(
     options: &NodeInitOptions,
-    persistence: embedded::Persistence,
-) -> Result<embedded::EmbeddedNodeConfig, String> {
+    persistence: defra_node::Persistence,
+) -> Result<defra_node::NodeConfig, String> {
     let key = if !options.signing_private_key.is_null() && options.signing_private_key_len > 0 {
         if options.signing_private_key_len > MAX_PRIVATE_KEY_LEN {
             return Err(format!(
@@ -148,13 +157,13 @@ fn resolve_embedded_config(
 
         Some(match signing_key_type {
             defra_core::signing::SigningKeyType::Secp256k1 => {
-                embedded::SigningKey::Secp256k1(key_bytes)
+                defra_node::SigningKey::Secp256k1(key_bytes)
             }
             defra_core::signing::SigningKeyType::Secp256r1 => {
-                embedded::SigningKey::Secp256r1(key_bytes)
+                defra_node::SigningKey::Secp256r1(key_bytes)
             }
             defra_core::signing::SigningKeyType::Ed25519 => {
-                embedded::SigningKey::Ed25519(key_bytes)
+                defra_node::SigningKey::Ed25519(key_bytes)
             }
             defra_core::signing::SigningKeyType::BlsAugV1 => {
                 return Err("unsupported signing key type: bls".to_string())
@@ -166,9 +175,9 @@ fn resolve_embedded_config(
     };
 
     let signing = if options.enable_signing != 0 || key.is_some() {
-        embedded::SigningConfig::Enabled { key }
+        defra_node::NodeSigning::Enabled { key }
     } else {
-        embedded::SigningConfig::Disabled
+        defra_node::NodeSigning::Disabled
     };
 
     #[cfg(not(feature = "vera"))]
@@ -178,7 +187,7 @@ fn resolve_embedded_config(
         );
     }
     #[cfg(not(feature = "vera"))]
-    let document_acp = embedded::DocumentAcpConfig::Local;
+    let document_acp = defra_node::DocumentAcpConfig::Local;
 
     #[cfg(feature = "vera")]
     let document_acp = if !options.vera_grpc_address.is_null() {
@@ -207,65 +216,65 @@ fn resolve_embedded_config(
                 .to_vec()
         };
 
-        embedded::DocumentAcpConfig::Vera(embedded::VeraConfig {
+        defra_node::DocumentAcpConfig::Vera(defra_node::VeraConfig {
             grpc_address,
             comet_rpc_address,
             chain_id,
             signer_key,
         })
     } else {
-        embedded::DocumentAcpConfig::Local
+        defra_node::DocumentAcpConfig::Local
     };
 
-    Ok(embedded::EmbeddedNodeConfig {
+    Ok(defra_node::NodeConfig {
         peer_keyring: None,
         persistence,
-        transport: embedded::TransportConfig::None,
+        transport: defra_node::TransportConfig::None,
         edge: None,
         signing,
         document_acp,
         query_limits: query::QueryLimits::default(),
-        max_concurrent_dag_fetches: if options.max_concurrent_dag_fetches > 0 {
-            Some(options.max_concurrent_dag_fetches)
-        } else {
-            None
-        },
-        max_concurrent_push_tasks: if options.max_concurrent_push_tasks > 0 {
-            Some(options.max_concurrent_push_tasks)
-        } else {
-            None
-        },
-        max_doc_sync_request_doc_ids: if options.max_doc_sync_request_doc_ids > 0 {
-            Some(options.max_doc_sync_request_doc_ids)
-        } else {
-            None
-        },
-        rate_limit_burst: if options.rate_limit_burst > 0 {
-            Some(options.rate_limit_burst)
-        } else {
-            None
-        },
-        rate_limit_rate: if options.rate_limit_rate > 0.0 {
-            Some(options.rate_limit_rate)
-        } else {
-            None
-        },
         ..Default::default()
     })
 }
 
+/// The sync limits the caller set; a zero leaves the node's default.
+#[cfg(any(feature = "libp2p", feature = "iroh"))]
+fn sync_tuning(options: &NodeInitOptions) -> defra_node::SyncTuning {
+    let mut tuning = defra_node::SyncTuning::default();
+    if options.max_concurrent_dag_fetches > 0 {
+        tuning.max_concurrent_dag_fetches = options.max_concurrent_dag_fetches;
+    }
+    if options.max_concurrent_push_tasks > 0 {
+        tuning.max_concurrent_push_tasks = options.max_concurrent_push_tasks;
+    }
+    if options.max_doc_sync_request_doc_ids > 0 {
+        tuning.max_doc_sync_request_doc_ids = options.max_doc_sync_request_doc_ids;
+    }
+    if options.rate_limit_burst > 0 {
+        tuning.rate_limit_burst = options.rate_limit_burst;
+    }
+    if options.rate_limit_rate > 0.0 {
+        tuning.rate_limit_rate = options.rate_limit_rate;
+    }
+    tuning
+}
+
 fn with_derived_iroh_key_path(
-    transport: embedded::TransportConfig,
+    transport: defra_node::TransportConfig,
     _db_path: &Option<String>,
-) -> embedded::TransportConfig {
+) -> defra_node::TransportConfig {
     #[cfg(feature = "iroh")]
-    if let embedded::TransportConfig::Iroh(mut config) = transport {
+    if let defra_node::TransportConfig::Iroh(mut config) = transport {
+        // The node keeps one peer key in its store, for either transport; an
+        // iroh key file only seeds it.
+        config.peer_key = defra_node::PeerKeySource::Store;
         if config.secret_key_path.is_none() {
             if let Some(path) = _db_path {
                 config.secret_key_path = Some(std::path::PathBuf::from(format!("{path}.iroh.key")));
             }
         }
-        return embedded::TransportConfig::Iroh(config);
+        return defra_node::TransportConfig::Iroh(config);
     }
 
     transport
@@ -300,17 +309,16 @@ pub extern "C" fn node_close(node_ptr: usize) -> FfiResult {
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
+        // The node's own shutdown stops its tasks and transport and closes the
+        // database; the P2P system's also clears the signing identities FFI
+        // registered, and the event bus is FFI's to close.
         let result = crate::helpers::block_on(rt, async {
-            state.background_tasks.shutdown().await;
             if let Some(p2p) = state.p2p.as_ref() {
                 p2p.system.shutdown().await;
             }
+            state._node.shutdown().await;
             state.event_bus.close();
-            state
-                .database
-                .close()
-                .await
-                .map_err(|error| format!("failed to close database: {}", error))
+            Ok::<(), String>(())
         });
         drop(state);
 

@@ -1,6 +1,6 @@
 use crypto::Key;
 use defra_core::signing::{SigningConfig, SigningKeyType};
-use defra_node::{EmbeddedNode, QueryRequest};
+use defra_node::{Node, QueryRequest};
 use identity::{Identity as _, RawIdentity};
 
 fn register_local_node_identity() -> (String, String) {
@@ -32,7 +32,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
     defra_core::signing::clear_identity_store();
     let (did, expected_identity) = register_local_node_identity();
 
-    let node = EmbeddedNode::builder()
+    let node = Node::builder()
         .with_node_identity_did(&did)
         .build()
         .await
@@ -184,7 +184,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
 
     node.shutdown().await;
 
-    let node = EmbeddedNode::builder()
+    let node = Node::builder()
         .build()
         .await
         .expect("build unsigned node");

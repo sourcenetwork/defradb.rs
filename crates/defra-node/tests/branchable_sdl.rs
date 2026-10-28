@@ -8,13 +8,13 @@
 //! heads land under the hash prefix, the responder scans the sequence prefix,
 //! and every `sync_branchable_collection` response is silently empty.
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use storage::corekv::{IterOptions, Store};
 
 #[test]
 fn branchable_directive_survives_sdl_parsing() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await.expect("build node");
+        let node = Node::builder().build().await.expect("build node");
         node.add_collection("type Note @branchable { title: String }")
             .await
             .expect("add schema");
@@ -38,7 +38,7 @@ fn branchable_directive_survives_sdl_parsing() {
 fn graphql_write_records_collection_head_under_persisted_id() {
     workers::block_on(async {
         let dir = tempfile::tempdir().expect("tempdir");
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .data_path(dir.path())
             .build()
             .await
@@ -129,7 +129,7 @@ fn signed_graphql_write_records_collection_head_under_persisted_id() {
         );
 
         let dir = tempfile::tempdir().expect("tempdir");
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .data_path(dir.path())
             .with_node_identity_did(&did)
             .build()

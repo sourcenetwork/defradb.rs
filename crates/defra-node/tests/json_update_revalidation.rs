@@ -1,11 +1,11 @@
 use defra_node::Result;
-use defra_node::{EmbeddedNode, QueryRequest};
+use defra_node::{Node, QueryRequest};
 use serde_json::{json, Value};
 
 #[test]
 fn retained_json_survives_unrelated_updates() -> Result<()> {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await?;
+    let node = Node::builder().build().await?;
     node.add_collection(
         "type JsonProbe { key: String @index(unique: true) payload: JSON sibling: String }",
     )
