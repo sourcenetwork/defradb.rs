@@ -136,9 +136,16 @@ fn with_signing_and_bypass(
     signing_config: Option<SigningConfig>,
     dac_bypass: bool,
 ) -> defra_core::RequestContext {
+    with_signing(context, signing_config).with_dac_bypass(dac_bypass)
+}
+
+/// `context` signing with `signing_config`, collecting into its batch session.
+pub(crate) fn with_signing(
+    context: defra_core::RequestContext,
+    signing_config: Option<SigningConfig>,
+) -> defra_core::RequestContext {
     let batch_session = signing_config.as_ref().map(|s| s.public_key_hex.clone());
     context
-        .with_dac_bypass(dac_bypass)
         .with_signing(signing_config)
         .with_batch_session(batch_session)
 }
