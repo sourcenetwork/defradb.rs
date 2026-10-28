@@ -51,17 +51,20 @@ pub struct ClientConfig {
 pub struct ExecRequestOptions {
     /// Values for the request's `$variables`.
     pub variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
+    /// The transaction to run it in, an ID from `txnBegin`.
+    #[serde(rename = "txnId")]
+    pub txn_id: Option<String>,
 }
 
 impl ExecRequestOptions {
-    /// Read the options object, rejecting any key but `variables`: an option
+    /// Read the options object, rejecting any key but `variables` and `txnId`: an option
     /// this client cannot honour must fail, not be ignored.
     pub fn from_js(opts: JsValue) -> Result<Self> {
         if opts.is_undefined() || opts.is_null() {
             return Ok(Self::default());
         }
         for key in js_sys::Object::keys(&js_sys::Object::from(opts.clone())) {
-            if key.as_string().as_deref() != Some("variables") {
+            if !matches!(key.as_string().as_deref(), Some("variables" | "txnId")) {
                 return Err(WasmError::Query(format!(
                     "unsupported execRequest option: {}",
                     key.as_string().unwrap_or_default()
