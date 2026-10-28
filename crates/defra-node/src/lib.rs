@@ -1218,7 +1218,7 @@ mod tests {
                 assert_eq!(created[0].name, "Book");
 
                 let schema = client
-                    .get(&schema_url)
+                    .get(format!("http://{address}/api/v0/schema"))
                     .send()
                     .await
                     .unwrap()
@@ -1257,7 +1257,7 @@ mod tests {
                 assert!(!book.version_id.is_empty());
 
                 let delete_response = client
-                    .delete(&url)
+                    .delete(format!("http://{address}/api/v0/collections/versions"))
                     .json(&vec![book.version_id.clone()])
                     .send()
                     .await
