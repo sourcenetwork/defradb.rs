@@ -9,6 +9,7 @@ use testo::prelude::*;
 
 use crate::actions::Actions;
 use crate::client_type::ClientType;
+use crate::export;
 use crate::scenario::Bindings;
 
 /// What every action sees: the node it acts on, and what earlier actions
@@ -67,6 +68,11 @@ impl TestCase {
     }
 
     pub fn execute(self) {
+        if let Some(dir) = std::env::var_os("DEFRA_EXPORT_SCENARIOS") {
+            self.export(std::path::Path::new(&dir));
+            return;
+        }
+        self.check_export();
         if let Some(reason) = self.skip {
             eprintln!("skipped: {reason}");
             return;
@@ -74,6 +80,26 @@ impl TestCase {
         for client_type in active_client_types() {
             let actions = client_type.apply(&self.actions);
             drop(testo::action::execute(State::default(), &actions));
+        }
+    }
+}
+
+impl TestCase {
+    fn export(&self, dir: &std::path::Path) {
+        let steps: Vec<_> = self.actions().iter().flat_map(Actions::wires).collect();
+        let id = self.id.split("::").skip(1).collect::<Vec<_>>().join(".");
+        let scenario = export::scenario(&id, &steps, self.without_db, self.skip);
+        export::write(dir, &id, &scenario);
+    }
+
+    fn check_export(&self) {
+        let steps: Vec<_> = self.actions().iter().flat_map(Actions::wires).collect();
+        if self.id.is_empty() || steps.is_empty() {
+            return;
+        }
+        let scenario = export::scenario(self.id, &steps, self.without_db, self.skip);
+        if let Err(reason) = export::check(&scenario, self.without_db) {
+            panic!("{}: {reason}", self.id);
         }
     }
 }
