@@ -12,11 +12,10 @@ mod clock;
 mod outcome;
 mod support;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use clock::sleep;
-use defra_node::{NodeBuilder, Libp2pConfig, NodeConfig, NodeSigning, TransportConfig};
+use defra_node::{Libp2pConfig, NodeBuilder, NodeConfig, NodeSigning, TransportConfig};
 use identity::Did;
 use outcome::Result;
 use std::time::Instant;

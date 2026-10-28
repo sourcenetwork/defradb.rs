@@ -152,6 +152,8 @@ pub enum SigningKey {
 }
 
 /// The P2P transport a node runs.
+// A config is built once per node, so the size of its largest variant costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub enum TransportConfig {

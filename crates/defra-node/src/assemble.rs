@@ -150,7 +150,7 @@ where
     }
     let embedding_config = db_options.embedding_config();
     #[cfg(not(target_arch = "wasm32"))]
-    let transaction_stats = store.transaction_stats_handle();
+    let transaction_stats = storage::Store::transaction_stats_handle(store.as_ref());
 
     let mut database = db::DB::open_from_arc_with_options(store.clone(), db_options)
         .await
@@ -491,10 +491,7 @@ where
 
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     let p2p = p2p_setup.map(|setup| setup.system);
-    #[cfg(all(
-        feature = "managed-p2p",
-        not(any(feature = "p2p", feature = "libp2p"))
-    ))]
+    #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]
     let p2p: Option<Arc<crate::ManagedP2PSystem>> = None;
 
     Ok(EmbeddedNode {

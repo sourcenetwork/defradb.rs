@@ -12,11 +12,11 @@ mod outcome;
 
 #[cfg(feature = "libp2p")]
 use defra_node::Libp2pConfig;
+use defra_node::NodeBuilder;
 #[cfg(feature = "p2p")]
 use defra_node::P2PConfig;
-use defra_node::{NodeBuilder, NodeConfig};
 #[cfg(any(feature = "libp2p", feature = "p2p"))]
-use defra_node::TransportConfig;
+use defra_node::{NodeConfig, TransportConfig};
 use outcome::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -115,7 +115,7 @@ fn p2p_shutdown_releases_persistent_store() -> Result<()> {
                 .with_config(config)
                 .data_path(&path)
                 .build()
-            .await?;
+                .await?;
 
             node.shutdown().await;
             drop(node);
@@ -151,7 +151,7 @@ fn iroh_shutdown_releases_persistent_store() -> Result<()> {
                 .with_config(config)
                 .data_path(&path)
                 .build()
-            .await?;
+                .await?;
 
             node.shutdown().await;
             drop(node);
@@ -186,7 +186,7 @@ fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
                 .with_config(config)
                 .data_path(&path)
                 .build()
-            .await;
+                .await;
             assert!(
                 result.is_err(),
                 "P2P setup should fail when the port is busy"
@@ -223,7 +223,7 @@ fn unownable_node_acp_releases_persistent_store() -> Result<()> {
                 .with_config(config)
                 .data_path(&path)
                 .build()
-            .await;
+                .await;
             assert!(
                 matches!(result, Err(defra_node::Error::NodeAcpNeedsIdentity)),
                 "NAC without a node identity must be refused"
