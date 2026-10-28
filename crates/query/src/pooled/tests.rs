@@ -79,6 +79,24 @@ impl QueryExecutor for Recorder {
         Ok(Vec::new())
     }
 
+    async fn observe_document_visibility_in_txn(
+        &self,
+        context: defra_core::RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        assert_eq!(context.identity(), Some("did:key:owner"));
+        assert!(!context.dac_bypass());
+        assert_eq!(actor.as_str(), "did:key:reader");
+        assert_eq!(handle.as_str(), "owned");
+        assert_eq!(collection, "Users");
+        assert_eq!(doc_ids, ["known"]);
+        self.call().await;
+        Ok(Vec::new())
+    }
+
     async fn begin_txn(
         &self,
         _readonly: bool,
@@ -340,6 +358,22 @@ fn owner_observation_passes_once_to_the_transaction_registry_without_a_pool_hop(
         "Users",
         &["known".into()],
         Some(identity::Did::new("did:key:reader").unwrap()),
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(recorder.workers(), [None]);
+    pool.shutdown_blocking().unwrap();
+}
+
+#[test]
+fn delegated_visibility_passes_once_to_the_transaction_registry_without_a_pool_hop() {
+    let (recorder, executor, pool) = pooled(2);
+    workers::block_on(executor.observe_document_visibility_in_txn(
+        defra_core::RequestContext::default().with_identity(Some("did:key:owner".into())),
+        &TransactionHandle::new("owned".into()),
+        "Users",
+        &["known".into()],
+        identity::Did::new("did:key:reader").unwrap(),
     ))
     .unwrap()
     .unwrap();
