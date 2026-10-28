@@ -53,18 +53,12 @@ pub enum Error {
     /// A schema policy does not match its policy definition.
     #[error("schema policy validation error: {0}")]
     PolicyValidation(String),
+    /// An add-collection request was refused.
+    #[error(transparent)]
+    Client(#[from] client::Error),
     /// The identity acting on a request is malformed.
     #[error("malformed acting identity: {0}")]
     InvalidActingIdentity(#[source] identity::Error),
-    /// The schema SDL did not parse.
-    #[error("SDL parse error: {0}")]
-    SchemaParse(#[source] query::QueryError),
-    /// The parsed schema is invalid.
-    #[error("schema validation error: {0}")]
-    SchemaValidation(String),
-    /// Creating the collections of a schema failed.
-    #[error("create collection error: {0}")]
-    CollectionCreate(#[source] db::Error),
     /// The target SDL of a view did not parse.
     #[error("view SDL parse error: {0}")]
     ViewSchemaParse(#[source] query::QueryError),

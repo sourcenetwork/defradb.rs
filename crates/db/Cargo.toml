@@ -95,6 +95,7 @@ inputs = { path = "../inputs" }
 edge = { path = "../edge" }
 identity = { path = "../identity" }
 acp = { path = "../acp", default-features = false }
+client = { path = "../client" }
 crdt = { path = "../crdt" }
 events = { path = "../events", default-features = false }
 lens = { path = "../lens", default-features = false }

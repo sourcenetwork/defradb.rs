@@ -75,6 +75,18 @@ impl PolicyLookup {
     }
 }
 
+#[async_trait::async_trait]
+impl acp::PolicyLookup for PolicyLookup {
+    async fn get_policy(
+        &self,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, String> {
+        PolicyLookup::get_policy(self, policy_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,

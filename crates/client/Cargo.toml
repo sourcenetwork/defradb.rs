@@ -1,0 +1,21 @@
+[package]
+name = "client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The client interface every DefraDB edge calls into"
+
+[lib]
+bench = false
+
+[dependencies]
+defra-core = { path = "../defra-core" }
+schema = { path = "../schema" }
+async-trait.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -50,6 +50,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 # Internal crates - use db crate which provides everything
 db = { path = "../db", default-features = false }
+client = { path = "../client" }
 storage = { path = "../storage", default-features = false, features = ["wasm"] }
 schema = { path = "../schema" }
 document = { path = "../document" }

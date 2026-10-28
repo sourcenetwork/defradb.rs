@@ -20,6 +20,7 @@ acp = { path = "../acp" }
 blockstore = { path = "../blockstore" }
 crypto = { path = "../crypto" }
 db = { path = "../db", default-features = false }
+client = { path = "../client" }
 defra-core = { path = "../defra-core" }
 # The network runtime a configured transport runs on.
 edge = { path = "../edge" }

@@ -107,77 +107,46 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             .await
     }
 
-    /// Add a schema within an existing transaction.
-    ///
-    /// Parses the SDL and creates collections within the transaction.
-    /// The collections are only visible after the transaction is committed,
-    /// but can be used by queries within the same transaction.
+    /// Add a schema within an existing transaction, through the same checks
+    /// as [`client::Client::add_collection`]. The collections are only
+    /// visible after the transaction commits, but queries within it can use
+    /// them. Branchable collection ACP objects are registered before the
+    /// storage commit when document ACP is installed.
     pub async fn add_collection_in_txn_as(
         &self,
         context: &RequestContext,
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_collection_in_txn_with_acp_as(context, txn_id, sdl, None, None)
-            .await
-    }
-
-    /// [`Self::add_collection_in_txn_with_acp_as`] in [`RequestContext::ambient`].
-    pub async fn add_collection_in_txn_with_acp(
-        &self,
-        txn_id: &str,
-        sdl: &str,
-        document_acp: Option<Arc<dyn acp::DocumentACP>>,
-        creator: Option<identity::Did>,
-    ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_collection_in_txn_with_acp_as(
-            &RequestContext::ambient(),
-            txn_id,
-            sdl,
-            document_acp,
-            creator,
-        )
-        .await
-    }
-
-    /// Add a schema within an existing transaction, optionally registering
-    /// branchable collection ACP objects before the storage commit.
-    pub async fn add_collection_in_txn_with_acp_as(
-        &self,
-        context: &RequestContext,
-        txn_id: &str,
-        sdl: &str,
-        document_acp: Option<Arc<dyn acp::DocumentACP>>,
-        creator: Option<identity::Did>,
-    ) -> Result<Vec<schema::CollectionVersion>> {
+        let to_error = |e: client::Error| Error::Other(e.to_string());
         self.db
             .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
+        let creator = DB::<S>::creator_of(context).map_err(to_error)?;
         let db = self.db.clone();
         let request = context.clone();
         let sdl = sdl.to_owned();
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
-                let sdl = sdl.as_str();
                 let txn = owned.alone()?;
 
-                let known_types: rapidhash::RapidHashSet<String> = db
+                let existing = db.get_all_collection_versions_with_txn(txn).await?;
+                let mut known_types: rapidhash::RapidHashSet<String> = db
                     .list_collections()
                     .map_err(|e| Error::Other(format!("failed to list collections: {}", e)))?
                     .into_iter()
                     .collect();
+                known_types.extend(existing.iter().map(|c| c.name.clone()));
 
-                let collections = query::parse_sdl_with_known_types(sdl, known_types)
-                    .map_err(|e| Error::Other(format!("failed to parse SDL: {}", e)))?;
-
-                schema::definition_validation::validate_new_collections(&collections)
-                    .map_err(|e| Error::Other(format!("failed to validate schema: {}", e)))?;
-                let existing = db.get_all_collection_versions_with_txn(txn).await?;
+                let collections = db
+                    .prepare_new_collections(&sdl, known_types)
+                    .await
+                    .map_err(to_error)?;
                 schema::definition_validation::validate_new_collections_with_existing(
                     &collections,
                     &existing,
                 )
-                .map_err(|e| Error::Other(format!("failed to validate schema: {}", e)))?;
+                .map_err(Error::Other)?;
 
                 let mut finalized = Vec::new();
                 for collection in collections {
@@ -185,7 +154,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     finalized.push(schema);
                 }
 
-                if let (Some(document_acp), Some(creator)) = (document_acp, creator) {
+                if let (Some(document_acp), Some(creator)) = (db.document_acp().cloned(), creator) {
                     txn.stage_collection_acp_registration(
                         &request,
                         document_acp,

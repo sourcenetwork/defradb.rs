@@ -2441,6 +2441,7 @@ dependencies = [
  "bytes",
  "cid",
  "clap",
+ "client",
  "crypto",
  "db",
  "defra-core",
@@ -2497,6 +2498,16 @@ dependencies = [
  "vera",
  "workers",
  "zeroize",
+]
+
+[[package]]
+name = "client"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "defra-core",
+ "schema",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3811,6 +3822,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "cid",
+ "client",
  "crdt",
  "crypto",
  "datastore",
@@ -3987,6 +3999,7 @@ dependencies = [
  "async-trait",
  "axum",
  "blockstore",
+ "client",
  "crdt",
  "crypto",
  "db",
@@ -4097,6 +4110,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cid",
+ "client",
  "console_error_panic_hook",
  "crypto",
  "db",
@@ -4583,6 +4597,7 @@ dependencies = [
  "blockstore",
  "bytes",
  "cid",
+ "client",
  "crdt",
  "crypto",
  "db",
@@ -4861,6 +4876,7 @@ dependencies = [
  "blockstore",
  "cbindgen",
  "cid",
+ "client",
  "crypto",
  "db",
  "defra-core",

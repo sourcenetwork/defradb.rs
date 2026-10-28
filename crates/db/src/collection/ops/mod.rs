@@ -6,6 +6,7 @@
 //! - Querying and listing collections
 //! - Managing collection versions and active states
 
+mod add;
 mod create;
 mod delete;
 mod lookup;

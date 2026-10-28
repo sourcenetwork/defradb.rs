@@ -39,6 +39,7 @@ workers = { path = "../workers" }
 query = { path = "../query" }
 replication-filter = { path = "../replication-filter" }
 db = { path = "../db" }
+client = { path = "../client" }
 schema = { path = "../schema" }
 events = { path = "../events" }
 lens = { path = "../lens" }

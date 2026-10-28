@@ -166,30 +166,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         context: &RequestContext,
         sdl: &str,
     ) -> Result<Vec<CollectionVersion>> {
-        let creator = Self::creator(context)?;
-        self.database
-            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await
-            .map_err(Error::from)?;
-
-        let collections = query::parse_sdl(sdl).map_err(Error::SchemaParse)?;
-
-        schema::definition_validation::validate_new_collections(&collections)
-            .map_err(Error::SchemaValidation)?;
-
-        self.validate_policies(&collections).await?;
-
-        let created = self
-            .database
-            .create_collections_atomic_with_acp_registration_as(
-                context,
-                collections,
-                self.document_acp.clone(),
-                creator,
-            )
-            .await
-            .map_err(Error::CollectionCreate)?;
-        Ok(created)
+        Ok(client::Client::add_collection(&*self.database, context, sdl).await?)
     }
 
     async fn ensure_ordinary_index(

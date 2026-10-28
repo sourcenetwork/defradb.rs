@@ -53,6 +53,7 @@ rapidhash.workspace = true
 kovan-queue.workspace = true
 crdt = { path = "../crdt" }
 db = { path = "../db", default-features = false }
+client = { path = "../client" }
 storage = { path = "../storage" }
 query = { path = "../query" }
 events = { path = "../events" }

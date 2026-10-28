@@ -56,6 +56,7 @@ crates/
 ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
 ├── blockstore/         # IPLD block storage
 ├── cli/                # Command-line interface
+├── client/             # The `Client` trait every edge calls; one implementation, on `db::DB`
 ├── crdt/               # CRDT implementations
 ├── crypto/             # Cryptographic operations
 ├── cursor/             # Opaque cursor token codec for GraphQL pagination
