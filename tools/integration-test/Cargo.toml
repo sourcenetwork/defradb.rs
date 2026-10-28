@@ -11,6 +11,10 @@ name = "matchers"
 path = "tests/matchers.rs"
 
 [[test]]
+name = "export"
+path = "tests/export.rs"
+
+[[test]]
 name = "basic"
 path = "tests/basic.rs"
 
@@ -149,6 +153,14 @@ rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
 
+[features]
+generator = ["serde_json/preserve_order"]
+
+[[bin]]
+name = "gen_scenarios"
+path = "src/bin/gen_scenarios/main.rs"
+required-features = ["generator"]
+
 [dev-dependencies]
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
@@ -180,3 +192,67 @@ path = "tests/acp_replay_outage_repro.rs"
 [[test]]
 name = "acp_replay_outage_cross_runtime"
 path = "tests/acp_replay_outage_cross_runtime.rs"
+
+[[test]]
+name = "index"
+path = "tests/index.rs"
+
+[[test]]
+name = "query_scenarios"
+path = "tests/query_scenarios.rs"
+
+[[test]]
+name = "acp_scenarios"
+path = "tests/acp_scenarios.rs"
+
+[[test]]
+name = "backup_scenarios"
+path = "tests/backup_scenarios.rs"
+
+[[test]]
+name = "collection"
+path = "tests/collection.rs"
+
+[[test]]
+name = "encryption_scenarios"
+path = "tests/encryption_scenarios.rs"
+
+[[test]]
+name = "explain"
+path = "tests/explain.rs"
+
+[[test]]
+name = "issues"
+path = "tests/issues.rs"
+
+[[test]]
+name = "mutation"
+path = "tests/mutation.rs"
+
+[[test]]
+name = "net"
+path = "tests/net.rs"
+
+[[test]]
+name = "node"
+path = "tests/node.rs"
+
+[[test]]
+name = "searchable_encryption"
+path = "tests/searchable_encryption.rs"
+
+[[test]]
+name = "signature"
+path = "tests/signature.rs"
+
+[[test]]
+name = "subscription"
+path = "tests/subscription.rs"
+
+[[test]]
+name = "txn"
+path = "tests/txn.rs"
+
+[[test]]
+name = "view"
+path = "tests/view.rs"
