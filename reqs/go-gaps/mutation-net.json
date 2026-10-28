@@ -9,7 +9,7 @@
       "tools/integration-test/tests/query/default_values_v1.rs::default_directive_value_v1_test"
     ],
     "evidence": "smoke.rs:43-48 asserts add_User result and a later User query return the doc; multi_collection.rs:110-133 asserts _docID is a string and each of 12 collections returns its field; multi_doc_create.rs:48-50 asserts a two-element array create returns 2 docs; default_values_v1.rs:28 creates with input: {} and 50-58 reads it back",
-    "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/embedded/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
+    "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/defra-node/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
   },
   {
     "id": "go.mutation.add.null_input",
@@ -225,7 +225,7 @@
     "id": "go.mutation.relation.one_to_one_link",
     "verdict": "partial",
     "rust_tests": [
-      "crates/embedded/tests/one_to_one_primary.rs::a_primary_side_create_commits"
+      "crates/defra-node/tests/one_to_one_primary.rs::a_primary_side_create_commits"
     ],
     "evidence": "one_to_one_primary.rs:84-87 asserts a Publisher created with book: <id> (primary side) is visible as Book { publisher { name } }",
     "note": "Not asserted: linking via update (and in the update_ response selection), the `_<field>ID` form, querying from the primary side, explicit `null` on the primary side, and a self-referencing one-to-one resolving both ways."

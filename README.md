@@ -130,7 +130,7 @@ telemetry  = { version = "0.5", features = ["otlp"] }
 ```
 
 ```rust
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use telemetry::TelemetryConfig;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -146,7 +146,7 @@ tracing_subscriber::registry()
     .with(telemetry::otel_layer(tracer))
     .try_init()?;
 
-let node = EmbeddedNode::builder()
+let node = Node::builder()
     .with_telemetry(handle)
     .build()
     .await?;

@@ -1,7 +1,7 @@
 //! Adapters bridging db types into the KMS trait surface.
 //!
 //! Kept in `crates/db` (not `crates/kms`) so the KMS crate doesn't depend on
-//! `db`. Shared by both the embedded node and the CLI node.
+//! `db`. Shared by both the node and the CLI node.
 
 use async_trait::async_trait;
 use bytes::Bytes;

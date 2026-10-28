@@ -1,6 +1,6 @@
 //! Cross-object (collection-level) ACP — end-to-end over the live HTTP stack.
 //!
-//! Proves that the embedded node's Zanzibar `DocumentACP` resolves a
+//! Proves that the node's Zanzibar `DocumentACP` resolves a
 //! cross-object `parent->read` inheritance cone, seeded entirely through the
 //! public HTTP relationship API (no store backdoor):
 //!

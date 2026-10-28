@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use crate::benchmark_queries::escape_graphql;
 use crate::benchmark_support::{CodingSessionFixtureConfig, FixtureSession, SessionKind};
 use crate::search_chunks::{derive_search_chunks, SearchChunkingConfig};
-use crate::EmbeddedNode;
+use crate::Node;
 
 const INSERT_BATCH_SIZE: usize = 25;
 const DEFAULT_CHUNK_CONFIG: SearchChunkingConfig = SearchChunkingConfig {
@@ -37,7 +37,7 @@ pub(crate) struct InsertedActionDoc {
     body: String,
 }
 
-pub(crate) async fn create_project(node: &EmbeddedNode, project_path: &str) -> Result<String> {
+pub(crate) async fn create_project(node: &Node, project_path: &str) -> Result<String> {
     let (repo_owner, repo_name) = repo_info(project_path);
     let owner_field = repo_owner
         .as_deref()
@@ -78,7 +78,7 @@ pub(crate) async fn create_project(node: &EmbeddedNode, project_path: &str) -> R
 }
 
 pub(crate) async fn create_session(
-    node: &EmbeddedNode,
+    node: &Node,
     session: &FixtureSession,
     project_doc_id: &str,
 ) -> Result<String> {
@@ -151,7 +151,7 @@ pub(crate) async fn create_session(
 }
 
 pub(crate) async fn create_messages(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
     session: &FixtureSession,
     session_doc_id: &str,
@@ -225,7 +225,7 @@ pub(crate) async fn create_messages(
 }
 
 pub(crate) async fn create_actions(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
     session: &FixtureSession,
     session_doc_id: &str,
@@ -286,7 +286,7 @@ pub(crate) async fn create_actions(
 }
 
 pub(crate) async fn create_search_chunks(
-    node: &EmbeddedNode,
+    node: &Node,
     session: &FixtureSession,
     project_doc_id: &str,
     session_doc_id: &str,
@@ -382,7 +382,7 @@ pub(crate) async fn create_search_chunks(
 }
 
 async fn execute_batched_add(
-    node: &EmbeddedNode,
+    node: &Node,
     context: &str,
     collection_name: &str,
     docs: &[String],
@@ -403,7 +403,7 @@ async fn execute_batched_add(
 }
 
 async fn execute_batched_add_collect_doc_ids(
-    node: &EmbeddedNode,
+    node: &Node,
     context: &str,
     collection_name: &str,
     docs: &[String],

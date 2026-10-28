@@ -1,4 +1,4 @@
-//! Trait implementations bridging DB to the embedded node's type-erased traits.
+//! Trait implementations bridging DB to the node's type-erased traits.
 
 use std::sync::Arc;
 

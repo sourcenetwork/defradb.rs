@@ -198,7 +198,7 @@ impl Node {
         // than serving them. The NAC handle gates authorization: when NAC is
         // enabled we use the real adapter's manager, otherwise we supply a
         // disabled NacManager whose check_permission returns Ok(true) (parity
-        // with the embedded node, which always populates these hooks).
+        // with the defra-node assembly, which always populates these hooks).
         if let (Some(hooks), Some(controller), Some(correlator), Some(query_correlator)) = (
             p2p_setup.manage_hooks.as_ref(),
             p2p_setup.manage_controller.as_ref(),
@@ -217,7 +217,7 @@ impl Node {
             });
         }
 
-        // Build + wire the KMS (mirrors crates/embedded/src/node.rs). The P2P
+        // Build + wire the KMS (mirrors crates/defra-node/src/assemble.rs). The P2P
         // transport was created earlier; the NacDacPolicy needs document_acp +
         // NAC which exist here (PR #4778 ordering).
         {

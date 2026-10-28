@@ -69,10 +69,9 @@ crates/
 │                       #   search/. src/ holds only lib.rs; every test
 │                       #   lives in db/tests/.
 ├── defra-core/         # Core types and traits
-├── defra-node/         # Reusable embedded node builder
+├── defra-node/         # The node assembly: builder, build_with_store, libp2p/iroh, FFI base
 ├── defra-version/      # Version metadata and Go compat tracking
 ├── document/           # Document handling
-├── embedded/           # Embedded/mobile node assembly
 ├── events/             # Pub/sub event bus (subscriptions)
 ├── ffi/                # C-compatible FFI bindings
 ├── http/               # HTTP API server

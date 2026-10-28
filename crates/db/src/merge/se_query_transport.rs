@@ -31,7 +31,7 @@ pub struct DbMergeSeQueryTransport<T: P2PTransport> {
     transport: T,
     correlator: SeQueryCorrelator,
     replicators: Arc<ReplicatorRegistry>,
-    /// Lazily-read SE key material. The CLI pre-fills this; embedded nodes
+    /// Lazily-read SE key material. The CLI pre-fills this; nodes
     /// receive the key at runtime via `set_se_options` (#976). `None` at query
     /// time means "no SE key" → empty result (Go semantics, no local fallback).
     key_handle: SeKeyHandle,

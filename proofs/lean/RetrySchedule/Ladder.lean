@@ -20,7 +20,7 @@ What must never happen:
 
 Rust anchors: `RetrySchedule::new` and `RetrySchedule::cap` in
 `crates/storage/src/stores/retry_info.rs`, and `RETRY_INTERVALS_SECS` beside
-them. `build_node` in `crates/embedded/src/node.rs` builds the ladder with `new`
+them. `assemble` in `crates/defra-node/src/assemble.rs` builds the ladder with `new`
 and refuses to start on its error. Intervals are `u64` seconds; `Nat` here is the
 same values without an upper limit, which no rule below needs.
 -/

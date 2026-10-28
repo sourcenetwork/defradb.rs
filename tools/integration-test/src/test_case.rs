@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use rapidhash::RapidHashMap;
 use serde_json::Value;
 use testo::multiplier::get_active_multipliers;
@@ -15,13 +15,13 @@ use crate::scenario::Bindings;
 /// captured.
 #[derive(Clone, Default)]
 pub struct State {
-    pub node: Option<Arc<EmbeddedNode>>,
+    pub node: Option<Arc<Node>>,
     pub captures: RapidHashMap<String, Value>,
     pub bindings: Bindings,
 }
 
 impl State {
-    pub fn node(&self) -> &EmbeddedNode {
+    pub fn node(&self) -> &Node {
         self.node
             .as_deref()
             .expect("no node: the Connect action did not run")

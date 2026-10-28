@@ -7,7 +7,7 @@
 //! asserting on results proves nothing: these tests assert the index was
 //! consulted, via the `indexFetches` an execute-explain reports.
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use query::QueryRequest;
 use serde_json::Value;
 
@@ -64,7 +64,7 @@ fn doc_id_restrictions_fill_vector_pages_after_offset() {
 #[test]
 fn protected_similarity_pages_count_only_authorized_documents() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
     let policy = node
@@ -169,13 +169,13 @@ fn render(vector: &[f64]) -> String {
         .join(", ")
 }
 
-async fn query_data(node: &EmbeddedNode, query: &str, context: &str) -> Value {
+async fn query_data(node: &Node, query: &str, context: &str) -> Value {
     let response = node.execute(query).await;
     assert!(!response.has_errors(), "{context}: {:?}", response.errors);
     response.data.unwrap_or(Value::Null)
 }
 
-async fn seed(node: &EmbeddedNode) {
+async fn seed(node: &Node) {
     for index in 0..CORPUS {
         let tag = if index % 2 == 0 { "even" } else { "odd" };
         let mutation = format!(
@@ -235,15 +235,15 @@ fn vector_index(explain: &Value) -> Option<String> {
     }
 }
 
-async fn node_with(algorithm: &str) -> EmbeddedNode {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn node_with(algorithm: &str) -> Node {
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&schema(algorithm))
         .await
         .unwrap_or_else(|e| panic!("add schema for {algorithm:?}: {e}"));
     node
 }
 
-async fn assert_routes(node: &EmbeddedNode, query: &str, context: &str) {
+async fn assert_routes(node: &Node, query: &str, context: &str) {
     let explain = query_data(
         node,
         &format!("query @explain(type: execute) {query}"),
@@ -260,7 +260,7 @@ async fn assert_routes(node: &EmbeddedNode, query: &str, context: &str) {
 #[test]
 fn nested_vector_pages_are_scoped_to_each_parent() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Owner { name: String notes: [Note] }
         type Note { title: String owner: Owner embedding: [Float32!] @index(vector: {dimensions: 4, flat: {metric: DOT}}) }")
         .await.unwrap();
@@ -435,7 +435,7 @@ fn a_filtered_similarity_query_returns_a_full_page() {
 #[test]
 fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
@@ -511,7 +511,7 @@ fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
 #[test]
 fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String @index  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
     ))
@@ -583,7 +583,7 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
                     } else {
                         "tag: String"
                     };
-                    let node = EmbeddedNode::builder().build().await.unwrap();
+                    let node = Node::builder().build().await.unwrap();
                     node.add_collection(&format!(
                         "type Note {{ title: String  {tag_field}  embedding: [Float32!] {} }}",
                         vector_index_sdl(*algorithm, *metric)
@@ -689,7 +689,7 @@ fn dimensions_are_required_when_the_schema_is_written() {
              @embedding(provider: \"openai\", model: \"m\", fields: [\"title\"]) }"
                 .to_string(),
         ] {
-            let node = EmbeddedNode::builder().build().await.unwrap();
+            let node = Node::builder().build().await.unwrap();
             let error = node
                 .add_collection(&sdl)
                 .await
@@ -714,7 +714,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
                 if algorithm.supports_metric(*metric) {
                     continue;
                 }
-                let node = EmbeddedNode::builder().build().await.unwrap();
+                let node = Node::builder().build().await.unwrap();
                 let result = node
                     .add_collection(&format!(
                         "type Note {{ embedding: [Float32!] {} }}",
@@ -745,7 +745,7 @@ fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
 #[test]
 fn a_relation_filter_above_the_scan_still_fills_the_page() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(
         "type Owner { name: String  notes: [Note] }
          type Note { title: String  owner: Owner  embedding: [Float32!] @index(vector: {dimensions: 4, hnsw: {metric: DOT}}) }",
@@ -1039,7 +1039,7 @@ fn ascending_order_warns_vector_index_unused() {
 #[test]
 fn a_metric_no_index_carries_scans_and_warns() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
     ))
@@ -1122,7 +1122,7 @@ fn a_metric_no_index_carries_scans_and_warns() {
 #[test]
 fn a_field_without_a_vector_index_never_warns() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}}})  plainEmbedding: [Float32!] }}"
     ))
@@ -1163,7 +1163,7 @@ fn a_field_without_a_vector_index_never_warns() {
 #[test]
 fn a_named_metric_reaches_its_own_index_among_several() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
@@ -1231,7 +1231,7 @@ fn a_named_metric_reaches_its_own_index_among_several() {
 #[test]
 fn several_indexes_without_a_metric_warn_ambiguous() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
          @index(name: \"by_cosine\", vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) \
