@@ -480,6 +480,27 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Check known documents as `actor` in the owning principal's transaction.
+    /// The transaction principal must independently hold node read permission;
+    /// document and application read checks always use `actor`. Native callers
+    /// must authenticate that actor at their gateway; this method does not
+    /// authenticate a DID supplied by an in-process embedder. The actor's NAC
+    /// read grant is deliberately not required, so gateway enrollment revocation
+    /// remains the gateway's responsibility. No document owner is returned.
+    async fn observe_document_visibility_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        let _ = (context, handle, collection, doc_ids, actor);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound delegated visibility is unsupported",
+        ))
+    }
+
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.

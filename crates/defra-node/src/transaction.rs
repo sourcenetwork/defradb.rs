@@ -84,4 +84,25 @@ impl EmbeddedNode {
             .observe_document_owners_in_txn(context, handle, collection, doc_ids, identity)
             .await
     }
+
+    /// Read only exact document visibility for an actor through the node-owned
+    /// transaction. Node authority is used only for the node read gate; the
+    /// requested actor remains the document and application read principal.
+    pub async fn observe_document_visibility_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+    ) -> query::error::Result<Vec<query::owners::DocumentOwnerObservation>> {
+        let node = self.node_query_identity.as_ref().ok_or_else(|| {
+            query::error::QueryError::execution(
+                "node identity is required for delegated visibility",
+            )
+        })?;
+        let context = defra_core::RequestContext::default().with_identity(Some(node.to_string()));
+        self.runner()
+            .observe_document_visibility_in_txn(context, handle, collection, doc_ids, actor)
+            .await
+    }
 }

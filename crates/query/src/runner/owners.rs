@@ -22,6 +22,7 @@ where
         collection: &str,
         doc_ids: &[String],
         identity: Option<identity::Did>,
+        node_authorized: bool,
     ) -> Result<Vec<DocumentOwnerObservation>> {
         let mut name = collection.chars();
         if !name
@@ -37,7 +38,22 @@ where
                 "choose a collection and between 1 and {MAX_OWNER_OBSERVATIONS} known document IDs",
             )));
         }
-        let context = context.or_ambient();
+        let context = if node_authorized {
+            context.with_dac_bypass(false)
+        } else {
+            context.or_ambient()
+        };
+        let nac_identity =
+            if node_authorized {
+                Some(
+                    Did::new(context.identity().ok_or_else(|| {
+                        QueryError::execution("transaction principal is required")
+                    })?)
+                    .map_err(|error| QueryError::execution(error.to_string()))?,
+                )
+            } else {
+                None
+            };
         let identity = match identity {
             Some(identity) => Some(identity),
             None => context
@@ -51,7 +67,11 @@ where
         let request = QueryRequest::new(format!("{{ {collection}(docID: {ids}) {{ _docID }} }}"))
             .with_identity(identity)
             .with_context(context.clone());
-        let runner = self.for_query(&request);
+        let runner = if node_authorized {
+            self.for_request(context.clone())
+        } else {
+            self.for_query(&request)
+        };
         let collection = collection.to_owned();
         let doc_ids = doc_ids.to_vec();
         let job = txn_job(move |turn| {
@@ -78,7 +98,7 @@ where
                 drop(ctx);
                 // The ordinary read path owns node, application, document and live
                 // membership gates. Both reads stay on this one transaction turn.
-                let response = match runner.run_turn(turn, request, PreparedInputMemo::default(), None).await {
+                let response = match runner.run_turn_with_nac_identity(turn, request, PreparedInputMemo::default(), None, nac_identity).await {
                 Turned::Done(response) => response,
                 Turned::NeedsInput(_, _) => return Err(QueryError::execution("owner observation requires an external input; use a local authorization snapshot")),
             };
@@ -91,6 +111,11 @@ where
                     .and_then(|data| data.get(&collection))
                     .and_then(|rows| rows.as_array());
                 // Node denial uses an empty data object on the normal read path.
+                if node_authorized && rows.is_none() {
+                    return Err(QueryError::execution(
+                        "transaction principal is not authorized for document reads",
+                    ));
+                }
                 let visible: RapidHashSet<&str> = rows
                     .into_iter()
                     .flatten()
@@ -99,7 +124,7 @@ where
                 let mut result = Vec::with_capacity(doc_ids.len());
                 for doc_id in doc_ids {
                     let readable = visible.contains(doc_id.as_str());
-                    let owner = if readable {
+                    let owner = if readable && !node_authorized {
                         if let Some(policy) = &definition.policy {
                             if acp
                                 .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)

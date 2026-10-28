@@ -100,4 +100,49 @@ theorem exact_snapshot (e : Evidence) (snapshotOwner returned : Nat)
   · exact (Option.some.inj h).symm
   · contradiction
 
+/-- A native gateway authenticates the delegated actor separately from the
+transaction principal. Node read authority belongs to the transaction principal;
+document and application authority belong to the delegated actor. The result is
+valid only in that transaction and never exports owner metadata. -/
+structure DelegatedEvidence where
+  ownsTransaction : Bool
+  principalNodeAllowed : Bool
+  actorAppAllowed : Bool
+  actorDocumentAllowed : Bool
+  liveMember : Bool
+  bound : Bool
+  explicitContext : Bool
+  deriving DecidableEq, Repr
+
+inductive DelegatedResult where
+  | unavailable
+  | visible (allowed : Bool)
+  deriving DecidableEq, Repr
+
+def delegated (e : DelegatedEvidence) : DelegatedResult :=
+  if e.ownsTransaction && e.principalNodeAllowed && e.bound && e.explicitContext then
+    .visible (e.actorAppAllowed && e.actorDocumentAllowed && e.liveMember)
+  else .unavailable
+
+theorem delegated_requires_node_authority (e : DelegatedEvidence)
+    (h : e.principalNodeAllowed = false) : delegated e = .unavailable := by
+  simp [delegated, h]
+
+theorem delegated_requires_own_transaction (e : DelegatedEvidence)
+    (h : e.ownsTransaction = false) : delegated e = .unavailable := by
+  simp [delegated, h]
+
+theorem delegated_document_denial (e : DelegatedEvidence)
+    (h : e.actorDocumentAllowed = false) : delegated e ≠ .visible true := by
+  unfold delegated
+  split <;> simp_all
+
+theorem delegated_requires_bound_explicit_context (e : DelegatedEvidence)
+    (h : e.bound = false ∨ e.explicitContext = false) : delegated e = .unavailable := by
+  rcases h with h | h <;> simp [delegated, h]
+
+example : delegated ⟨true, true, true, true, true, true, true⟩ = .visible true := by decide
+example : delegated ⟨true, true, true, false, true, true, true⟩ = .visible false := by decide
+example : delegated ⟨true, false, true, true, true, true, true⟩ = .unavailable := by decide
+
 end Acp.OwnerObservation

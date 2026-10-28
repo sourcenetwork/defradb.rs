@@ -115,6 +115,18 @@ where
         inputs: PreparedInputMemo,
         parsed: Option<ParsedOperation>,
     ) -> Turned {
+        self.run_turn_with_nac_identity(turn, request, inputs, parsed, None)
+            .await
+    }
+
+    pub(super) async fn run_turn_with_nac_identity(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: QueryRequest,
+        inputs: PreparedInputMemo,
+        parsed: Option<ParsedOperation>,
+        nac_identity: Option<Did>,
+    ) -> Turned {
         let variables = convert_variables(&request.variables);
         let parsed = match parsed {
             Some(parsed) => parsed,
@@ -138,7 +150,7 @@ where
             }
         }
         let turned = self
-            .lent(turn, parsed, request, variables, inputs)
+            .lent(turn, parsed, request, variables, inputs, nac_identity)
             .await
             .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
         if statement {
@@ -161,6 +173,7 @@ where
         request: QueryRequest,
         variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
         inputs: PreparedInputMemo,
+        nac_identity_override: Option<Did>,
     ) -> std::result::Result<Turned, TransactionError> {
         let txn_ctx = turn.context()?;
         // The transaction's own provider, so its uncommitted schemas are visible.
@@ -173,7 +186,8 @@ where
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 
-        let nac_identity = request.identity.clone().unwrap_or_else(Did::wildcard);
+        let nac_actor = nac_identity_override.or_else(|| request.identity.clone());
+        let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
         match txn_ctx
             .doc_fetcher()
             .check_node_permission(&nac_identity, permission_for_operation(&parsed))
@@ -184,7 +198,7 @@ where
             }
             Ok(Some(true)) => {}
             Ok(None) => {
-                if let Some(denial) = check_nac(self, &request.identity, &parsed).await {
+                if let Some(denial) = check_nac(self, &nac_actor, &parsed).await {
                     return Ok(Turned::Done(denial));
                 }
             }
