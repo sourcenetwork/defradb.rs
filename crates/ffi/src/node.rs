@@ -66,7 +66,6 @@ pub(crate) async fn build_node_state(
     Ok(NodeState {
         database: node.database().clone(),
         background_tasks: node.background_tasks(),
-        txn_registry: node.txn_registry().clone(),
         query_runner: node.runner().clone(),
         nac_manager: node.nac_manager().clone(),
         document_acp: node.document_acp(),
