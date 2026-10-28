@@ -159,10 +159,10 @@ pub(super) fn build_aggregate_types_for_collection(
                 };
                 let similarity_selector =
                     InputObject::new(format!("{}__{}__SimilaritySelector", coll_name, field.name))
-                        .field(InputValue::new(
-                            "vector",
-                            TypeRef::named_nn_list_nn(vector_type),
-                        ))
+                        .field(
+                            InputValue::new("vector", TypeRef::named_nn_list_nn(vector_type))
+                                .description(SIMILARITY_VECTOR_DESCRIPTION),
+                        )
                         .field(InputValue::new(
                             "metric",
                             TypeRef::named("VectorDistanceMetric"),
@@ -179,6 +179,8 @@ pub(super) fn build_aggregate_types_for_collection(
 
     types
 }
+
+const SIMILARITY_VECTOR_DESCRIPTION: &str = "\nThe vector to compare the field's value against. It must have the same number of\n dimensions as the values stored in the field.\n";
 
 /// The `VectorDistanceMetric` enum backing `metric` on every `SimilaritySelector`.
 ///
