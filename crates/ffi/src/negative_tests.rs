@@ -79,6 +79,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 ptr::null(),
                 ptr::null(),
@@ -178,6 +179,7 @@ mod tests {
         let r = unsafe {
             exec_request(
                 stale,
+                std::ptr::null(),
                 ptr::null(),
                 q.as_ptr(),
                 ptr::null(),
@@ -276,6 +278,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 ptr,
                 ptr::null(),
@@ -510,6 +513,7 @@ mod tests {
         let r = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 q.as_ptr(),
                 ptr::null(),

@@ -13,9 +13,9 @@ use crate::ffi_entry;
 use crate::helpers::{get_node_database, require_c_str};
 use crate::nac_check::check_nac_for_node;
 use crate::policy_yaml;
-use crate::state::{PolicyStore, NODES};
+use crate::state::PolicyStore;
 use crate::types::FfiResult;
-use crate::{ffi_async, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, try_ffi};
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn parse_optional_identity_did(
@@ -99,19 +99,21 @@ pub unsafe extern "C" fn add_schema_in_txn(
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
         let schema_str = try_ffi!(require_c_str(schema_sdl, "schema_sdl"));
 
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(registry) => registry,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
         let (identity_str, _) = try_ffi!(parse_optional_identity_did(identity_did));
 
         // The caller acts in the call's context, so the NAC checks the core
         // makes resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(identity_str);
+        let context = defra_core::RequestContext::default()
+            .with_identity(identity_str)
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let created_versions = registry
-                .add_collection_in_txn_as(&context, &txn_str, &schema_str)
+            let created_versions = runner
+                .add_collection_as(&context, &schema_str)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -182,18 +184,20 @@ pub unsafe extern "C" fn get_collections_in_txn(
         ));
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
 
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
 
         // The caller acts in the call's context, so the NAC checks the body
         // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let collections = registry
-                .get_collections_in_txn_as(&context, &txn_str)
+            let collections = runner
+                .collections_as(&context)
                 .await
                 .map_err(|e| format!("failed to get collections in txn: {}", e))?;
 
