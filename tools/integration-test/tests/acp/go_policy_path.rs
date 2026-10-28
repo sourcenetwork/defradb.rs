@@ -11,7 +11,7 @@ use integration_test::{for_each_runtime, TestCluster, USER_ACP_POLICY};
 async fn go_policy_path_test(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
 
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new()
         .post(format!("{api_url}/api/v1/acp/document/policy"))
         .body(USER_ACP_POLICY)
         .send()

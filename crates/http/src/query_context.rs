@@ -283,7 +283,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn auto_commit_returns_business_conflict_without_replaying_request() {
         let executor = Arc::new(ConflictExecutor::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge()).build();
@@ -300,7 +300,7 @@ mod tests {
         assert!(response.is_transaction_conflict());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn engine_managed_batch_conflict_is_not_replayed_by_http() {
         let executor = Arc::new(ConflictExecutor {
             engine_managed_retry: true,
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn auto_commit_resolves_input_then_returns_conflict_without_replaying_it() {
         let executor = Arc::new(ConflictExecutor {
             input_on_second: true,
@@ -341,7 +341,7 @@ mod tests {
         assert!(response.is_transaction_conflict());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn explicit_transaction_execution_is_not_retried() {
         let executor = Arc::new(ConflictExecutor::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge()).build();
@@ -422,7 +422,7 @@ mod tests {
         ExtractIdentity::from_did(Some(identity::Did::new_unchecked(OWNER_DID.to_string())))
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn node_owner_is_not_promoted_to_nac_dac_bypass() {
         let executor = Arc::new(DacBypassRecorder::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge())
@@ -440,7 +440,7 @@ mod tests {
         assert!(!executor.observed.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_stranger_gets_no_dac_bypass() {
         let executor = Arc::new(DacBypassRecorder::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge())
@@ -459,7 +459,7 @@ mod tests {
 
         assert!(!executor.observed.load(Ordering::SeqCst));
     }
-    #[tokio::test]
+    #[nuclei::test]
     async fn bearer_scope_crosses_each_blocking_execution_boundary() {
         let executor = Arc::new(DacBypassRecorder::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge())
@@ -577,7 +577,7 @@ mod context_tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_nac_admin_with_bypass_dac_carries_the_bypass_and_identity_in_its_request() {
         let admin = identity::Did::new_unchecked(ADMIN_DID.to_string());
         let executor = Arc::new(ContextRecorder::default());
@@ -622,7 +622,7 @@ mod context_tests {
         assert_eq!(context.identity(), Some(ADMIN_DID));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_stranger_carries_no_bypass_in_its_request() {
         let executor = Arc::new(ContextRecorder::default());
         let state = AppStateBuilder::new(executor.clone(), edge::testing::edge())

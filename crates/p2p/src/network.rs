@@ -53,7 +53,7 @@ impl Network {
     {
         match &self.edge {
             Some(edge) => drop(edge.spawn(future)),
-            None => drop(n0_future::task::spawn(future)),
+            None => crate::rt::spawn(future).detach(),
         }
     }
 
@@ -76,7 +76,7 @@ impl Network {
     pub fn sleep(&self, duration: Duration) -> MaybeBoxFuture<'static, ()> {
         match &self.edge {
             Some(edge) => Box::pin(edge.sleep(duration)),
-            None => Box::pin(n0_future::time::sleep(duration)),
+            None => Box::pin(crate::rt::time::sleep(duration)),
         }
     }
 
@@ -87,7 +87,7 @@ impl Network {
     {
         match &self.edge {
             Some(edge) => edge.timeout(limit, future).await.map_err(|_| Elapsed),
-            None => n0_future::time::timeout(limit, future)
+            None => crate::rt::time::timeout(limit, future)
                 .await
                 .map_err(|_| Elapsed),
         }

@@ -171,7 +171,7 @@ async fn measure(
         if count >= expected {
             break;
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        nuclei::time::sleep(POLL_INTERVAL).await;
     }
     let visible = start.elapsed();
 
@@ -272,80 +272,83 @@ fn print_table(
 
 /// Measures replication latency across all four topologies and reports the cost of each
 /// mixed direction.
-#[tokio::test(flavor = "multi_thread")]
+#[nuclei::test]
 #[ignore = "benchmark: launches eight node processes and requires a `defradb` binary on PATH"]
 async fn bench_p2p_interop_cost() {
-    let rust_rust = measure_topology(
-        "rust->rust",
-        TestCluster::builder()
-            .rust_nodes(2)
-            .with_p2p()
-            .build()
-            .await
-            .expect("build rust/rust cluster"),
-        0,
-        1,
-    )
+    edge::compat(async {
+        let rust_rust = measure_topology(
+            "rust->rust",
+            TestCluster::builder()
+                .rust_nodes(2)
+                .with_p2p()
+                .build()
+                .await
+                .expect("build rust/rust cluster"),
+            0,
+            1,
+        )
+        .await;
+
+        let go_go = measure_topology(
+            "go->go",
+            TestCluster::builder()
+                .go_nodes(2)
+                .with_p2p()
+                .build()
+                .await
+                .expect("build go/go cluster"),
+            0,
+            1,
+        )
+        .await;
+
+        // The builder spawns Rust nodes first, so in a one-Rust/one-Go cluster node 0 is the
+        // Rust node and node 1 is the Go node. Each direction gets its own cluster: a
+        // replicator is one-way, and reusing a cluster would leave the documents from the
+        // first direction already present for the second.
+        let rust_go = measure_topology(
+            "rust->go",
+            TestCluster::builder()
+                .rust_nodes(1)
+                .go_nodes(1)
+                .with_p2p()
+                .build()
+                .await
+                .expect("build rust/go cluster"),
+            0,
+            1,
+        )
+        .await;
+
+        let go_rust = measure_topology(
+            "go->rust",
+            TestCluster::builder()
+                .rust_nodes(1)
+                .go_nodes(1)
+                .with_p2p()
+                .build()
+                .await
+                .expect("build go/rust cluster"),
+            1,
+            0,
+        )
+        .await;
+
+        print_table(
+            &format!("cross-runtime replication cost (poll resolution {POLL_INTERVAL:?})"),
+            &rust_rust,
+            &go_go,
+            [&rust_go, &go_rust],
+            |m| m.visible,
+        );
+
+        print_table(
+            "replication tail only (excludes the cost of issuing the writes)",
+            &rust_rust,
+            &go_go,
+            [&rust_go, &go_rust],
+            |m| m.tail,
+        );
+    })
     .await;
-
-    let go_go = measure_topology(
-        "go->go",
-        TestCluster::builder()
-            .go_nodes(2)
-            .with_p2p()
-            .build()
-            .await
-            .expect("build go/go cluster"),
-        0,
-        1,
-    )
-    .await;
-
-    // The builder spawns Rust nodes first, so in a one-Rust/one-Go cluster node 0 is the
-    // Rust node and node 1 is the Go node. Each direction gets its own cluster: a
-    // replicator is one-way, and reusing a cluster would leave the documents from the
-    // first direction already present for the second.
-    let rust_go = measure_topology(
-        "rust->go",
-        TestCluster::builder()
-            .rust_nodes(1)
-            .go_nodes(1)
-            .with_p2p()
-            .build()
-            .await
-            .expect("build rust/go cluster"),
-        0,
-        1,
-    )
-    .await;
-
-    let go_rust = measure_topology(
-        "go->rust",
-        TestCluster::builder()
-            .rust_nodes(1)
-            .go_nodes(1)
-            .with_p2p()
-            .build()
-            .await
-            .expect("build go/rust cluster"),
-        1,
-        0,
-    )
-    .await;
-
-    print_table(
-        &format!("cross-runtime replication cost (poll resolution {POLL_INTERVAL:?})"),
-        &rust_rust,
-        &go_go,
-        [&rust_go, &go_rust],
-        |m| m.visible,
-    );
-
-    print_table(
-        "replication tail only (excludes the cost of issuing the writes)",
-        &rust_rust,
-        &go_go,
-        [&rust_go, &go_rust],
-        |m| m.tail,
-    );
 }

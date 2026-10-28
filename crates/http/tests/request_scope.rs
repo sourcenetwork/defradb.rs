@@ -57,7 +57,7 @@ fn token(identity: &RawIdentity) -> String {
     .unwrap()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn each_request_binds_its_own_caller() {
     let alice = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
     let bob = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
@@ -83,7 +83,7 @@ async fn each_request_binds_its_own_caller() {
         .unwrap()
     };
 
-    let (a, b, anonymous) = tokio::join!(
+    let (a, b, anonymous) = nuclei::join!(
         app.clone().oneshot(request(Some(token(&alice)))),
         app.clone().oneshot(request(Some(token(&bob)))),
         app.oneshot(request(None)),
@@ -109,7 +109,7 @@ async fn bearer(CallerContext(context): CallerContext) -> Json<Option<String>> {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn each_request_carries_its_own_bearer_in_its_context() {
     let identity = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
     let first = token(&identity);
@@ -142,7 +142,7 @@ async fn each_request_carries_its_own_bearer_in_its_context() {
             .unwrap()
     };
 
-    let (a, b) = tokio::join!(
+    let (a, b) = nuclei::join!(
         app.clone().oneshot(request(&first)),
         app.oneshot(request(&second))
     );

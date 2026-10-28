@@ -2,8 +2,8 @@
 //! they have it, and a peer that has it is asked for the block when none is in flight.
 
 use libp2p::PeerId;
+use nuclei::time::Instant;
 use rapidhash::{RapidHashMap, RapidHashSet};
-use tokio::time::Instant;
 
 use super::fetch::FetchId;
 

@@ -39,8 +39,9 @@ const SCHEMA: &str = r#"
     }
 "#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_cross_runtime_crud_and_query_equivalence() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
         .go_nodes(1)
@@ -200,4 +201,6 @@ async fn go_cross_runtime_crud_and_query_equivalence() {
     ] {
         assert_query_equivalent(&rust, &go, query);
     }
+})
+    .await;
 }

@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::{mpsc, oneshot};
 use async_trait::async_trait;
 use cid::Cid;
 use iroh::SecretKey;
-use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{Error, Result};
 use crate::explicit_replay::ExplicitReplayCapabilityCache;
@@ -368,13 +368,13 @@ impl P2PTransport for IrohTransport {
                 if peers.contains(peer_id) {
                     return Ok(());
                 }
-                n0_future::time::sleep(Duration::from_millis(50)).await;
+                crate::rt::time::sleep(Duration::from_millis(50)).await;
             }
         };
-        tokio::select! {
+        crate::rt::select! {
             biased;
             _ = self.command_tx.closed() => Err(Error::ChannelSend),
-            result = n0_future::time::timeout(timeout, wait_for_peer) => {
+            result = crate::rt::time::timeout(timeout, wait_for_peer) => {
                 result.unwrap_or_else(|_| Err(Error::ConnectionTimeout(peer_id.to_string())))
             }
         }
@@ -763,8 +763,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::rt::time::timeout;
     use identity::Identity as _;
-    use n0_future::time::timeout;
 
     use crate::iroh::records::RECORDS_TOPIC;
     use crate::iroh::{
@@ -793,7 +793,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn peer_identity_is_bound_to_authenticated_iroh_endpoint() {
         let requester_key = SecretKey::generate();
         let server_key = SecretKey::generate();
@@ -833,11 +833,11 @@ mod tests {
 
         requester.shutdown().await.unwrap();
         server.shutdown().await.unwrap();
-        requester_task.await.unwrap();
-        server_task.await.unwrap();
+        requester_task.join().await.unwrap();
+        server_task.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn peer_without_node_identity_is_distinct_from_challenge_failure() {
         let requester_key = SecretKey::generate();
         let server_key = SecretKey::generate();
@@ -874,11 +874,11 @@ mod tests {
 
         requester.shutdown().await.unwrap();
         server.shutdown().await.unwrap();
-        requester_task.await.unwrap();
-        server_task.await.unwrap();
+        requester_task.join().await.unwrap();
+        server_task.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn se_query_roundtrip_emits_request_and_reply_events() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -965,8 +965,8 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
     }
 
     async fn poll_until_disconnected(transport: &IrohTransport, peer_id: &PeerId) {
@@ -981,11 +981,11 @@ mod tests {
                 "timed out waiting for disconnection from {}",
                 peer_id
             );
-            n0_future::time::sleep(Duration::from_millis(50)).await;
+            crate::rt::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn disconnect_drops_connected_peer() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -1021,11 +1021,11 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn disconnect_absent_peer_is_ok() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -1040,10 +1040,10 @@ mod tests {
             .expect("disconnecting a never-connected peer must be Ok");
 
         transport0.shutdown().await.unwrap();
-        task0.await.unwrap();
+        task0.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn three_node_relay_preserves_origin_without_promoting_hop() {
         use bytes::Bytes;
 
@@ -1109,7 +1109,7 @@ mod tests {
                     {
                         return;
                     }
-                    tokio::task::yield_now().await;
+                    crate::rt::yield_now().await;
                 }
             })
             .await
@@ -1159,8 +1159,8 @@ mod tests {
         async fn assert_direct_link_refused(dialer: &IrohTransport, server: &IrohTransport) {
             let addrs = server.listen_addresses().await.unwrap();
             let _ = dialer.dial(server.local_peer_id(), addrs).await;
-            let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
-            while tokio::time::Instant::now() < deadline {
+            let deadline = crate::rt::time::Instant::now() + Duration::from_millis(300);
+            while crate::rt::time::Instant::now() < deadline {
                 assert!(
                     !server
                         .connected_peers()
@@ -1169,7 +1169,7 @@ mod tests {
                         .contains(dialer.local_peer_id()),
                     "the allowlist must refuse a direct link that bypasses the relay"
                 );
-                tokio::task::yield_now().await;
+                crate::rt::yield_now().await;
             }
         }
         assert_direct_link_refused(&transport2, &transport0).await;
@@ -1178,12 +1178,12 @@ mod tests {
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
         transport2.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
-        task2.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
+        task2.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn publish_raw_emits_gossip_raw_message_on_registered_topic() {
         use crate::topics::{DefraTopic, ENCRYPTION_TOPIC};
 
@@ -1273,13 +1273,13 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
     }
 
     /// A record one node signs reaches a connected peer's book over the
     /// discovery topic, and advertises the public collection it holds.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn a_service_record_reaches_a_connected_peer() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -1332,7 +1332,7 @@ mod tests {
                 {
                     return record;
                 }
-                n0_future::time::sleep(Duration::from_millis(50)).await;
+                crate::rt::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -1359,7 +1359,7 @@ mod tests {
     /// `GossipRawMessage`. Before the fix `subscribe_raw` only registered the
     /// topic for raw routing without joining, so the message never arrived and
     /// the KMS key fetch timed out.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn subscribe_raw_joins_mesh_and_receives_publish_raw() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -1447,11 +1447,11 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn se_artifacts_roundtrip_signs_and_verifies_sender() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
@@ -1508,7 +1508,7 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.await.unwrap();
-        task1.await.unwrap();
+        task0.join().await.unwrap();
+        task1.join().await.unwrap();
     }
 }

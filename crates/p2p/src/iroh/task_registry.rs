@@ -3,9 +3,9 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use crate::rt::Task;
 use defra_core::thread_bounds::MaybeSend;
 use kovan_queue::seg_queue::SegQueue;
-use n0_future::task::JoinHandle;
 
 use crate::tracked_task::{TrackedAbort, TrackedTask};
 
@@ -43,7 +43,7 @@ impl TaskRegistry {
             if self.tasks.len() >= self.reap_at.load(Ordering::Relaxed).max(REAP_FLOOR) {
                 self.reap_finished();
             }
-            let task = TrackedTask::spawn(future);
+            let task = TrackedTask::spawn(crate::rt::compat(future));
             let abort = task.abort_handle();
             self.tasks.push(task);
             Some(abort)
@@ -83,7 +83,7 @@ impl TaskRegistry {
     }
 
     /// Refuse further spawns, abort every task and hand back their join handles.
-    pub(super) fn close(&self) -> Vec<JoinHandle<()>> {
+    pub(super) fn close(&self) -> Vec<Task<()>> {
         self.closed.store(true, Ordering::SeqCst);
         while self.registering.load(Ordering::SeqCst) > 0 {
             std::hint::spin_loop();

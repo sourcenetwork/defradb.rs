@@ -43,7 +43,7 @@ mod tests {
     fn the_on_demand_runtime_starts_once_and_is_shared() {
         let (first, second) = (on_demand().unwrap(), on_demand().unwrap());
         assert!(Arc::ptr_eq(&first.shared, &second.shared));
-        let answer = n0_future::future::block_on(first.spawn(async { 6 * 7 })).unwrap();
+        let answer = futures_lite::future::block_on(first.spawn(async { 6 * 7 })).unwrap();
         assert_eq!(answer, 42);
     }
 }

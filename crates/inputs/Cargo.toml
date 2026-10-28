@@ -25,12 +25,16 @@ rapidhash.workspace = true
 tracing.workspace = true
 # The network runtime round trips run on, through its `Edge` handle.
 edge = { path = "../edge" }
-# The ambient runtime, for a caller with no `Edge`: tokio natively, the
-# browser's event loop on wasm; and the combinators a wait races with.
-n0-future.workspace = true
+# The combinators a wait races with.
+futures-lite.workspace = true
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The runtime's clock, which a paused-time test moves.
+nuclei.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser's clock.
+n0-future.workspace = true
 
 [lints]
 workspace = true

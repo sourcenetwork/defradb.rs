@@ -52,7 +52,7 @@ async fn wait_for_se_query(
             Instant::now() < deadline,
             "SE query did not return doc {expected_doc_id} within timeout; last result: {result}"
         );
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        nuclei::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -62,67 +62,72 @@ async fn wait_for_se_query(
 /// node 0. Node 0 generates the search tag, fans it out to node 1 over the iroh
 /// SE query protocol, and node 1 byte-matches the artifact and returns the
 /// docID. End-to-end exercise of the iroh SE query/serve loop (#976).
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn rust_rust_se_iroh() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_iroh_transport()
-        .with_encryption()
-        .with_shared_searchable_encryption_key(SHARED_SE_KEY)
-        .build()
-        .await
-        .expect("build rust 2-node iroh cluster with shared SE key");
-
-    let p2p_timeout = Duration::from_secs(30);
-    for i in 0..2 {
-        cluster
-            .wait_for_log(i, "p2p_listening", p2p_timeout)
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_iroh_transport()
+            .with_encryption()
+            .with_shared_searchable_encryption_key(SHARED_SE_KEY)
+            .build()
             .await
-            .unwrap_or_else(|_| panic!("node{i} P2P listener did not start"));
-    }
+            .expect("build rust 2-node iroh cluster with shared SE key");
 
-    let node_a = cluster.client(0);
-    let node_b = cluster.client(1);
+        let p2p_timeout = Duration::from_secs(30);
+        for i in 0..2 {
+            cluster
+                .wait_for_log(i, "p2p_listening", p2p_timeout)
+                .await
+                .unwrap_or_else(|_| panic!("node{i} P2P listener did not start"));
+        }
 
-    node_a.schema_add(USER_SCHEMA).expect("add schema node A");
-    node_b.schema_add(USER_SCHEMA).expect("add schema node B");
-    node_a
-        .encrypted_index_add("User", "name")
-        .expect("encrypted index node A");
-    node_b
-        .encrypted_index_add("User", "name")
-        .expect("encrypted index node B");
+        let node_a = cluster.client(0);
+        let node_b = cluster.client(1);
 
-    let addr_b = extract_p2p_addr(&cluster, 1);
-    node_a.p2p_connect(&[&addr_b]).expect("connect peers");
-    node_a
-        .p2p_collection_add(&["User"])
-        .expect("collection add owner");
-    node_b
-        .p2p_collection_add(&["User"])
-        .expect("collection add replicator");
-    node_a
-        .p2p_replicator_set(&["User"], &addr_b)
-        .expect("replicator owner->replicator");
+        node_a.schema_add(USER_SCHEMA).expect("add schema node A");
+        node_b.schema_add(USER_SCHEMA).expect("add schema node B");
+        node_a
+            .encrypted_index_add("User", "name")
+            .expect("encrypted index node A");
+        node_b
+            .encrypted_index_add("User", "name")
+            .expect("encrypted index node B");
 
-    let created = node_a
-        .query(r#"mutation { add_User(input: {name: "John", age: 21, city: "NYC"}) { _docID } }"#)
-        .expect("create User on node A");
-    let doc_id = created["add_User"][0]["_docID"]
-        .as_str()
-        .or_else(|| created["add_User"]["_docID"].as_str())
-        .expect("missing _docID")
-        .to_string();
+        let addr_b = extract_p2p_addr(&cluster, 1);
+        node_a.p2p_connect(&[&addr_b]).expect("connect peers");
+        node_a
+            .p2p_collection_add(&["User"])
+            .expect("collection add owner");
+        node_b
+            .p2p_collection_add(&["User"])
+            .expect("collection add replicator");
+        node_a
+            .p2p_replicator_set(&["User"], &addr_b)
+            .expect("replicator owner->replicator");
 
-    // Query runs on the OWNER (node A), which fans out to replicator B over iroh.
-    let deadline = Instant::now() + Duration::from_secs(45);
-    wait_for_se_query(
-        &node_a,
-        "User",
-        r#"{name: {_eq: "John"}}"#,
-        &doc_id,
-        deadline,
-    )
+        let created = node_a
+            .query(
+                r#"mutation { add_User(input: {name: "John", age: 21, city: "NYC"}) { _docID } }"#,
+            )
+            .expect("create User on node A");
+        let doc_id = created["add_User"][0]["_docID"]
+            .as_str()
+            .or_else(|| created["add_User"]["_docID"].as_str())
+            .expect("missing _docID")
+            .to_string();
+
+        // Query runs on the OWNER (node A), which fans out to replicator B over iroh.
+        let deadline = Instant::now() + Duration::from_secs(45);
+        wait_for_se_query(
+            &node_a,
+            "User",
+            r#"{name: {_eq: "John"}}"#,
+            &doc_id,
+            deadline,
+        )
+        .await;
+    })
     .await;
 }

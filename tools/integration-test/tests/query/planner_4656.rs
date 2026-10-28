@@ -84,8 +84,11 @@ async fn inverted_join_scalar_and_relation_filters_are_anded_test(cluster: TestC
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_inverted_join_scalar_and_relation_filters_are_anded() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    inverted_join_scalar_and_relation_filters_are_anded_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        inverted_join_scalar_and_relation_filters_are_anded_test(cluster).await;
+    })
+    .await;
 }

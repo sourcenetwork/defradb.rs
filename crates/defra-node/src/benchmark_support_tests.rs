@@ -1765,7 +1765,7 @@ impl RealEmbeddingServer {
     }
 
     async fn wait_until_ready(&self) -> crate::Result<()> {
-        let client = reqwest::Client::new();
+        let client = net::http::Client::new();
         let health_url = self.base_url.trim_end_matches("/v1").to_string() + "/health";
 
         for _ in 0..120 {
@@ -1816,7 +1816,7 @@ async fn request_real_embedding(
     model: &str,
     input: &str,
 ) -> crate::Result<Vec<f64>> {
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new()
         .post(format!("{}/embeddings", base_url.trim_end_matches('/')))
         .json(&serde_json::json!({
             "model": model,

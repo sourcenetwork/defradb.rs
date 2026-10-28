@@ -1,4 +1,4 @@
-//! Index-maintenance — after create/update/delete, an indexed-field lookup
+//! Index-maintenance - after create/update/delete, an indexed-field lookup
 //! returns exactly the live docs: no stale entry, none missing.
 //! Model: `proofs/lean/IndexMaintenance` (`onDocumentUpdate_correct`).
 
@@ -108,7 +108,7 @@ async fn poll_seed_indexed(node: &DefraClient, timeout: Duration) -> bool {
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -160,67 +160,70 @@ async fn poll_index_matches_winner(node: &DefraClient, timeout: Duration) -> boo
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn index_no_stale_no_missing() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("build single-node cluster");
-    let node = cluster.client(0);
-    node.schema_add("type User { name: String @index  age: Int }")
-        .expect("schema with @index");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("build single-node cluster");
+        let node = cluster.client(0);
+        node.schema_add("type User { name: String @index  age: Int }")
+            .expect("schema with @index");
 
-    let created = node
-        .query(r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID } }"#)
-        .expect("create");
-    let doc_id = created["add_User"][0]["_docID"]
-        .as_str()
-        .expect("_docID")
-        .to_string();
+        let created = node
+            .query(r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID } }"#)
+            .expect("create");
+        let doc_id = created["add_User"][0]["_docID"]
+            .as_str()
+            .expect("_docID")
+            .to_string();
 
-    let by = |n: &str| {
-        format!(r#"query {{ User(filter: {{name: {{_eq: "{n}"}}}}) {{ _docID name }} }}"#)
-    };
+        let by = |n: &str| {
+            format!(r#"query {{ User(filter: {{name: {{_eq: "{n}"}}}}) {{ _docID name }} }}"#)
+        };
 
-    // Present after create.
-    assert_eq!(
-        count(&node.query(&by("Alice")).expect("lookup Alice")),
-        1,
-        "indexed lookup must find the document after create"
-    );
+        // Present after create.
+        assert_eq!(
+            count(&node.query(&by("Alice")).expect("lookup Alice")),
+            1,
+            "indexed lookup must find the document after create"
+        );
 
-    // Update the indexed field: old key must have NO stale entry; new key present.
-    node.query(&format!(
-        r#"mutation {{ update_User(docID: "{doc_id}", input: {{name: "Alicia"}}) {{ _docID }} }}"#
-    ))
-    .expect("update");
-    assert_eq!(
-        count(&node.query(&by("Alice")).expect("lookup old key")),
-        0,
-        "old indexed key must have no stale entry after update"
-    );
-    assert_eq!(
-        count(&node.query(&by("Alicia")).expect("lookup new key")),
-        1,
-        "new indexed key must be present after update (none missing)"
-    );
+        // Update the indexed field: old key must have NO stale entry; new key present.
+        node.query(&format!(
+            r#"mutation {{ update_User(docID: "{doc_id}", input: {{name: "Alicia"}}) {{ _docID }} }}"#
+        ))
+        .expect("update");
+        assert_eq!(
+            count(&node.query(&by("Alice")).expect("lookup old key")),
+            0,
+            "old indexed key must have no stale entry after update"
+        );
+        assert_eq!(
+            count(&node.query(&by("Alicia")).expect("lookup new key")),
+            1,
+            "new indexed key must be present after update (none missing)"
+        );
 
-    // Delete: the index entry must be gone.
-    node.query(&format!(
-        r#"mutation {{ delete_User(docID: "{doc_id}") {{ _docID }} }}"#
-    ))
-    .expect("delete");
-    assert_eq!(
-        count(&node.query(&by("Alicia")).expect("lookup after delete")),
-        0,
-        "deleted document must leave no index entry"
-    );
+        // Delete: the index entry must be gone.
+        node.query(&format!(
+            r#"mutation {{ delete_User(docID: "{doc_id}") {{ _docID }} }}"#
+        ))
+        .expect("delete");
+        assert_eq!(
+            count(&node.query(&by("Alicia")).expect("lookup after delete")),
+            0,
+            "deleted document must leave no index entry"
+        );
+    })
+    .await
 }
 
 /// SECONDARY-INDEX reconciliation across a restart-partition. The `@index`ed
@@ -237,86 +240,89 @@ async fn index_no_stale_no_missing() {
 ///   convergence gate forces that merge to actually occur, so this leg is not
 ///   satisfied by node1's local write alone.
 /// - node0 locally wrote the LOSER 20 and must MERGE node1's winning 99, flipping
-///   its index from 20 to 99 — the genuine cross-node merge + index-follow leg.
+///   its index from 20 to 99 - the genuine cross-node merge + index-follow leg.
 ///
 /// REGRESSION: the index is a THIRD store layered on the LWW two-store seam. A
 /// local write advances the materialized blob and writes its own index entry,
 /// while the LWW priority store advances only on merge. If a merge
 /// re-materializes the blob from a stale priority store, the index can be left
-/// pointing at an orphaned value — the document shows 99 but a filtered query
+/// pointing at an orphaned value - the document shows 99 but a filtered query
 /// returns the loser or nothing. The structured `@explain` oracle additionally
 /// proves the filtered query plans a `User` index scan, so the index counts are
 /// not silently satisfied by a full collection scan.
-#[tokio::test]
+#[nuclei::test]
 async fn index_reconciles_lww_merge_after_restart() {
-    let mut cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("build 2-node p2p cluster");
+    edge::compat(async move {
+        let mut cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("build 2-node p2p cluster");
 
-    let schema = "type User { name: String  age: Int @index }";
-    cluster.client(0).schema_add(schema).expect("schema node0");
-    cluster.client(1).schema_add(schema).expect("schema node1");
-    wire_user(&cluster);
+        let schema = "type User { name: String  age: Int @index }";
+        cluster.client(0).schema_add(schema).expect("schema node0");
+        cluster.client(1).schema_add(schema).expect("schema node1");
+        wire_user(&cluster);
 
-    let created = cluster
-        .client(0)
-        .query(r#"mutation { add_User(input: {name: "Alice", age: 10}) { _docID } }"#)
-        .expect("create");
-    let doc_id = created["add_User"][0]["_docID"]
-        .as_str()
-        .expect("_docID")
-        .to_string();
-    assert!(
-        poll_seed_indexed(&cluster.client(1), Duration::from_secs(20)).await,
-        "seed document must replicate AND be index-resolvable on node1 before the indexed LWW partition"
-    );
-    assert_age_filter_uses_index(&cluster.client(0), "pre-replay node0");
+        let created = cluster
+            .client(0)
+            .query(r#"mutation { add_User(input: {name: "Alice", age: 10}) { _docID } }"#)
+            .expect("create");
+        let doc_id = created["add_User"][0]["_docID"]
+            .as_str()
+            .expect("_docID")
+            .to_string();
+        assert!(
+            poll_seed_indexed(&cluster.client(1), Duration::from_secs(20)).await,
+            "seed document must replicate AND be index-resolvable on node1 before the indexed LWW partition"
+        );
+        assert_age_filter_uses_index(&cluster.client(0), "pre-replay node0");
 
-    cluster
-        .restart_node(1, Duration::from_secs(30))
-        .await
-        .expect("restart node1");
+        cluster
+            .restart_node(1, Duration::from_secs(30))
+            .await
+            .expect("restart node1");
 
-    cluster
-        .client(0)
-        .query(&format!(
-            r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: 20}}) {{ _docID }} }}"#
-        ))
-        .expect("node0 writes losing indexed value");
-    cluster
-        .client(1)
-        .query(&format!(
-            r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: 99}}) {{ _docID }} }}"#
-        ))
-        .expect("node1 writes winning indexed value");
+        cluster
+            .client(0)
+            .query(&format!(
+                r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: 20}}) {{ _docID }} }}"#
+            ))
+            .expect("node0 writes losing indexed value");
+        cluster
+            .client(1)
+            .query(&format!(
+                r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: 99}}) {{ _docID }} }}"#
+            ))
+            .expect("node1 writes winning indexed value");
 
-    rewire_user(&cluster);
-    assert!(
-        support::poll_dags_converged(
-            &cluster.client(0),
-            &cluster.client(1),
-            &doc_id,
-            Duration::from_secs(40)
-        )
-        .await,
-        "indexed LWW DAGs did not converge; node0={:?} node1={:?}",
-        support::commit_cids(&cluster.client(0), &doc_id),
-        support::commit_cids(&cluster.client(1), &doc_id)
-    );
+        rewire_user(&cluster);
+        assert!(
+            support::poll_dags_converged(
+                &cluster.client(0),
+                &cluster.client(1),
+                &doc_id,
+                Duration::from_secs(40)
+            )
+            .await,
+            "indexed LWW DAGs did not converge; node0={:?} node1={:?}",
+            support::commit_cids(&cluster.client(0), &doc_id),
+            support::commit_cids(&cluster.client(1), &doc_id)
+        );
 
-    for n in 0..2 {
-        if !poll_index_matches_winner(&cluster.client(n), Duration::from_secs(30)).await {
-            panic!(
-                "node{n} index does not match materialized LWW winner; state={:?}",
-                indexed_lww_state(&cluster.client(n))
-            );
+        for n in 0..2 {
+            if !poll_index_matches_winner(&cluster.client(n), Duration::from_secs(30)).await {
+                panic!(
+                    "node{n} index does not match materialized LWW winner; state={:?}",
+                    indexed_lww_state(&cluster.client(n))
+                );
+            }
+            assert_age_filter_uses_index(&cluster.client(n), &format!("post-replay node{n}"));
         }
-        assert_age_filter_uses_index(&cluster.client(n), &format!("post-replay node{n}"));
-    }
+    })
+    .await
 }

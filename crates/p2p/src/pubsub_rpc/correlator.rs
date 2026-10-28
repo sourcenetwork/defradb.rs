@@ -12,10 +12,10 @@
 
 use std::sync::Arc;
 
+use crate::rt::mpsc;
 use cid::Cid;
 use kovan_map::HopscotchMap;
 use kovan_queue::array_queue::ArrayQueue;
-use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::envelope::InternalResponse;

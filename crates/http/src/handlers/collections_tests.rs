@@ -40,7 +40,7 @@ fn create_failing_state() -> AppState {
     .build()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_list_collections() {
     let state = create_state();
     let identity = ExtractIdentity::anonymous();
@@ -60,7 +60,7 @@ async fn test_list_collections() {
         .any(|version| version.name == "MockCollection"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_list_collections_no_rest() {
     let state = create_state_without_rest();
     let identity = ExtractIdentity::anonymous();
@@ -74,7 +74,7 @@ async fn test_list_collections_no_rest() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_list_collections_error() {
     let state = create_failing_state();
     let identity = ExtractIdentity::anonymous();
@@ -114,7 +114,7 @@ fn router_with_rest() -> axum::Router {
     crate::router::create_router_with_state(state)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn truncate_collection_forwards_optional_filter() {
     let operations = Arc::new(MockCollectionManagementOperations::new());
     let router = router_with_collection_mgmt_operations(operations.clone());
@@ -152,7 +152,7 @@ async fn truncate_collection_forwards_optional_filter() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn truncate_collection_rejects_missing_or_null_filter_body() {
     for body in ["{}", r#"{"filter":null}"#, "not json"] {
         let operations = Arc::new(MockCollectionManagementOperations::new());
@@ -173,7 +173,7 @@ async fn truncate_collection_rejects_missing_or_null_filter_body() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_doc_ids_returns_paginated_metadata() {
     let router = router_with_rest();
     let response = router
@@ -203,7 +203,7 @@ async fn collection_doc_ids_returns_paginated_metadata() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_doc_ids_uses_default_limit() {
     let router = router_with_rest();
     let response = router
@@ -228,7 +228,7 @@ async fn collection_doc_ids_uses_default_limit() {
     assert_eq!(value["limit"], json!(100));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_doc_ids_rejects_limit_above_max() {
     let router = router_with_rest();
     let response = router
@@ -245,7 +245,7 @@ async fn collection_doc_ids_rejects_limit_above_max() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn delete_collections_by_query_returns_ok_for_single_name() {
     let router = router_with_collection_mgmt();
     let response = router
@@ -261,7 +261,7 @@ async fn delete_collections_by_query_returns_ok_for_single_name() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn delete_collections_by_query_returns_ok_for_csv_names() {
     let router = router_with_collection_mgmt();
     let response = router
@@ -277,7 +277,7 @@ async fn delete_collections_by_query_returns_ok_for_csv_names() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn delete_collections_by_query_rejects_missing_name_param() {
     let router = router_with_collection_mgmt();
     let response = router
@@ -293,7 +293,7 @@ async fn delete_collections_by_query_rejects_missing_name_param() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn delete_collections_by_query_rejects_invalid_active_only() {
     let router = router_with_collection_mgmt();
     let response = router
@@ -309,7 +309,7 @@ async fn delete_collections_by_query_rejects_invalid_active_only() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn patch_collection_forwards_migration() {
     let operations = Arc::new(MockCollectionManagementOperations::new());
     let router = router_with_collection_mgmt_operations(operations.clone());
@@ -339,7 +339,7 @@ async fn patch_collection_forwards_migration() {
     assert_eq!(operations.last_migration().unwrap().lenses, Vec::new());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn patch_collection_rejects_migration_file_paths() {
     let operations = Arc::new(MockCollectionManagementOperations::new());
     let router = router_with_collection_mgmt_operations(operations.clone());

@@ -22,7 +22,7 @@ pub(super) struct PushWorkerContext<T> {
     pub(super) transport: T,
     pub(super) backlog: Arc<PushBacklog>,
     pub(super) selective_car_access: Arc<super::selective_car_access::SelectiveCarAccess>,
-    pub(super) failure_tx: Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    pub(super) failure_tx: Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     pub(super) send_timeout: Duration,
     pub(super) peer_state: Arc<PeerStateTracker>,
 }
@@ -33,7 +33,7 @@ pub(super) struct PushWorkerContext<T> {
 /// this queue exists to make durable. Only a closed channel (recorder gone,
 /// process shutting down) is logged and released.
 pub(super) async fn report_push_failure(
-    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -59,7 +59,7 @@ pub(super) async fn report_push_failure(
 }
 
 pub(super) async fn report_observed_head(
-    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> Option<u64> {
     report_push_event(
@@ -80,7 +80,7 @@ pub(super) async fn report_observed_head(
 }
 
 pub(super) async fn report_push_ack(
-    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> bool {
     report_push_event(
@@ -103,7 +103,7 @@ pub(super) async fn report_push_ack(
 
 #[allow(clippy::too_many_arguments)]
 async fn report_push_event(
-    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -134,7 +134,7 @@ async fn report_push_event(
     }
     let tx = failure_tx.load().as_deref().cloned();
     if let Some(tx) = tx {
-        let (durable_tx, durable_rx) = tokio::sync::oneshot::channel();
+        let (durable_tx, durable_rx) = crate::rt::oneshot::channel();
         let failure = PushFailure {
             peer_id: peer_id.to_string(),
             doc_id,
@@ -367,7 +367,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
 ) -> PushSendOutcome {
     use crate::error::is_at_capacity_message;
 
-    match n0_future::time::timeout(
+    match crate::rt::time::timeout(
         send_timeout,
         transport.send_two_stream_request(peer_id, request.clone()),
     )

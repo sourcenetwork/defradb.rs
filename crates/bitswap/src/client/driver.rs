@@ -10,8 +10,8 @@ use std::task::{Context, Poll, Waker};
 
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::mpsc;
-use tokio::time::{sleep_until, timeout, Instant, Sleep};
+use nuclei::sync::mpsc;
+use nuclei::time::{sleep_until, timeout, Instant, Sleep};
 use tracing::debug;
 
 use super::{Client, KeepAlive};
@@ -39,11 +39,11 @@ pub(crate) struct Driver {
 }
 
 impl Driver {
-    /// Spawns the keep-alive task on the current tokio runtime.
+    /// Spawns the keep-alive task on the current nuclei runtime.
     pub(crate) fn new(network: Network) -> Self {
         let (results_tx, results) = mpsc::unbounded_channel();
         let (keep_alive, ops) = mpsc::unbounded_channel();
-        tokio::spawn(run_keep_alive(network.clone(), ops));
+        nuclei::spawn(run_keep_alive(network.clone(), ops)).detach();
         Driver {
             network,
             results,
@@ -78,7 +78,7 @@ impl Driver {
         for outgoing in client.take_ready(protocol) {
             let network = self.network.clone();
             let results = self.results_tx.clone();
-            tokio::spawn(async move {
+            nuclei::spawn(async move {
                 let peer = outgoing.peer;
                 let ok = match network.send_message(peer, outgoing.message).await {
                     Ok(()) => true,
@@ -95,7 +95,8 @@ impl Driver {
                 if results.send(done).is_err() {
                     debug!(%peer, "client send result dropped, behaviour is gone");
                 }
-            });
+            })
+            .detach();
         }
         for change in client.take_keep_alive() {
             if self.keep_alive.send(change).is_err() {

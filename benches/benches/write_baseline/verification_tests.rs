@@ -1,4 +1,4 @@
-#[tokio::test]
+#[nuclei::test]
 #[should_panic(expected = "not a final successful write")]
 async fn verification_rejects_an_acknowledged_update_that_was_not_persisted() {
     use super::{verify, Fixture, Scenario};
@@ -7,7 +7,7 @@ async fn verification_rejects_an_acknowledged_update_that_was_not_persisted() {
     verify::check(&fixture, Scenario::SharedUpdates, &[(0, 0)]).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[should_panic(expected = "not a final successful write")]
 async fn verification_rejects_an_increment_without_its_label_update() {
     use super::{verify, Fixture, Scenario};
@@ -26,7 +26,7 @@ async fn verification_rejects_an_increment_without_its_label_update() {
     verify::check(&fixture, Scenario::CountersIndexes, &[(0, 0)]).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[should_panic(expected = "no obsolete label entries remain")]
 async fn verification_rejects_an_obsolete_index_entry() {
     use document::{DocID, NormalValue};
@@ -65,7 +65,7 @@ async fn verification_rejects_an_obsolete_index_entry() {
     verify::check(&fixture, Scenario::CountersIndexes, &[]).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn measured_engine_exhaustions_are_failures_not_commits() {
     use super::{run, Scenario};
 

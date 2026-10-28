@@ -1,7 +1,7 @@
 //! PushLog request and response methods.
 
+use crate::rt::oneshot;
 use libp2p::PeerId;
-use tokio::sync::oneshot;
 
 use crate::codec::write_message;
 use crate::error::{Error, Result};
@@ -105,19 +105,18 @@ impl TwoStreamHandler {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use libp2p::{swarm::SwarmEvent, SwarmBuilder};
+    use libp2p::{swarm::SwarmEvent, Swarm};
     use std::time::Duration;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn retry_after_protocol_negotiates_and_falls_back_to_legacy() {
-        tokio::time::timeout(Duration::from_secs(15), async {
+        crate::rt::time::timeout(Duration::from_secs(15), edge::compat(async {
             for negotiated in [true, false] {
                 let sender_key = libp2p::identity::Keypair::generate_ed25519();
                 let receiver_key = libp2p::identity::Keypair::generate_ed25519();
-                let swarm = |key| {
-                    SwarmBuilder::with_existing_identity(key).with_tokio()
-                        .with_tcp(Default::default(), libp2p::noise::Config::new, libp2p::yamux::Config::default).unwrap()
-                        .with_behaviour(|_| libp2p_stream::Behaviour::new()).unwrap().build()
+                let swarm = |key: libp2p::identity::Keypair| {
+                    let (transport, _) = crate::host::transport::build(&key, false).unwrap();
+                    Swarm::new(transport, libp2p_stream::Behaviour::new(), key.public().to_peer_id(), libp2p::swarm::Config::with_executor(crate::host::transport::Executor))
                 };
                 let mut sender = swarm(sender_key.clone());
                 let mut receiver = swarm(receiver_key.clone());
@@ -133,19 +132,19 @@ mod tests {
                 };
                 sender.dial(address).unwrap();
                 loop {
-                    tokio::select! {
+                    crate::rt::select! {
                         event = sender.select_next_some() => if matches!(event, SwarmEvent::ConnectionEstablished { .. }) { break; },
                         _ = receiver.select_next_some() => {}
                     }
                 }
-                let sender_task = tokio::spawn(async move { loop { sender.select_next_some().await; } });
-                let receiver_task = tokio::spawn(async move { loop { receiver.select_next_some().await; } });
+                let sender_task = crate::rt::spawn(edge::compat(async move { loop { sender.select_next_some().await; } }));
+                let receiver_task = crate::rt::spawn(edge::compat(async move { loop { receiver.select_next_some().await; } }));
                 let pending = sender_handler.pending_responses();
-                let response_task = tokio::spawn(async move {
+                let response_task = crate::rt::spawn(async move {
                     let (peer, stream) = responses.next().await.unwrap();
                     TwoStreamHandler::handle_response_stream(&pending, peer, stream, 65536, Duration::from_secs(5)).await.unwrap();
                 });
-                let request_task = tokio::spawn(async move {
+                let request_task = crate::rt::spawn(async move {
                     let (peer, stream) = requests.next().await.unwrap();
                     let event = TwoStreamHandler::handle_request_stream(peer, stream, 65536, Duration::from_secs(5)).await.unwrap();
                     let crate::two_stream::event::TwoStreamEvent::InboundRequest { request, .. } = event else { panic!("expected PushLog") };
@@ -162,11 +161,11 @@ mod tests {
                 let reply = reply.await.unwrap();
                 assert_eq!(reply.retry_after_ms, negotiated.then_some(1234));
                 assert_eq!(reply.err_message.as_deref(), Some(crate::error::RATE_LIMITED_MESSAGE));
-                request_task.await.unwrap();
-                response_task.await.unwrap();
+                request_task.join().await.unwrap();
+                response_task.join().await.unwrap();
                 sender_task.abort();
                 receiver_task.abort();
             }
-        }).await.expect("protocol negotiation completes");
+        })).await.expect("protocol negotiation completes");
     }
 }

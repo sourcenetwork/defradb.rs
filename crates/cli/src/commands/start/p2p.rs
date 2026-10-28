@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use tokio::task::JoinHandle;
+use nuclei::task::Task;
 use tracing::{error, info};
 
 use super::node::Node;
@@ -82,9 +82,9 @@ impl Node {
         serve_acp: std::sync::Arc<p2p::bitswap::LateBoundServeAcp>,
     ) -> Result<(
         p2p::P2PHostHandle,
-        tokio::sync::mpsc::Receiver<p2p::HostEvent>,
+        nuclei::sync::mpsc::Receiver<p2p::HostEvent>,
         std::sync::Arc<p2p::ReplicatorRegistry>,
-        JoinHandle<()>,
+        Task<()>,
     )> {
         let access_mode = if config.acp.document_type != AcpDocumentType::None {
             p2p::bitswap::AccessMode::Controlled
@@ -121,7 +121,7 @@ impl Node {
 
         // Spawn the host event loop FIRST - it must be running to process commands
         // Track the task handle for graceful shutdown
-        let host_task = tokio::spawn(host.run());
+        let host_task = nuclei::spawn(host.run());
 
         // Start listening on configured addresses
         for addr_str in &config.net.p2p_addresses {

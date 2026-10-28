@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use integration_test::TestCluster;
-use reqwest::header::CONTENT_TYPE;
-use reqwest::{Client, Method, StatusCode};
+use net::http::header::CONTENT_TYPE;
+use net::http::{Client, Method, StatusCode};
 use serde_json::{json, Map, Value};
 
 struct JsonResponse {
@@ -161,81 +161,84 @@ async fn compare_json(
     (rust, go)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_rust_http_contract() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .build()
-        .await
-        .unwrap();
-    let rust_url = cluster.api_url(0);
-    let go_url = cluster.api_url(1);
-    let client = Client::new();
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .build()
+            .await
+            .unwrap();
+        let rust_url = cluster.api_url(0);
+        let go_url = cluster.api_url(1);
+        let client = Client::new();
 
-    add_collection(&client, rust_url).await;
-    add_collection(&client, go_url).await;
+        add_collection(&client, rust_url).await;
+        add_collection(&client, go_url).await;
 
-    let (rust_openapi, go_openapi) = compare_json(
-        &client,
-        Method::GET,
-        rust_url,
-        go_url,
-        "/openapi.json",
-        None,
-    )
+        let (rust_openapi, go_openapi) = compare_json(
+            &client,
+            Method::GET,
+            rust_url,
+            go_url,
+            "/openapi.json",
+            None,
+        )
+        .await;
+        assert_eq!(
+            operations(&rust_openapi.body),
+            operations(&go_openapi.body),
+            "registered HTTP operations"
+        );
+        assert_go_routes_resolve_in_rust(&client, rust_url, &go_openapi.body).await;
+
+        let (rust_health, go_health) = compare_json(
+            &client,
+            Method::GET,
+            rust_url,
+            go_url,
+            "/health-check",
+            None,
+        )
+        .await;
+        assert_eq!(rust_health.body, go_health.body);
+        assert_eq!(rust_health.body, json!("Healthy"));
+
+        let query = json!({"query": "{ Book { title } }"});
+        compare_json(
+            &client,
+            Method::POST,
+            rust_url,
+            go_url,
+            "/api/v0/graphql",
+            Some(&query),
+        )
+        .await;
+
+        let invalid_query = json!({"query": "{"});
+        compare_json(
+            &client,
+            Method::POST,
+            rust_url,
+            go_url,
+            "/api/v0/graphql",
+            Some(&invalid_query),
+        )
+        .await;
+
+        let missing_document = "/api/v0/collections/Missing/document/missing";
+        let (rust_not_found, _) = compare_json(
+            &client,
+            Method::GET,
+            rust_url,
+            go_url,
+            missing_document,
+            None,
+        )
+        .await;
+        assert_eq!(rust_not_found.status, StatusCode::NOT_FOUND);
+        assert!(rust_not_found.body["error"].is_string());
+    })
     .await;
-    assert_eq!(
-        operations(&rust_openapi.body),
-        operations(&go_openapi.body),
-        "registered HTTP operations"
-    );
-    assert_go_routes_resolve_in_rust(&client, rust_url, &go_openapi.body).await;
-
-    let (rust_health, go_health) = compare_json(
-        &client,
-        Method::GET,
-        rust_url,
-        go_url,
-        "/health-check",
-        None,
-    )
-    .await;
-    assert_eq!(rust_health.body, go_health.body);
-    assert_eq!(rust_health.body, json!("Healthy"));
-
-    let query = json!({"query": "{ Book { title } }"});
-    compare_json(
-        &client,
-        Method::POST,
-        rust_url,
-        go_url,
-        "/api/v0/graphql",
-        Some(&query),
-    )
-    .await;
-
-    let invalid_query = json!({"query": "{"});
-    compare_json(
-        &client,
-        Method::POST,
-        rust_url,
-        go_url,
-        "/api/v0/graphql",
-        Some(&invalid_query),
-    )
-    .await;
-
-    let missing_document = "/api/v0/collections/Missing/document/missing";
-    let (rust_not_found, _) = compare_json(
-        &client,
-        Method::GET,
-        rust_url,
-        go_url,
-        missing_document,
-        None,
-    )
-    .await;
-    assert_eq!(rust_not_found.status, StatusCode::NOT_FOUND);
-    assert!(rust_not_found.body["error"].is_string());
 }

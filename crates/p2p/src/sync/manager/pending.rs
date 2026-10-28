@@ -62,7 +62,7 @@ pub struct PendingDag {
     /// Every dispatch site must win `try_claim_pending_dag_dispatch`,
     /// which advances this by `retry_backoff(dispatches)`, the receiver's
     /// re-arm pacing (#1112 inbound half, #1116 stage 2).
-    pub next_retry_at: n0_future::time::Instant,
+    pub next_retry_at: crate::rt::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
     /// Committed merge work yielded with a locally ready DAG. Never persisted:

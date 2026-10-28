@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(id, None);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn stores_collection_state_in_systemstore_namespace() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let p2p_store = P2PCollectionStore::new(store.clone());
@@ -305,7 +305,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn stores_collection_batch_in_systemstore_namespace() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let p2p_store = P2PCollectionStore::new(store);
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(stored, collections.into_iter().collect());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn adding_counts_only_the_collections_not_subscribed_yet() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let p2p_store = P2PCollectionStore::new(store);
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(p2p_store.add_collections(&[]).await.unwrap(), 0);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn removes_collection_batch_from_systemstore_namespace() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let p2p_store = P2PCollectionStore::new(store);
@@ -376,7 +376,7 @@ mod tests {
     /// The change is one engine transaction: concurrent subscribes and
     /// unsubscribes of the same collections all commit, through the engine
     /// retry where they race, and leave the state of the last one.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[nuclei::test(threads = 4)]
     async fn racing_subscribes_and_unsubscribes_all_commit() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let p2p_store = Arc::new(P2PCollectionStore::new(store).with_max_txn_retries(64));
@@ -385,7 +385,7 @@ mod tests {
         for index in 0..16 {
             let p2p_store = Arc::clone(&p2p_store);
             let collections = collections.clone();
-            tasks.push(tokio::spawn(async move {
+            tasks.push(crate::rt::spawn(async move {
                 if index % 2 == 0 {
                     p2p_store.add_collections(&collections).await.map(|_| ())
                 } else {
@@ -394,7 +394,7 @@ mod tests {
             }));
         }
         for task in tasks {
-            task.await.unwrap().unwrap();
+            task.join().await.unwrap().unwrap();
         }
 
         p2p_store.add_collections(&collections).await.unwrap();
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(stored, collections.into_iter().collect());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn loads_collection_state_written_like_go_systemstore() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let systemstore = Systemstore::new(store.clone());
@@ -430,7 +430,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn memory_storage_keeps_the_subscribed_set_in_process() {
         let storage = MemoryCollectionStorage::default();
         assert_eq!(

@@ -44,7 +44,7 @@ async fn start_peer_with_bus(
 
 /// The endpoint accepts before `start` returns, so a block merged or served
 /// before a caller could bind ACP would bypass it.
-#[tokio::test]
+#[nuclei::test]
 async fn document_acp_is_bound_before_start_returns() {
     let peer = start_peer(Arc::new(RegolithStore::in_memory().unwrap()), true).await;
 
@@ -65,7 +65,7 @@ async fn document_acp_is_bound_before_start_returns() {
 
 /// A task that outlives shutdown keeps the store open, so the same path
 /// cannot be reopened (#1309).
-#[tokio::test]
+#[nuclei::test]
 async fn shutdown_releases_every_store_reference() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let peer = start_peer(Arc::clone(&store), false).await;
@@ -73,9 +73,9 @@ async fn shutdown_releases_every_store_reference() {
     peer.shutdown.shutdown().await;
     drop(peer);
 
-    let released = tokio::time::timeout(Duration::from_secs(5), async {
+    let released = p2p::rt::time::timeout(Duration::from_secs(5), async {
         while Arc::strong_count(&store) > 1 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            p2p::rt::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await;
@@ -89,7 +89,7 @@ async fn shutdown_releases_every_store_reference() {
 async fn next_peer_connection(
     subscription: &mut events::Subscription,
 ) -> events::PeerConnectionData {
-    tokio::time::timeout(Duration::from_secs(10), subscription.recv())
+    p2p::rt::time::timeout(Duration::from_secs(10), subscription.recv())
         .await
         .expect("peer connection event within timeout")
         .expect("subscription open")
@@ -100,7 +100,7 @@ async fn next_peer_connection(
 
 /// Connecting and disconnecting a peer reach the event bus, so embedders can
 /// track presence without polling `connected_peers` (#1989).
-#[tokio::test]
+#[nuclei::test]
 async fn peer_connection_changes_are_published() {
     let bus = Arc::new(events::ChannelBus::new());
     let mut connections =

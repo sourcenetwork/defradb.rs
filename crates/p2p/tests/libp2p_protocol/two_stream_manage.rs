@@ -1,6 +1,6 @@
 use p2p::message::{ManageMutateOp, ManageRequest};
 
-#[tokio::test]
+#[nuclei::test]
 async fn manage_request_decodes() {
     let req = ManageRequest::new(
         ManageMutateOp::CollectionAdd {

@@ -64,9 +64,10 @@ async fn setup_schema_version_cluster() -> (TestCluster, String) {
 ///
 /// Node0 has schema with extra field. Creates doc, updates it, then verifies
 /// node1 (older schema) receives the doc with base fields.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_new_field_syncs_to_older_version_multistep() {
+    edge::compat(async move {
     let (cluster, patch_ok) = setup_schema_version_cluster().await;
     if patch_ok != "true" {
         eprintln!("KNOWN GAP: skipping — collection patch not functional");
@@ -133,59 +134,65 @@ async fn update_new_field_syncs_to_older_version_multistep() {
             eprintln!("KNOWN GAP: creating doc with patched schema field: {}", e);
         }
     }
+})
+    .await;
 }
 
 /// Port: TestP2PPeerUpdateWithNewFieldSyncsDocsToOlderSchemaVersion
 /// Schema update syncs docs to older version.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_new_field_syncs_to_older_version() {
-    let (cluster, patch_ok) = setup_schema_version_cluster().await;
-    if patch_ok != "true" {
-        eprintln!("KNOWN GAP: skipping — collection patch not functional");
-        return;
-    }
+    edge::compat(async move {
+        let (cluster, patch_ok) = setup_schema_version_cluster().await;
+        if patch_ok != "true" {
+            eprintln!("KNOWN GAP: skipping - collection patch not functional");
+            return;
+        }
 
-    let node0 = cluster.client(0);
-    let node1 = cluster.client(1);
+        let node0 = cluster.client(0);
+        let node1 = cluster.client(1);
 
-    // Create doc on node0 with base fields only
-    node0
-        .query(r#"mutation { add_Users(input: {name: "John", age: 21}) { _docID } }"#)
-        .expect("create John");
+        // Create doc on node0 with base fields only
+        node0
+            .query(r#"mutation { add_Users(input: {name: "John", age: 21}) { _docID } }"#)
+            .expect("create John");
 
-    // Wait for replication
-    let node1_ref = &node1;
-    poll_until(
-        || {
-            let r = node1_ref
-                .query("query { Users { name age } }")
-                .unwrap_or_default();
-            r["Users"]
-                .as_array()
-                .map(|arr| arr.iter().any(|u| u["name"].as_str() == Some("John")))
-                .unwrap_or(false)
-        },
-        P2P_TIMEOUT,
-        P2P_POLL_INTERVAL,
-        "doc did not replicate to older schema node",
-    )
+        // Wait for replication
+        let node1_ref = &node1;
+        poll_until(
+            || {
+                let r = node1_ref
+                    .query("query { Users { name age } }")
+                    .unwrap_or_default();
+                r["Users"]
+                    .as_array()
+                    .map(|arr| arr.iter().any(|u| u["name"].as_str() == Some("John")))
+                    .unwrap_or(false)
+            },
+            P2P_TIMEOUT,
+            P2P_POLL_INTERVAL,
+            "doc did not replicate to older schema node",
+        )
+        .await;
+
+        let result = node1
+            .query("query { Users { name age } }")
+            .expect("query node1");
+        let users = result["Users"].as_array().expect("not array");
+        assert!(!users.is_empty());
+        assert_eq!(users[0]["name"].as_str(), Some("John"));
+        assert_eq!(users[0]["age"].as_i64(), Some(21));
+    })
     .await;
-
-    let result = node1
-        .query("query { Users { name age } }")
-        .expect("query node1");
-    let users = result["Users"].as_array().expect("not array");
-    assert!(!users.is_empty());
-    assert_eq!(users[0]["name"].as_str(), Some("John"));
-    assert_eq!(users[0]["age"].as_i64(), Some(21));
 }
 
 /// Port: TestP2PPeerCreateWithNewFieldSyncsDocsToOlderSchemaVersion
 /// Create with new field syncs to node with older schema.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn create_new_field_syncs_to_older_version() {
+    edge::compat(async move {
     let (cluster, patch_ok) = setup_schema_version_cluster().await;
     if patch_ok != "true" {
         eprintln!("KNOWN GAP: skipping — collection patch not functional");
@@ -230,6 +237,8 @@ async fn create_new_field_syncs_to_older_version() {
             eprintln!("KNOWN GAP: creating doc with new schema field: {}", e);
         }
     }
+})
+    .await;
 }
 
 /// Port: TestP2PPeerCreateWithNewFieldSyncsDocsToNewerSchemaVersion
@@ -237,9 +246,10 @@ async fn create_new_field_syncs_to_older_version() {
 ///
 /// Reverse direction: node1 has base schema, creates doc. Node0 has newer
 /// schema. The doc should replicate and the email field should be null/absent.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn create_new_field_syncs_to_newer_version() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_iroh_transport()
@@ -313,6 +323,8 @@ async fn create_new_field_syncs_to_newer_version() {
     assert!(!users.is_empty());
     assert_eq!(users[0]["name"].as_str(), Some("Bob"));
     assert_eq!(users[0]["age"].as_i64(), Some(40));
+})
+    .await;
 }
 
 /// Port: TestP2PPeerCreateWithNewFieldSyncsDocsToUpdatedSchemaVersion
@@ -320,9 +332,10 @@ async fn create_new_field_syncs_to_newer_version() {
 ///
 /// Both nodes start with base, both patch to add email. Doc with email
 /// should sync correctly to the other node.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn create_new_field_syncs_to_updated_version() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_iroh_transport()
@@ -396,6 +409,8 @@ async fn create_new_field_syncs_to_updated_version() {
             eprintln!("KNOWN GAP: creating doc with patched field: {}", e);
         }
     }
+})
+    .await;
 }
 
 /// Port: TestP2PPeerCreateWithNewFieldDocSyncedBeforeReceivingNodeSchemaUpdatedDoesNotReturnNewField
@@ -404,9 +419,10 @@ async fn create_new_field_syncs_to_updated_version() {
 /// Node0 has newer schema, creates doc with email. Syncs to node1 (old schema).
 /// Then node1 updates schema. The doc should NOT retroactively show the email
 /// field because it was synced under the old schema version.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn create_synced_before_schema_update_no_new_field() {
+    edge::compat(async move {
     let (cluster, patch_ok) = setup_schema_version_cluster().await;
     if patch_ok != "true" {
         eprintln!("KNOWN GAP: skipping — collection patch not functional");
@@ -473,4 +489,6 @@ async fn create_synced_before_schema_update_no_new_field() {
             eprintln!("KNOWN GAP: creating doc with patched field: {}", e);
         }
     }
+})
+    .await;
 }

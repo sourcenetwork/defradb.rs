@@ -457,7 +457,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn add_doc_relationships_validates_every_item_before_writing() {
         let doc_acp = Arc::new(MockDocumentAcpOperations::new());
         let state = AppStateBuilder::new(

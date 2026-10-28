@@ -18,7 +18,7 @@ use libp2p::swarm::handler::{
 use libp2p::swarm::{
     ConnectionHandler, ConnectionHandlerEvent, Stream, StreamUpgradeError, SubstreamProtocol,
 };
-use tokio::sync::oneshot;
+use nuclei::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::codec::BitswapCodec;

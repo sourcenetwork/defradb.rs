@@ -84,7 +84,7 @@ fn create_composite_block(links: Vec<DAGLink>) -> (Cid, Vec<u8>) {
     (cid, bytes)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_stores_block() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -108,7 +108,7 @@ async fn test_process_pushlog_stores_block() {
     // Complete-at-arrival heads still enter receiver-owned state before the
     // sender can clear its marker. The one receiver clock claims the merge.
     assert_eq!(manager.pending_dag_count(), 1);
-    assert!(manager.try_claim_pending_dag_dispatch(&cid, tokio::time::Instant::now()));
+    assert!(manager.try_claim_pending_dag_dispatch(&cid, nuclei::time::Instant::now()));
     assert!(manager.retry_pending_dag(&cid).await.unwrap());
 
     let event = events.try_recv().unwrap();
@@ -125,7 +125,7 @@ async fn test_process_pushlog_stores_block() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_already_merged() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -147,11 +147,11 @@ async fn test_process_pushlog_already_merged() {
     assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_mark_as_merged() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -176,7 +176,7 @@ async fn test_mark_as_merged() {
     assert!(manager.is_merged(&cid).await.unwrap());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_get_unmerged() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -208,7 +208,7 @@ async fn test_get_unmerged() {
     assert!(unmerged.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_invalid_cid_returns_error() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -234,7 +234,7 @@ async fn test_process_pushlog_invalid_cid_returns_error() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_cid_mismatch_returns_error() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -255,7 +255,7 @@ async fn test_process_pushlog_cid_mismatch_returns_error() {
     assert!(matches!(result, Err(Error::BlockCidMismatch { .. })));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sequential_unmerged_reannouncement_is_idempotently_registered() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -281,7 +281,7 @@ async fn test_sequential_unmerged_reannouncement_is_idempotently_registered() {
     assert!(events.try_recv().is_err());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_registration_does_not_depend_on_event_receiver() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -303,7 +303,7 @@ async fn test_process_pushlog_registration_does_not_depend_on_event_receiver() {
     assert!(blockstore.has(&cid).await.unwrap());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_already_merged_fast_path_does_not_need_event_receiver() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -326,7 +326,7 @@ async fn test_already_merged_fast_path_does_not_need_event_receiver() {
     assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_pending_dag_count_initially_zero() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -335,7 +335,7 @@ async fn test_pending_dag_count_initially_zero() {
     assert_eq!(manager.pending_dag_count(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_pending_dag_tracking() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -352,7 +352,7 @@ async fn test_pending_dag_tracking() {
         .unwrap();
 
     assert_eq!(manager.pending_dag_count(), 1);
-    assert!(manager.try_claim_pending_dag_dispatch(&cid, tokio::time::Instant::now()));
+    assert!(manager.try_claim_pending_dag_dispatch(&cid, nuclei::time::Instant::now()));
     assert!(manager.retry_pending_dag(&cid).await.unwrap());
 
     let event = events.try_recv().unwrap();
@@ -370,7 +370,7 @@ async fn test_pending_dag_tracking() {
     assert_eq!(manager.pending_dag_count(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -396,7 +396,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
 
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
     let pending = manager
         .pending_dag_snapshot(&composite_cid)
@@ -425,7 +425,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
         .await
         .unwrap();
 
-    let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+    let event = nuclei::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("expected pending DAG retry event")
         .expect("event channel closed");
@@ -436,7 +436,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
     assert!(
         matches!(
             events.try_recv(),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
         ),
         "a legacy field PushLog must not be emitted as a standalone document head"
     );
@@ -456,7 +456,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -491,7 +491,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     // sole DagNeedsFetch dispatcher.
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
 
     // Three retry rounds while the field block is still missing.
@@ -520,7 +520,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
         .await
         .unwrap();
 
-    let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+    let event = nuclei::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("event")
         .expect("channel open");
@@ -530,7 +530,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     ));
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
 
     let snap = diag.snapshot();
@@ -542,7 +542,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     assert_eq!(snap.pending_dag_expired, 0, "never expired within test");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_pending_dag_attempts_increment_per_retry() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -568,7 +568,7 @@ async fn test_pending_dag_attempts_increment_per_retry() {
 
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
     assert_eq!(manager.pending_dag_attempts(&composite_cid), 0);
@@ -583,7 +583,7 @@ async fn test_pending_dag_attempts_increment_per_retry() {
     assert_eq!(manager.pending_dag_attempts(&test_cid()), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_blockstore_accessor() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -609,7 +609,7 @@ fn broadcast_for(cid: &Cid, doc_id: &str, block: Vec<u8>) -> PushLogBroadcast {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_process_pushlog_pending_capacity_returns_typed_error() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -634,7 +634,7 @@ async fn test_process_pushlog_pending_capacity_returns_typed_error() {
         .unwrap();
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
 
@@ -664,7 +664,7 @@ async fn test_process_pushlog_pending_capacity_returns_typed_error() {
     assert!(!blockstore.has(&comp_b_cid).await.unwrap());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_max_pending_dags_zero_is_normalized_to_one() {
     // A zero cap would reject every missing-link push forever (permanent
     // admission outage); the manager normalizes it to a 1-slot map.
@@ -689,7 +689,7 @@ async fn test_max_pending_dags_zero_is_normalized_to_one() {
         .expect("a single pending registration must be admitted even with cap 0");
     assert!(matches!(
         events.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
 }
@@ -709,7 +709,7 @@ mod pending_persistence {
         store: Arc<RegolithStore>,
     ) -> (
         SyncManager<DefraBlockstore<RegolithStore>>,
-        tokio::sync::mpsc::Receiver<SyncEvent>,
+        nuclei::sync::mpsc::Receiver<SyncEvent>,
         Arc<PendingDagStore<RegolithStore>>,
     ) {
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -758,7 +758,7 @@ mod pending_persistence {
         )
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn current_sender_scope_head_atomically_supersedes_older_durable_root() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store.clone()).await;
@@ -821,7 +821,7 @@ mod pending_persistence {
         while events.try_recv().is_ok() {}
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn same_root_reannouncement_retains_durable_recovery_provider() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store.clone()).await;
@@ -872,7 +872,7 @@ mod pending_persistence {
         while events.try_recv().is_ok() {}
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn complete_at_arrival_head_is_durable_before_ack_and_restart() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store.clone()).await;
@@ -897,7 +897,7 @@ mod pending_persistence {
         restarted.resync_persisted_pending_dags().await;
         assert_eq!(restarted_store.load_all().await.expect("load").len(), 1);
         assert_eq!(restarted.pending_dag_cids(), vec![root]);
-        assert!(restarted.try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()));
+        assert!(restarted.try_claim_pending_dag_dispatch(&root, nuclei::time::Instant::now()));
         assert!(restarted.retry_pending_dag(&root).await.expect("ready"));
         assert!(matches!(
             restarted_events.try_recv(),
@@ -905,7 +905,7 @@ mod pending_persistence {
         ));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn durable_scope_head_survives_pending_eviction_and_restart() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (old_root, old_bytes) = composite_with_priority_and_missing_field(1, "old");
@@ -959,7 +959,7 @@ mod pending_persistence {
         assert_eq!(records[0].1.head_priority, Some(2));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn current_scope_replacement_is_admitted_at_pending_capacity() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -1003,7 +1003,7 @@ mod pending_persistence {
         assert_eq!(records[0].0, new_root);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collection_scope_heads_use_the_same_current_obligation_rule() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, _events, pending_store) = manager_with_store(store).await;
@@ -1043,7 +1043,7 @@ mod pending_persistence {
         assert_eq!(manager.pending_dag_cids(), vec![new_root]);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn pending_registration_persists_until_marked_merged() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store).await;
@@ -1069,7 +1069,7 @@ mod pending_persistence {
 
         assert!(matches!(
             events.try_recv(),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
         ));
 
         // The missing field arrives: the DAG resolves (DagReady emitted) but
@@ -1085,7 +1085,7 @@ mod pending_persistence {
             )
             .await
             .expect("field block completes the pending DAG");
-        let ready = tokio::time::timeout(Duration::from_secs(1), events.recv())
+        let ready = nuclei::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("DagReady event")
             .expect("event channel open");
@@ -1125,7 +1125,7 @@ mod pending_persistence {
     /// both receiver representations; leaving the old entry behind causes
     /// pointless fetches and prevents quiescence even though durability was
     /// already cleared.
-    #[tokio::test]
+    #[nuclei::test]
     async fn terminal_merge_clears_a_live_pending_entry_for_the_same_root() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, pending_store) = manager_with_store(store).await;
@@ -1152,7 +1152,7 @@ mod pending_persistence {
         assert!(pending_store.load_all().await.expect("load").is_empty());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn restore_re_registers_and_re_drives_fetch() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let comp_cid = {
@@ -1189,7 +1189,7 @@ mod pending_persistence {
         assert!(pending.is_recovery_registered);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn restore_skips_and_deletes_merged_roots() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, pending_store) = manager_with_store(store.clone()).await;
@@ -1222,7 +1222,7 @@ mod pending_persistence {
 
     /// Peer-connect re-drive targeting (#1099): a reconnecting peer re-drives
     /// its own prior pushes and provider-exhausted entries, nothing else.
-    #[tokio::test]
+    #[nuclei::test]
     async fn redrive_selection_targets_source_peer_and_exhausted_fetches() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, _pending_store) = manager_with_store(store).await;
@@ -1258,7 +1258,7 @@ mod pending_persistence {
     /// Clearing the in-memory entry (another fetch path completed the DAG,
     /// or TTL eviction) must not discharge the durable obligation: only a
     /// successful merge may.
-    #[tokio::test]
+    #[nuclei::test]
     async fn clear_keeps_durable_record_until_merge() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, pending_store) = manager_with_store(store).await;
@@ -1298,7 +1298,7 @@ mod pending_persistence {
     /// In-process recovery for records whose in-memory entry is gone (TTL
     /// eviction / clear): the resync sweep re-registers and re-drives them
     /// without a restart.
-    #[tokio::test]
+    #[nuclei::test]
     async fn resync_re_registers_cleared_records() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, _events, _pending_store) = manager_with_store(store).await;
@@ -1323,7 +1323,7 @@ mod pending_persistence {
             .pending_dag_snapshot(&comp_cid)
             .expect("resync must register the root for the receiver clock");
         assert!(pending.is_recovery_registered);
-        assert!(pending.next_retry_at <= tokio::time::Instant::now());
+        assert!(pending.next_retry_at <= nuclei::time::Instant::now());
 
         // With the entry live in memory again, the sweep is a no-op.
         assert_eq!(manager.resync_persisted_pending_dags().await, 0);
@@ -1332,7 +1332,7 @@ mod pending_persistence {
     /// Durable registrations outlive the in-memory map, so they carry their
     /// own cap; at the cap the obligation is refused with a backpressure
     /// nack instead of being accepted and later dropped.
-    #[tokio::test]
+    #[nuclei::test]
     async fn durable_cap_nacks_new_registrations() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -1384,7 +1384,7 @@ mod pending_persistence {
     /// in-memory map was at capacity must be re-driven by a later sweep once
     /// a slot frees — the periodic resync loop supplies that later sweep even
     /// with no peer reconnect or restart.
-    #[tokio::test]
+    #[nuclei::test]
     async fn resync_drains_records_skipped_at_capacity_once_slots_free() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -1432,7 +1432,7 @@ mod pending_persistence {
     /// accounting set after a rare reserve/put race) must be rediscovered by
     /// the periodically forced full sweep even when the steady-state
     /// early-exit would otherwise skip load_all.
-    #[tokio::test]
+    #[nuclei::test]
     async fn forced_sweep_rediscovers_orphan_records() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store).await;
@@ -1478,7 +1478,7 @@ mod pending_persistence {
             }
         }
         assert!(rediscovered, "orphan record never rediscovered");
-        while tokio::time::timeout(Duration::from_millis(50), events.recv())
+        while nuclei::time::timeout(Duration::from_millis(50), events.recv())
             .await
             .is_ok()
         {}
@@ -1487,7 +1487,7 @@ mod pending_persistence {
     /// Round-4 nit (other direction): a stale accounting entry with neither a
     /// record nor a live in-memory entry must be pruned so it cannot hold
     /// durable-cap headroom forever.
-    #[tokio::test]
+    #[nuclei::test]
     async fn sweep_prunes_stale_accounting_entries() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, pending_store) = manager_with_store(store).await;
@@ -1524,7 +1524,7 @@ mod pending_persistence {
     /// in-memory pending entry is still live.  The store is authoritative:
     /// reconciliation must not preserve (or recreate) accounting merely
     /// because that process-local entry has not been cleared yet.
-    #[tokio::test]
+    #[nuclei::test]
     async fn sweep_prunes_deleted_record_even_while_pending_entry_is_live() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut _events, pending_store) = manager_with_store(store).await;
@@ -1561,7 +1561,7 @@ mod pending_persistence {
     /// Round-4 nit: the durable cap must be hard from the first PushLog
     /// after a restart — install hydrates the accounting set synchronously
     /// instead of waiting for the first (spawned) resync sweep.
-    #[tokio::test]
+    #[nuclei::test]
     async fn install_hydrates_durable_accounting_before_first_push() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         {
@@ -1641,7 +1641,7 @@ mod pending_persistence {
 
     /// Fail closed: if the registration cannot be made durable the push must
     /// be nacked (pusher keeps its retry record), not success-acked.
-    #[tokio::test]
+    #[nuclei::test]
     async fn persist_failure_nacks_the_push_and_keeps_nothing_registered() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));

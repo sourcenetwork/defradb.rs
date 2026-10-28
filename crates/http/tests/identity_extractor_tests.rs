@@ -43,21 +43,21 @@ async fn extract_from_request(
     ExtractIdentity::from_request_parts(&mut parts, &()).await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_no_auth_header_returns_anonymous() {
     let result = extract_from_request(None).await;
     assert!(result.is_ok());
     assert!(result.unwrap().is_anonymous());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_empty_bearer_returns_anonymous() {
     let result = extract_from_request(Some("Bearer ")).await;
     assert!(result.is_ok());
     assert!(result.unwrap().is_anonymous());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_non_bearer_auth_returns_error() {
     // Go DefraDB behavior: non-Bearer auth returns 403 Forbidden
     let result = extract_from_request(Some("Basic dXNlcjpwYXNz")).await;
@@ -68,7 +68,7 @@ async fn test_non_bearer_auth_returns_error() {
     ));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_valid_bearer_token_extracts_did() {
     let (token, expected_did) = create_test_token();
     let auth_header = format!("Bearer {}", token);
@@ -80,7 +80,7 @@ async fn test_valid_bearer_token_extracts_did() {
     assert_eq!(extracted.into_did().unwrap(), expected_did);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_lowercase_bearer_works() {
     let (token, expected_did) = create_test_token();
     let auth_header = format!("bearer {}", token);
@@ -92,7 +92,7 @@ async fn test_lowercase_bearer_works() {
     assert_eq!(extracted.into_did().unwrap(), expected_did);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_invalid_token_returns_error() {
     let result = extract_from_request(Some("Bearer invalid-token")).await;
     assert!(result.is_err());
@@ -102,7 +102,7 @@ async fn test_invalid_token_returns_error() {
     ));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_extract_token_identity_full() {
     let (token, expected_did) = create_test_token();
     let auth_header = format!("Bearer {}", token);
@@ -125,7 +125,7 @@ async fn test_extract_token_identity_full() {
 // These tests verify that authenticated requests require a valid Host header
 // to prevent token bypass via missing/malformed Host header attacks.
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_missing_host_header_with_token_returns_error() {
     // Create a valid token
     let private_key = crypto::generate_ed25519().unwrap();
@@ -157,7 +157,7 @@ async fn test_missing_host_header_with_token_returns_error() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_missing_host_header_anonymous_request_succeeds() {
     // Build request WITHOUT Host header and WITHOUT Authorization (anonymous)
     let builder = Request::builder().uri("/test");
@@ -169,7 +169,7 @@ async fn test_missing_host_header_anonymous_request_succeeds() {
     assert!(result.unwrap().is_anonymous());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_empty_bearer_with_missing_host_succeeds() {
     // Build request WITHOUT Host header but with empty Bearer token
     // Empty bearer = anonymous, so this should succeed
@@ -184,7 +184,7 @@ async fn test_empty_bearer_with_missing_host_succeeds() {
     assert!(result.unwrap().is_anonymous());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_extract_token_identity_missing_host_returns_error() {
     // Create a valid token
     let private_key = crypto::generate_ed25519().unwrap();
@@ -219,7 +219,7 @@ async fn test_extract_token_identity_missing_host_returns_error() {
 
 // === Additional Edge Case Tests ===
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_wrong_host_header_with_valid_token_returns_error() {
     // Create a token for one host (localhost:9181)
     let private_key = crypto::generate_ed25519().unwrap();
@@ -257,7 +257,7 @@ async fn test_wrong_host_header_with_valid_token_returns_error() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_bearer_token_with_leading_whitespace() {
     let (token, expected_did) = create_test_token();
     // Token with leading spaces after "Bearer "
@@ -271,7 +271,7 @@ async fn test_bearer_token_with_leading_whitespace() {
     assert_eq!(extracted.into_did().unwrap(), expected_did);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_bearer_token_with_trailing_whitespace() {
     let (token, expected_did) = create_test_token();
     // Token with trailing spaces
@@ -285,7 +285,7 @@ async fn test_bearer_token_with_trailing_whitespace() {
     assert_eq!(extracted.into_did().unwrap(), expected_did);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_uppercase_bearer_returns_error() {
     // "BEARER" (uppercase) should be rejected - only "Bearer" and "bearer" are valid
     let (token, _) = create_test_token();

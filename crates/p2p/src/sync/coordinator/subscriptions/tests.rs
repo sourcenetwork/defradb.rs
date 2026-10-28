@@ -190,7 +190,7 @@ impl P2PTransport for RecordingTransport {
         self.max_subscribe_in_flight
             .fetch_max(in_flight, Ordering::Relaxed);
         if !self.subscribe_delay.is_zero() {
-            n0_future::time::sleep(self.subscribe_delay).await;
+            crate::rt::time::sleep(self.subscribe_delay).await;
         }
 
         let should_fail_once = take_failure(&self.fail_subscribe_remaining, &topic);
@@ -505,9 +505,9 @@ where
     F: FnMut() -> bool,
 {
     let mut delay = Duration::from_millis(1);
-    n0_future::time::timeout(Duration::from_secs(5), async {
+    crate::rt::time::timeout(Duration::from_secs(5), async {
         while !done() {
-            n0_future::time::sleep(delay).await;
+            crate::rt::time::sleep(delay).await;
             delay = (delay * 2).min(Duration::from_millis(50));
         }
     })
@@ -515,7 +515,7 @@ where
     .expect(expectation);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn subscribe_collections_is_bounded_batched_and_idempotent() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -562,7 +562,7 @@ async fn subscribe_collections_is_bounded_batched_and_idempotent() {
     assert_eq!(collection_store.add_batches(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn subscribe_collections_persists_desired_set_and_restart_heals_partial_failure() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -614,7 +614,7 @@ async fn subscribe_collections_persists_desired_set_and_restart_heals_partial_fa
     assert_eq!(restarted_transport.subscribed_topics().len(), 3);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn failed_subscribe_retries_durable_intent_without_restart() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -649,7 +649,7 @@ async fn failed_subscribe_retries_durable_intent_without_restart() {
     assert_eq!(collection_store.add_batches(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn load_p2p_collections_reinstalls_subscriptions_after_restart() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let initial_transport = RecordingTransport::new("initial-peer");
@@ -676,7 +676,7 @@ async fn load_p2p_collections_reinstalls_subscriptions_after_restart() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn load_p2p_collections_retries_failed_restoration_in_process() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -708,7 +708,7 @@ async fn load_p2p_collections_retries_failed_restoration_in_process() {
     assert!(reconcilers_done(&coordinator));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn subscribe_collection_keeps_durable_intent_when_transport_subscribe_fails() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let failing_transport = RecordingTransport::new("failing-peer").fail_subscribe("users");
@@ -741,7 +741,7 @@ async fn subscribe_collection_keeps_durable_intent_when_transport_subscribe_fail
     assert_eq!(restarted_transport.subscribed_topics(), vec!["users"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn unsubscribe_failure_keeps_live_topic_retryable() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -786,7 +786,7 @@ async fn unsubscribe_failure_keeps_live_topic_retryable() {
     assert_eq!(collection_store.remove_batches(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn resubscribe_after_failed_unsubscribe_restores_durable_intent() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -841,7 +841,7 @@ async fn resubscribe_after_failed_unsubscribe_restores_durable_intent() {
 /// A resubscribe does not wait for a removal in flight: it commits its
 /// intent, finds the topic still live, and returns; the removal then finds
 /// the topic desired again, and the reconciler installs it once more.
-#[tokio::test]
+#[nuclei::test]
 async fn resubscribe_during_an_in_flight_removal_returns_at_once_and_converges() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -863,7 +863,7 @@ async fn resubscribe_during_an_in_flight_removal_returns_at_once_and_converges()
         .expect_err("injected transport failure should be returned");
 
     retry_started.notified().await;
-    let resubscribed = n0_future::time::timeout(
+    let resubscribed = crate::rt::time::timeout(
         Duration::from_secs(5),
         coordinator.subscribe_collection("users"),
     )
@@ -887,7 +887,7 @@ async fn resubscribe_during_an_in_flight_removal_returns_at_once_and_converges()
     assert_eq!(collection_store.remove_batches(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn terminated_retry_releases_ownership_for_a_later_unsubscribe() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -930,7 +930,7 @@ async fn terminated_retry_releases_ownership_for_a_later_unsubscribe() {
     assert_eq!(collection_store.remove_batches(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn unsubscribe_collections_commits_one_durable_batch_before_live_cleanup() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));

@@ -223,7 +223,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
     ///
     /// # Note
     ///
-    /// This must be called within a tokio runtime context as Bitswap spawns
+    /// This must be called within a nuclei runtime context as Bitswap spawns
     /// background tasks for operations.
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -513,7 +513,7 @@ mod tests {
         key
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_behaviour_creation_with_signing() {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
@@ -539,7 +539,7 @@ mod tests {
         assert!(behaviour.is_ok());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_behaviour_creation_without_signing() {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
@@ -579,7 +579,7 @@ mod tests {
             .is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_behaviour_creation_pubsub_disabled() {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();

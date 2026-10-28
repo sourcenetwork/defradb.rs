@@ -9,7 +9,7 @@ use crate::QueryId;
 use super::ResponseChannel;
 
 /// The channel the P2P host emits its [`HostEvent`]s on.
-pub type HostEventReceiver = tokio::sync::mpsc::Receiver<HostEvent>;
+pub type HostEventReceiver = crate::rt::mpsc::Receiver<HostEvent>;
 
 /// Events emitted by the P2P host.
 #[derive(Debug)]

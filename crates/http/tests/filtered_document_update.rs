@@ -66,7 +66,7 @@ async fn document(router: Router, doc_id: &str) -> Value {
 }
 
 /// The gap itself: this used to be a 405.
-#[tokio::test]
+#[nuclei::test]
 async fn the_route_is_no_longer_a_405() {
     let (status, body) = patch_with(
         router(),
@@ -79,7 +79,7 @@ async fn the_route_is_no_longer_a_405() {
 
 /// Go types `updater` as a string holding JSON, which is what its client
 /// sends, so that encoding has to work.
-#[tokio::test]
+#[nuclei::test]
 async fn an_updater_sent_as_a_json_string_is_applied() {
     let router = router();
     let (status, body) = patch_with(
@@ -102,7 +102,7 @@ async fn an_updater_sent_as_a_json_string_is_applied() {
 }
 
 /// A hand-written client is likelier to send an object than to double-encode.
-#[tokio::test]
+#[nuclei::test]
 async fn an_updater_sent_as_an_object_is_applied() {
     let router = router();
     let (status, body) = patch_with(
@@ -115,7 +115,7 @@ async fn an_updater_sent_as_an_object_is_applied() {
 }
 
 /// Go's `UpdateResult` fields carry no json tags, so they marshal capitalised.
-#[tokio::test]
+#[nuclei::test]
 async fn the_response_uses_gos_field_names() {
     let (_, body) = patch_with(
         router(),
@@ -127,7 +127,7 @@ async fn the_response_uses_gos_field_names() {
     assert!(result.get("DocIDs").is_some(), "{body}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_filter_matching_nothing_updates_nothing() {
     let router = router();
     let (status, body) = patch_with(
@@ -144,7 +144,7 @@ async fn a_filter_matching_nothing_updates_nothing() {
 
 /// Neither half may be guessed. A missing filter would rewrite the whole
 /// collection; a missing updater would claim an update that never happened.
-#[tokio::test]
+#[nuclei::test]
 async fn an_incomplete_request_is_refused() {
     let bodies = [
         "",
@@ -172,7 +172,7 @@ async fn an_incomplete_request_is_refused() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_unknown_collection_is_not_a_success() {
     let (status, _) = send(
         router(),
@@ -186,7 +186,7 @@ async fn an_unknown_collection_is_not_a_success() {
 
 /// A new verb on an existing path needs its own permission entry, or it falls
 /// to the safe default and is gated as a read.
-#[tokio::test]
+#[nuclei::test]
 async fn the_route_is_gated_as_a_document_update() {
     assert_eq!(
         route_permission("/api/v0/collections/{name}", &Method::PATCH),
@@ -203,7 +203,7 @@ async fn the_route_is_gated_as_a_document_update() {
 /// updated while leaving them untouched is a lie to the caller, so this route
 /// says it cannot do it instead of copying the behaviour. That is a known
 /// divergence from Go, in the direction of refusing a no-op.
-#[tokio::test]
+#[nuclei::test]
 async fn a_json_patch_updater_is_refused_rather_than_silently_doing_nothing() {
     let router = router();
     let (status, body) = patch_with(
@@ -221,7 +221,7 @@ async fn a_json_patch_updater_is_refused_rather_than_silently_doing_nothing() {
 
 /// Go's filter is `any`, and a string is first-class; the JS client always
 /// sends one (`internal/db/document_update.go:168-176`).
-#[tokio::test]
+#[nuclei::test]
 async fn a_filter_sent_as_graphql_source_is_applied() {
     let router = router();
     let (status, body) = patch_with(
@@ -234,7 +234,7 @@ async fn a_filter_sent_as_graphql_source_is_applied() {
 }
 
 /// A bare scalar condition is equality, as Go's connor reads it.
-#[tokio::test]
+#[nuclei::test]
 async fn a_bare_scalar_condition_means_equality() {
     let router = router();
     let (status, body) = patch_with(

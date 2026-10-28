@@ -71,7 +71,7 @@ async fn doc_ids(router: Router) -> Vec<String> {
 }
 
 /// The filter selects, and only the matching documents go.
-#[tokio::test]
+#[nuclei::test]
 async fn a_filter_deletes_only_the_matching_documents() {
     let router = router();
     let (status, body) =
@@ -86,7 +86,7 @@ async fn a_filter_deletes_only_the_matching_documents() {
 }
 
 /// The bug itself: this route used to destroy the collection.
-#[tokio::test]
+#[nuclei::test]
 async fn a_filtered_delete_never_touches_collection_management() {
     let mgmt = Arc::new(MockCollectionManagementOperations::new());
     let router = router_with(mgmt.clone());
@@ -108,7 +108,7 @@ async fn a_filtered_delete_never_touches_collection_management() {
 
 /// Go's `DeleteResult` fields carry no json tags, so they marshal capitalised.
 /// A client reading `Count` off a lowercase `count` sees nothing.
-#[tokio::test]
+#[nuclei::test]
 async fn the_response_uses_gos_field_names() {
     let (_, body) = delete_with(router(), r#"{"filter":{"name":{"_eq":"Alice"}}}"#).await;
     let result: Value = serde_json::from_str(&body).unwrap();
@@ -117,7 +117,7 @@ async fn the_response_uses_gos_field_names() {
 }
 
 /// A filter matching nothing is a successful no-op, not an error.
-#[tokio::test]
+#[nuclei::test]
 async fn a_filter_matching_nothing_deletes_nothing() {
     let router = router();
     let (status, body) =
@@ -133,7 +133,7 @@ async fn a_filter_matching_nothing_deletes_nothing() {
 /// A filter that cannot be read must not fall back to acting on everything.
 /// Go's behaviour for a null filter could not be confirmed from source here,
 /// and guessing "match all" would delete the whole collection's contents.
-#[tokio::test]
+#[nuclei::test]
 async fn a_request_without_a_usable_filter_is_refused() {
     for body in ["", "{}", r#"{"filter":null}"#, "not json"] {
         let router = router();
@@ -151,7 +151,7 @@ async fn a_request_without_a_usable_filter_is_refused() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_unknown_collection_is_not_a_success() {
     let (status, _) = send(
         router(),
@@ -165,7 +165,7 @@ async fn an_unknown_collection_is_not_a_success() {
 
 /// Dropping a collection did not go away, it just stopped sharing a route with
 /// document deletion.
-#[tokio::test]
+#[nuclei::test]
 async fn dropping_a_collection_still_has_its_own_route() {
     let (status, body) = send(
         router(),
@@ -180,7 +180,7 @@ async fn dropping_a_collection_still_has_its_own_route() {
 /// The route changed meaning, so its permission had to change with it. Leaving
 /// it on `CollectionPatch` would gate document deletion behind a schema
 /// permission and let a `DocumentDelete` holder be refused.
-#[tokio::test]
+#[nuclei::test]
 async fn the_route_is_gated_as_a_document_delete() {
     assert_eq!(
         route_permission("/api/v0/collections/{name}", &Method::DELETE),
@@ -197,7 +197,7 @@ async fn the_route_is_gated_as_a_document_delete() {
 /// `NewFilterFromString` (`internal/db/document_update.go:168-176`). Its own
 /// client marshals whatever it was handed and the JS client always sends a
 /// string, so this is a payload Go-compatible clients really produce.
-#[tokio::test]
+#[nuclei::test]
 async fn a_filter_sent_as_graphql_source_is_applied() {
     let router = router();
     let (status, body) =
@@ -211,7 +211,7 @@ async fn a_filter_sent_as_graphql_source_is_applied() {
 
 /// An empty string filter is Go's `ErrEmptyFilter`, and a type Go's switch has
 /// no arm for is `ErrUnsupportedFilterType`. Both are 400s there.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unsupported_filter_type_is_refused() {
     for body in [
         r#"{"filter":""}"#,
@@ -239,7 +239,7 @@ async fn an_unsupported_filter_type_is_refused() {
 /// Go's connor reads a bare scalar as equality (`internal/connor/eq.go:63-76`),
 /// so `{"name":"Alice"}` and `{"name":{"_eq":"Alice"}}` are the same filter and
 /// a Go-compatible client may send either.
-#[tokio::test]
+#[nuclei::test]
 async fn a_bare_scalar_condition_means_equality() {
     let router = router();
     let (status, body) = delete_with(router.clone(), r#"{"filter":{"name":"Alice"}}"#).await;

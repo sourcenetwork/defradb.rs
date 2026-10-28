@@ -32,9 +32,9 @@ fn the_recorder_and_peer_activation_write_on_the_pool() {
     .unwrap();
     let before = stats.snapshot().off_pool_calls;
 
-    let (failures, received) = tokio::sync::mpsc::channel(1);
+    let (failures, received) = p2p::rt::mpsc::channel(1);
     let recorder = spawn_failure_recorder(peerstore.clone(), received);
-    let (registered, generation) = tokio::sync::oneshot::channel();
+    let (registered, generation) = p2p::rt::oneshot::channel();
     failures
         .blocking_send(p2p::sync::PushFailure {
             peer_id: "peer-a".to_string(),

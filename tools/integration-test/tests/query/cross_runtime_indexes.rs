@@ -136,173 +136,176 @@ fn assert_index_query(rust: &DefraClient, go: &DefraClient, query: &str, expecte
     assert_uses_index("Go", go, query);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_cross_runtime_index_key_ordering() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .build()
-        .await
-        .unwrap();
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
-    rust.schema_add(SCHEMA).expect("add Rust schema");
-    go.schema_add(SCHEMA).expect("add Go schema");
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .build()
+            .await
+            .unwrap();
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
+        rust.schema_add(SCHEMA).expect("add Rust schema");
+        go.schema_add(SCHEMA).expect("add Go schema");
 
-    for document in DOCUMENTS {
-        create_both(&rust, &go, "IndexedValue", document);
-    }
+        for document in DOCUMENTS {
+            create_both(&rust, &go, "IndexedValue", document);
+        }
 
-    assert_index_query(
-        &rust,
-        &go,
-        "query { IndexedValue(order: {integer: ASC}) { name integer } }",
-        &[
-            "minimum",
-            "negative",
-            "negative_zero",
-            "positive_zero",
-            "positive",
-            "maximum",
-        ],
-    );
-    assert_index_query(
-        &rust,
-        &go,
-        "query { IndexedValue(filter: {integer: {_gt: -10}}, order: {integer: ASC}) { name integer } }",
-        &[
-            "negative",
-            "negative_zero",
-            "positive_zero",
-            "positive",
-            "maximum",
-        ],
-    );
-    assert_index_query(
-        &rust,
-        &go,
-        "query { IndexedValue(filter: {ratio: {_geq: -10.5}}, order: {ratio: ASC}) { name ratio } }",
-        &[
-            "minimum",
-            "negative",
-            "negative_zero",
-            "positive_zero",
-            "positive",
-            "maximum",
-        ],
-    );
-    assert_index_query(
-        &rust,
-        &go,
-        "query { IndexedValue(order: {text: ASC}) { name text } }",
-        &[
-            "minimum",
-            "negative",
-            "positive_zero",
-            "negative_zero",
-            "positive",
-            "maximum",
-        ],
-    );
-    assert_index_query(
-        &rust,
-        &go,
-        r#"query { IndexedValue(filter: {text: {_like: "alpha%"}}) { name text } }"#,
-        &["negative", "positive_zero"],
-    );
+        assert_index_query(
+            &rust,
+            &go,
+            "query { IndexedValue(order: {integer: ASC}) { name integer } }",
+            &[
+                "minimum",
+                "negative",
+                "negative_zero",
+                "positive_zero",
+                "positive",
+                "maximum",
+            ],
+        );
+        assert_index_query(
+            &rust,
+            &go,
+            "query { IndexedValue(filter: {integer: {_gt: -10}}, order: {integer: ASC}) { name integer } }",
+            &[
+                "negative",
+                "negative_zero",
+                "positive_zero",
+                "positive",
+                "maximum",
+            ],
+        );
+        assert_index_query(
+            &rust,
+            &go,
+            "query { IndexedValue(filter: {ratio: {_geq: -10.5}}, order: {ratio: ASC}) { name ratio } }",
+            &[
+                "minimum",
+                "negative",
+                "negative_zero",
+                "positive_zero",
+                "positive",
+                "maximum",
+            ],
+        );
+        assert_index_query(
+            &rust,
+            &go,
+            "query { IndexedValue(order: {text: ASC}) { name text } }",
+            &[
+                "minimum",
+                "negative",
+                "positive_zero",
+                "negative_zero",
+                "positive",
+                "maximum",
+            ],
+        );
+        assert_index_query(
+            &rust,
+            &go,
+            r#"query { IndexedValue(filter: {text: {_like: "alpha%"}}) { name text } }"#,
+            &["negative", "positive_zero"],
+        );
 
-    let bool_query = "query { IndexedValue(filter: {enabled: {_in: [false, true]}}, order: {enabled: ASC}) { enabled } }";
-    let bool_response = assert_query_equivalent(&rust, &go, bool_query);
-    let bools: Vec<_> = bool_response["IndexedValue"]
-        .as_array()
-        .expect("IndexedValue array")
-        .iter()
-        .map(|row| row["enabled"].as_bool().expect("enabled"))
-        .collect();
-    assert_eq!(bools, [false, false, false, true, true, true]);
-    assert_uses_index("Rust", &rust, bool_query);
-    assert_uses_index("Go", &go, bool_query);
+        let bool_query = "query { IndexedValue(filter: {enabled: {_in: [false, true]}}, order: {enabled: ASC}) { enabled } }";
+        let bool_response = assert_query_equivalent(&rust, &go, bool_query);
+        let bools: Vec<_> = bool_response["IndexedValue"]
+            .as_array()
+            .expect("IndexedValue array")
+            .iter()
+            .map(|row| row["enabled"].as_bool().expect("enabled"))
+            .collect();
+        assert_eq!(bools, [false, false, false, true, true, true]);
+        assert_uses_index("Rust", &rust, bool_query);
+        assert_uses_index("Go", &go, bool_query);
 
-    assert_index_query(
-        &rust,
-        &go,
-        r#"query { IndexedValue(filter: {observed: {_geq: "1600-01-01T00:00:00Z"}}, order: {observed: ASC}) { name observed } }"#,
-        &[
-            "minimum",
-            "negative",
-            "negative_zero",
-            "positive_zero",
-            "positive",
-            "maximum",
-        ],
-    );
+        assert_index_query(
+            &rust,
+            &go,
+            r#"query { IndexedValue(filter: {observed: {_geq: "1600-01-01T00:00:00Z"}}, order: {observed: ASC}) { name observed } }"#,
+            &[
+                "minimum",
+                "negative",
+                "negative_zero",
+                "positive_zero",
+                "positive",
+                "maximum",
+            ],
+        );
 
-    let nullable_query =
-        "query { IndexedValue(order: {optionalInteger: ASC}) { optionalInteger } }";
-    let nullable_response = assert_query_equivalent(&rust, &go, nullable_query);
-    let values: Vec<_> = nullable_response["IndexedValue"]
-        .as_array()
-        .expect("IndexedValue array")
-        .iter()
-        .map(|row| row["optionalInteger"].clone())
-        .collect();
-    assert_eq!(
-        values,
-        [
-            Value::Null,
-            Value::Null,
-            json!(-1),
-            json!(0),
-            json!(1),
-            json!(i64::MAX),
-        ]
-    );
-    assert_uses_index("Rust", &rust, nullable_query);
-    assert_uses_index("Go", &go, nullable_query);
+        let nullable_query =
+            "query { IndexedValue(order: {optionalInteger: ASC}) { optionalInteger } }";
+        let nullable_response = assert_query_equivalent(&rust, &go, nullable_query);
+        let values: Vec<_> = nullable_response["IndexedValue"]
+            .as_array()
+            .expect("IndexedValue array")
+            .iter()
+            .map(|row| row["optionalInteger"].clone())
+            .collect();
+        assert_eq!(
+            values,
+            [
+                Value::Null,
+                Value::Null,
+                json!(-1),
+                json!(0),
+                json!(1),
+                json!(i64::MAX),
+            ]
+        );
+        assert_uses_index("Rust", &rust, nullable_query);
+        assert_uses_index("Go", &go, nullable_query);
 
-    assert_index_query(
-        &rust,
-        &go,
-        r#"query { IndexedValue(filter: {group: {_like: "Al%"}}) { name group rank } }"#,
-        &["negative", "negative_zero", "positive", "minimum"],
-    );
+        assert_index_query(
+            &rust,
+            &go,
+            r#"query { IndexedValue(filter: {group: {_like: "Al%"}}) { name group rank } }"#,
+            &["negative", "negative_zero", "positive", "minimum"],
+        );
 
-    for document in [
-        r#"{"name":"repeated","values":[5,5,8]}"#,
-        r#"{"name":"other","values":[5,9]}"#,
-    ] {
-        create_both(&rust, &go, "ArrayValue", document);
-    }
-    let array_query = "query { ArrayValue(filter: {values: {_any: {_eq: 5}}}, order: {name: ASC}) { name values } }";
-    let array_response = assert_query_equivalent(&rust, &go, array_query);
-    assert_eq!(
-        array_response["ArrayValue"],
-        json!([
-            {"name": "other", "values": [5, 9]},
-            {"name": "repeated", "values": [5, 5, 8]}
-        ])
-    );
-    assert_uses_index("Rust", &rust, array_query);
-    assert_uses_index("Go", &go, array_query);
+        for document in [
+            r#"{"name":"repeated","values":[5,5,8]}"#,
+            r#"{"name":"other","values":[5,9]}"#,
+        ] {
+            create_both(&rust, &go, "ArrayValue", document);
+        }
+        let array_query = "query { ArrayValue(filter: {values: {_any: {_eq: 5}}}, order: {name: ASC}) { name values } }";
+        let array_response = assert_query_equivalent(&rust, &go, array_query);
+        assert_eq!(
+            array_response["ArrayValue"],
+            json!([
+                {"name": "other", "values": [5, 9]},
+                {"name": "repeated", "values": [5, 5, 8]}
+            ])
+        );
+        assert_uses_index("Rust", &rust, array_query);
+        assert_uses_index("Go", &go, array_query);
 
-    let repeated_unique = r#"mutation { add_UniqueArrayValue(input: {name: "accepted", values: [7, 7, 8]}) { name values } }"#;
-    assert_query_equivalent(&rust, &go, repeated_unique);
+        let repeated_unique = r#"mutation { add_UniqueArrayValue(input: {name: "accepted", values: [7, 7, 8]}) { name values } }"#;
+        assert_query_equivalent(&rust, &go, repeated_unique);
 
-    let collision = r#"{"name":"rejected","values":[8,9]}"#;
-    let _ = rust
-        .collection_create("UniqueArrayValue", collision)
-        .expect_err("Rust must reject a cross-document unique collision");
-    let _ = go
-        .collection_create("UniqueArrayValue", collision)
-        .expect_err("Go must reject a cross-document unique collision");
+        let collision = r#"{"name":"rejected","values":[8,9]}"#;
+        let _ = rust
+            .collection_create("UniqueArrayValue", collision)
+            .expect_err("Rust must reject a cross-document unique collision");
+        let _ = go
+            .collection_create("UniqueArrayValue", collision)
+            .expect_err("Go must reject a cross-document unique collision");
 
-    let unique_query =
-        "query { UniqueArrayValue(filter: {values: {_any: {_eq: 7}}}) { name values } }";
-    let unique_response = assert_query_equivalent(&rust, &go, unique_query);
-    assert_eq!(
-        unique_response["UniqueArrayValue"],
-        json!([{"name": "accepted", "values": [7, 7, 8]}])
-    );
-    assert_uses_index("Rust", &rust, unique_query);
-    assert_uses_index("Go", &go, unique_query);
+        let unique_query =
+            "query { UniqueArrayValue(filter: {values: {_any: {_eq: 7}}}) { name values } }";
+        let unique_response = assert_query_equivalent(&rust, &go, unique_query);
+        assert_eq!(
+            unique_response["UniqueArrayValue"],
+            json!([{"name": "accepted", "values": [7, 7, 8]}])
+        );
+        assert_uses_index("Rust", &rust, unique_query);
+        assert_uses_index("Go", &go, unique_query);
+    })
+    .await;
 }

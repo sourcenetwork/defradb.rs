@@ -25,8 +25,8 @@ fn oversized_schema() -> String {
     sdl
 }
 
-async fn post_schema(url: &str, sdl: String) -> reqwest::StatusCode {
-    reqwest::Client::new()
+async fn post_schema(url: &str, sdl: String) -> net::http::StatusCode {
+    net::http::Client::new()
         .post(format!("{url}/api/v1/collections"))
         .header("content-type", "application/json")
         .body(sdl)
@@ -45,28 +45,34 @@ async fn node_with_schema_cap() -> TestCluster {
         .expect("cluster starts")
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_oversized_schema_is_rejected_on_the_wire() {
-    let cluster = node_with_schema_cap().await;
+    edge::compat(async move {
+        let cluster = node_with_schema_cap().await;
 
-    assert_eq!(
-        post_schema(cluster.api_url(0), oversized_schema()).await,
-        reqwest::StatusCode::PAYLOAD_TOO_LARGE,
-        "--max-schema-size was set but an oversized schema was not rejected"
-    );
+        assert_eq!(
+            post_schema(cluster.api_url(0), oversized_schema()).await,
+            net::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "--max-schema-size was set but an oversized schema was not rejected"
+        );
+    })
+    .await;
 }
 
 /// The other half of the pair. Without it the test above would pass just as
 /// well against a node that rejected every schema, or one that never started.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_schema_within_the_limit_is_not_rejected() {
-    let cluster = node_with_schema_cap().await;
-    let small = "type S { n: Int }".to_string();
-    assert!(small.len() < MAX_SCHEMA_SIZE);
+    edge::compat(async move {
+        let cluster = node_with_schema_cap().await;
+        let small = "type S { n: Int }".to_string();
+        assert!(small.len() < MAX_SCHEMA_SIZE);
 
-    assert_ne!(
-        post_schema(cluster.api_url(0), small).await,
-        reqwest::StatusCode::PAYLOAD_TOO_LARGE,
-        "a schema under the cap must not be rejected as too large"
-    );
+        assert_ne!(
+            post_schema(cluster.api_url(0), small).await,
+            net::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "a schema under the cap must not be rejected as too large"
+        );
+    })
+    .await;
 }

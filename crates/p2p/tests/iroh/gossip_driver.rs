@@ -71,12 +71,12 @@ async fn connection() -> (Connection, Connection, [iroh::Endpoint; 2]) {
 async fn connection_on(alpn: &[u8]) -> (Connection, Connection, [iroh::Endpoint; 2]) {
     let server = endpoint().await;
     let client = endpoint().await;
-    let accept = n0_future::task::spawn({
+    let accept = nuclei::spawn(edge::compat({
         let server = server.clone();
         async move { server.accept().await.unwrap().await.unwrap() }
-    });
+    }));
     let connection = client.connect(server.addr(), alpn).await.expect("connect");
-    let far_side = accept.await.unwrap();
+    let far_side = accept.join().await.unwrap();
     (connection, far_side, [server, client])
 }
 
@@ -89,116 +89,134 @@ async fn gossip_to(driver: &mut Driver<Dials>, peer: EndpointId) {
     assert!(driver.drain().await.is_ok());
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_peer_with_no_connection_is_reached_only_through_an_admitted_dial() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    let peer = iroh::SecretKey::generate().public();
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let peer = iroh::SecretKey::generate().public();
 
-    gossip_to(&mut driver, peer).await;
-    assert_eq!(dials.0.pop(), Some(peer));
-    let entry = &driver.peers[&peer];
-    assert!(entry.writer.is_none() && entry.dialing);
-    assert_eq!(entry.pending.len(), 1);
+        gossip_to(&mut driver, peer).await;
+        assert_eq!(dials.0.pop(), Some(peer));
+        let entry = &driver.peers[&peer];
+        assert!(entry.writer.is_none() && entry.dialing);
+        assert_eq!(entry.pending.len(), 1);
 
-    // The endpoint refused the dial, as it does for a revoked peer.
-    assert!(driver.on_input(Input::DialFailed(peer)).await.is_ok());
-    assert!(!driver.peers.contains_key(&peer));
+        // The endpoint refused the dial, as it does for a revoked peer.
+        assert!(driver.on_input(Input::DialFailed(peer)).await.is_ok());
+        assert!(!driver.peers.contains_key(&peer));
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn forgetting_a_peer_leaves_its_connection_open() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    let (connection, _far_side, _endpoints) = connection().await;
-    let peer = connection.remote_id();
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, _far_side, _endpoints) = connection().await;
+        let peer = connection.remote_id();
 
-    driver.connected(peer, connection.clone());
-    gossip_to(&mut driver, peer).await;
-    assert!(driver.peers[&peer].writer.is_some());
-    assert!(dials.0.pop().is_none());
+        driver.connected(peer, connection.clone());
+        gossip_to(&mut driver, peer).await;
+        assert!(driver.peers[&peer].writer.is_some());
+        assert!(dials.0.pop().is_none());
 
-    driver.forget(peer);
-    assert!(driver.peers[&peer].writer.is_none());
-    let done = tokio::time::timeout(Duration::from_secs(10), driver.io.inbox.next())
-        .await
-        .expect("the writer reports it is done");
-    assert!(matches!(done, Some(Input::WriterDone { peer: p, .. }) if p == peer));
-    assert!(connection.close_reason().is_none());
+        driver.forget(peer);
+        assert!(driver.peers[&peer].writer.is_none());
+        let done = nuclei::time::timeout(Duration::from_secs(10), driver.io.inbox.next())
+            .await
+            .expect("the writer reports it is done");
+        assert!(matches!(done, Some(Input::WriterDone { peer: p, .. }) if p == peer));
+        assert!(connection.close_reason().is_none());
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_closed_connection_is_never_gossiped_on() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    let (connection, _far_side, _endpoints) = connection().await;
-    let peer = connection.remote_id();
-    connection.close(0u32.into(), b"revoked");
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, _far_side, _endpoints) = connection().await;
+        let peer = connection.remote_id();
+        connection.close(0u32.into(), b"revoked");
 
-    driver.connected(peer, connection);
-    assert!(!driver.peers.contains_key(&peer));
-    gossip_to(&mut driver, peer).await;
-    assert!(driver.peers[&peer].writer.is_none());
-    assert_eq!(dials.0.pop(), Some(peer));
+        driver.connected(peer, connection);
+        assert!(!driver.peers.contains_key(&peer));
+        gossip_to(&mut driver, peer).await;
+        assert!(driver.peers[&peer].writer.is_none());
+        assert_eq!(dials.0.pop(), Some(peer));
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_dial_that_lands_on_an_older_mux_ends_the_gossip_dial() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    let (connection, _far_side, _endpoints) = connection_on(protocols::ALPN_MUX_V1).await;
-    let peer = connection.remote_id();
-    gossip_to(&mut driver, peer).await;
-    assert!(driver.peers[&peer].dialing);
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, _far_side, _endpoints) = connection_on(protocols::ALPN_MUX_V1).await;
+        let peer = connection.remote_id();
+        gossip_to(&mut driver, peer).await;
+        assert!(driver.peers[&peer].dialing);
 
-    let handle = GossipHandle {
-        inbox: Arc::clone(&driver.io.inbox),
-        subscribed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-    };
-    handle.connected(peer, &connection);
-    let input = tokio::time::timeout(Duration::from_secs(10), driver.io.inbox.next())
-        .await
-        .expect("the gossip dial is answered")
-        .expect("an input");
-    assert!(matches!(input, Input::DialFailed(p) if p == peer));
-    assert!(driver.on_input(input).await.is_ok());
-    assert!(!driver.peers.contains_key(&peer));
+        let handle = GossipHandle {
+            inbox: Arc::clone(&driver.io.inbox),
+            subscribed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        };
+        handle.connected(peer, &connection);
+        let input = nuclei::time::timeout(Duration::from_secs(10), driver.io.inbox.next())
+            .await
+            .expect("the gossip dial is answered")
+            .expect("an input");
+        assert!(matches!(input, Input::DialFailed(p) if p == peer));
+        assert!(driver.on_input(input).await.is_ok());
+        assert!(!driver.peers.contains_key(&peer));
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn made_up_peers_never_keep_a_real_peers_address_out() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    for _ in 0..MAX_LEARNED {
-        driver
-            .learned
-            .insert(iroh::SecretKey::generate().public(), Vec::new());
-    }
-    let peer = iroh::SecretKey::generate().public();
-    driver.learn(peer, &peer_data(&AddrInfo::default()));
-    assert!(driver.learned.contains_key(&peer));
-    assert_eq!(driver.learned.len(), MAX_LEARNED);
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        for _ in 0..MAX_LEARNED {
+            driver
+                .learned
+                .insert(iroh::SecretKey::generate().public(), Vec::new());
+        }
+        let peer = iroh::SecretKey::generate().public();
+        driver.learn(peer, &peer_data(&AddrInfo::default()));
+        assert!(driver.learned.contains_key(&peer));
+        assert_eq!(driver.learned.len(), MAX_LEARNED);
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_join_hint_dials_the_advertisers_of_a_joined_topic_only() {
-    let dials = Dials::default();
-    let (mut driver, _events) = driver(&dials);
-    let peer = iroh::SecretKey::generate().public();
-    let hint = || Input::Hint {
-        topic: "t".into(),
-        peers: vec![peer],
-    };
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let peer = iroh::SecretKey::generate().public();
+        let hint = || Input::Hint {
+            topic: "t".into(),
+            peers: vec![peer],
+        };
 
-    assert!(driver.on_input(hint()).await.is_ok());
-    assert!(driver.drain().await.is_ok());
-    assert!(
-        dials.0.pop().is_none(),
-        "a topic we have not joined is left alone"
-    );
+        assert!(driver.on_input(hint()).await.is_ok());
+        assert!(driver.drain().await.is_ok());
+        assert!(
+            dials.0.pop().is_none(),
+            "a topic we have not joined is left alone"
+        );
 
-    assert!(driver.on_input(Input::Join("t".into())).await.is_ok());
-    assert!(driver.on_input(hint()).await.is_ok());
-    assert!(driver.drain().await.is_ok());
-    assert_eq!(dials.0.pop(), Some(peer));
+        assert!(driver.on_input(Input::Join("t".into())).await.is_ok());
+        assert!(driver.on_input(hint()).await.is_ok());
+        assert!(driver.drain().await.is_ok());
+        assert_eq!(dials.0.pop(), Some(peer));
+    })
+    .await
 }

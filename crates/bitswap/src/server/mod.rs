@@ -15,8 +15,8 @@ pub mod wantlist;
 
 use kovan_channel::{bounded, unbounded};
 use libp2p::PeerId;
+use nuclei::sync::oneshot;
 use thiserror::Error;
-use tokio::sync::oneshot;
 
 pub use config::ServerConfig;
 pub use filter::PeerBlockRequestFilter;
@@ -48,7 +48,7 @@ impl std::fmt::Debug for Server {
 }
 
 impl Server {
-    /// Spawns the server tasks on the current tokio runtime.
+    /// Spawns the server tasks on the current nuclei runtime.
     pub fn new<S: Store>(network: Network, store: S, config: ServerConfig) -> Self {
         let (inbound, inbound_rx) = kovan_channel::bounded(INBOUND_CAPACITY);
         let (commands, commands_rx) = kovan_channel::unbounded();
@@ -57,15 +57,16 @@ impl Server {
         let max_wants = config.max_queued_wantlist_entries_per_peer;
         let lookup_timeout = config.message_lookup_timeout;
         let engine = Engine::new(&config, store.clone(), network, reports);
-        tokio::spawn(receive::run(
+        nuclei::spawn(receive::run(
             inbound_rx,
             commands.clone(),
             store,
             config.peer_block_request_filter,
             max_wants,
             lookup_timeout,
-        ));
-        tokio::spawn(engine.run(commands_rx, reports_rx));
+        ))
+        .detach();
+        nuclei::spawn(engine.run(commands_rx, reports_rx)).detach();
 
         Server { inbound, commands }
     }

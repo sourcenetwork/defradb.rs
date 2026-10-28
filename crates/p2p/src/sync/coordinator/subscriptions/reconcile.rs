@@ -52,9 +52,9 @@ where
     async fn run(self: Arc<Self>, collection_id: String) {
         let mut delay = RECONCILE_RETRY_MIN;
         loop {
-            tokio::select! {
+            crate::rt::select! {
                 _ = self.shutdown.cancelled() => break,
-                _ = n0_future::time::sleep(delay) => {}
+                _ = crate::rt::time::sleep(delay) => {}
             }
             match self.pass(&collection_id).await {
                 Pass::Converged => {

@@ -4,7 +4,6 @@ use crate::proto::{
     StartSignResponse,
 };
 use regolith::sync::HopscotchMap;
-use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 
 const DERIVATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -91,22 +90,18 @@ impl SignService for Service {
     }
 }
 
-async fn client(
-    response: Option<String>,
-) -> (OrbisClient, tokio::task::JoinHandle<()>, Arc<Tokens>) {
+async fn client(response: Option<String>) -> (OrbisClient, nuclei::Task<()>, Arc<Tokens>) {
     let identity = identity();
     let tokens = Arc::new(Tokens::with_hasher(rapidhash::fast::RandomState::default()));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let listener = nuclei::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.get_ref().local_addr().unwrap());
     let service = Service {
         identity: identity.clone(),
         response,
         tokens: tokens.clone(),
     };
-    let task = tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(SignServiceServer::new(service))
-            .serve_with_incoming(TcpListenerStream::new(listener))
+    let task = nuclei::spawn(async move {
+        net::server::serve(listener, None, SignServiceServer::new(service))
             .await
             .unwrap();
     });
@@ -122,7 +117,7 @@ async fn client(
     (client, task, tokens)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn current_protocol_signs_with_distinct_message_bound_tokens() {
     let (client, task, tokens) = client(None).await;
     for message in [b"first".as_slice(), b"second"] {
@@ -146,7 +141,7 @@ async fn current_protocol_signs_with_distinct_message_bound_tokens() {
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn current_protocol_rejects_invalid_signatures() {
     for signature in [
         hex::encode(
@@ -179,7 +174,7 @@ async fn current_protocol_rejects_invalid_signatures() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn invalid_configuration_fails_before_connecting() {
     let pk = key(7).sk_to_pk().compress().to_vec();
     for derivation in ["", "bad", &"A".repeat(64)] {
@@ -210,7 +205,7 @@ async fn invalid_configuration_fails_before_connecting() {
     assert!(result.err().unwrap().to_string().contains("Ed25519"));
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn signs_from_a_thread_outside_any_runtime() {
     let (client, task, tokens) = client(None).await;
     let client = Arc::new(client);

@@ -44,8 +44,8 @@ async fn node() -> TestCluster {
     cluster
 }
 
-async fn subscribe(cluster: &TestCluster, query: &str) -> reqwest::Response {
-    reqwest::Client::new()
+async fn subscribe(cluster: &TestCluster, query: &str) -> net::http::Response {
+    net::http::Client::new()
         .post(format!("{}/api/v0/graphql", cluster.api_url(0)))
         .header("Accept", "text/event-stream")
         .json(&serde_json::json!({ "query": query }))
@@ -54,14 +54,20 @@ async fn subscribe(cluster: &TestCluster, query: &str) -> reqwest::Response {
         .expect("subscription request")
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_named_fragment_root_delivers_like_a_plain_one() {
-    assert_delivers(NAMED_FRAGMENT_ROOT).await;
+    edge::compat(async {
+        assert_delivers(NAMED_FRAGMENT_ROOT).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_inline_fragment_root_delivers_like_a_plain_one() {
-    assert_delivers(INLINE_FRAGMENT_ROOT).await;
+    edge::compat(async {
+        assert_delivers(INLINE_FRAGMENT_ROOT).await;
+    })
+    .await;
 }
 
 async fn assert_delivers(query: &str) {
@@ -87,53 +93,59 @@ async fn assert_delivers(query: &str) {
 /// same place -- and reports it as a GraphQL error, which is a `200` with a
 /// JSON body rather than a stream. Held here so this path stays distinct from
 /// the roots that legitimately open one.
-#[tokio::test]
+#[nuclei::test]
 async fn a_root_resolving_to_two_fields_is_reported() {
-    for query in [MULTI_ROOT, FRAGMENT_TO_TWO_FIELDS] {
-        let cluster = node().await;
-        let response = subscribe(&cluster, query).await;
+    edge::compat(async {
+        for query in [MULTI_ROOT, FRAGMENT_TO_TWO_FIELDS] {
+            let cluster = node().await;
+            let response = subscribe(&cluster, query).await;
 
-        let status = response.status();
-        let body: serde_json::Value = response.json().await.expect("a JSON error body");
-        let rendered = body.to_string();
+            let status = response.status();
+            let body: serde_json::Value = response.json().await.expect("a JSON error body");
+            let rendered = body.to_string();
 
-        assert!(
-            !status.is_server_error(),
-            "expected the caller to be told, got {status}: {rendered} for {query}"
-        );
-        assert!(
-            rendered.contains("exactly one root field"),
-            "expected the reason to name the problem, got {rendered} for {query}"
-        );
-    }
+            assert!(
+                !status.is_server_error(),
+                "expected the caller to be told, got {status}: {rendered} for {query}"
+            );
+            assert!(
+                rendered.contains("exactly one root field"),
+                "expected the reason to name the problem, got {rendered} for {query}"
+            );
+        }
+    })
+    .await;
 }
 
 /// The control: the same apparatus, a subscription the node accepts, events
 /// arrive. Without it, "0 events" above could as easily be a broken test.
-#[tokio::test]
+#[nuclei::test]
 async fn single_root_subscription_delivers_as_a_control() {
-    let cluster = node().await;
-    let response = subscribe(&cluster, SINGLE_ROOT).await;
-    assert!(response.status().is_success());
+    edge::compat(async {
+        let cluster = node().await;
+        let response = subscribe(&cluster, SINGLE_ROOT).await;
+        assert!(response.status().is_success());
 
-    let delivered = deliveries_after_a_matching_write(&cluster, response).await;
-    assert!(
-        delivered > 0,
-        "an accepted subscription delivered nothing either, so the measurement \
-         is at fault rather than the node"
-    );
+        let delivered = deliveries_after_a_matching_write(&cluster, response).await;
+        assert!(
+            delivered > 0,
+            "an accepted subscription delivered nothing either, so the measurement \
+             is at fault rather than the node"
+        );
+    })
+    .await;
 }
 
 /// Count `next` frames arriving on `response` after writing a document the
 /// subscription covers.
 async fn deliveries_after_a_matching_write(
     cluster: &TestCluster,
-    response: reqwest::Response,
+    response: net::http::Response,
 ) -> usize {
     let delivered = Arc::new(AtomicUsize::new(0));
     let counter = delivered.clone();
 
-    let reader = tokio::spawn(async move {
+    let reader = nuclei::spawn(async move {
         use futures::StreamExt;
         let mut stream = response.bytes_stream();
         let mut buf = String::new();
@@ -150,12 +162,12 @@ async fn deliveries_after_a_matching_write(
 
     // The node registers the subscription before returning its headers, but
     // give the reader a moment to be polled before there is anything to read.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
     cluster
         .client(0)
         .query(r#"mutation { add_User(input: {name: "Alice"}) { _docID } }"#)
         .expect("write a document the subscription covers");
-    tokio::time::sleep(DELIVERY_WINDOW).await;
+    nuclei::time::sleep(DELIVERY_WINDOW).await;
 
     reader.abort();
     delivered.load(Ordering::SeqCst)

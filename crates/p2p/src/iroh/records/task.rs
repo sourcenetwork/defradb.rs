@@ -10,11 +10,12 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::rt::time::Instant;
 use bytes::Bytes;
 use iroh::{EndpointId, SecretKey};
-use n0_future::time::{Duration, Instant};
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tracing::{debug, warn};
 
 use super::{
@@ -196,12 +197,12 @@ impl RecordsHandle {
     {
         let mut records = Records::new(key, net);
         loop {
-            let input = tokio::select! {
+            let input = crate::rt::select! {
                 input = self.next() => match input {
                     Some(input) => Some(input),
                     None => break,
                 },
-                () = n0_future::time::sleep(TICK) => None,
+                () = crate::rt::time::sleep(TICK) => None,
             };
             let now = Instant::now();
             if let Some(input) = input {

@@ -32,7 +32,7 @@ const PATHS: &[(&str, Method)] = &[
 /// Every prefix must answer a given request the same way, not merely resolve.
 /// `!= NOT_FOUND` would pass with the unversioned mount answering 405 while
 /// the versioned ones answer 400.
-#[tokio::test]
+#[nuclei::test]
 async fn every_mount_answers_a_request_identically() {
     // Pinned literally: a test that only iterates the constant stops covering
     // the unversioned mount the moment the constant loses it.
@@ -71,7 +71,7 @@ async fn every_mount_answers_a_request_identically() {
 /// The call this change exists to serve. Go advertises `POST /api/graphql`
 /// with a query body (`node/node_api.go`), and a GET without `query` is a 400
 /// on both, so asserting the GET proves nothing about the mount.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unversioned_graphql_post_is_served() {
     let (status, body) = Call::post("/api/graphql")
         .json(r#"{"query":"{ __typename }"}"#)
@@ -100,7 +100,7 @@ async fn an_unversioned_graphql_post_is_served() {
 }
 
 /// The regression: this was a 404.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unversioned_request_is_not_a_404() {
     let (status, body) = Call::post("/api/collections")
         .method(Method::GET)
@@ -178,7 +178,7 @@ fn near_miss_version_segments_land_on_the_safe_default() {
 /// `/api/purge` folds to `DocumentUpdate`, so a `DocumentUpdate` holder gets
 /// through and a `DocumentRead` holder does not. An unfolded route would be
 /// enforced as `DocumentRead` and flip the first case.
-#[tokio::test]
+#[nuclei::test]
 async fn the_unversioned_mount_is_enforced_as_its_real_permission() {
     async fn purge_as(granted: NodePermission) -> StatusCode {
         let (owner, _) = nac_owner();

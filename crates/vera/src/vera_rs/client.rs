@@ -5,9 +5,14 @@ use alloy_primitives::{Bytes, B256};
 use serde::de::DeserializeOwned;
 use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
 
+#[cfg(not(target_arch = "wasm32"))]
+use net::http as http_client;
+#[cfg(target_arch = "wasm32")]
+use reqwest as http_client;
+
 pub struct VeraRsClient {
     url: String,
-    http: reqwest::Client,
+    http: http_client::Client,
     next_id: AtomicU64,
 }
 
@@ -15,7 +20,7 @@ impl VeraRsClient {
     pub fn new(url: String, request_timeout: Duration) -> Result<Self, ClientError> {
         Ok(Self {
             url,
-            http: reqwest::Client::builder()
+            http: http_client::Client::builder()
                 .timeout(request_timeout)
                 .build()?,
             next_id: AtomicU64::new(1),
@@ -113,7 +118,7 @@ impl VeraRsClient {
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error(transparent)]
-    Http(#[from] reqwest::Error),
+    Http(#[from] http_client::Error),
     #[error("RPC error ({code}): {message}")]
     Rpc { code: i64, message: String },
     #[error("invalid RPC response: {0}")]

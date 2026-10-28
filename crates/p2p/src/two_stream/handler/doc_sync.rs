@@ -1,7 +1,7 @@
 //! DocSync request and response methods.
 
+use crate::rt::time::timeout;
 use libp2p::PeerId;
-use tokio::time::timeout;
 
 use crate::codec::write_message;
 use crate::error::{Error, Result};
@@ -23,7 +23,7 @@ impl TwoStreamHandler {
         let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
         // Create response channel
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = crate::rt::oneshot::channel();
 
         // Register pending response against the expected peer as well as the message ID.
         self.pending.register_doc_sync(pending_key.clone(), tx);

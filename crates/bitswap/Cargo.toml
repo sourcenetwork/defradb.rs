@@ -25,10 +25,10 @@ kovan-channel = { workspace = true }
 libp2p = { workspace = true }
 multihash = { workspace = true }
 multihash-codetable = { workspace = true }
+nuclei = { workspace = true }
 prost = { workspace = true }
 rapidhash = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 unsigned-varint = { version = "0.8", features = ["asynchronous_codec"] }
 
@@ -37,10 +37,10 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 hex = { workspace = true }
-libp2p = { workspace = true, features = ["tokio", "macros"] }
+libp2p = { workspace = true, features = ["macros"] }
+# Test swarms on nuclei sockets.
+net = { path = "../net", features = ["libp2p"] }
 libp2p-stream = { workspace = true }
 multistream-select = "0.13"
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "io-util", "time", "test-util"] }
-tokio-util = { version = "0.7", features = ["compat"] }

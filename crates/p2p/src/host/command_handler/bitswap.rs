@@ -20,7 +20,7 @@ impl<S: Store> P2PHost<S> {
         cid: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
-        response: tokio::sync::oneshot::Sender<Result<QueryId>>,
+        response: crate::rt::oneshot::Sender<Result<QueryId>>,
     ) {
         // Generate a query ID for tracking
         static QUERY_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -58,10 +58,10 @@ impl<S: Store> P2PHost<S> {
         // re-added with nothing left to remove it: the map would grow by one per
         // fetch, and a long-gone query would still report as cancellable. Gate
         // the task on registration having happened.
-        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel::<()>();
+        let (registered_tx, registered_rx) = crate::rt::oneshot::channel::<()>();
 
         // Spawn async task to fetch blocks (with cancellation support)
-        let task_handle = tokio::spawn(async move {
+        let task_handle = crate::rt::spawn(async move {
             let _ = registered_rx.await;
 
             #[cfg(feature = "test-utils")]
@@ -75,7 +75,7 @@ impl<S: Store> P2PHost<S> {
             let per_block_timeout = std::time::Duration::from_secs(10);
 
             loop {
-                match tokio::time::timeout(per_block_timeout, receiver.recv()).await {
+                match crate::rt::time::timeout(per_block_timeout, receiver.recv()).await {
                     Ok(Some(block)) => {
                         fetched += 1;
 
@@ -144,16 +144,14 @@ impl<S: Store> P2PHost<S> {
             queries.remove(&query_id);
         });
 
+        let abort = task_handle.abort_handle();
+        task_handle.detach();
+
         #[cfg(feature = "test-utils")]
         crate::testutil::stall_before_query_registration().await;
 
-        self.bitswap_queries.insert(
-            query_id,
-            BitswapQuery {
-                abort: task_handle.abort_handle(),
-                fetch_id,
-            },
-        );
+        self.bitswap_queries
+            .insert(query_id, BitswapQuery { abort, fetch_id });
         let _ = registered_tx.send(());
 
         if response.send(Ok(query_id)).is_err() {
@@ -164,7 +162,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_bitswap_cancel(
         &mut self,
         query_id: QueryId,
-        response: tokio::sync::oneshot::Sender<bool>,
+        response: crate::rt::oneshot::Sender<bool>,
     ) {
         let cancelled = if let Some(query) = self.bitswap_queries.remove(&query_id) {
             debug!(query_id = ?query_id, "Cancelling Bitswap query");

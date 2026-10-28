@@ -551,7 +551,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn bitswap_block_received_retries_only_waiting_dags() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -585,7 +585,7 @@ mod tests {
             .await
             .expect("bitswap block received");
 
-        match n0_future::time::timeout(Duration::from_secs(1), events.recv())
+        match crate::rt::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("event")
             .expect("channel open")
@@ -608,7 +608,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn bitswap_block_coalesces_without_blocking_the_transport_drain() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -624,7 +624,7 @@ mod tests {
             .try_acquire_nowait(&cid)
             .expect("test owns CID");
 
-        n0_future::time::timeout(
+        crate::rt::time::timeout(
             Duration::from_millis(100),
             coordinator.handle_bitswap_block_received(QueryId(42), cid, block.clone()),
         )
@@ -649,7 +649,7 @@ mod tests {
         assert!(blockstore.has(&cid).await.unwrap());
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn deferred_ingest_preserves_the_claimed_retry_deadline() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -669,7 +669,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         assert!(coordinator
             .manager()
             .try_claim_pending_dag_dispatch(&root, now));
@@ -683,16 +683,16 @@ mod tests {
                 .try_claim_pending_dag_dispatch(&root, now),
             "local ingest contention must not turn the eligibility wakeup into a fetch loop"
         );
-        tokio::time::advance(Duration::from_secs(4)).await;
+        nuclei::time::advance(Duration::from_secs(4)).await;
         assert!(coordinator
             .manager()
-            .try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+            .try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
     }
 
     /// #1116 stage 2 (#1112): registration and failed completion only update
     /// durable receiver state. The per-root clock is the sole path that may
     /// claim and emit `DagNeedsFetch`, preventing an immediate retry storm.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn bitswap_complete_failure_defers_reissue_to_retry_clock() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -723,7 +723,7 @@ mod tests {
         );
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         coordinator.dispatch_pending_dag_fetch_for_test(due[0].0, &due[0].1);
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -756,10 +756,10 @@ mod tests {
 
         // Advance past the rung reached by the clock's first claim
         // (dispatches=1 -> retry_backoff(1) = 4s) and run another tick.
-        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         for (due_root, dag) in &due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -779,7 +779,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn bitswap_complete_retries_only_its_registered_and_due_root() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -822,7 +822,7 @@ mod tests {
         );
         let initial_due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(initial_due.len(), 2);
         for (due_root, dag) in &initial_due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -851,7 +851,7 @@ mod tests {
         assert!(
             coordinator
                 .manager()
-                .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+                .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
                 .is_empty(),
             "neither root is due before the clock rung elapses"
         );
@@ -878,10 +878,10 @@ mod tests {
 
         // Advance past the clock-owned first rung. Both roots become due; only
         // the clock claim advances their dispatch counters.
-        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert!(
             due.iter().any(|(cid, _)| *cid == root1_cid),
             "root1 should be due after its second rung elapses"

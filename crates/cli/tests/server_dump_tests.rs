@@ -4,7 +4,7 @@ use std::sync::Arc;
 use db::database::DB;
 use keyring::{FileKeyring, Keyring, ENCRYPTION_KEY, KEYRING_SECRET_ENV};
 
-#[tokio::test]
+#[nuclei::test]
 async fn server_dump_reads_encrypted_regolith_store() {
     let root = tempfile::tempdir().unwrap();
     let secret = "server-dump-test-secret";

@@ -2,10 +2,9 @@
 //! allocator every target runs on ([`allocator`]).
 //!
 //! Only helpers that are byte-identical at every call site live here. A helper
-//! that differs between targets stays with its target: for tokio runtimes in
-//! particular, the builder configuration is part of what a benchmark measures,
-//! and four of the six variants in this suite are deliberately unique to their
-//! target.
+//! that differs between targets stays with its target: for runtimes in
+//! particular, the worker count is part of what a benchmark measures, so each
+//! target names its own.
 
 #![allow(dead_code)]
 
@@ -15,8 +14,37 @@ pub mod vector;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use criterion::async_executor::AsyncExecutor;
 use regolith::sync::OnceCell;
-use tokio::runtime::Runtime;
+
+/// A nuclei runtime a benchmark drives its futures from, and criterion's executor for them.
+pub struct Runtime(nuclei::Runtime);
+
+impl Runtime {
+    pub fn block_on<F>(&self, future: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        self.0.block_on(future)
+    }
+}
+
+impl AsyncExecutor for &Runtime {
+    fn block_on<T>(&self, future: impl std::future::Future<Output = T>) -> T {
+        Runtime::block_on(self, future)
+    }
+}
+
+/// A runtime of `threads` workers. Zero runs every task on the thread inside
+/// `block_on`.
+pub fn runtime(threads: usize) -> Runtime {
+    Runtime(
+        nuclei::Runtime::builder()
+            .worker_threads(threads)
+            .build()
+            .expect("a nuclei runtime"),
+    )
+}
 
 /// Built once per process and reused. `Runtime::new()` is multi-threaded across
 /// all available cores.
@@ -25,7 +53,7 @@ pub fn shared_runtime() -> &'static Runtime {
     static CLAIMED: AtomicBool = AtomicBool::new(false);
     // The runtime spawns threads, so exactly one caller builds it; the rest wait for it.
     if !CLAIMED.swap(true, Ordering::AcqRel) {
-        let _ = RUNTIME.set(Runtime::new().unwrap());
+        let _ = RUNTIME.set(owned_runtime());
     }
     loop {
         if let Some(runtime) = RUNTIME.get() {
@@ -38,7 +66,7 @@ pub fn shared_runtime() -> &'static Runtime {
 /// A fresh multi-threaded runtime per call, for targets that build one outside
 /// the measured region and hand it to criterion.
 pub fn owned_runtime() -> Runtime {
-    Runtime::new().expect("a tokio runtime")
+    Runtime(nuclei::Runtime::new().expect("a nuclei runtime"))
 }
 
 /// The positive count the environment variable `name` holds, else `default`.

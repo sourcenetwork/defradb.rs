@@ -2,9 +2,9 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use std::path::Path;
 use std::time::Instant;
 
+use nuclei::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use nuclei::process::Command;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::process::Command;
 
 use crate::config::FFI_CRATE_PATH;
 use crate::error::{FfiTestError, Result};
@@ -103,7 +103,7 @@ pub async fn run_tests(
 
     let stdout = child.stdout.take().expect("Failed to capture stdout");
     let stderr = child.stderr.take().expect("Failed to capture stderr");
-    let stderr_task = tokio::spawn(async move {
+    let stderr_task = nuclei::spawn(async move {
         let mut stderr = BufReader::new(stderr);
         let mut output = String::new();
         stderr.read_to_string(&mut output).await?;
@@ -209,7 +209,7 @@ pub async fn run_tests(
 
     // Wait for the command to complete
     let status = child.wait().await?;
-    let stderr = stderr_task.await.map_err(|e| {
+    let stderr = stderr_task.join().await.map_err(|e| {
         FfiTestError::TestExecution(format!("failed to read go test stderr: {e}"))
     })??;
     let duration_secs = start.elapsed().as_secs_f64();
@@ -399,7 +399,7 @@ pub async fn discover_subpackages(go_path: &Path, package: &str) -> Result<Vec<S
 
 /// Recursively collect test packages
 async fn collect_packages(base: &Path, current: &Path, packages: &mut Vec<String>) -> Result<()> {
-    let mut entries = tokio::fs::read_dir(current).await?;
+    let mut entries = nuclei::fs::read_dir(current).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -407,7 +407,7 @@ async fn collect_packages(base: &Path, current: &Path, packages: &mut Vec<String
         if entry.file_type().await?.is_dir() {
             // Check if this directory contains Go test files
             let mut has_tests = false;
-            let mut dir_entries = tokio::fs::read_dir(&path).await?;
+            let mut dir_entries = nuclei::fs::read_dir(&path).await?;
 
             while let Some(file) = dir_entries.next_entry().await? {
                 let name = file.file_name();

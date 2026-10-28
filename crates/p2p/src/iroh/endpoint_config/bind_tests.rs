@@ -83,7 +83,7 @@ fn native_bindings_match_executed_model() {
     let cases = model_cases(&inputs);
     let count = cases.len();
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             for case in cases {
                 let address = case.input["addr"]["ip"]
                     .as_str()
@@ -133,7 +133,7 @@ fn native_bindings_match_executed_model() {
                 }
                 endpoint.close().await;
             }
-        })
+        }))
         .expect("native endpoint model binding");
     tracing::info!(
         cases = count,

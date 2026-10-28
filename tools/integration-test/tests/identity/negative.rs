@@ -99,7 +99,7 @@ fn der_to_raw_secp256k1(der: &[u8]) -> Option<Vec<u8>> {
 async fn graphql_with_raw_auth(api_url: &str, auth_header: &str) -> u16 {
     let url = format!("{}/api/v0/graphql", api_url);
     let body = serde_json::json!({"query": "query { __typename }"});
-    let client = reqwest::Client::new();
+    let client = net::http::Client::new();
     let resp = client
         .post(&url)
         .header("Authorization", auth_header)

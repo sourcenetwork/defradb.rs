@@ -11,9 +11,9 @@
 
 use std::sync::Arc;
 
+use crate::rt::oneshot;
 use kovan_map::HopscotchMap;
 use kovan_queue::array_queue::ArrayQueue;
-use tokio::sync::oneshot;
 use tracing::debug;
 
 use crate::message::QuerySEArtifactsReply;

@@ -284,38 +284,56 @@ async fn duplicate_selection_with_reordered_arguments_test(cluster: TestCluster)
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_duplicate_selection_via_fragment_spread() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    duplicate_selection_via_fragment_spread_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        duplicate_selection_via_fragment_spread_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_duplicate_selection_via_inline_fragment() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    duplicate_selection_via_inline_fragment_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        duplicate_selection_via_inline_fragment_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_duplicate_selection_with_reordered_arguments() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    duplicate_selection_with_reordered_arguments_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        duplicate_selection_with_reordered_arguments_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_parent_group_by_relation_with_duplicate_selection() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    parent_group_by_relation_with_duplicate_selection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        parent_group_by_relation_with_duplicate_selection_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_duplicate_relation_selection_plans_one_join() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    duplicate_relation_selection_plans_one_join_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        duplicate_relation_selection_plans_one_join_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_rendering_1597_group_by_with_parent_relation_filter() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    group_by_with_parent_relation_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        group_by_with_parent_relation_filter_test(cluster).await;
+    })
+    .await;
 }

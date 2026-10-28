@@ -96,7 +96,7 @@ async fn index_management_test(cluster: TestCluster) {
         "idx_name_price not found in list"
     );
 
-    let compatible_list: Value = reqwest::get(format!(
+    let compatible_list: Value = net::http::get(format!(
         "{}/api/v0/collections/Product/indexes",
         cluster.api_url(0)
     ))
@@ -142,7 +142,7 @@ async fn index_management_test(cluster: TestCluster) {
     // Completed actions are removed rather than retained as terminal records.
     node.collection_truncate("Product")
         .expect("truncate Product");
-    let actions: Value = reqwest::get(format!("{}/api/v0/actions", cluster.api_url(0)))
+    let actions: Value = net::http::get(format!("{}/api/v0/actions", cluster.api_url(0)))
         .await
         .expect("list actions request")
         .json()

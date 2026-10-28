@@ -4,8 +4,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use tokio::sync::mpsc;
 
 #[cfg(feature = "libp2p-transport")]
 use super::authorizer::AccessAuthorizer;
@@ -286,14 +286,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Set the failure channel for reporting push failures to the FFI layer.
-    pub fn set_failure_channel(&mut self, tx: tokio::sync::mpsc::Sender<super::PushFailure>) {
+    pub fn set_failure_channel(&mut self, tx: crate::rt::mpsc::Sender<super::PushFailure>) {
         self.runtime.failure_tx.store_some(tx);
     }
 
     /// A bounded channel of `capacity` push failures, installed as this
     /// coordinator's failure channel; the receiver is the caller's.
     pub fn attach_failure_channel(&mut self, capacity: usize) -> super::PushFailureReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(capacity);
+        let (tx, rx) = crate::rt::mpsc::channel(capacity);
         self.set_failure_channel(tx);
         rx
     }

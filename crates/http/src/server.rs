@@ -9,9 +9,8 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::Router;
 use edge::Edge;
-use tokio::net::TcpListener;
+use nuclei::net::TcpListener;
 use tower::limit::ConcurrencyLimitLayer;
-use tower::timeout::TimeoutLayer;
 use tower::{Layer, ServiceBuilder};
 use tower_http::cors::CorsLayer;
 use tower_http::normalize_path::NormalizePathLayer;
@@ -123,12 +122,7 @@ pub struct Server {
 /// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
 /// listener. Call it on the network runtime.
 pub async fn serve_router(listener: std::net::TcpListener, router: Router) -> std::io::Result<()> {
-    axum::serve(adopt(listener)?, router).await
-}
-
-fn adopt(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
-    listener.set_nonblocking(true)?;
-    TcpListener::from_std(listener)
+    net::server::serve(TcpListener::new(listener)?, None, router).await
 }
 
 impl Server {
@@ -549,13 +543,13 @@ impl Server {
             router = router.layer(
                 ServiceBuilder::new()
                     .layer(HandleErrorLayer::new(|err: axum::BoxError| async move {
-                        if err.is::<tower::timeout::error::Elapsed>() {
+                        if err.is::<net::timeout::Elapsed>() {
                             StatusCode::REQUEST_TIMEOUT
                         } else {
                             StatusCode::SERVICE_UNAVAILABLE
                         }
                     }))
-                    .layer(TimeoutLayer::new(Duration::from_secs(
+                    .layer(net::timeout::TimeoutLayer::new(Duration::from_secs(
                         self.config.request_timeout,
                     ))),
             );
@@ -646,7 +640,7 @@ impl Server {
     /// Serves on `listener`, already bound by the caller, until shutdown.
     /// Call it on the network runtime.
     pub async fn serve_on(self, listener: std::net::TcpListener) -> Result<()> {
-        let listener = adopt(listener).map_err(|e| self.bind_error(e))?;
+        let listener = TcpListener::new(listener).map_err(|e| self.bind_error(e))?;
         self.serve(listener).await
     }
 
@@ -655,14 +649,15 @@ impl Server {
         if let Some(extra) = self.extra_routes {
             router = router.merge(extra);
         }
-        let address = listener.local_addr().unwrap_or(self.config.address);
+        let address = listener
+            .get_ref()
+            .local_addr()
+            .unwrap_or(self.config.address);
         let scheme = if self.tls.is_some() { "https" } else { "http" };
         tracing::info!("Providing HTTP API at {scheme}://{address}");
 
-        let result = match self.tls {
-            Some(tls) => tls.serve(listener, router).await,
-            None => axum::serve(listener, router).await,
-        };
+        let tls = self.tls.map(|tls| tls.acceptor());
+        let result = net::server::serve(listener, tls, router).await;
         result.map_err(|e| {
             tracing::error!(error = %e, "HTTP server encountered fatal error");
             crate::error::HttpError::Internal(format!("server error: {}", e))

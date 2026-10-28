@@ -57,7 +57,7 @@ impl<S: Store> P2PHost<S> {
                     peer_id,
                     connection_path(&endpoint),
                     endpoint.is_dialer(),
-                    tokio::time::Instant::now(),
+                    crate::rt::time::Instant::now(),
                 );
 
                 let mut superseded = false;
@@ -325,7 +325,7 @@ mod tests {
     use crate::host::P2PHost;
     use crate::testutil::MockBitswapStore;
 
-    fn drain(rx: &mut tokio::sync::mpsc::Receiver<HostEvent>) -> Vec<HostEvent> {
+    fn drain(rx: &mut crate::rt::mpsc::Receiver<HostEvent>) -> Vec<HostEvent> {
         let mut events = Vec::new();
         while let Ok(event) = rx.try_recv() {
             events.push(event);
@@ -344,7 +344,7 @@ mod tests {
     /// `ConnectionClosed` emitted `PeerDisconnected` unconditionally, so tearing
     /// down a duplicate connection (common under Linux socket scheduling) flipped
     /// the peer's `connected` gate off and stalled block reconciliation.
-    #[tokio::test]
+    #[nuclei::test]
     async fn peer_disconnect_only_on_last_connection_close() {
         let store = MockBitswapStore::new();
         let (mut host, _handle, mut events, _registry) = P2PHost::new(store).await.unwrap();

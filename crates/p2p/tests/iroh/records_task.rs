@@ -6,8 +6,9 @@ use std::rc::Rc;
 
 use bytes::Bytes;
 use iroh::{EndpointId, SecretKey};
-use n0_future::time::{Duration, Instant};
+use nuclei::time::Instant;
 use rapidhash::{HashSetExt, RapidHashSet};
+use std::time::Duration;
 
 use super::task::Records;
 use super::*;
@@ -526,7 +527,7 @@ fn providers(
     now: Instant,
     ask: Vec<EndpointId>,
 ) -> Vec<EndpointId> {
-    let (reply, mut answer) = tokio::sync::oneshot::channel();
+    let (reply, mut answer) = nuclei::sync::oneshot::channel();
     records.on_input(
         Input::Providers {
             id: "users".into(),
@@ -701,7 +702,7 @@ fn replicator_offers_list_only_nodes_that_offer_and_hold_the_collection() {
     );
 
     let lookup = |records: &mut Records<FakeNet>, id: Option<&str>| {
-        let (reply, mut answer) = tokio::sync::oneshot::channel();
+        let (reply, mut answer) = nuclei::sync::oneshot::channel();
         records.on_input(
             Input::Replicators {
                 id: id.map(str::to_owned),
@@ -721,7 +722,7 @@ fn replicator_offers_list_only_nodes_that_offer_and_hold_the_collection() {
     assert_eq!(lookup(&mut records, None), every);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn changes_queue_past_a_full_hint_lane_and_come_out_first() {
     let handle = RecordsHandle::new();
     let peer = SecretKey::generate().public();
@@ -738,7 +739,7 @@ async fn changes_queue_past_a_full_hint_lane_and_come_out_first() {
     }
 
     for n in 0..2048 {
-        match n0_future::time::timeout(Duration::from_secs(5), handle.next()).await {
+        match nuclei::time::timeout(Duration::from_secs(5), handle.next()).await {
             Ok(Some(Input::Collection { id, held: true })) => assert_eq!(id, n.to_string()),
             _ => panic!("change {n} was not read first"),
         }

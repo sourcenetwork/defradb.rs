@@ -136,7 +136,7 @@ impl Node {
                 )
             })?;
             let worker_config = config.clone();
-            let worker = tokio::task::spawn_blocking(move || {
+            let worker = nuclei::spawn_blocking(move || {
                 let keyring = crate::commands::open_keyring(&worker_config)?;
                 vera::vera_rs::NativeWorker::open(
                     &worker_config.rootdir.join("vera-worker"),
@@ -145,6 +145,7 @@ impl Node {
                 )
                 .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
             })
+            .join()
             .await
             .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
@@ -222,7 +223,7 @@ fn gate_external_acp(
 ) -> Arc<dyn acp::DocumentACP> {
     let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
     let redrive = Arc::clone(&gate);
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         match redrive.redrive_owed().await {
             Ok(report) if report.settled > 0 => info!(
                 settled = report.settled,
@@ -235,6 +236,7 @@ fn gate_external_acp(
                 "Could not read owed ACP registrations; their documents stay readable only by their creators"
             ),
         }
-    });
+    })
+    .detach();
     gate
 }

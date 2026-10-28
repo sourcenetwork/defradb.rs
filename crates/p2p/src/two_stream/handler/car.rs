@@ -16,7 +16,7 @@ async fn read_stream(
     timeout: std::time::Duration,
 ) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    tokio::time::timeout(timeout, stream.take(max_size).read_to_end(&mut buf))
+    crate::rt::time::timeout(timeout, stream.take(max_size).read_to_end(&mut buf))
         .await
         .map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::TimedOut, "CAR stream read timed out")

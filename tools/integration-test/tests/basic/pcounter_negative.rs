@@ -24,47 +24,57 @@ fn assert_no_documents(cluster: &TestCluster) {
     assert_eq!(data["Tally"].as_array().map(Vec::len), Some(0), "{data}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_create_rejects_a_negative_pcounter() {
-    let cluster = single_node().await;
-    let error = cluster
-        .client(0)
-        .query_expect_error(
-            r#"mutation { add_Tally(input: {name: "first", hits: -1}) { _docID } }"#,
-        )
-        .expect("negative create error");
-    assert!(error.contains(REFUSAL), "{error}");
-    assert_no_documents(&cluster);
+    edge::compat(async move {
+        let cluster = single_node().await;
+        let error = cluster
+            .client(0)
+            .query_expect_error(
+                r#"mutation { add_Tally(input: {name: "first", hits: -1}) { _docID } }"#,
+            )
+            .expect("negative create error");
+        assert!(error.contains(REFUSAL), "{error}");
+        assert_no_documents(&cluster);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn http_create_rejects_a_negative_pcounter() {
-    let cluster = single_node().await;
-    let response = reqwest::Client::new()
-        .post(format!("{}/api/v0/collections/Tally", cluster.api_url(0)))
-        .json(&serde_json::json!({"name": "first", "hits": -1}))
-        .send()
-        .await
-        .expect("POST document");
-    assert!(!response.status().is_success(), "{}", response.status());
-    let body = response.text().await.expect("error body");
-    assert!(body.contains(REFUSAL), "{body}");
-    assert_no_documents(&cluster);
+    edge::compat(async move {
+        let cluster = single_node().await;
+        let response = net::http::Client::new()
+            .post(format!("{}/api/v0/collections/Tally", cluster.api_url(0)))
+            .json(&serde_json::json!({"name": "first", "hits": -1}))
+            .send()
+            .await
+            .expect("POST document");
+        assert!(!response.status().is_success(), "{}", response.status());
+        let body = response.text().await.expect("error body");
+        assert!(body.contains(REFUSAL), "{body}");
+        assert_no_documents(&cluster);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cli_create_rejects_a_negative_pcounter() {
-    let cluster = single_node().await;
-    let error = cluster
-        .client(0)
-        .collection_create("Tally", r#"{"name": "first", "hits": -1}"#)
-        .expect_err("negative create");
-    assert!(error.to_string().contains(REFUSAL), "{error}");
-    assert_no_documents(&cluster);
+    edge::compat(async move {
+        let cluster = single_node().await;
+        let error = cluster
+            .client(0)
+            .collection_create("Tally", r#"{"name": "first", "hits": -1}"#)
+            .expect_err("negative create");
+        assert!(error.to_string().contains(REFUSAL), "{error}");
+        assert_no_documents(&cluster);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_batch_create_rejects_a_negative_pcounter() {
+    edge::compat(async move {
     let cluster = single_node().await;
     let error = cluster
         .client(0)
@@ -74,4 +84,6 @@ async fn graphql_batch_create_rejects_a_negative_pcounter() {
         .expect("negative batch create error");
     assert!(error.contains(REFUSAL), "{error}");
     assert_no_documents(&cluster);
+})
+    .await;
 }

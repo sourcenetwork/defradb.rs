@@ -1,8 +1,8 @@
 //! Host commands for controlling the P2P host.
 
+use crate::rt::oneshot;
 use cid::Cid;
 use libp2p::{gossipsub, Multiaddr, PeerId};
-use tokio::sync::oneshot;
 
 use crate::error::Result;
 use crate::message::PushLogBroadcast;

@@ -60,6 +60,14 @@ where
     pin!(future).poll(&mut Context::from_waker(Waker::noop()))
 }
 
+/// A nuclei runtime of one thread, the one that calls its `block_on`.
+fn single_threaded() -> nuclei::Runtime {
+    nuclei::Runtime::builder()
+        .worker_threads(0)
+        .build()
+        .expect("a single-threaded runtime starts")
+}
+
 async fn explode() -> u32 {
     panic!("boom")
 }

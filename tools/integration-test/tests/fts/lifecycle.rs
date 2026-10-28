@@ -6,8 +6,9 @@ const SCHEMA: &str = r#"type Article {
     category: String
 }"#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_document_update_reflects_new_content() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -58,10 +59,13 @@ async fn bm25_document_update_reflects_new_content() {
         .as_f64()
         .unwrap_or(0.0);
     assert!(score_python > 0.0, "Should score for 'python' after update");
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_document_deletion_removes_from_results() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -113,4 +117,6 @@ async fn bm25_document_deletion_removes_from_results() {
         articles[0]["BM25"].as_f64().unwrap_or(0.0) > 0.0,
         "Remaining doc should still score for 'rust'"
     );
+})
+    .await;
 }

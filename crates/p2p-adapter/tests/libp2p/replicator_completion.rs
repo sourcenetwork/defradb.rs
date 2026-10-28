@@ -104,9 +104,9 @@ impl TransportDocPusher for ReplayPusher {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn every_successful_install_emits_a_correlated_completion() {
-    tokio::time::timeout(Duration::from_secs(15), async {
+    p2p::rt::time::timeout(Duration::from_secs(15), async {
         let (host, handle, _events, _) =
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
                 .await
@@ -115,8 +115,8 @@ async fn every_successful_install_emits_a_correlated_completion() {
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
                 .await
                 .unwrap();
-        let local_task = tokio::spawn(host.run());
-        let remote_task = tokio::spawn(remote.run());
+        let local_task = p2p::rt::spawn(host.run());
+        let remote_task = p2p::rt::spawn(remote.run());
         connect_hosts(&handle, &remote_handle).await;
         let peer = remote_handle.local_peer_id_cached();
         let address = format!(
@@ -172,11 +172,11 @@ async fn every_successful_install_emits_a_correlated_completion() {
         adapter.add_replicator(requested.clone(), Some(&address), ReplicationFilters::new(), vec![], None).await.unwrap();
         pusher.started.notified().await;
         let repeated = adapter.add_replicator(requested, Some(&address), ReplicationFilters::new(), vec![], None);
-        tokio::pin!(repeated);
-        tokio::select! {
+        let mut repeated = std::pin::pin!(repeated);
+        p2p::rt::select! {
             result = &mut repeated => panic!("install completed before the earlier replay: {result:?}"),
             message = sub.recv() => panic!("premature completion: {message:?}"),
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            _ = p2p::rt::time::sleep(Duration::from_millis(100)) => {}
         }
         gate.add_permits(1);
         let message = sub.recv().await.unwrap();

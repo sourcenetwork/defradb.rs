@@ -32,7 +32,7 @@ pub async fn load_or_generate_secret_key(
 
     match path {
         Some(path) if path.exists() => {
-            let bytes = tokio::fs::read(path)
+            let bytes = nuclei::fs::read(path)
                 .await
                 .map_err(fail("failed to read iroh secret key", path))?;
             let array: [u8; 32] = bytes.try_into().map_err(|_| {
@@ -43,17 +43,17 @@ pub async fn load_or_generate_secret_key(
         Some(path) => {
             let key = generate_secret_key();
             if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent)
+                nuclei::fs::create_dir_all(parent)
                     .await
                     .map_err(fail("failed to create iroh key directory", parent))?;
             }
-            tokio::fs::write(path, key.to_bytes())
+            nuclei::fs::write(path, key.to_bytes())
                 .await
                 .map_err(fail("failed to write iroh secret key", path))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                nuclei::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
                     .await
                     .map_err(fail("failed to set permissions on", path))?;
             }

@@ -84,7 +84,7 @@ pub struct Bitswap<S: Store> {
 }
 
 impl<S: Store> Bitswap<S> {
-    /// Builds the behaviour and spawns the server tasks on the current tokio runtime, which must exist.
+    /// Builds the behaviour and spawns the server tasks on the current nuclei runtime.
     pub fn new(self_id: PeerId, store: S, config: Config) -> Self {
         let (network, out_events) = Network::new(self_id);
         let driver = Driver::new(network.clone());

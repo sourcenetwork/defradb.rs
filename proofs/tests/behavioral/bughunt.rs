@@ -1,4 +1,4 @@
-//! BUG-HUNT (ignored, reporting) — convergence/concurrency probes against the
+//! BUG-HUNT (ignored, reporting) - convergence/concurrency probes against the
 //! real binary, on the surface where the LWW priority-reconcile bug lived. These
 //! report each node's converged state (not assert) so divergences are visible.
 //!
@@ -34,8 +34,8 @@ async fn wire(cluster: &TestCluster) {
     cluster.client(1).p2p_replicator_set(&["Tally"], &a0).ok();
 }
 
-/// Concurrent PCounter increments (node0 +45, node1 +45) — optionally across a
-/// restart-partition — must converge to the SUM (90) on both nodes. Counters are
+/// Concurrent PCounter increments (node0 +45, node1 +45) - optionally across a
+/// restart-partition - must converge to the SUM (90) on both nodes. Counters are
 /// non-idempotent (applied-CID dedup), so a re-merge that drops or double-counts
 /// an increment is a serious, visible bug.
 async fn run_counter(label: &str, restart: Option<usize>) {
@@ -63,7 +63,7 @@ async fn run_counter(label: &str, restart: Option<usize>) {
         .as_str()
         .expect("_docID")
         .to_string();
-    tokio::time::sleep(Duration::from_secs(3)).await; // converge seed
+    nuclei::time::sleep(Duration::from_secs(3)).await; // converge seed
 
     if let Some(idx) = restart {
         cluster
@@ -111,20 +111,26 @@ async fn run_counter(label: &str, restart: Option<usize>) {
             );
             return;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_counter_live() {
-    run_counter("counter_live", None).await;
+    edge::compat(async move {
+        run_counter("counter_live", None).await;
+    })
+    .await
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_counter_restart() {
-    run_counter("counter_restart(node1)", Some(1)).await;
+    edge::compat(async move {
+        run_counter("counter_restart(node1)", Some(1)).await;
+    })
+    .await
 }
 
 /// MULTI-ROUND counter robustness for the reconcile fix: each node runs `rounds`
@@ -156,7 +162,7 @@ async fn run_counter_multiround(rounds: usize) {
         .as_str()
         .expect("_docID")
         .to_string();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    nuclei::time::sleep(Duration::from_secs(3)).await;
 
     for _ in 0..rounds {
         for n in [0usize, 1] {
@@ -167,7 +173,7 @@ async fn run_counter_multiround(rounds: usize) {
                 ))
                 .expect("increment");
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        nuclei::time::sleep(Duration::from_millis(500)).await;
     }
 
     let want = (2 * rounds * 10) as i64;
@@ -181,14 +187,17 @@ async fn run_counter_multiround(rounds: usize) {
             );
             return;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_counter_multiround() {
-    run_counter_multiround(5).await;
+    edge::compat(async move {
+        run_counter_multiround(5).await;
+    })
+    .await
 }
 
 /// DELETE vs concurrent UPDATE race. node0 deletes the document while node1
@@ -196,137 +205,143 @@ async fn bughunt_counter_multiround() {
 /// a `DeletedObjectMarker`; this reports each node's view (doc present? field
 /// value?) so a divergent delete/update resolution is visible.
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_delete_update_race() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("2-node cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("2-node cluster");
 
-    let schema = "type User { name: String  age: Int }";
-    cluster.client(0).schema_add(schema).expect("schema node0");
-    cluster.client(1).schema_add(schema).expect("schema node1");
-    let (a0, a1) = (node_addr(&cluster, 0), node_addr(&cluster, 1));
-    cluster.client(0).p2p_connect(&[a1.as_str()]).ok();
-    cluster.client(1).p2p_connect(&[a0.as_str()]).ok();
-    cluster.client(0).p2p_collection_add(&["User"]).ok();
-    cluster.client(1).p2p_collection_add(&["User"]).ok();
-    cluster.client(0).p2p_replicator_set(&["User"], &a1).ok();
-    cluster.client(1).p2p_replicator_set(&["User"], &a0).ok();
+        let schema = "type User { name: String  age: Int }";
+        cluster.client(0).schema_add(schema).expect("schema node0");
+        cluster.client(1).schema_add(schema).expect("schema node1");
+        let (a0, a1) = (node_addr(&cluster, 0), node_addr(&cluster, 1));
+        cluster.client(0).p2p_connect(&[a1.as_str()]).ok();
+        cluster.client(1).p2p_connect(&[a0.as_str()]).ok();
+        cluster.client(0).p2p_collection_add(&["User"]).ok();
+        cluster.client(1).p2p_collection_add(&["User"]).ok();
+        cluster.client(0).p2p_replicator_set(&["User"], &a1).ok();
+        cluster.client(1).p2p_replicator_set(&["User"], &a0).ok();
 
-    let created = cluster
-        .client(0)
-        .query(r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID } }"#)
-        .expect("create");
-    let id = created["add_User"][0]["_docID"]
-        .as_str()
-        .expect("_docID")
-        .to_string();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+        let created = cluster
+            .client(0)
+            .query(r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID } }"#)
+            .expect("create");
+        let id = created["add_User"][0]["_docID"]
+            .as_str()
+            .expect("_docID")
+            .to_string();
+        nuclei::time::sleep(Duration::from_secs(3)).await;
 
-    // Concurrent: node0 deletes, node1 updates age.
-    cluster
-        .client(0)
-        .query(&format!(
-            r#"mutation {{ delete_User(docID: "{id}") {{ _docID }} }}"#
-        ))
-        .ok();
-    cluster
-        .client(1)
-        .query(&format!(
-            r#"mutation {{ update_User(docID: "{id}", input: {{age: 99}}) {{ _docID }} }}"#
-        ))
-        .ok();
+        // Concurrent: node0 deletes, node1 updates age.
+        cluster
+            .client(0)
+            .query(&format!(
+                r#"mutation {{ delete_User(docID: "{id}") {{ _docID }} }}"#
+            ))
+            .ok();
+        cluster
+            .client(1)
+            .query(&format!(
+                r#"mutation {{ update_User(docID: "{id}", input: {{age: 99}}) {{ _docID }} }}"#
+            ))
+            .ok();
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
+        nuclei::time::sleep(Duration::from_secs(10)).await;
 
-    let view = |n: usize| -> String {
-        let r = cluster
-            .client(n)
-            .query("query { User { _docID age } }")
-            .unwrap_or_default();
-        match r["User"].as_array().and_then(|a| a.first()) {
-            Some(d) => format!("present(age={})", d["age"]),
-            None => "deleted".to_string(),
-        }
-    };
-    let (v0, v1) = (view(0), view(1));
-    eprintln!(
-        "BUGHUNT[delete_update_race] node0={v0} node1={v1} | CONVERGED={}",
-        v0 == v1
-    );
+        let view = |n: usize| -> String {
+            let r = cluster
+                .client(n)
+                .query("query { User { _docID age } }")
+                .unwrap_or_default();
+            match r["User"].as_array().and_then(|a| a.first()) {
+                Some(d) => format!("present(age={})", d["age"]),
+                None => "deleted".to_string(),
+            }
+        };
+        let (v0, v1) = (view(0), view(1));
+        eprintln!(
+            "BUGHUNT[delete_update_race] node0={v0} node1={v1} | CONVERGED={}",
+            v0 == v1
+        );
+    })
+    .await
 }
 
 /// 3-NODE TRANSITIVE propagation: a linear chain node0 -> node1 -> node2 (no
 /// direct node0 -> node2 replicator). A write on node0 must reach node2 via
 /// node1's onward replication. Reports whether node2 receives it.
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_3node_transitive() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("3-node cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("3-node cluster");
 
-    let schema = "type User { name: String }";
-    for n in 0..3 {
-        cluster.client(n).schema_add(schema).expect("schema");
-        cluster.client(n).p2p_collection_add(&["User"]).ok();
-    }
-    let addr: Vec<String> = (0..3).map(|n| node_addr(&cluster, n)).collect();
-    // Chain: 0 -> 1 -> 2.
-    cluster.client(0).p2p_connect(&[addr[1].as_str()]).ok();
-    cluster.client(1).p2p_connect(&[addr[2].as_str()]).ok();
-    cluster
-        .client(0)
-        .p2p_replicator_set(&["User"], &addr[1])
-        .ok();
-    cluster
-        .client(1)
-        .p2p_replicator_set(&["User"], &addr[2])
-        .ok();
-
-    cluster
-        .client(0)
-        .query(r#"mutation { add_User(input: {name: "Relayed"}) { _docID } }"#)
-        .expect("create");
-
-    let names = |n: usize| -> Vec<String> {
-        cluster
-            .client(n)
-            .query("query { User { name } }")
-            .unwrap_or_default()["User"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|u| u["name"].as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let deadline = Instant::now() + Duration::from_secs(25);
-    loop {
-        let got = names(2).iter().any(|s| s == "Relayed");
-        if got || Instant::now() >= deadline {
-            eprintln!(
-                "BUGHUNT[3node_transitive] node1={:?} node2={:?} | node2_received={got}",
-                names(1),
-                names(2)
-            );
-            return;
+        let schema = "type User { name: String }";
+        for n in 0..3 {
+            cluster.client(n).schema_add(schema).expect("schema");
+            cluster.client(n).p2p_collection_add(&["User"]).ok();
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
+        let addr: Vec<String> = (0..3).map(|n| node_addr(&cluster, n)).collect();
+        // Chain: 0 -> 1 -> 2.
+        cluster.client(0).p2p_connect(&[addr[1].as_str()]).ok();
+        cluster.client(1).p2p_connect(&[addr[2].as_str()]).ok();
+        cluster
+            .client(0)
+            .p2p_replicator_set(&["User"], &addr[1])
+            .ok();
+        cluster
+            .client(1)
+            .p2p_replicator_set(&["User"], &addr[2])
+            .ok();
+
+        cluster
+            .client(0)
+            .query(r#"mutation { add_User(input: {name: "Relayed"}) { _docID } }"#)
+            .expect("create");
+
+        let names = |n: usize| -> Vec<String> {
+            cluster
+                .client(n)
+                .query("query { User { name } }")
+                .unwrap_or_default()["User"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|u| u["name"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            let got = names(2).iter().any(|s| s == "Relayed");
+            if got || Instant::now() >= deadline {
+                eprintln!(
+                    "BUGHUNT[3node_transitive] node1={:?} node2={:?} | node2_received={got}",
+                    names(1),
+                    names(2)
+                );
+                return;
+            }
+            nuclei::time::sleep(Duration::from_millis(300)).await;
+        }
+    })
+    .await
 }
 
 /// INDEXED-FIELD convergence: a secondary index is a THIRD materialized view (on
@@ -334,11 +349,11 @@ async fn bughunt_3node_transitive() {
 /// same indexed LWW field to different values; LWW picks the higher value (99).
 /// After convergence each node must agree on the value AND its index must be
 /// consistent: a filter query for the WINNER returns the doc, and a filter query
-/// for the LOSER returns nothing — on BOTH nodes. A stale index entry (the loser
+/// for the LOSER returns nothing - on BOTH nodes. A stale index entry (the loser
 /// value still pointing at the doc, or the winner missing) is the bug this hunts.
 ///
 /// `restart` optionally restarts a node between the seed and the concurrent
-/// writes — the exact trigger of the LWW two-store bug (a re-walk re-materializes
+/// writes - the exact trigger of the LWW two-store bug (a re-walk re-materializes
 /// the doc; does the index follow?).
 async fn run_indexed_lww(label: &str, restart: Option<usize>) {
     let mut cluster = TestCluster::builder()
@@ -370,7 +385,7 @@ async fn run_indexed_lww(label: &str, restart: Option<usize>) {
         .as_str()
         .expect("_docID")
         .to_string();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    nuclei::time::sleep(Duration::from_secs(3)).await;
 
     if let Some(idx) = restart {
         cluster
@@ -411,7 +426,7 @@ async fn run_indexed_lww(label: &str, restart: Option<usize>) {
         cluster.client(1).p2p_replicator_set(&["User"], &a0b).ok();
     }
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    nuclei::time::sleep(Duration::from_secs(10)).await;
 
     // Index-filtered counts: how many docs each node returns for a given age.
     let by_index = |n: usize, age: i64| -> usize {
@@ -454,15 +469,21 @@ async fn run_indexed_lww(label: &str, restart: Option<usize>) {
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_indexed_lww_convergence() {
-    run_indexed_lww("indexed_lww_live", None).await;
+    edge::compat(async move {
+        run_indexed_lww("indexed_lww_live", None).await;
+    })
+    .await
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_indexed_lww_restart() {
-    run_indexed_lww("indexed_lww_restart(node1)", Some(1)).await;
+    edge::compat(async move {
+        run_indexed_lww("indexed_lww_restart(node1)", Some(1)).await;
+    })
+    .await
 }
 
 /// ENCRYPTED-FIELD convergence: an encrypted field routes its delta through the
@@ -505,7 +526,7 @@ async fn run_encrypted_lww(label: &str, restart: Option<usize>) {
         .as_str()
         .expect("_docID")
         .to_string();
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    nuclei::time::sleep(Duration::from_secs(4)).await;
 
     if let Some(idx) = restart {
         cluster
@@ -546,7 +567,7 @@ async fn run_encrypted_lww(label: &str, restart: Option<usize>) {
         cluster.client(0).p2p_replicator_set(&["Vault"], &a1b).ok();
         cluster.client(1).p2p_replicator_set(&["Vault"], &a0b).ok();
     }
-    tokio::time::sleep(Duration::from_secs(12)).await;
+    nuclei::time::sleep(Duration::from_secs(12)).await;
 
     let secret = |n: usize| -> String {
         cluster
@@ -565,104 +586,113 @@ async fn run_encrypted_lww(label: &str, restart: Option<usize>) {
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_encrypted_lww_convergence() {
-    run_encrypted_lww("encrypted_lww", None).await;
+    edge::compat(async move {
+        run_encrypted_lww("encrypted_lww", None).await;
+    })
+    .await
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_encrypted_lww_restart() {
-    run_encrypted_lww("encrypted_lww_restart(node1)", Some(1)).await;
+    edge::compat(async move {
+        run_encrypted_lww("encrypted_lww_restart(node1)", Some(1)).await;
+    })
+    .await
 }
 
 /// 3-NODE counter accumulation: each of three fully-meshed nodes increments the
 /// same counter by 10, concurrently. Every node's delta must reach the other two
-/// and accumulate — all three converge to 30. With only two nodes the counter
+/// and accumulate - all three converge to 30. With only two nodes the counter
 /// reconcile is symmetric; a third node exposes whether a delta that arrives via
 /// a different peer still accumulates (no dedup collision, no lost cross-peer
 /// delta).
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_counter_3node() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("3-node cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("3-node cluster");
 
-    let schema = "type Tally { name: String  hits: Int @crdt(type: pcounter) }";
-    let addr: Vec<String> = (0..3).map(|n| node_addr(&cluster, n)).collect();
-    for n in 0..3 {
-        cluster.client(n).schema_add(schema).expect("schema");
-        cluster.client(n).p2p_collection_add(&["Tally"]).ok();
-    }
-    // Full mesh: every node replicates to the other two.
-    for i in 0..3 {
-        for (j, peer_addr) in addr.iter().enumerate() {
-            if i != j {
-                cluster.client(i).p2p_connect(&[peer_addr.as_str()]).ok();
-                cluster
-                    .client(i)
-                    .p2p_replicator_set(&["Tally"], peer_addr)
-                    .ok();
+        let schema = "type Tally { name: String  hits: Int @crdt(type: pcounter) }";
+        let addr: Vec<String> = (0..3).map(|n| node_addr(&cluster, n)).collect();
+        for n in 0..3 {
+            cluster.client(n).schema_add(schema).expect("schema");
+            cluster.client(n).p2p_collection_add(&["Tally"]).ok();
+        }
+        // Full mesh: every node replicates to the other two.
+        for i in 0..3 {
+            for (j, peer_addr) in addr.iter().enumerate() {
+                if i != j {
+                    cluster.client(i).p2p_connect(&[peer_addr.as_str()]).ok();
+                    cluster
+                        .client(i)
+                        .p2p_replicator_set(&["Tally"], peer_addr)
+                        .ok();
+                }
             }
         }
-    }
 
-    let created = cluster
-        .client(0)
-        .query(r#"mutation { add_Tally(input: {name: "t", hits: 0}) { _docID } }"#)
-        .expect("create");
-    let id = created["add_Tally"][0]["_docID"]
-        .as_str()
-        .expect("_docID")
-        .to_string();
+        let created = cluster
+            .client(0)
+            .query(r#"mutation { add_Tally(input: {name: "t", hits: 0}) { _docID } }"#)
+            .expect("create");
+        let id = created["add_Tally"][0]["_docID"]
+            .as_str()
+            .expect("_docID")
+            .to_string();
 
-    // BARRIER: wait until ALL THREE nodes have the seed doc (hits==0) before any
-    // node increments — so a node can't build its increment on a pre-seed base.
-    // This isolates a genuine merge/dedup race from seed-propagation timing.
-    let seed_deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if (0..3).all(|n| hits(&cluster.client(n)) == 0) {
-            break;
-        }
-        assert!(
-            Instant::now() < seed_deadline,
-            "seed did not reach all 3 nodes"
-        );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-
-    for n in 0..3 {
-        cluster
-            .client(n)
-            .query(&format!(
-                r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: 10}}) {{ _docID }} }}"#
-            ))
-            .expect("increment");
-    }
-
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let h: Vec<i64> = (0..3).map(|n| hits(&cluster.client(n))).collect();
-        let ok = h.iter().all(|&x| x == 30);
-        if ok || Instant::now() >= deadline {
-            eprintln!(
-                "BUGHUNT[counter_3node] node0={} node1={} node2={} | expected 30 each | CONVERGED={ok}",
-                h[0], h[1], h[2]
+        // BARRIER: wait until ALL THREE nodes have the seed doc (hits==0) before any
+        // node increments - so a node can't build its increment on a pre-seed base.
+        // This isolates a genuine merge/dedup race from seed-propagation timing.
+        let seed_deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if (0..3).all(|n| hits(&cluster.client(n)) == 0) {
+                break;
+            }
+            assert!(
+                Instant::now() < seed_deadline,
+                "seed did not reach all 3 nodes"
             );
-            return;
+            nuclei::time::sleep(Duration::from_millis(200)).await;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
+
+        for n in 0..3 {
+            cluster
+                .client(n)
+                .query(&format!(
+                    r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: 10}}) {{ _docID }} }}"#
+                ))
+                .expect("increment");
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let h: Vec<i64> = (0..3).map(|n| hits(&cluster.client(n))).collect();
+            let ok = h.iter().all(|&x| x == 30);
+            if ok || Instant::now() >= deadline {
+                eprintln!(
+                    "BUGHUNT[counter_3node] node0={} node1={} node2={} | expected 30 each | CONVERGED={ok}",
+                    h[0], h[1], h[2]
+                );
+                return;
+            }
+            nuclei::time::sleep(Duration::from_millis(300)).await;
+        }
+    })
+    .await
 }
 
-/// SAME-DOC MERGE STORM — high concurrent-write contention on ONE counter doc in
+/// SAME-DOC MERGE STORM - high concurrent-write contention on ONE counter doc in
 /// a 3-node full mesh. Each node fires a burst of `+1` increments at the same
 /// document over several rounds; the exact running sum is the no-loss /
 /// no-double-apply oracle (below => a delta dropped, above => one double-applied).
@@ -671,26 +701,29 @@ async fn bughunt_counter_3node() {
 /// and does NOT recover within 40s. Distinct from a Bitswap DAG-fetch timeout:
 /// node logs show ZERO bitswap timeouts; the lagging nodes simply
 /// process one FEWER composite delta. The signature is a gossip-DELIVERY drop
-/// under concurrent full-mesh load — "Dropping GossipSub message outside accepted
+/// under concurrent full-mesh load - "Dropping GossipSub message outside accepted
 /// replication direction", "not authorized for collection", and a "document topic
-/// failed - InsufficientPeers" partial broadcast — so a delta's composite never
+/// failed - InsufficientPeers" partial broadcast - so a delta's composite never
 /// arrives via any accepted path (no fetch is ever attempted). An 8s topic-mesh
 /// warmup does NOT fix it, so it is not a gossipsub graft-warmup artifact. The
 /// committed single-increment `counter_3node` converges, so this is load-
 /// dependent within a valid topology. Reporting probe until root-caused/fixed.
 #[ignore = "bug-hunt probe (reproduces a same-doc-contention under-count); run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_same_doc_merge_storm() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("3-node rust cluster");
-    run_merge_storm(cluster, 3, "rust").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("3-node rust cluster");
+        run_merge_storm(cluster, 3, "rust").await;
+    })
+    .await
 }
 
 /// Go<->Go<->Go control: does the upstream Go binary exhibit the same under-count
@@ -698,17 +731,20 @@ async fn bughunt_same_doc_merge_storm() {
 /// limitation (live updates are best-effort gossip in both impls); if NO, it is a
 /// Rust delivery regression. Needs the Go `defradb` on PATH.
 #[ignore = "bug-hunt probe (go control); needs Go binary on PATH; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_same_doc_merge_storm_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(3)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("3-node go cluster");
-    run_merge_storm(cluster, 3, "go").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(3)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("3-node go cluster");
+        run_merge_storm(cluster, 3, "go").await;
+    })
+    .await
 }
 
 async fn run_merge_storm(cluster: TestCluster, nodes: usize, label: &str) {
@@ -743,7 +779,7 @@ async fn run_merge_storm(cluster: TestCluster, nodes: usize, label: &str) {
         if Instant::now() >= seed_deadline {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 
     let mut expected = 0i64;
@@ -784,7 +820,7 @@ async fn run_merge_storm(cluster: TestCluster, nodes: usize, label: &str) {
                 }
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            nuclei::time::sleep(Duration::from_millis(300)).await;
         }
     }
 }
@@ -826,7 +862,7 @@ async fn run_mixed_fields(label: &str, restart: Option<usize>) {
         .as_str()
         .expect("_docID")
         .to_string();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    nuclei::time::sleep(Duration::from_secs(3)).await;
 
     if let Some(idx) = restart {
         cluster
@@ -835,7 +871,7 @@ async fn run_mixed_fields(label: &str, restart: Option<usize>) {
             .expect("restart node");
     }
 
-    // node0 sets the LWW field; node1 increments the counter — different fields.
+    // node0 sets the LWW field; node1 increments the counter - different fields.
     cluster
         .client(0)
         .query(&format!(
@@ -889,18 +925,24 @@ async fn run_mixed_fields(label: &str, restart: Option<usize>) {
             );
             return;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_mixed_fields_live() {
-    run_mixed_fields("mixed_fields_live", None).await;
+    edge::compat(async move {
+        run_mixed_fields("mixed_fields_live", None).await;
+    })
+    .await
 }
 
 #[ignore = "bug-hunt probe; run with --ignored --nocapture"]
-#[tokio::test]
+#[nuclei::test]
 async fn bughunt_mixed_fields_restart() {
-    run_mixed_fields("mixed_fields_restart(node1)", Some(1)).await;
+    edge::compat(async move {
+        run_mixed_fields("mixed_fields_restart(node1)", Some(1)).await;
+    })
+    .await
 }

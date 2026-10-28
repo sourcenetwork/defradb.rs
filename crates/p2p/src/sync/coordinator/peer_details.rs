@@ -90,7 +90,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .into_iter()
             .find(|entry| entry.peer_id == peer);
 
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         let mut pending = self.manager.pending_dags_from(peer);
         pending.sort_by_key(|(_, dag)| dag.next_retry_at);
         let pending_fetch_count = pending.len();

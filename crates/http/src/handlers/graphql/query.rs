@@ -362,7 +362,7 @@ async fn graphql_sse(
     state: AppState,
     identity: ExtractIdentity,
     request: TransactionalQueryRequest,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, HttpError> {
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, HttpError> {
     let event_bus = state.event_bus.as_ref().ok_or_else(|| {
         HttpError::ServiceUnavailable("event bus is not available for subscriptions".to_string())
     })?;

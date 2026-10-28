@@ -21,7 +21,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: PushLogRequest,
-        response: tokio::sync::oneshot::Sender<Result<PushLogReply>>,
+        response: crate::rt::oneshot::Sender<Result<PushLogReply>>,
     ) {
         let request_id = self
             .swarm
@@ -34,7 +34,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         channel: ResponseChannel,
         reply: PushLogReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let result = self
             .swarm
@@ -51,7 +51,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: PushLogReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -66,7 +66,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: PushLogRequest,
-        response: tokio::sync::oneshot::Sender<Result<PushLogReply>>,
+        response: crate::rt::oneshot::Sender<Result<PushLogReply>>,
     ) {
         let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -80,7 +80,7 @@ impl<S: Store> P2PHost<S> {
                 }
             };
 
-            let result = match tokio::time::timeout(
+            let result = match crate::rt::time::timeout(
                 std::time::Duration::from_secs(30),
                 rx,
             )
@@ -110,7 +110,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: DocSyncReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -125,7 +125,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: DocSyncRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -141,7 +141,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: BranchableSyncReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -156,7 +156,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: BranchableSyncRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -173,7 +173,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: PushSEArtifactsRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -188,7 +188,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: PushSEArtifactsReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -203,7 +203,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: QuerySEArtifactsRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -220,7 +220,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: QuerySEArtifactsReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -235,7 +235,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: ManageRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -252,7 +252,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: ManageReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -267,7 +267,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         request: ManageQueryRequest,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -284,7 +284,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         reply: ManageQueryReply,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -299,7 +299,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         root_cid: Cid,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -314,7 +314,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         car_data: Vec<u8>,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
@@ -328,7 +328,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_get_peer_identity(
         &mut self,
         peer_id: PeerId,
-        response: tokio::sync::oneshot::Sender<Result<Option<identity::Did>>>,
+        response: crate::rt::oneshot::Sender<Result<Option<identity::Did>>>,
     ) {
         let local_peer_id = self.swarm.local_peer_id().to_string();
         let keypair = self.keypair.clone();
@@ -376,7 +376,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         mut info: ReplicatorInfo,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         debug!(peer_id = %peer_id, collections = ?info.collections, filters = ?info.filters, "Creating replicator");
         let peer_str = peer_id.to_string();
@@ -390,7 +390,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_delete_replicator(
         &mut self,
         peer_id: PeerId,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         debug!(peer_id = %peer_id, "Deleting replicator");
         self.replicators.remove_peer(&peer_id.to_string());
@@ -403,7 +403,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         collections: Vec<String>,
-        response: tokio::sync::oneshot::Sender<Result<bool>>,
+        response: crate::rt::oneshot::Sender<Result<bool>>,
     ) {
         debug!(
             peer_id = %peer_id,

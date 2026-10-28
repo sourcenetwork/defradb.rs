@@ -179,7 +179,7 @@ pub async fn run(scenario: Scenario, writers: usize, operations: usize) -> Measu
     let storage_before = stats.snapshot();
     let retries_before = telemetry::conflict_metrics_snapshot();
     let start = Instant::now();
-    let mut tasks = tokio::task::JoinSet::new();
+    let mut tasks = nuclei::task::JoinSet::new();
     for writer in 0..writers {
         let state = fixture.state.clone();
         let ids = fixture.ids.clone();

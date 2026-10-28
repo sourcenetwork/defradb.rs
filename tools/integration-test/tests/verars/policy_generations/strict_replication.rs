@@ -147,14 +147,14 @@ async fn exercise(delete: bool, grant: RelayGrant) {
     }
 
     if matches!(grant, RelayGrant::Writer) {
-        tokio::time::timeout(DEADLINE, async {
+        nuclei::time::timeout(DEADLINE, async {
             loop {
                 if document(origin, id, &owner.private_key_hex) == edited_document
                     && commit_ids(origin, id, Some(&owner.private_key_hex)) == edited_commits
                 {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                nuclei::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -166,7 +166,7 @@ async fn exercise(delete: bool, grant: RelayGrant) {
             .unwrap()
             .join("logs/stdout.log");
         let reason = format!("signer {} lacks {permission} permission", relay.did);
-        tokio::time::timeout(DEADLINE, async {
+        nuclei::time::timeout(DEADLINE, async {
             loop {
                 if std::fs::read_to_string(&log).is_ok_and(|text| {
                     text.lines().any(|line| {
@@ -177,7 +177,7 @@ async fn exercise(delete: bool, grant: RelayGrant) {
                 }) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                nuclei::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -196,26 +196,38 @@ async fn exercise(delete: bool, grant: RelayGrant) {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_replicated_update_rejects_reader_only_signer() {
-    exercise(false, RelayGrant::Reader).await;
+    edge::compat(async {
+        exercise(false, RelayGrant::Reader).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_replicated_delete_rejects_revoked_writer() {
-    exercise(true, RelayGrant::RevokedWriter).await;
+    edge::compat(async {
+        exercise(true, RelayGrant::RevokedWriter).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_replicated_update_accepts_granted_writer() {
-    exercise(false, RelayGrant::Writer).await;
+    edge::compat(async {
+        exercise(false, RelayGrant::Writer).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_replicated_delete_accepts_granted_writer() {
-    exercise(true, RelayGrant::Writer).await;
+    edge::compat(async {
+        exercise(true, RelayGrant::Writer).await;
+    })
+    .await;
 }

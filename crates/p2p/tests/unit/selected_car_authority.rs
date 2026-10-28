@@ -27,7 +27,7 @@ async fn coordinator(
     coordinator
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn disk_reopen_serves_only_selected_root_descendants_without_subscription_or_acp() {
     let directory = tempfile::tempdir().unwrap();
     let peer = random_peer_id();

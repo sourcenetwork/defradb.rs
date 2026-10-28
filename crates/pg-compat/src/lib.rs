@@ -4,12 +4,13 @@ pub mod error;
 mod handler;
 mod metadata;
 mod types;
+pub mod wire;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use nuclei::net::TcpListener;
 use query::{CollectionProvider, QueryExecutor};
-use tokio::net::TcpListener;
 use tracing::{error, info};
 
 use handler::{DefraHandlerFactory, DefraQueryHandler};
@@ -58,11 +59,12 @@ impl PgServer {
             info!("PG connection from {}", peer);
 
             let factory = self.factory.clone();
-            tokio::spawn(async move {
-                if let Err(e) = pgwire::tokio::process_socket(socket, None, factory).await {
+            nuclei::spawn(async move {
+                if let Err(e) = wire::serve(socket, peer, factory).await {
                     error!("PG connection error from {}: {}", peer, e);
                 }
-            });
+            })
+            .detach();
         }
     }
 }

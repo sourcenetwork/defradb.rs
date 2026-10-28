@@ -12,14 +12,6 @@ description = "Vera ACP client for DefraDB"
 bench = false
 
 [dependencies]
-# HTTP client for REST/LCD and CometBFT JSON-RPC
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "charset",
-    "http2",
-    "system-proxy",
-    "rustls-tls-native-roots",
-] }
 
 # Cosmos SDK transaction building and signing
 cosmrs = "0.22"
@@ -29,7 +21,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 # Async
-tokio = { workspace = true, features = ["rt", "sync", "time", "io-util"] }
 async-trait.workspace = true
 
 # Error handling
@@ -82,20 +73,28 @@ bs58.workspace = true
 acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei
+# sockets; the browser's fetch on wasm32 (below).
+net = { path = "../net" }
 # The Cosmos event stream runs on the network runtime it is given.
 edge = { path = "../edge" }
 futures.workspace = true
 prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
-tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
+# The Cosmos event stream: a WebSocket over a futures-io stream (net::connect).
+async-tungstenite = "0.29.1"
+nuclei.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
+n0-future.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["macros", "net", "test-util"] }
 kovan-queue.workspace = true
 
 [lints]

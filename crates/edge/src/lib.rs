@@ -16,13 +16,18 @@
 //! stops accepting.
 //!
 //! No type of the runtime underneath appears in this crate's API, so
-//! replacing it replaces this crate alone. Natively it is one tokio
+//! replacing it replaces this crate alone. Natively it is one nuclei
 //! runtime; on wasm32 it is the browser's event loop, behind the same
 //! handle (without the blocking calls a browser cannot make). A build
 //! that starts no networking starts no runtime; a component given no
 //! `Edge` that needs one reaches the process's [`on_demand`] runtime,
 //! started the first time it is needed.
+//!
+//! A library that binds its own sockets on tokio, and takes none of ours,
+//! is reached through [`compat`], the one place tokio is entered.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod compat;
 mod config;
 mod contain;
 mod error;
@@ -40,6 +45,8 @@ mod task;
 pub mod testing;
 mod timer;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use compat::{compat, Compat};
 pub use config::{EdgeConfig, ThreadStart};
 pub use error::EdgeError;
 pub use handle::{Drained, Edge, Scope};

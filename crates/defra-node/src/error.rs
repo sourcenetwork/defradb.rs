@@ -14,8 +14,9 @@ pub enum Error {
     #[error(transparent)]
     Identity(#[from] identity::Error),
     /// An HTTP request to an embedding service failed.
+    #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]
-    Http(#[from] reqwest::Error),
+    Http(#[from] net::http::Error),
     /// A file or directory operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),

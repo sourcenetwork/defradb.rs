@@ -1,6 +1,7 @@
 //! Node run loop and shutdown coordination
 
-use tokio::task::JoinHandle;
+use nuclei::task::{AbortHandle, Join, Task};
+use nuclei::time::timeout;
 use tracing::{error, info, warn};
 
 use super::node::Node;
@@ -19,9 +20,9 @@ impl Node {
         info!("API endpoint: {scheme}://{}", self.config.api.address);
 
         // Start HTTP server
-        let http_task: Option<JoinHandle<()>> = if let Some(server) = self.http_server.take() {
+        let http_task: Option<Task<()>> = if let Some(server) = self.http_server.take() {
             info!("Starting HTTP server on {}", self.config.api.address);
-            Some(tokio::spawn(async move {
+            Some(nuclei::spawn(async move {
                 if let Err(e) = server.run().await {
                     error!("HTTP server error: {}", e);
                 }
@@ -32,14 +33,14 @@ impl Node {
 
         // Start PG wire protocol server
         #[cfg(not(feature = "postgres"))]
-        let pg_task: Option<JoinHandle<()>> = None;
+        let pg_task: Option<Task<()>> = None;
         #[cfg(feature = "postgres")]
-        let pg_task: Option<JoinHandle<()>> = if let Some(server) = self.pg_server.take() {
+        let pg_task: Option<Task<()>> = if let Some(server) = self.pg_server.take() {
             info!(
                 "Starting Postgres wire protocol server on {}",
                 server.address()
             );
-            Some(tokio::spawn(async move {
+            Some(nuclei::spawn(async move {
                 if let Err(e) = server.run().await {
                     error!("PG server error: {}", e);
                 }
@@ -53,15 +54,15 @@ impl Node {
 
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{signal, SignalKind};
+            use nuclei::signal::unix::{signal, SignalKind};
 
             let mut sigint =
                 signal(SignalKind::interrupt()).map_err(|e| Error::Signal(e.to_string()))?;
             let mut sigterm =
                 signal(SignalKind::terminate()).map_err(|e| Error::Signal(e.to_string()))?;
 
-            tokio::spawn(async move {
-                tokio::select! {
+            nuclei::spawn(async move {
+                nuclei::select! {
                     _ = sigint.recv() => {
                         info!("Received SIGINT");
                     }
@@ -72,13 +73,14 @@ impl Node {
                 if let Err(e) = shutdown_tx.send(()).await {
                     error!("Failed to send shutdown signal: {}", e);
                 }
-            });
+            })
+            .detach();
         }
 
         #[cfg(not(unix))]
         {
-            tokio::spawn(async move {
-                match tokio::signal::ctrl_c().await {
+            nuclei::spawn(async move {
+                match nuclei::signal::ctrl_c().await {
                     Ok(()) => {
                         info!("Received Ctrl+C");
                         if let Err(e) = shutdown_tx.send(()).await {
@@ -92,14 +94,16 @@ impl Node {
                         );
                     }
                 }
-            });
+            })
+            .detach();
         }
 
         // Wait for shutdown signal OR HTTP server crash
-        let mut http_task = http_task;
-        let http_crashed = match &mut http_task {
+        let http_abort: Option<AbortHandle> = http_task.as_ref().map(Task::abort_handle);
+        let mut http_join: Option<Join<()>> = http_task.map(Task::join);
+        let http_crashed = match &mut http_join {
             Some(task) => {
-                tokio::select! {
+                nuclei::select! {
                     _ = self.shutdown_rx.recv() => false,
                     result = task => {
                         match result {
@@ -128,10 +132,10 @@ impl Node {
         } else {
             info!("Shutting down DefraDB node...");
             // Only abort if we're shutting down normally (not due to crash)
-            if let Some(task) = http_task {
+            if let (Some(abort), Some(task)) = (http_abort, http_join) {
                 info!("Stopping HTTP server...");
-                task.abort();
-                match tokio::time::timeout(std::time::Duration::from_secs(1), task).await {
+                abort.abort();
+                match timeout(std::time::Duration::from_secs(1), task).await {
                     Ok(_) => info!("HTTP server stopped"),
                     Err(_) => warn!(
                         timeout_secs = 1,
@@ -143,7 +147,7 @@ impl Node {
             if let Some(task) = pg_task {
                 info!("Stopping PG server...");
                 task.abort();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+                let _ = timeout(std::time::Duration::from_secs(1), task.join()).await;
                 info!("PG server stopped");
             }
         }
@@ -151,25 +155,25 @@ impl Node {
         if let Some(task) = self.downsample_task.take() {
             info!("Stopping downsample worker...");
             task.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+            let _ = timeout(std::time::Duration::from_secs(1), task).await;
         }
 
         if let Some(task) = self.vector_rebuild_task.take() {
             info!("Stopping vector index rebuild worker...");
             task.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+            let _ = timeout(std::time::Duration::from_secs(1), task).await;
         }
 
         if let Some(task) = self.txn_cleanup_task.take() {
             info!("Stopping transaction idle cleanup worker...");
             task.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+            let _ = timeout(std::time::Duration::from_secs(1), task).await;
         }
 
         // Shutdown P2P tasks first, then the handle
         if let Some(tasks) = self.p2p_tasks.take() {
             info!("Stopping P2P background tasks...");
-            let timeout = std::time::Duration::from_secs(2);
+            let grace = std::time::Duration::from_secs(2);
 
             match tasks {
                 super::node::P2PTasks::Libp2p {
@@ -191,8 +195,8 @@ impl Node {
                         event_task.abort();
                     }
 
-                    let _ = tokio::time::timeout(timeout, replication_task).await;
-                    let _ = tokio::time::timeout(timeout, host_task).await;
+                    let _ = timeout(grace, replication_task.join()).await;
+                    let _ = timeout(grace, host_task.join()).await;
                 }
                 #[cfg(feature = "iroh")]
                 super::node::P2PTasks::Iroh {
@@ -204,12 +208,12 @@ impl Node {
 
                     #[cfg(feature = "iroh-relay-server")]
                     if let Some(relay_server) = relay_server {
-                        match tokio::time::timeout(timeout, relay_server.shutdown()).await {
+                        match timeout(grace, relay_server.shutdown()).await {
                             Ok(Ok(())) => {}
                             Ok(Err(e)) => {
                                 warn!("iroh relay server shutdown encountered an issue: {}", e)
                             }
-                            Err(_) => warn!("iroh relay server did not stop within {:?}", timeout),
+                            Err(_) => warn!("iroh relay server did not stop within {:?}", grace),
                         }
                     }
                 }

@@ -99,7 +99,7 @@ impl Apart {
             if last.0 == last.1 && done(&last.0) {
                 return last.0;
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            nuclei::time::sleep(Duration::from_millis(200)).await;
         }
         panic!("peers did not converge in time; last values {last:?}");
     }
@@ -131,88 +131,103 @@ where
         if done(&last) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
     panic!("meta did not arrive in time; last {last:?}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn peers_editing_different_keys_keep_both_edits() {
-    let apart = Apart::new(r#"{a: 1, b: 1, nested: {x: 1}}"#).await;
-    apart.update(0, r#"{set: {meta: {a: 2}}}"#);
-    apart.update(1, r#"{set: {meta: {nested: {y: 3}}}}"#);
-    let value = apart.converge(|meta| meta["nested"]["y"] == 3).await;
-    assert_eq!(value, json!({"a": 2, "b": 1, "nested": {"x": 1, "y": 3}}));
-    assert_eq!(apart.conflicts(0), json!([]));
-    assert_eq!(apart.conflicts(1), json!([]));
+    edge::compat(async {
+        let apart = Apart::new(r#"{a: 1, b: 1, nested: {x: 1}}"#).await;
+        apart.update(0, r#"{set: {meta: {a: 2}}}"#);
+        apart.update(1, r#"{set: {meta: {nested: {y: 3}}}}"#);
+        let value = apart.converge(|meta| meta["nested"]["y"] == 3).await;
+        assert_eq!(value, json!({"a": 2, "b": 1, "nested": {"x": 1, "y": 3}}));
+        assert_eq!(apart.conflicts(0), json!([]));
+        assert_eq!(apart.conflicts(1), json!([]));
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_whole_value_write_only_changes_the_keys_it_changes() {
-    let apart = Apart::new(r#"{a: 1, b: 1}"#).await;
-    apart.update(0, r#"{meta: {a: 1, b: 2}}"#);
-    apart.update(1, r#"{meta: {a: 5, b: 1, c: true}}"#);
-    let value = apart.converge(|meta| meta.get("c").is_some()).await;
-    assert_eq!(value, json!({"a": 5, "b": 2, "c": true}));
+    edge::compat(async {
+        let apart = Apart::new(r#"{a: 1, b: 1}"#).await;
+        apart.update(0, r#"{meta: {a: 1, b: 2}}"#);
+        apart.update(1, r#"{meta: {a: 5, b: 1, c: true}}"#);
+        let value = apart.converge(|meta| meta.get("c").is_some()).await;
+        assert_eq!(value, json!({"a": 5, "b": 2, "c": true}));
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_update_below_beats_a_concurrent_delete() {
-    let apart = Apart::new(r#"{a: {b: 1, c: 1}, d: 1}"#).await;
-    apart.update(0, r#"{delete: {meta: ["a"]}}"#);
-    apart.update(1, r#"{set: {meta: {a: {b: 2}}}}"#);
-    let value = apart.converge(|meta| meta["a"]["b"] == 2).await;
-    assert_eq!(value, json!({"a": {"b": 2}, "d": 1}));
-    for node in [0, 1] {
-        let conflicts = apart.conflicts(node);
-        assert_eq!(conflicts.as_array().map(Vec::len), Some(1), "{conflicts}");
-        assert_eq!(conflicts[0]["path"], json!(["a"]));
-        assert_eq!(conflicts[0]["deleted"], json!(true));
-    }
+    edge::compat(async {
+        let apart = Apart::new(r#"{a: {b: 1, c: 1}, d: 1}"#).await;
+        apart.update(0, r#"{delete: {meta: ["a"]}}"#);
+        apart.update(1, r#"{set: {meta: {a: {b: 2}}}}"#);
+        let value = apart.converge(|meta| meta["a"]["b"] == 2).await;
+        assert_eq!(value, json!({"a": {"b": 2}, "d": 1}));
+        for node in [0, 1] {
+            let conflicts = apart.conflicts(node);
+            assert_eq!(conflicts.as_array().map(Vec::len), Some(1), "{conflicts}");
+            assert_eq!(conflicts[0]["path"], json!(["a"]));
+            assert_eq!(conflicts[0]["deleted"], json!(true));
+        }
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_type_clash_resolves_one_way_on_both_peers() {
-    let apart = Apart::new(r#"{a: {b: 1}}"#).await;
-    apart.update(0, r#"{set: {meta: {a: 5}}}"#);
-    apart.update(1, r#"{set: {meta: {a: {c: 2}}}}"#);
-    // Setting `a` replaced its map, `b` included, so a winning map holds
-    // only what the other peer set below it.
-    let value = apart
-        .converge(|meta| *meta == json!({"a": 5}) || *meta == json!({"a": {"c": 2}}))
-        .await;
-    let conflicts = apart.conflicts(0);
-    assert_eq!(conflicts, apart.conflicts(1));
-    assert_eq!(conflicts.as_array().map(Vec::len), Some(1), "{conflicts}");
-    assert_eq!(conflicts[0]["path"], json!(["a"]));
-    let lost_map = value == json!({"a": 5});
-    assert_eq!(conflicts[0]["value"] == json!({}), lost_map, "{conflicts}");
-}
-
-#[tokio::test]
-async fn racing_writes_of_one_path_list_the_loser_with_its_block() {
-    let apart = Apart::new(r#"{a: 1, b: 1}"#).await;
-    apart.update(0, r#"{set: {meta: {a: "alice"}}}"#);
-    apart.update(1, r#"{set: {meta: {a: "bob"}}}"#);
-    let value = apart.converge(|meta| meta["a"] != 1).await;
-    let winner = value["a"].as_str().expect("a is a string").to_string();
-    let loser = if winner == "alice" { "bob" } else { "alice" };
-    for node in [0, 1] {
-        let conflicts = apart.conflicts(node);
+    edge::compat(async {
+        let apart = Apart::new(r#"{a: {b: 1}}"#).await;
+        apart.update(0, r#"{set: {meta: {a: 5}}}"#);
+        apart.update(1, r#"{set: {meta: {a: {c: 2}}}}"#);
+        // Setting `a` replaced its map, `b` included, so a winning map holds
+        // only what the other peer set below it.
+        let value = apart
+            .converge(|meta| *meta == json!({"a": 5}) || *meta == json!({"a": {"c": 2}}))
+            .await;
+        let conflicts = apart.conflicts(0);
+        assert_eq!(conflicts, apart.conflicts(1));
         assert_eq!(conflicts.as_array().map(Vec::len), Some(1), "{conflicts}");
         assert_eq!(conflicts[0]["path"], json!(["a"]));
-        assert_eq!(conflicts[0]["value"], json!(loser));
-        assert_eq!(conflicts[0]["height"], json!(2));
-        assert_eq!(conflicts[0]["deleted"], json!(false));
-        let cid = conflicts[0]["cid"]
-            .as_str()
-            .expect("the loser's block is named");
-        let commit = apart
-            .peer(node)
-            .query(&format!(
-                r#"query {{ _commits(cid: "{cid}") {{ fieldName }} }}"#
-            ))
-            .unwrap();
-        assert_eq!(commit["_commits"][0]["fieldName"], json!("meta"));
-    }
+        let lost_map = value == json!({"a": 5});
+        assert_eq!(conflicts[0]["value"] == json!({}), lost_map, "{conflicts}");
+    })
+    .await;
+}
+
+#[nuclei::test]
+async fn racing_writes_of_one_path_list_the_loser_with_its_block() {
+    edge::compat(async {
+        let apart = Apart::new(r#"{a: 1, b: 1}"#).await;
+        apart.update(0, r#"{set: {meta: {a: "alice"}}}"#);
+        apart.update(1, r#"{set: {meta: {a: "bob"}}}"#);
+        let value = apart.converge(|meta| meta["a"] != 1).await;
+        let winner = value["a"].as_str().expect("a is a string").to_string();
+        let loser = if winner == "alice" { "bob" } else { "alice" };
+        for node in [0, 1] {
+            let conflicts = apart.conflicts(node);
+            assert_eq!(conflicts.as_array().map(Vec::len), Some(1), "{conflicts}");
+            assert_eq!(conflicts[0]["path"], json!(["a"]));
+            assert_eq!(conflicts[0]["value"], json!(loser));
+            assert_eq!(conflicts[0]["height"], json!(2));
+            assert_eq!(conflicts[0]["deleted"], json!(false));
+            let cid = conflicts[0]["cid"]
+                .as_str()
+                .expect("the loser's block is named");
+            let commit = apart
+                .peer(node)
+                .query(&format!(
+                    r#"query {{ _commits(cid: "{cid}") {{ fieldName }} }}"#
+                ))
+                .unwrap();
+            assert_eq!(commit["_commits"][0]["fieldName"], json!("meta"));
+        }
+    })
+    .await;
 }

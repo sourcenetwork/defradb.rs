@@ -439,7 +439,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn transaction_conflicts_preserve_the_client_retry_contract() {
         let errors = [
             HttpError::from(DbError::Storage(storage::Error::TxnConflict)),

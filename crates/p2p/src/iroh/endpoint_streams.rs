@@ -289,7 +289,7 @@ pub(super) async fn admit_stream(
     };
     // The idle deadline catches a sender that stops; the total deadline catches
     // one that trickles bytes to keep its lease.
-    let payload = n0_future::time::timeout(
+    let payload = crate::rt::time::timeout(
         deadlines.body(len),
         protocols::read_body_until_idle(recv, len, deadlines.idle),
     )

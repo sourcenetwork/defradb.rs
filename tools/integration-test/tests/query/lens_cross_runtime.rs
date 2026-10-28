@@ -206,80 +206,83 @@ fn rows(client: &DefraClient, collection: &str, query: &str) -> Vec<Value> {
     rows
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_lens_migration_http_parity() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_development()
-        .build()
-        .await
-        .unwrap();
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
-    let migration = migration_config();
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_development()
+            .build()
+            .await
+            .unwrap();
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
+        let migration = migration_config();
 
-    for case in cases() {
-        let index = if case.indexed { " @index" } else { "" };
-        let schema = format!(
-            "type {} {{ required: {}!{} optional: {} }}",
-            case.collection, case.kind, index, case.kind
-        );
-        rust.schema_add(&schema)
-            .unwrap_or_else(|error| panic!("add Rust {} schema: {error}", case.collection));
-        go.schema_add(&schema)
-            .unwrap_or_else(|error| panic!("add Go {} schema: {error}", case.collection));
-
-        let filled_id = add_document(
-            &rust,
-            &go,
-            case.collection,
-            case.required,
-            Some(case.optional),
-        );
-        let null_id = add_document(&rust, &go, case.collection, case.other_required, None);
-        let doc_ids = vec![filled_id.clone(), null_id.clone()];
-        assert_cids_match(&rust, &go, &doc_ids);
-
-        let patch = format!(
-            r#"[{{"op":"add","path":"/{}/Fields/-","value":{{"Name":"migrated","Kind":"Boolean"}}}}]"#,
-            case.collection
-        );
-        patch_with_migration(&rust, cluster.api_url(0), &patch, &migration);
-        patch_with_migration(&go, cluster.api_url(1), &patch, &migration);
-        assert_cids_match(&rust, &go, &doc_ids);
-
-        let query = format!(
-            "query {{ {} {{ _docID required optional migrated }} }}",
-            case.collection
-        );
-        let rust_rows = rows(&rust, case.collection, &query);
-        let go_rows = rows(&go, case.collection, &query);
-        assert_eq!(rust_rows, go_rows, "{} migrated values", case.collection);
-        let filled = rust_rows
-            .iter()
-            .find(|row| row["_docID"] == filled_id)
-            .expect("filled document");
-        assert_eq!(filled["required"], case.expected_required);
-        assert_eq!(filled["optional"], case.expected_optional);
-        assert_eq!(filled["migrated"], json!(true));
-        let null = rust_rows
-            .iter()
-            .find(|row| row["_docID"] == null_id)
-            .expect("null document");
-        assert!(null["optional"].is_null());
-        assert_eq!(null["migrated"], json!(true));
-
-        if case.indexed {
-            let indexed_query = format!(
-                "query {{ {}(filter: {{required: {{_eq: {}}}}}) {{ _docID required migrated }} }}",
-                case.collection, case.required
+        for case in cases() {
+            let index = if case.indexed { " @index" } else { "" };
+            let schema = format!(
+                "type {} {{ required: {}!{} optional: {} }}",
+                case.collection, case.kind, index, case.kind
             );
-            let rust_indexed = rows(&rust, case.collection, &indexed_query);
-            let go_indexed = rows(&go, case.collection, &indexed_query);
-            assert_eq!(rust_indexed, go_indexed, "reindexed DateTime query");
-            assert_eq!(rust_indexed.len(), 1);
-            assert_eq!(rust_indexed[0]["_docID"], filled_id);
+            rust.schema_add(&schema)
+                .unwrap_or_else(|error| panic!("add Rust {} schema: {error}", case.collection));
+            go.schema_add(&schema)
+                .unwrap_or_else(|error| panic!("add Go {} schema: {error}", case.collection));
+
+            let filled_id = add_document(
+                &rust,
+                &go,
+                case.collection,
+                case.required,
+                Some(case.optional),
+            );
+            let null_id = add_document(&rust, &go, case.collection, case.other_required, None);
+            let doc_ids = vec![filled_id.clone(), null_id.clone()];
+            assert_cids_match(&rust, &go, &doc_ids);
+
+            let patch = format!(
+                r#"[{{"op":"add","path":"/{}/Fields/-","value":{{"Name":"migrated","Kind":"Boolean"}}}}]"#,
+                case.collection
+            );
+            patch_with_migration(&rust, cluster.api_url(0), &patch, &migration);
+            patch_with_migration(&go, cluster.api_url(1), &patch, &migration);
+            assert_cids_match(&rust, &go, &doc_ids);
+
+            let query = format!(
+                "query {{ {} {{ _docID required optional migrated }} }}",
+                case.collection
+            );
+            let rust_rows = rows(&rust, case.collection, &query);
+            let go_rows = rows(&go, case.collection, &query);
+            assert_eq!(rust_rows, go_rows, "{} migrated values", case.collection);
+            let filled = rust_rows
+                .iter()
+                .find(|row| row["_docID"] == filled_id)
+                .expect("filled document");
+            assert_eq!(filled["required"], case.expected_required);
+            assert_eq!(filled["optional"], case.expected_optional);
+            assert_eq!(filled["migrated"], json!(true));
+            let null = rust_rows
+                .iter()
+                .find(|row| row["_docID"] == null_id)
+                .expect("null document");
+            assert!(null["optional"].is_null());
+            assert_eq!(null["migrated"], json!(true));
+
+            if case.indexed {
+                let indexed_query = format!(
+                    "query {{ {}(filter: {{required: {{_eq: {}}}}}) {{ _docID required migrated }} }}",
+                    case.collection, case.required
+                );
+                let rust_indexed = rows(&rust, case.collection, &indexed_query);
+                let go_indexed = rows(&go, case.collection, &indexed_query);
+                assert_eq!(rust_indexed, go_indexed, "reindexed DateTime query");
+                assert_eq!(rust_indexed.len(), 1);
+                assert_eq!(rust_indexed[0]["_docID"], filled_id);
+            }
         }
-    }
+    })
+    .await;
 }

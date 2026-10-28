@@ -8,8 +8,8 @@ use bitswap::server::{Server, ServerConfig};
 use bitswap::{BitswapMessage, Block, WantType};
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::timeout;
+use nuclei::sync::{mpsc, oneshot};
+use nuclei::time::timeout;
 
 use crate::common::mem_store::MemStore;
 
@@ -31,7 +31,7 @@ pub fn start(blocks: &[Block], config: ServerConfig) -> Harness {
 pub fn start_with<S: bitswap::Store>(store: S, config: ServerConfig) -> Harness {
     let (network, mut events) = Network::new(PeerId::random());
     let (tx, sent) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         loop {
             match poll_fn(|cx| events.poll_next(cx)).await {
                 OutEvent::Dial { response, .. } => {
@@ -45,7 +45,8 @@ pub fn start_with<S: bitswap::Store>(store: S, config: ServerConfig) -> Harness 
                 OutEvent::Protect { .. } | OutEvent::Unprotect { .. } => {}
             }
         }
-    });
+    })
+    .detach();
     let server = Server::new(network, store, config);
     let peer = PeerId::random();
     server.peer_connected(peer);
@@ -108,7 +109,7 @@ pub fn has_have(messages: &[BitswapMessage], cid: &Cid) -> bool {
 impl Harness {
     /// Lets every queued tick run, then acknowledges and returns every message the server sent.
     pub async fn drain(&mut self) -> Vec<BitswapMessage> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        nuclei::time::sleep(Duration::from_secs(1)).await;
         let mut out = Vec::new();
         while let Ok(sent) = self.sent.try_recv() {
             let _ = sent.response.send(Ok(()));

@@ -29,13 +29,16 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
 {
-    let mut asked = 1;
-    loop {
-        match read().await {
-            Err(error) if asked < ATTEMPTS && overtaken(&error) => asked += 1,
-            outcome => return outcome,
+    edge::compat(async {
+        let mut asked = 1;
+        loop {
+            match read().await {
+                Err(error) if asked < ATTEMPTS && overtaken(&error) => asked += 1,
+                outcome => return outcome,
+            }
         }
-    }
+    })
+    .await
 }
 
 fn overtaken<E>(error: &E) -> bool
@@ -55,7 +58,7 @@ mod tests {
     const DECISION_REFUSAL: &str =
         "ACP state changed during decision verification; retry the request";
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_read_the_chain_overtook_is_asked_again_until_answered() {
         let asked = Cell::new(0);
         let outcome = verified(|| {
@@ -74,7 +77,7 @@ mod tests {
         assert_eq!(asked.get(), ATTEMPTS);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_decision_the_chain_overtook_is_asked_again() {
         let asked = Cell::new(0);
         let outcome = verified(|| {
@@ -92,7 +95,7 @@ mod tests {
         assert_eq!(outcome, Ok(2));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last() {
         let asked = Cell::new(0);
         let outcome: Result<(), _> = verified(|| {
@@ -104,7 +107,7 @@ mod tests {
         assert_eq!(asked.get(), ATTEMPTS);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn any_other_error_is_returned_at_the_first_ask() {
         let asked = Cell::new(0);
         let outcome: Result<(), _> = verified(|| {

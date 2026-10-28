@@ -3,7 +3,7 @@
 use regolith::sync::OnceCell;
 use std::time::Duration;
 
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use net::http::{Client, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
 use url::Url;
@@ -180,7 +180,7 @@ impl HttpClient {
     }
 
     /// Check if an error is retryable (connection errors, timeouts)
-    fn is_retryable_error(error: &reqwest::Error) -> bool {
+    fn is_retryable_error(error: &net::http::Error) -> bool {
         error.is_connect() || error.is_timeout()
     }
 
@@ -201,7 +201,7 @@ impl HttpClient {
                     "Warning: Request failed, retry attempt {}/{} after {}ms delay...",
                     attempt, MAX_RETRIES, backoff_ms
                 );
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                nuclei::time::sleep(Duration::from_millis(backoff_ms)).await;
                 backoff_ms *= 2; // Exponential backoff
             }
 

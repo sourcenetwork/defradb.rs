@@ -1,13 +1,13 @@
 use super::VeraClient;
+use nuclei::io::{AsyncReadExt, AsyncWriteExt};
+use nuclei::net::TcpListener;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
-#[tokio::test]
+#[nuclei::test]
 async fn lcd_requests_use_vera_routes() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move {
+    let address = format!("http://{}", listener.get_ref().local_addr().unwrap());
+    let server = nuclei::spawn(async move {
         for path in [
             "/sourcenetwork/vera/acp/policy/policy",
             "/sourcenetwork/vera/acp/object_owner/policy/document/doc",
@@ -27,6 +27,7 @@ async fn lcd_requests_use_vera_routes() {
                 .unwrap()
                 .starts_with(&format!("GET {path} HTTP/1.1\r\n")));
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            stream.flush().await.unwrap();
         }
     });
     let client = VeraClient::new(
@@ -44,8 +45,7 @@ async fn lcd_requests_use_vera_routes() {
             .unwrap(),
         (false, String::new())
     );
-    tokio::time::timeout(Duration::from_secs(3), server)
+    nuclei::time::timeout(Duration::from_secs(3), server)
         .await
-        .unwrap()
         .unwrap();
 }

@@ -110,7 +110,7 @@ async fn await_names(cluster: &TestCluster, index: usize, key: &str, want: usize
     let deadline = Instant::now() + ARRIVAL_BUDGET;
     let mut arrived = names_on(cluster, index, key);
     while Instant::now() < deadline && arrived.len() < want {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        nuclei::time::sleep(Duration::from_millis(500)).await;
         arrived = names_on(cluster, index, key);
     }
     arrived
@@ -266,148 +266,160 @@ async fn outage_replay(
 }
 
 /// A: Go writer, Go replicator. The pure-Go baseline the parity claim rests on.
-#[tokio::test]
+#[nuclei::test]
 async fn a_go_to_go_outage_replay() {
-    let mut cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_go_binary(go_binary())
-        .with_node_store(0, "badger")
-        .with_node_store(1, "badger")
-        .with_file_keyring()
-        .with_p2p()
-        .with_acp_local()
-        .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .build()
-        .await
-        .expect("go→go cluster");
+    edge::compat(async {
+        let mut cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_go_binary(go_binary())
+            .with_node_store(0, "badger")
+            .with_node_store(1, "badger")
+            .with_file_keyring()
+            .with_p2p()
+            .with_acp_local()
+            .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .build()
+            .await
+            .expect("go→go cluster");
 
-    let key = setup(&cluster, &[(0, 1)], "A go→go").await;
-    let missing = outage_replay(&mut cluster, 0, 1, &key, "A go→go").await;
-    assert!(missing.is_empty(), "A go→go lost {missing:?}");
+        let key = setup(&cluster, &[(0, 1)], "A go→go").await;
+        let missing = outage_replay(&mut cluster, 0, 1, &key, "A go→go").await;
+        assert!(missing.is_empty(), "A go→go lost {missing:?}");
+    })
+    .await;
 }
 
 /// B: Go writer, Rust replicator. Go pushes with its host peer id as creator;
 /// the Rust receiver must accept and merge both kinds on replay.
-#[tokio::test]
+#[nuclei::test]
 async fn b_go_to_rust_outage_replay() {
-    let mut cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_go_binary(go_binary())
-        .with_node_store(0, "regolith")
-        .with_node_store(1, "badger")
-        .with_file_keyring()
-        .with_p2p()
-        .with_acp_local()
-        .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .build()
-        .await
-        .expect("go→rust cluster");
+    edge::compat(async {
+        let mut cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_go_binary(go_binary())
+            .with_node_store(0, "regolith")
+            .with_node_store(1, "badger")
+            .with_file_keyring()
+            .with_p2p()
+            .with_acp_local()
+            .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .build()
+            .await
+            .expect("go→rust cluster");
 
-    // node0 is the Rust receiver, node1 the Go writer.
-    let key = setup(&cluster, &[(1, 0)], "B go→rust").await;
-    let missing = outage_replay(&mut cluster, 1, 0, &key, "B go→rust").await;
-    assert!(missing.is_empty(), "B go→rust lost {missing:?}");
+        // node0 is the Rust receiver, node1 the Go writer.
+        let key = setup(&cluster, &[(1, 0)], "B go→rust").await;
+        let missing = outage_replay(&mut cluster, 1, 0, &key, "B go→rust").await;
+        assert!(missing.is_empty(), "B go→rust lost {missing:?}");
+    })
+    .await;
 }
 
 /// C: Rust writer, Go replicator. 124's repro with a Go receiver: the public
 /// document is expected to be refused on the Rust side before it is sent.
-#[tokio::test]
+#[nuclei::test]
 async fn c_rust_to_go_outage_replay() {
-    let mut cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_go_binary(go_binary())
-        .with_node_store(0, "regolith")
-        .with_node_store(1, "badger")
-        .with_file_keyring()
-        .with_p2p()
-        .with_acp_local()
-        .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .build()
-        .await
-        .expect("rust→go cluster");
+    edge::compat(async {
+        let mut cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_go_binary(go_binary())
+            .with_node_store(0, "regolith")
+            .with_node_store(1, "badger")
+            .with_file_keyring()
+            .with_p2p()
+            .with_acp_local()
+            .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .build()
+            .await
+            .expect("rust→go cluster");
 
-    let key = setup(&cluster, &[(0, 1)], "C rust→go").await;
-    let missing = outage_replay(&mut cluster, 0, 1, &key, "C rust→go").await;
-    assert!(missing.is_empty(), "C rust→go lost {missing:?}");
+        let key = setup(&cluster, &[(0, 1)], "C rust→go").await;
+        let missing = outage_replay(&mut cluster, 0, 1, &key, "C rust→go").await;
+        assert!(missing.is_empty(), "C rust→go lost {missing:?}");
+    })
+    .await;
 }
 
 /// D: the forwarding case. A (Go) writes, B (Rust) forwards to C (Rust), which
 /// was down. B holds no ACP owner registration for either document, so
 /// `resolve_push_creator` sees the same `Ok(None)` for both.
-#[tokio::test]
+#[nuclei::test]
 async fn d_go_to_rust_to_rust_forwarding_outage() {
-    let mut cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .go_nodes(1)
-        .with_go_binary(go_binary())
-        .with_node_store(0, "regolith")
-        .with_node_store(1, "regolith")
-        .with_node_store(2, "badger")
-        .with_file_keyring()
-        .with_p2p()
-        .with_acp_local()
-        .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
-        .build()
-        .await
-        .expect("go→rust→rust cluster");
+    edge::compat(async {
+        let mut cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .go_nodes(1)
+            .with_go_binary(go_binary())
+            .with_node_store(0, "regolith")
+            .with_node_store(1, "regolith")
+            .with_node_store(2, "badger")
+            .with_file_keyring()
+            .with_p2p()
+            .with_acp_local()
+            .with_extra_rust_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .with_extra_go_args(["--replicator-retry-intervals", RETRY_INTERVALS])
+            .build()
+            .await
+            .expect("go→rust→rust cluster");
 
-    // node2 = Go writer A, node0 = Rust forwarder B, node1 = Rust receiver C.
-    let label = "D go→rust→rust";
-    let key = setup(&cluster, &[(2, 0), (0, 1)], label).await;
+        // node2 = Go writer A, node0 = Rust forwarder B, node1 = Rust receiver C.
+        let label = "D go→rust→rust";
+        let key = setup(&cluster, &[(2, 0), (0, 1)], label).await;
 
-    write_pair(&cluster, 2, "Live", &key, label);
-    {
-        let (c, k) = (&cluster, key.clone());
-        poll_until(
-            || names_on(c, 1, &k).len() >= 2,
-            LIVE_BUDGET,
-            Duration::from_millis(200),
-            "live documents did not reach C before the outage",
-        )
-        .await;
-    }
+        write_pair(&cluster, 2, "Live", &key, label);
+        {
+            let (c, k) = (&cluster, key.clone());
+            poll_until(
+                || names_on(c, 1, &k).len() >= 2,
+                LIVE_BUDGET,
+                Duration::from_millis(200),
+                "live documents did not reach C before the outage",
+            )
+            .await;
+        }
 
-    let stopped = cluster.stop_node(1).await.expect("stop C");
-    write_pair(&cluster, 2, "Outage", &key, label);
-    // Let A's push reach B before C comes back, so the loss under test is B's
-    // forwarding replay and not A's.
-    {
-        let (c, k) = (&cluster, key.clone());
-        poll_until(
-            || names_on(c, 0, &k).len() >= 4,
-            LIVE_BUDGET,
-            Duration::from_millis(200),
-            "outage documents did not reach the forwarder B",
-        )
-        .await;
-    }
-    cluster
-        .start_stopped_node(stopped, Duration::from_secs(90))
-        .await
-        .expect("restart C");
+        let stopped = cluster.stop_node(1).await.expect("stop C");
+        write_pair(&cluster, 2, "Outage", &key, label);
+        // Let A's push reach B before C comes back, so the loss under test is B's
+        // forwarding replay and not A's.
+        {
+            let (c, k) = (&cluster, key.clone());
+            poll_until(
+                || names_on(c, 0, &k).len() >= 4,
+                LIVE_BUDGET,
+                Duration::from_millis(200),
+                "outage documents did not reach the forwarder B",
+            )
+            .await;
+        }
+        cluster
+            .start_stopped_node(stopped, Duration::from_secs(90))
+            .await
+            .expect("restart C");
 
-    let expected = [
-        "LiveProtected",
-        "LivePublic",
-        "OutageProtected",
-        "OutagePublic",
-    ];
-    let arrived = await_names(&cluster, 1, &key, expected.len()).await;
-    let missing: Vec<&str> = expected
-        .iter()
-        .copied()
-        .filter(|n| !arrived.iter().any(|a| a == n))
-        .collect();
-    println!(
-        "[{label}] on C after {}s: arrived {arrived:?}",
-        ARRIVAL_BUDGET.as_secs()
-    );
-    println!("[{label}] MISSING: {missing:?}");
-    report_sender_logs(&cluster, 0, label);
-    assert!(missing.is_empty(), "{label} lost {missing:?}");
+        let expected = [
+            "LiveProtected",
+            "LivePublic",
+            "OutageProtected",
+            "OutagePublic",
+        ];
+        let arrived = await_names(&cluster, 1, &key, expected.len()).await;
+        let missing: Vec<&str> = expected
+            .iter()
+            .copied()
+            .filter(|n| !arrived.iter().any(|a| a == n))
+            .collect();
+        println!(
+            "[{label}] on C after {}s: arrived {arrived:?}",
+            ARRIVAL_BUDGET.as_secs()
+        );
+        println!("[{label}] MISSING: {missing:?}");
+        report_sender_logs(&cluster, 0, label);
+        assert!(missing.is_empty(), "{label} lost {missing:?}");
+    })
+    .await;
 }

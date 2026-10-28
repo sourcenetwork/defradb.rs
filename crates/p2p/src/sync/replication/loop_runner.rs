@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use tokio::sync::mpsc;
 
 use super::config::ReplicationConfig;
 use super::handlers::{

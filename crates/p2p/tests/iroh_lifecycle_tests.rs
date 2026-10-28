@@ -4,12 +4,12 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use multihash_codetable::{Code, MultihashDigest};
+use nuclei::time::timeout;
+use nuclei::Task;
 use p2p::iroh::{
     spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig, IrohTransport,
 };
 use p2p::transport::P2PTransport;
-use tokio::task::JoinHandle;
-use tokio::time::timeout;
 
 fn config() -> IrohEndpointConfig {
     IrohEndpointConfig {
@@ -20,18 +20,16 @@ fn config() -> IrohEndpointConfig {
     }
 }
 
-async fn assert_endpoint_stopped(mut task: JoinHandle<()>) {
+async fn assert_endpoint_stopped(mut task: Task<()>) {
     let result = timeout(Duration::from_secs(5), &mut task).await;
     if result.is_err() {
         task.abort();
-        let _ = task.await;
+        let _ = task.join().await;
     }
-    result
-        .expect("endpoint kept running after its last command sender was dropped")
-        .expect("endpoint task panicked");
+    result.expect("endpoint kept running after its last command sender was dropped");
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn endpoint_stops_when_last_transport_clone_is_dropped() {
     let config = config();
     let key = config.secret_key.clone();
@@ -46,7 +44,7 @@ async fn endpoint_stops_when_last_transport_clone_is_dropped() {
     assert_endpoint_stopped(task).await;
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn endpoint_stops_when_command_sender_is_dropped_before_startup() {
     let (commands, _events, _replicators, task) = spawn_endpoint(config()).await.unwrap();
     drop(commands);
@@ -54,7 +52,7 @@ async fn endpoint_stops_when_command_sender_is_dropped_before_startup() {
     assert_endpoint_stopped(task).await;
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn shutdown_joins_subscriptions_and_syncs_with_a_full_event_queue() {
     let config = config();
     let key = config.secret_key.clone();
@@ -73,7 +71,7 @@ async fn shutdown_joins_subscriptions_and_syncs_with_a_full_event_queue() {
             transport.sync_blocks(root, vec![], vec![]).await.unwrap();
         }
         while !events.is_full(p2p::sync::DispatchClass::Completion) {
-            tokio::task::yield_now().await;
+            nuclei::task::yield_now().await;
         }
     })
     .await

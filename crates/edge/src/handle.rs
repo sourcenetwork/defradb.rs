@@ -9,12 +9,12 @@ use std::task::Poll;
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
-use n0_future::time::Instant;
-use n0_future::FutureExt;
+use futures_lite::FutureExt;
 
 use crate::contain::contain;
 use crate::error::EdgeError;
 use crate::gate::{Gate, Permit};
+use crate::platform::Instant;
 use crate::shared::Shared;
 use crate::stats::EdgeStats;
 use crate::task::{Service, Task};
@@ -156,11 +156,9 @@ impl Edge {
     /// Runs `future` to its end on the calling thread, which it blocks.
     ///
     /// For a thread outside the runtime: a program's `main`, a C caller, a
-    /// synchronous trait whose work is network I/O. On a thread of a
-    /// multi-threaded runtime the thread's executor work moves elsewhere
-    /// first; on a single-threaded executor the call is refused with
-    /// [`EdgeError::WouldBlock`]. A panic in `future` is returned as
-    /// [`EdgeError::Panicked`].
+    /// synchronous trait whose work is network I/O. Inside a nuclei task the
+    /// wait nests: the thread's shard keeps running its other tasks. A panic
+    /// in `future` is returned as [`EdgeError::Panicked`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn block_on<F>(&self, future: F) -> Result<F::Output, EdgeError>
     where
@@ -172,7 +170,7 @@ impl Edge {
         let rt = &self.shared.rt;
         contain(
             &self.shared.stats,
-            crate::platform::wait_here(|| rt.drive(future))?,
+            crate::platform::wait_here(|| rt.drive(future)),
         )
     }
 
@@ -194,6 +192,13 @@ impl Edge {
     /// Whether this handle stopped accepting work.
     pub fn is_closed(&self) -> bool {
         self.gate.is_closed()
+    }
+
+    /// The CPUs the runtime's threads run on, held for them alone; empty
+    /// when they run unpinned.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cpus(&self) -> &workers::topology::CpuSet {
+        &self.shared.rt.cpus
     }
 
     /// The runtime's counters, with this handle's work in flight.

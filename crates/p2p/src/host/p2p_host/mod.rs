@@ -12,24 +12,24 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::{
+    mpsc,
+    time::{self, Instant, MissedTickBehavior},
+};
 use ::bitswap::Store;
 use futures::StreamExt;
 use libp2p::{
     identity::Keypair,
     multiaddr::Protocol,
-    noise, request_response,
+    request_response,
     swarm::{
         behaviour::toggle::Toggle,
         dial_opts::{DialOpts, PeerCondition},
         DialError,
     },
-    tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
+    Multiaddr, PeerId, Swarm,
 };
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
-use tokio::{
-    sync::mpsc,
-    time::{self, Instant, MissedTickBehavior},
-};
 use tracing::{debug, info, warn};
 
 use crate::behaviour::DefraBehaviour;
@@ -240,7 +240,7 @@ impl Default for P2PHostConfig {
 /// One in-flight Bitswap query: its abort handle and the fetch id.
 #[derive(Clone)]
 pub(super) struct BitswapQuery {
-    pub(super) abort: tokio::task::AbortHandle,
+    pub(super) abort: crate::rt::AbortHandle,
     pub(super) fetch_id: ::bitswap::FetchId,
 }
 
@@ -257,7 +257,7 @@ pub struct P2PHost<S: Store> {
     shutdown_requested: bool,
     pub(super) pending_requests: RapidHashMap<
         request_response::OutboundRequestId,
-        tokio::sync::oneshot::Sender<Result<PushLogReply>>,
+        crate::rt::oneshot::Sender<Result<PushLogReply>>,
     >,
     /// Replicator registry for access control
     pub(super) replicators: Arc<ReplicatorRegistry>,
@@ -267,7 +267,7 @@ pub struct P2PHost<S: Store> {
     /// Receiver for two-stream events
     pub(super) two_stream_event_rx: mpsc::Receiver<crate::two_stream::TwoStreamEvent>,
     /// Tracked spawned tasks for graceful shutdown
-    pub(super) spawned_tasks: tokio::task::JoinSet<()>,
+    pub(super) spawned_tasks: crate::rt::JoinSet<()>,
     /// Bitswap queries, for cancellation and session teardown. Shared with
     /// each fetch task, which removes its own entry when it completes.
     pub(super) bitswap_queries: BitswapQueries,
@@ -339,7 +339,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     ///
     /// # Note
     ///
-    /// This must be called within a tokio runtime context as Bitswap spawns
+    /// This must be called within a nuclei runtime context as Bitswap spawns
     /// background tasks for operations.
     pub async fn with_keypair(
         keypair: Keypair,
@@ -455,48 +455,15 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         )
         .await?;
 
-        let tcp_config = tcp::Config::default();
-
-        // Two builder paths required: libp2p's SwarmBuilder uses a typestate
-        // pattern where `.with_relay_client()` transitions to a different builder
-        // type (different `.with_behaviour()` closure signature), so it cannot be
-        // called conditionally on a single builder chain.
-        let swarm = if config.enable_relay {
-            SwarmBuilder::with_existing_identity(keypair.clone())
-                .with_tokio()
-                .with_tcp(tcp_config, noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_quic()
-                .with_dns()
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_websocket(noise::Config::new, yamux::Config::default)
-                .await
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_relay_client(noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_behaviour(|_key, relay_client| {
-                    behaviour.relay = Toggle::from(Some(relay_client));
-                    behaviour
-                })
-                .expect("behaviour already constructed")
-                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
-                .build()
-        } else {
-            SwarmBuilder::with_existing_identity(keypair.clone())
-                .with_tokio()
-                .with_tcp(tcp_config, noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_quic()
-                .with_dns()
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_websocket(noise::Config::new, yamux::Config::default)
-                .await
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_behaviour(|_key| behaviour)
-                .expect("behaviour already constructed")
-                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
-                .build()
-        };
+        let (transport, relay_client) = super::transport::build(&keypair, config.enable_relay)?;
+        behaviour.relay = Toggle::from(relay_client);
+        let swarm = Swarm::new(
+            transport,
+            behaviour,
+            local_peer_id,
+            libp2p::swarm::Config::with_executor(super::transport::Executor)
+                .with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT),
+        );
 
         let (command_tx, command_rx) = mpsc::channel(256);
         let (event_tx, event_rx) = mpsc::channel(256);
@@ -592,7 +559,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             config.stream_timeout,
             config.max_p2p_tasks,
         );
-        tokio::spawn(runner.run());
+        crate::rt::spawn(runner.run()).detach();
 
         let host = Self {
             swarm,
@@ -604,7 +571,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             replicators: Arc::clone(&replicators),
             two_stream_handler,
             two_stream_event_rx,
-            spawned_tasks: tokio::task::JoinSet::new(),
+            spawned_tasks: crate::rt::JoinSet::new(),
             bitswap_queries: Arc::new(kovan_map::HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
@@ -642,7 +609,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let mut event = Some(event);
         loop {
             let event_tx = self.event_tx.clone();
-            tokio::select! {
+            crate::rt::select! {
                 permit = event_tx.reserve_owned() => {
                     let Ok(permit) = permit else {
                         return false;
@@ -671,7 +638,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         }
     }
 
-    fn report_spawned_task(result: Option<std::result::Result<(), tokio::task::JoinError>>) {
+    fn report_spawned_task(result: Option<std::result::Result<(), crate::rt::JoinError>>) {
         if let Some(Err(error)) = result {
             tracing::warn!(%error, "P2P host task failed");
         }
@@ -680,7 +647,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// Run the P2P host event loop.
     ///
     /// This method runs until shutdown is requested.
-    pub async fn run(mut self) {
+    pub async fn run(self) {
+        // The swarm polls libp2p's QUIC and DNS transports, which bind tokio
+        // sockets and timers.
+        crate::rt::compat(self.drive()).await
+    }
+
+    async fn drive(mut self) {
         let mut bootstrap_scheduler = BootstrapScheduler::new(DHT_BOOTSTRAP_DEBOUNCE);
         let mut bootstrap_deadline = Box::pin(time::sleep(DHT_BOOTSTRAP_DEBOUNCE));
         let mut bootstrap_interval = time::interval(DHT_BOOTSTRAP_INTERVAL);
@@ -694,7 +667,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             // Biased select: process swarm events before commands.
             // This ensures ConnectionEstablished events (which update peer_addrs)
             // are processed before PeerAddresses commands read them.
-            tokio::select! {
+            crate::rt::select! {
                 biased;
 
                 event = self.swarm.select_next_some() => {
@@ -929,7 +902,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn saturated_event_delivery_still_services_host_commands() {
         let (mut host, handle, mut events, _) =
             P2PHost::new(MockBitswapStore::new()).await.unwrap();
@@ -943,7 +916,7 @@ mod tests {
                 .try_send(HostEvent::Listening(address.clone()))
             {
                 Ok(()) => filled += 1,
-                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => break,
+                Err(crate::rt::mpsc::error::TrySendError::Full(_)) => break,
                 Err(error) => panic!("event receiver unexpectedly closed: {error}"),
             }
         }
@@ -951,8 +924,8 @@ mod tests {
 
         let mut command = Box::pin(handle.local_peer_id());
         let mut forward = Box::pin(host.forward_event(HostEvent::Listening(address)));
-        let resolved_peer_id = tokio::time::timeout(Duration::from_secs(1), async {
-            tokio::select! {
+        let resolved_peer_id = crate::rt::time::timeout(Duration::from_secs(1), async {
+            crate::rt::select! {
                 result = &mut command => result.unwrap(),
                 _ = &mut forward => panic!("event forwarding cannot finish while the channel is full"),
             }

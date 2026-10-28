@@ -47,7 +47,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite",
  "tracing",
  "vera-domain",
  "vera-modules",
@@ -1291,6 +1291,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compat"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c97d7ff3c25d6c10d64170c12acaf5d4245e76dece3779c1d92b153a64f11df"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-graphql"
 version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1480,6 +1493,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-tungstenite"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef0f7efedeac57d9b26170f72965ecfd31473ca52ca7a64e925b0b6f5f079886"
+dependencies = [
+ "atomic-waker",
+ "futures-core",
+ "futures-io",
+ "futures-task",
+ "futures-util",
+ "log",
+ "pin-project-lite",
+ "tungstenite",
+]
+
+[[package]]
 name = "async_io_stream"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,7 +1627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
- "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -1617,10 +1645,8 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1 0.10.6",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -1644,28 +1670,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-server"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1df331683d982a0b9492b38127151e6453639cd34926eb9c07d4cd8c6d22bfc"
-dependencies = [
- "arc-swap",
- "bytes",
- "either",
- "fs-err",
- "http 1.4.0",
- "http-body 1.0.1",
- "hyper 1.9.0",
- "hyper-util",
- "pin-project-lite",
- "rustls 0.23.46",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls 0.26.4",
- "tower-service",
 ]
 
 [[package]]
@@ -1768,6 +1772,7 @@ dependencies = [
  "lru",
  "mimalloc",
  "multihash",
+ "nuclei",
  "p2p",
  "query",
  "rapidhash",
@@ -1779,7 +1784,6 @@ dependencies = [
  "storage",
  "telemetry",
  "tempfile",
- "tokio",
  "tower",
  "workers",
  "x25519-dalek 2.0.1",
@@ -1871,13 +1875,13 @@ dependencies = [
  "multihash",
  "multihash-codetable",
  "multistream-select",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
- "tokio-util",
  "tracing",
  "unsigned-varint 0.8.0",
 ]
@@ -2463,6 +2467,8 @@ dependencies = [
  "libc",
  "libp2p",
  "mimalloc",
+ "net",
+ "nuclei",
  "orbis",
  "p2p",
  "pg-compat",
@@ -2473,7 +2479,6 @@ dependencies = [
  "rcgen 0.13.2",
  "regolith 0.2.3",
  "replication-filter",
- "reqwest 0.12.28",
  "rlimit",
  "rustls 0.23.46",
  "schema",
@@ -2486,7 +2491,6 @@ dependencies = [
  "telemetry",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tower",
  "tracing",
@@ -2951,11 +2955,12 @@ name = "conformance"
 version = "0.1.0"
 dependencies = [
  "defra-harness",
+ "edge",
+ "nuclei",
  "serde",
  "serde_json",
  "serial_test",
  "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
@@ -3347,7 +3352,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
- "tokio",
  "walkdir",
 ]
 
@@ -3820,6 +3824,7 @@ dependencies = [
  "edge",
  "events",
  "futures",
+ "futures-lite",
  "getrandom 0.2.17",
  "hex",
  "identity",
@@ -3832,6 +3837,8 @@ dependencies = [
  "libp2p",
  "multihash",
  "n0-future",
+ "net",
+ "nuclei",
  "p2p",
  "proptest",
  "query",
@@ -3897,6 +3904,7 @@ dependencies = [
  "multibase",
  "multihash",
  "multihash-codetable",
+ "nuclei",
  "proptest",
  "rand 0.8.8",
  "rapidhash",
@@ -3907,7 +3915,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "uuid",
  "workers",
@@ -3942,7 +3949,6 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
- "axum-server",
  "base64 0.23.1",
  "cid",
  "crypto",
@@ -3960,6 +3966,8 @@ dependencies = [
  "kovan-map 0.2.2",
  "kovan-queue 0.2.2",
  "lens",
+ "net",
+ "nuclei",
  "query",
  "rapidhash",
  "regolith 0.2.3",
@@ -3970,8 +3978,6 @@ dependencies = [
  "storage",
  "telemetry",
  "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
@@ -4004,11 +4010,11 @@ dependencies = [
  "kovan-queue 0.2.2",
  "lens",
  "mimalloc",
+ "net",
  "p2p",
  "query",
  "rapidhash",
  "regolith 0.2.3",
- "reqwest 0.12.28",
  "schema",
  "serde",
  "serde_json",
@@ -4041,6 +4047,7 @@ dependencies = [
  "document",
  "edge",
  "events",
+ "futures-lite",
  "hex",
  "identity",
  "iroh",
@@ -4051,6 +4058,7 @@ dependencies = [
  "lens",
  "libp2p",
  "n0-future",
+ "nuclei",
  "p2p",
  "query",
  "rapidhash",
@@ -4063,7 +4071,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "storage",
- "tokio",
  "tracing",
  "web-time",
  "workers",
@@ -4502,11 +4509,13 @@ dependencies = [
 name = "edge"
 version = "0.5.0"
 dependencies = [
+ "async-compat",
  "defra-core",
+ "futures-lite",
  "n0-future",
+ "nuclei",
  "regolith 0.2.3",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "workers",
 ]
@@ -4869,6 +4878,7 @@ dependencies = [
  "edge",
  "embedded",
  "events",
+ "futures-lite",
  "hex",
  "identity",
  "kovan 0.2.2",
@@ -4890,7 +4900,6 @@ dependencies = [
  "storage",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -4909,11 +4918,12 @@ dependencies = [
  "colored",
  "defra-version",
  "dirs",
+ "net",
+ "nuclei",
  "rapidhash",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
@@ -5032,16 +5042,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fs-err"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91aa448ca50d7e79433bdf3ee8d99215430d2ec02ade5aefab2a073a1822e8a"
-dependencies = [
- "autocfg",
- "tokio",
 ]
 
 [[package]]
@@ -5802,23 +5802,9 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "rustls 0.23.46",
- "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
- "tower-service",
-]
-
-[[package]]
-name = "hyper-timeout"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
-dependencies = [
- "hyper 1.9.0",
- "hyper-util",
- "pin-project-lite",
- "tokio",
  "tower-service",
 ]
 
@@ -6194,10 +6180,11 @@ version = "0.5.0"
 dependencies = [
  "defra-core",
  "edge",
+ "futures-lite",
  "n0-future",
+ "nuclei",
  "rapidhash",
  "regolith 0.2.3",
- "tokio",
  "tracing",
  "workers",
 ]
@@ -6218,6 +6205,7 @@ dependencies = [
  "defra-core",
  "defra-harness",
  "document",
+ "edge",
  "futures",
  "hex",
  "identity",
@@ -6225,15 +6213,16 @@ dependencies = [
  "kovan 0.2.2",
  "libc",
  "mach2 0.4.3",
+ "net",
+ "nuclei",
  "p2p",
  "paste",
  "rapidhash",
  "regolith 0.2.3",
- "reqwest 0.12.28",
  "serde_json",
  "serial_test",
  "tempfile",
- "tokio",
+ "thiserror 2.0.21",
  "vera",
  "vera-client",
  "vera-domain",
@@ -6891,6 +6880,7 @@ dependencies = [
  "kovan 0.2.2",
  "kovan-map 0.2.2",
  "kovan-queue 0.2.2",
+ "nuclei",
  "orbis",
  "rand 0.8.8",
  "rapidhash",
@@ -6898,7 +6888,6 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "uuid",
  "vera",
@@ -7048,8 +7037,8 @@ name = "lens-host"
 version = "0.5.0"
 dependencies = [
  "lens",
+ "nuclei",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -8023,6 +8012,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
+name = "net"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "futures-core",
+ "futures-io",
+ "futures-rustls",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "if-addrs",
+ "libp2p",
+ "nuclei",
+ "pin-project-lite",
+ "rapidhash",
+ "rcgen 0.13.2",
+ "regolith 0.2.3",
+ "rustls 0.23.46",
+ "rustls-native-certs 0.8.3",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "socket2 0.6.3",
+ "thiserror 2.0.21",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "netdev"
 version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8335,6 +8359,28 @@ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "nuclei"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a20d653c18ef6c97faff7dd053ba7885fc6a9ef6bb0fc9af642d9bc83cb1fa88"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "kovan 0.2.2",
+ "kovan-channel 0.2.2",
+ "kovan-map 0.2.2",
+ "kovan-queue 0.2.2",
+ "libc",
+ "nuclei-macros",
+]
+
+[[package]]
+name = "nuclei-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48fef3c48a8721f47388c8deb7bca43a3575f6b13527644efa93d1cff40db230"
 
 [[package]]
 name = "num"
@@ -8791,14 +8837,14 @@ dependencies = [
  "edge",
  "hex",
  "identity",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "regolith 0.2.3",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
  "tonic",
  "tonic-build",
  "tonic-prost",
@@ -8872,6 +8918,7 @@ dependencies = [
  "document",
  "edge",
  "futures",
+ "futures-lite",
  "getrandom 0.3.4",
  "hex",
  "identity",
@@ -8891,7 +8938,9 @@ dependencies = [
  "multiaddr",
  "multihash-codetable",
  "n0-future",
+ "net",
  "noq",
+ "nuclei",
  "postcard",
  "rand 0.10.3",
  "rapidhash",
@@ -8907,7 +8956,6 @@ dependencies = [
  "sysinfo 0.33.1",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "unsigned-varint 0.8.0",
  "uuid",
@@ -9138,19 +9186,21 @@ name = "pg-compat"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "futures",
  "identity",
  "kovan 0.2.2",
+ "nuclei",
  "pgwire",
  "query",
  "rapidhash",
  "regex",
  "regolith 0.2.3",
+ "rustls 0.23.46",
  "schema",
  "serde_json",
  "sqlparser",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
 ]
 
@@ -9730,7 +9780,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -10490,9 +10540,6 @@ dependencies = [
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
- "quinn",
- "rustls 0.23.46",
- "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -10500,7 +10547,6 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-native-tls",
- "tokio-rustls 0.26.4",
  "tokio-util",
  "tower",
  "tower-http",
@@ -12403,14 +12449,17 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "telemetry"
 version = "0.5.0"
 dependencies = [
+ "async-trait",
+ "edge",
  "kovan 0.2.2",
+ "net",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "rapidhash",
  "regolith 0.2.3",
- "reqwest 0.13.3",
  "thiserror 2.0.21",
  "tracing",
  "tracing-opentelemetry",
@@ -12778,24 +12827,8 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.46",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls 0.26.4",
- "tungstenite 0.26.2",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "tokio-tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.29.0",
+ "tungstenite",
 ]
 
 [[package]]
@@ -12959,23 +12992,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fec7c61a0695dc1887c1b53952990f3ad2e3a31453e1f49f10e75424943a93ec"
 dependencies = [
  "async-trait",
- "axum",
  "base64 0.22.1",
  "bytes",
- "h2 0.4.19",
  "http 1.4.0",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.9.0",
- "hyper-timeout",
- "hyper-util",
  "percent-encoding",
  "pin-project",
- "socket2 0.6.3",
  "sync_wrapper 1.0.2",
- "tokio",
  "tokio-stream",
- "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -13028,9 +13053,7 @@ checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap 2.14.0",
  "pin-project-lite",
- "slab",
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-util",
@@ -13196,27 +13219,9 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
- "rustls 0.23.46",
- "rustls-pki-types",
  "sha1 0.10.6",
  "thiserror 2.0.21",
  "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
-dependencies = [
- "bytes",
- "data-encoding",
- "http 1.4.0",
- "httparse",
- "log",
- "rand 0.9.5",
- "sha1 0.10.6",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -13448,6 +13453,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
+ "async-tungstenite",
  "base64 0.23.1",
  "bs58",
  "commonware-codec",
@@ -13465,6 +13471,9 @@ dependencies = [
  "kovan 0.2.2",
  "kovan-map 0.2.2",
  "kovan-queue 0.2.2",
+ "n0-future",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "regolith 0.2.3",
@@ -13474,8 +13483,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.26.2",
  "tonic",
  "tonic-prost",
  "tracing",

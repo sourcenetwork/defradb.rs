@@ -1,7 +1,8 @@
 //! OTLP exporter setup. Mirrors Go DefraDB's `internal/telemetry/otel.go`.
 //!
-//! - OTLP/HTTP transport (`reqwest-blocking-client`). Same wire protocol Go
-//!   uses via `otlptracehttp`. Default endpoint is `http://localhost:4318`.
+//! - OTLP/HTTP transport on nuclei sockets (`crate::transport`). Same wire
+//!   protocol Go uses via `otlptracehttp`. Default endpoint is
+//!   `http://localhost:4318`.
 //! - Standard OTEL env vars are honored automatically by `opentelemetry-otlp`
 //!   0.32: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
 //!   `OTEL_EXPORTER_OTLP_PROTOCOL`, signal-specific overrides, etc.
@@ -24,7 +25,8 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::config::TelemetryConfig;
 use crate::handle::TelemetryHandle;
-use crate::util::{otel_timeout, panic_message};
+use crate::transport::OtlpHttp;
+use crate::util::otel_timeout;
 
 pub use opentelemetry_sdk::trace::SdkTracer as Tracer;
 
@@ -36,14 +38,11 @@ pub enum InitError {
     #[error("failed to build OTLP metric exporter: {0}")]
     MetricExporter(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("failed to spawn the telemetry HTTP client init thread: {0}")]
-    HttpClientThreadSpawn(#[source] std::io::Error),
-
-    #[error("the telemetry HTTP client init thread panicked: {0}")]
-    HttpClientThreadPanic(String),
+    #[error("the network runtime for telemetry export could not start: {0}")]
+    Network(#[source] edge::EdgeError),
 
     #[error("failed to build the telemetry HTTP client: {0}")]
-    HttpClientBuild(#[source] reqwest::Error),
+    HttpClientBuild(#[source] net::http::Error),
 }
 
 /// Returns the lifecycle handle and a configured [`SdkTracer`]. The caller
@@ -51,10 +50,9 @@ pub enum InitError {
 /// at its subscriber-composition site so type inference can pick the right
 /// `S` parameter for `OpenTelemetryLayer<S, _>`.
 ///
-/// Safe to call from any context (no Tokio runtime required): with the
-/// `reqwest-blocking-client` transport selected in this crate's `Cargo.toml`,
-/// `BatchSpanProcessor` spawns a dedicated OS thread via `std::thread`. No
-/// `Handle::current()` call happens at init.
+/// Safe to call from any context: `BatchSpanProcessor` exports from a
+/// dedicated OS thread, and each export runs as a task of the process's
+/// on-demand network runtime ([`edge::on_demand`]), started here.
 ///
 /// By default `init` installs the providers in the process-wide
 /// `opentelemetry::global` slot. Set [`TelemetryConfig::install_global`] to
@@ -83,17 +81,8 @@ pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), Ini
         .with_attribute(KeyValue::new("process.executable.name", executable_name))
         .build();
 
-    let http_client = std::thread::Builder::new()
-        .name("telemetry-http-client-init".into())
-        .spawn(move || {
-            reqwest::blocking::Client::builder()
-                .timeout(otel_timeout())
-                .build()
-        })
-        .map_err(InitError::HttpClientThreadSpawn)?
-        .join()
-        .map_err(|payload| InitError::HttpClientThreadPanic(panic_message(&payload)))?
-        .map_err(InitError::HttpClientBuild)?;
+    let edge = edge::on_demand().map_err(InitError::Network)?.clone();
+    let http_client = OtlpHttp::new(edge, otel_timeout()).map_err(InitError::HttpClientBuild)?;
 
     let span_exporter = SpanExporter::builder()
         .with_http()

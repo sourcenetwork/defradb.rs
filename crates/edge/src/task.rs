@@ -6,10 +6,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use n0_future::task::JoinHandle;
-use n0_future::time::Instant;
-
 use crate::error::EdgeError;
+use crate::platform::{Instant, JoinHandle};
 use crate::shared::Shared;
 use crate::timer::Timer;
 
@@ -88,13 +86,7 @@ impl<T> Future for Task<T> {
             return Poll::Ready(Err(EdgeError::Closed));
         };
         if let Poll::Ready(joined) = Pin::new(&mut running.join).poll(cx) {
-            return Poll::Ready(joined.unwrap_or_else(|error| {
-                Err(if error.is_panic() {
-                    EdgeError::Panicked(error.to_string())
-                } else {
-                    EdgeError::Cancelled
-                })
-            }));
+            return Poll::Ready(joined.and_then(|outcome| outcome));
         }
         running.timer.poll_limit(cx, running.limit).map(|error| {
             running.join.abort();

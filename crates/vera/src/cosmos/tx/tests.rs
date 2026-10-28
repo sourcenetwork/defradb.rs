@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cosmrs::Any;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
+use nuclei::io::{AsyncReadExt, AsyncWriteExt};
+use nuclei::net::{TcpListener, TcpStream};
+use regolith::sync::Notify;
 
 use super::*;
 
@@ -53,7 +53,7 @@ fn transaction_messages_use_vera_type_urls() {
     assert_eq!(command.type_url, "/vera.acp.MsgBearerPolicyCmd");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn sign_and_broadcast_holds_sequence_lock_until_inclusion() {
     let state = Arc::new(RpcState::new(ServerMode::DelayFirstTx));
     let base_url = spawn_vera_rpc(state.clone()).await;
@@ -63,14 +63,14 @@ async fn sign_and_broadcast_holds_sequence_lock_until_inclusion() {
     let first = {
         let client = client.clone();
         let signer = signer.clone();
-        tokio::spawn(async move {
+        nuclei::spawn(async move {
             signer
                 .sign_and_broadcast(client.as_ref(), vec![test_msg("first")])
                 .await
         })
     };
 
-    tokio::time::timeout(
+    nuclei::time::timeout(
         Duration::from_secs(5),
         state.first_tx_poll_started.notified(),
     )
@@ -80,15 +80,23 @@ async fn sign_and_broadcast_holds_sequence_lock_until_inclusion() {
     let second = {
         let client = client.clone();
         let signer = signer.clone();
-        tokio::spawn(async move {
+        nuclei::spawn(async move {
             signer
                 .sign_and_broadcast(client.as_ref(), vec![test_msg("second")])
                 .await
         })
     };
 
-    first.await.unwrap().expect("first tx should be included");
-    second.await.unwrap().expect("second tx should be included");
+    first
+        .join()
+        .await
+        .unwrap()
+        .expect("first tx should be included");
+    second
+        .join()
+        .await
+        .unwrap()
+        .expect("second tx should be included");
 
     assert_eq!(state.account_queries.load(Ordering::SeqCst), 1);
     assert_eq!(state.broadcasts.load(Ordering::SeqCst), 2);
@@ -97,7 +105,7 @@ async fn sign_and_broadcast_holds_sequence_lock_until_inclusion() {
         .load(Ordering::SeqCst));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn sign_and_broadcast_resets_sequence_after_inclusion_failure() {
     let state = Arc::new(RpcState::new(ServerMode::FailFirstTx));
     let base_url = spawn_vera_rpc(state.clone()).await;
@@ -127,19 +135,24 @@ async fn spawn_vera_rpc(state: Arc<RpcState>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test rpc should bind");
-    let address = listener.local_addr().expect("test rpc should have address");
+    let address = listener
+        .get_ref()
+        .local_addr()
+        .expect("test rpc should have address");
 
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 break;
             };
             let state = state.clone();
-            tokio::spawn(async move {
+            nuclei::spawn(async move {
                 handle_rpc_connection(stream, state).await;
-            });
+            })
+            .detach();
         }
-    });
+    })
+    .detach();
 
     format!("http://{address}")
 }
@@ -153,6 +166,7 @@ async fn handle_rpc_connection(mut stream: TcpStream, state: Arc<RpcState>) {
         body.len()
     );
     let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.flush().await;
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> String {
@@ -253,7 +267,7 @@ async fn tx_query_response(state: &RpcState, query: usize) -> (&'static str, Str
     match (state.mode, query) {
         (ServerMode::DelayFirstTx, 1) => {
             state.first_tx_poll_started.notify_waiters();
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            nuclei::time::sleep(Duration::from_millis(150)).await;
             state.first_tx_done.store(true, Ordering::SeqCst);
             ("200 OK", successful_tx_response())
         }

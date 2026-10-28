@@ -30,260 +30,263 @@ const DOCS_PER_PUSHER: usize = 8;
 /// forward progress through that durable retry path: every committed doc is
 /// either merged, durably registered at the receiver, or retained as a sender
 /// scope marker.
-#[tokio::test]
+#[nuclei::test]
 async fn fan_in_pushlog_admission_no_silent_divergence() {
-    std::env::set_var("DEFRA_P2P_MAX_PENDING_DAGS", "1");
-    std::env::set_var("RUST_LOG", "info,p2p::retry_after=debug");
+    edge::compat(async {
+        std::env::set_var("DEFRA_P2P_MAX_PENDING_DAGS", "1");
+        std::env::set_var("RUST_LOG", "info,p2p::retry_after=debug");
 
-    let cluster = TestCluster::builder()
-        .rust_nodes(1 + PUSHERS)
-        .with_p2p()
-        .build()
-        .await
-        .expect("cluster start");
-
-    let startup_timeout = Duration::from_secs(30);
-    for node in 0..=PUSHERS {
-        cluster
-            .wait_for_log(node, "p2p_listening", startup_timeout)
+        let cluster = TestCluster::builder()
+            .rust_nodes(1 + PUSHERS)
+            .with_p2p()
+            .build()
             .await
-            .unwrap_or_else(|e| panic!("node{node} P2P listener did not start: {e}"));
-    }
+            .expect("cluster start");
 
-    let hub = cluster.client(0);
-    let hub_info = hub.p2p_info().expect("hub p2p info");
-    let hub_addr = hub_info
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .expect("hub has no P2P address")
-        .to_string();
-
-    hub.schema_add(SCHEMA).expect("hub schema");
-    for pusher in 1..=PUSHERS {
-        let client = cluster.client(pusher);
-        client.schema_add(SCHEMA).expect("pusher schema");
-        client.p2p_connect(&[&hub_addr]).expect("connect to hub");
-        client
-            .p2p_replicator_set(&["User"], &hub_addr)
-            .expect("replicator pusher -> hub");
-    }
-
-    // Concurrent create bursts, one thread per pusher: each create commits
-    // locally and pushes its head block to the hub from a background task, so
-    // pushes from all 8 pushers race for the hub's single pending-DAG slot.
-    // The hub handles transport events serially, so any push that arrives
-    // while another registration is still waiting on its Bitswap round trip
-    // overflows admission.
-    let pusher_clients: Vec<DefraClient> = (1..=PUSHERS).map(|i| cluster.client(i)).collect();
-    let expected_doc_ids: Vec<String> = std::thread::scope(|scope| {
-        let handles: Vec<_> = pusher_clients
-            .into_iter()
-            .enumerate()
-            .map(|(idx, client)| {
-                scope.spawn(move || {
-                    let pusher = idx + 1;
-                    (0..DOCS_PER_PUSHER)
-                        .map(|doc| {
-                            let mutation = format!(
-                                r#"mutation {{ add_User(input: {{name: "p{pusher}-d{doc}", age: {doc}}}) {{ _docID }} }}"#
-                            );
-                            let data = client.query(&mutation).expect("create doc on pusher");
-                            data["add_User"][0]["_docID"]
-                                .as_str()
-                                .expect("missing _docID")
-                                .to_string()
-                        })
-                        .collect::<Vec<String>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("pusher thread panicked"))
-            .collect()
-    });
-    assert_eq!(expected_doc_ids.len(), PUSHERS * DOCS_PER_PUSHER);
-
-    // Anti-vacuity: the hub must actually have hit admission capacity —
-    // otherwise this test would pass without exercising the overflow path.
-    // (`wait_for_log` only knows pre-registered named patterns, so read the
-    // hub's stdout log directly: it lives at <node_dir>/logs/stdout.log next
-    // to the <node_dir>/data rootdir.)
-    let hub_log = cluster.nodes[0]
-        .rootdir
-        .parent()
-        .expect("hub rootdir has a parent")
-        .join("logs/stdout.log");
-    let capacity_deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let log = std::fs::read_to_string(&hub_log).unwrap_or_default();
-        if log.contains("Pending DAGs at capacity") {
-            break;
+        let startup_timeout = Duration::from_secs(30);
+        for node in 0..=PUSHERS {
+            cluster
+                .wait_for_log(node, "p2p_listening", startup_timeout)
+                .await
+                .unwrap_or_else(|e| panic!("node{node} P2P listener did not start: {e}"));
         }
-        assert!(
-            Instant::now() < capacity_deadline,
-            "hub never hit pending-DAG capacity; the fan-in did not stress admission"
-        );
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
 
-    let status: serde_json::Value =
-        reqwest::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
-            .await
-            .expect("hub sync status request")
-            .json()
-            .await
-            .expect("hub sync status json");
-    assert!(
-        status["pending_dag_capacity_shed"]
-            .as_u64()
-            .is_some_and(|count| count > 0),
-        "fan-in capacity exits were not counted: {status}"
-    );
-    assert!(status["single_flight_suppressed"].is_u64());
-    assert!(status["already_merged_fast_path"].is_u64());
-
-    // Wait for the first live-send wave to drain so the next merge must come
-    // from the durable sender ladder rather than a still-queued initial hint.
-    let send_waves = DOCS_PER_PUSHER.div_ceil(p2p::sync::DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER);
-    let settle_timeout = p2p::sync::DEFAULT_PUSH_SEND_TIMEOUT * (send_waves as u32 + 1);
-    let settle_deadline = Instant::now() + settle_timeout;
-    loop {
-        let mut settled = true;
-        for pusher in 1..=PUSHERS {
-            let status: serde_json::Value = reqwest::get(format!(
-                "{}/api/v0/p2p/sync/status",
-                cluster.api_url(pusher)
-            ))
-            .await
-            .expect("pusher sync status request")
-            .json()
-            .await
-            .expect("pusher sync status json");
-            settled &= status["push_backlog"]["active_jobs"].as_u64() == Some(0)
-                && status["push_backlog"]["queued_items"].as_u64() == Some(0);
-        }
-        if settled {
-            break;
-        }
-        assert!(
-            Instant::now() < settle_deadline,
-            "initial head-hint wave did not drain"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-
-    let initial_result = hub
-        .query("query { User { _docID } }")
-        .expect("query initial hub Users");
-    let initially_merged = initial_result["User"].as_array().map_or(0, Vec::len);
-
-    // M1: wait for full convergence or at least one later retry to merge, then require exact
-    // obligation conservation across sender markers, durable receiver roots,
-    // and merged documents. The 90s bound covers the first two production
-    // ladder rungs without weakening their Go-compatible timing.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let result = hub
-            .query("query { User { _docID } }")
-            .expect("query hub Users");
-        let present: rapidhash::RapidHashSet<&str> = result["User"]
+        let hub = cluster.client(0);
+        let hub_info = hub.p2p_info().expect("hub p2p info");
+        let hub_addr = hub_info
             .as_array()
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| row["_docID"].as_str())
-                    .collect()
-            })
-            .unwrap_or_default();
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("hub has no P2P address")
+            .to_string();
 
-        let hub_status: serde_json::Value =
-            reqwest::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
+        hub.schema_add(SCHEMA).expect("hub schema");
+        for pusher in 1..=PUSHERS {
+            let client = cluster.client(pusher);
+            client.schema_add(SCHEMA).expect("pusher schema");
+            client.p2p_connect(&[&hub_addr]).expect("connect to hub");
+            client
+                .p2p_replicator_set(&["User"], &hub_addr)
+                .expect("replicator pusher -> hub");
+        }
+
+        // Concurrent create bursts, one thread per pusher: each create commits
+        // locally and pushes its head block to the hub from a background task, so
+        // pushes from all 8 pushers race for the hub's single pending-DAG slot.
+        // The hub handles transport events serially, so any push that arrives
+        // while another registration is still waiting on its Bitswap round trip
+        // overflows admission.
+        let pusher_clients: Vec<DefraClient> = (1..=PUSHERS).map(|i| cluster.client(i)).collect();
+        let expected_doc_ids: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = pusher_clients
+                .into_iter()
+                .enumerate()
+                .map(|(idx, client)| {
+                    scope.spawn(move || {
+                        let pusher = idx + 1;
+                        (0..DOCS_PER_PUSHER)
+                            .map(|doc| {
+                                let mutation = format!(
+                                    r#"mutation {{ add_User(input: {{name: "p{pusher}-d{doc}", age: {doc}}}) {{ _docID }} }}"#
+                                );
+                                let data = client.query(&mutation).expect("create doc on pusher");
+                                data["add_User"][0]["_docID"]
+                                    .as_str()
+                                    .expect("missing _docID")
+                                    .to_string()
+                            })
+                            .collect::<Vec<String>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("pusher thread panicked"))
+                .collect()
+        });
+        assert_eq!(expected_doc_ids.len(), PUSHERS * DOCS_PER_PUSHER);
+
+        // Anti-vacuity: the hub must actually have hit admission capacity -
+        // otherwise this test would pass without exercising the overflow path.
+        // (`wait_for_log` only knows pre-registered named patterns, so read the
+        // hub's stdout log directly: it lives at <node_dir>/logs/stdout.log next
+        // to the <node_dir>/data rootdir.)
+        let hub_log = cluster.nodes[0]
+            .rootdir
+            .parent()
+            .expect("hub rootdir has a parent")
+            .join("logs/stdout.log");
+        let capacity_deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let log = std::fs::read_to_string(&hub_log).unwrap_or_default();
+            if log.contains("Pending DAGs at capacity") {
+                break;
+            }
+            assert!(
+                Instant::now() < capacity_deadline,
+                "hub never hit pending-DAG capacity; the fan-in did not stress admission"
+            );
+            nuclei::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        let status: serde_json::Value =
+            net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
                 .await
                 .expect("hub sync status request")
                 .json()
                 .await
                 .expect("hub sync status json");
-        let receiver_obligations = hub_status["persisted_pending_dags"]
-            .as_u64()
-            .expect("persisted_pending_dags counter") as usize;
+        assert!(
+            status["pending_dag_capacity_shed"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+            "fan-in capacity exits were not counted: {status}"
+        );
+        assert!(status["single_flight_suppressed"].is_u64());
+        assert!(status["already_merged_fast_path"].is_u64());
 
-        let mut sender_markers = 0usize;
-        let mut sender_jobs = 0u64;
-        for pusher in 1..=PUSHERS {
-            let status: serde_json::Value = reqwest::get(format!(
-                "{}/api/v0/p2p/sync/status",
-                cluster.api_url(pusher)
-            ))
-            .await
-            .expect("pusher sync status request")
-            .json()
-            .await
-            .expect("pusher sync status json");
-            sender_markers += status["push_retry_markers"]["document_markers"]
-                .as_u64()
-                .expect("document marker count") as usize;
-            sender_jobs += status["push_backlog"]["active_jobs"]
-                .as_u64()
-                .expect("active job count");
+        // Wait for the first live-send wave to drain so the next merge must come
+        // from the durable sender ladder rather than a still-queued initial hint.
+        let send_waves = DOCS_PER_PUSHER.div_ceil(p2p::sync::DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER);
+        let settle_timeout = p2p::sync::DEFAULT_PUSH_SEND_TIMEOUT * (send_waves as u32 + 1);
+        let settle_deadline = Instant::now() + settle_timeout;
+        loop {
+            let mut settled = true;
+            for pusher in 1..=PUSHERS {
+                let status: serde_json::Value = net::http::get(format!(
+                    "{}/api/v0/p2p/sync/status",
+                    cluster.api_url(pusher)
+                ))
+                .await
+                .expect("pusher sync status request")
+                .json()
+                .await
+                .expect("pusher sync status json");
+                settled &= status["push_backlog"]["active_jobs"].as_u64() == Some(0)
+                    && status["push_backlog"]["queued_items"].as_u64() == Some(0);
+            }
+            if settled {
+                break;
+            }
+            assert!(
+                Instant::now() < settle_deadline,
+                "initial head-hint wave did not drain"
+            );
+            nuclei::time::sleep(Duration::from_millis(250)).await;
         }
 
-        let balanced =
-            present.len() + receiver_obligations + sender_markers == expected_doc_ids.len();
-        let fully_merged = expected_doc_ids
-            .iter()
-            .all(|doc_id| present.contains(doc_id.as_str()));
-        if (fully_merged || present.len() > initially_merged) && sender_jobs == 0 && balanced {
-            break;
+        let initial_result = hub
+            .query("query { User { _docID } }")
+            .expect("query initial hub Users");
+        let initially_merged = initial_result["User"].as_array().map_or(0, Vec::len);
+
+        // M1: wait for full convergence or at least one later retry to merge, then require exact
+        // obligation conservation across sender markers, durable receiver roots,
+        // and merged documents. The 90s bound covers the first two production
+        // ladder rungs without weakening their Go-compatible timing.
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let result = hub
+                .query("query { User { _docID } }")
+                .expect("query hub Users");
+            let present: rapidhash::RapidHashSet<&str> = result["User"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|row| row["_docID"].as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let hub_status: serde_json::Value =
+                net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
+                    .await
+                    .expect("hub sync status request")
+                    .json()
+                    .await
+                    .expect("hub sync status json");
+            let receiver_obligations = hub_status["persisted_pending_dags"]
+                .as_u64()
+                .expect("persisted_pending_dags counter") as usize;
+
+            let mut sender_markers = 0usize;
+            let mut sender_jobs = 0u64;
+            for pusher in 1..=PUSHERS {
+                let status: serde_json::Value = net::http::get(format!(
+                    "{}/api/v0/p2p/sync/status",
+                    cluster.api_url(pusher)
+                ))
+                .await
+                .expect("pusher sync status request")
+                .json()
+                .await
+                .expect("pusher sync status json");
+                sender_markers += status["push_retry_markers"]["document_markers"]
+                    .as_u64()
+                    .expect("document marker count") as usize;
+                sender_jobs += status["push_backlog"]["active_jobs"]
+                    .as_u64()
+                    .expect("active job count");
+            }
+
+            let balanced =
+                present.len() + receiver_obligations + sender_markers == expected_doc_ids.len();
+            let fully_merged = expected_doc_ids
+                .iter()
+                .all(|doc_id| present.contains(doc_id.as_str()));
+            if (fully_merged || present.len() > initially_merged) && sender_jobs == 0 && balanced {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fan-in obligations did not remain balanced while the durable retry ladder made \
+             progress: merged={}, receiver={}, sender={}, expected={}, initially_merged={}",
+                present.len(),
+                receiver_obligations,
+                sender_markers,
+                expected_doc_ids.len(),
+                initially_merged,
+            );
+            nuclei::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // Require a negotiated hint from actual receiver saturation and a later
+        // durable dispatch honoring its deadline, not merely a default retry rung.
+        let mut hinted_retries = 0;
+        for pusher in 1..=PUSHERS {
+            let path = cluster.nodes[pusher]
+                .rootdir
+                .parent()
+                .unwrap()
+                .join("logs/stdout.log");
+            let log = std::fs::read_to_string(path).expect("pusher log");
+            let deadlines: rapidhash::RapidHashSet<u64> = log
+                .lines()
+                .filter(|line| line.contains("Persisting negotiated PushLog retry-after"))
+                .map(|line| {
+                    assert!(log_number(line, "retry_after_ms=") > 0);
+                    log_number(line, "retry_not_before_unix=")
+                })
+                .collect();
+            for line in log
+                .lines()
+                .filter(|line| line.contains("Dispatching deferred PushLog retry"))
+            {
+                let deadline = log_number(line, "retry_not_before_unix=");
+                let started = log_number(line, "retry_started_unix=");
+                assert!(
+                    started >= deadline,
+                    "retry dispatched before receiver hint: {line}"
+                );
+                hinted_retries += usize::from(deadlines.contains(&deadline));
+            }
         }
         assert!(
-            Instant::now() < deadline,
-            "fan-in obligations did not remain balanced while the durable retry ladder made \
-             progress: merged={}, receiver={}, sender={}, expected={}, initially_merged={}",
-            present.len(),
-            receiver_obligations,
-            sender_markers,
-            expected_doc_ids.len(),
-            initially_merged,
+            hinted_retries > 0,
+            "saturation never exercised a negotiated, durably deferred retry"
         );
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    // Require a negotiated hint from actual receiver saturation and a later
-    // durable dispatch honoring its deadline, not merely a default retry rung.
-    let mut hinted_retries = 0;
-    for pusher in 1..=PUSHERS {
-        let path = cluster.nodes[pusher]
-            .rootdir
-            .parent()
-            .unwrap()
-            .join("logs/stdout.log");
-        let log = std::fs::read_to_string(path).expect("pusher log");
-        let deadlines: rapidhash::RapidHashSet<u64> = log
-            .lines()
-            .filter(|line| line.contains("Persisting negotiated PushLog retry-after"))
-            .map(|line| {
-                assert!(log_number(line, "retry_after_ms=") > 0);
-                log_number(line, "retry_not_before_unix=")
-            })
-            .collect();
-        for line in log
-            .lines()
-            .filter(|line| line.contains("Dispatching deferred PushLog retry"))
-        {
-            let deadline = log_number(line, "retry_not_before_unix=");
-            let started = log_number(line, "retry_started_unix=");
-            assert!(
-                started >= deadline,
-                "retry dispatched before receiver hint: {line}"
-            );
-            hinted_retries += usize::from(deadlines.contains(&deadline));
-        }
-    }
-    assert!(
-        hinted_retries > 0,
-        "saturation never exercised a negotiated, durably deferred retry"
-    );
+    })
+    .await;
 }
 
 fn log_number(line: &str, field: &str) -> u64 {

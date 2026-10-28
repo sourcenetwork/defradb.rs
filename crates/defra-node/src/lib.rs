@@ -2016,14 +2016,14 @@ mod tests {
                     .build()
                     .await
                     .unwrap();
-                let client = reqwest::Client::new();
+                let client = net::http::Client::new();
                 let schema_url = format!("http://{address}/api/v0/collections");
                 let created = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {
                         loop {
                             if let Ok(response) = client
                                 .post(&schema_url)
-                                .header(reqwest::header::CONTENT_TYPE, "text/plain")
+                                .header(net::http::header::CONTENT_TYPE, "text/plain")
                                 .body("type Book { title: String }")
                                 .send()
                                 .await
@@ -2092,7 +2092,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     delete_response.status(),
-                    reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                    net::http::StatusCode::SERVICE_UNAVAILABLE,
                     "embedded collection observation must not enable destructive management"
                 );
 

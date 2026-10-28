@@ -1,8 +1,8 @@
 use super::SyncShutdownHandle;
+use nuclei::sync::oneshot;
 use std::sync::Arc;
-use tokio::sync::oneshot;
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn concurrent_shutdown_callers_wait_for_task_completion() {
     let shutdown = SyncShutdownHandle::new(1);
     let (release, wait) = oneshot::channel();
@@ -13,39 +13,39 @@ async fn concurrent_shutdown_callers_wait_for_task_completion() {
         let _ = wait.await;
     });
 
-    let first = tokio::spawn({
+    let first = nuclei::spawn({
         let shutdown = shutdown.clone();
         async move { shutdown.shutdown().await }
     });
     shutdown.cancelled().await;
 
     let second = shutdown.shutdown();
-    tokio::pin!(second);
-    tokio::select! {
+    let mut second = std::pin::pin!(second);
+    nuclei::select! {
         biased;
         _ = &mut second => panic!("shutdown returned while a registered task was still running"),
-        _ = tokio::task::yield_now() => {}
+        _ = nuclei::task::yield_now() => {}
     }
 
     release.send(()).unwrap();
     second.await;
-    first.await.unwrap();
+    first.join().await.unwrap();
     assert!(retained.upgrade().is_none());
     shutdown.shutdown().await;
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn abandoned_drain_releases_shutdown_waiters() {
     let shutdown = SyncShutdownHandle::new(1);
     assert!(shutdown.begin_shutdown());
     // Model a drain future dropped before its first poll.
     drop(shutdown.inner.shutdown_complete_tx.pop());
-    tokio::time::timeout(std::time::Duration::from_secs(1), shutdown.shutdown())
+    nuclei::time::timeout(std::time::Duration::from_secs(1), shutdown.shutdown())
         .await
         .expect("shutdown waited forever after losing its drain");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn shutdown_bounds_joining_a_non_cooperative_task() {
     let shutdown = SyncShutdownHandle::new(1);
     let (release, blocked) = std::sync::mpsc::channel();
@@ -55,12 +55,13 @@ async fn shutdown_bounds_joining_a_non_cooperative_task() {
         let _ = blocked.recv();
     });
     ready.await.unwrap();
-    let result = tokio::time::timeout(std::time::Duration::from_secs(7), shutdown.shutdown()).await;
+    let result =
+        nuclei::time::timeout(std::time::Duration::from_secs(7), shutdown.shutdown()).await;
     let _ = release.send(());
     result.expect("shutdown exceeded its cancellation budget");
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn shutdown_joins_aborted_tasks_before_returning() {
     let shutdown = SyncShutdownHandle::new(1);
     let resource = Arc::new(());
@@ -83,7 +84,7 @@ async fn shutdown_joins_aborted_tasks_before_returning() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn cancelling_the_first_shutdown_caller_does_not_detach_tasks() {
     let shutdown = SyncShutdownHandle::new(1);
     let resource = Arc::new(());
@@ -96,13 +97,13 @@ async fn cancelling_the_first_shutdown_caller_does_not_detach_tasks() {
     });
     running.await.unwrap();
 
-    let first = tokio::spawn({
+    let first = nuclei::spawn({
         let shutdown = shutdown.clone();
         async move { shutdown.shutdown().await }
     });
     shutdown.cancelled().await;
     first.abort();
-    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(first.join().await.unwrap_err().is_cancelled());
 
     shutdown.shutdown().await;
 
@@ -112,7 +113,7 @@ async fn cancelling_the_first_shutdown_caller_does_not_detach_tasks() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn shutdown_rejects_new_tasks_without_spawning_them() {
     let shutdown = SyncShutdownHandle::new(1);
     shutdown.shutdown().await;
@@ -131,14 +132,14 @@ async fn shutdown_rejects_new_tasks_without_spawning_them() {
     assert_eq!(shutdown.retained_task_count(), 0);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn task_registration_racing_shutdown_does_not_leave_resources_alive() {
     for _ in 0..32 {
         let shutdown = SyncShutdownHandle::new(1);
         let resource = Arc::new(());
         let retained = Arc::downgrade(&resource);
         let barrier = Arc::new(regolith::sync::Barrier::new(2));
-        let registration = tokio::spawn({
+        let registration = nuclei::spawn({
             let shutdown = shutdown.clone();
             let barrier = barrier.clone();
             async move {
@@ -153,7 +154,7 @@ async fn task_registration_racing_shutdown_does_not_leave_resources_alive() {
 
         barrier.wait().await;
         shutdown.shutdown().await;
-        registration.await.unwrap();
+        registration.join().await.unwrap();
 
         // A registration that lost the race self-aborts and returns before the
         // runtime has dropped the cancelled future, so the resource release
@@ -165,7 +166,7 @@ async fn task_registration_racing_shutdown_does_not_leave_resources_alive() {
                 std::time::Instant::now() < deadline,
                 "registration raced past the drain"
             );
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            nuclei::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
 }

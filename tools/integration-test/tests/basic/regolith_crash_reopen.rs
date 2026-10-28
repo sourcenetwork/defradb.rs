@@ -7,7 +7,7 @@ use kovan::Atom;
 use serde_json::{json, Value};
 
 async fn graphql_query(
-    client: &reqwest::Client,
+    client: &net::http::Client,
     api_url: &str,
     query: &str,
 ) -> Result<Value, String> {
@@ -55,94 +55,97 @@ async fn wait_for_acked_writes(acked: &Arc<Atom<Vec<i64>>>, target: usize) {
             Instant::now() < deadline,
             "timed out waiting for {target} acknowledged writes"
         );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        nuclei::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes() {
-    let _root = integration_test::workspace_root();
-    let mut cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_store("regolith")
-        .health_timeout(Duration::from_secs(60))
-        .build()
-        .await
-        .expect("build regolith cluster");
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let mut cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_store("regolith")
+            .health_timeout(Duration::from_secs(60))
+            .build()
+            .await
+            .expect("build regolith cluster");
 
-    let node = cluster.client(0);
-    node.schema_add(
-        "type CrashDoc {
+        let node = cluster.client(0);
+        node.schema_add(
+            "type CrashDoc {
             seq: Int @index(unique: true)
             label: String @index
             body: String
         }",
-    )
-    .expect("add CrashDoc schema");
+        )
+        .expect("add CrashDoc schema");
 
-    let api_url = cluster.api_url(0).to_string();
-    let acked = Arc::new(Atom::new(Vec::new()));
-    let writer_acked = Arc::clone(&acked);
-    let target_ack_count = crash_reopen_ack_target();
-    let max_attempts = (target_ack_count.max(50) * 4) as i64;
+        let api_url = cluster.api_url(0).to_string();
+        let acked = Arc::new(Atom::new(Vec::new()));
+        let writer_acked = Arc::clone(&acked);
+        let target_ack_count = crash_reopen_ack_target();
+        let max_attempts = (target_ack_count.max(50) * 4) as i64;
 
-    let writer = tokio::spawn(async move {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
-            .expect("http client");
+        let writer = nuclei::spawn(async move {
+            let http = net::http::Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .expect("http client");
 
-        for seq in 0..max_attempts {
-            let body = format!("payload-{seq}-{}", "x".repeat(256));
-            let gql = format!(
-                r#"mutation {{
+            for seq in 0..max_attempts {
+                let body = format!("payload-{seq}-{}", "x".repeat(256));
+                let gql = format!(
+                    r#"mutation {{
                     add_CrashDoc(input: {{seq: {seq}, label: "doc-{seq}", body: "{body}"}}) {{
                         seq
                     }}
                 }}"#
-            );
+                );
 
-            match graphql_query(&http, &api_url, &gql).await {
-                Ok(_) => writer_acked.rcu(|acked| {
-                    let mut next = acked.clone();
-                    next.push(seq);
-                    next
-                }),
-                Err(_) => break,
+                match graphql_query(&http, &api_url, &gql).await {
+                    Ok(_) => writer_acked.rcu(|acked| {
+                        let mut next = acked.clone();
+                        next.push(seq);
+                        next
+                    }),
+                    Err(_) => break,
+                }
+
+                nuclei::time::sleep(Duration::from_millis(2)).await;
             }
+        });
 
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
-    });
+        wait_for_acked_writes(&acked, target_ack_count).await;
+        cluster.nodes[0].process.kill();
+        writer.join().await.expect("writer task should not panic");
 
-    wait_for_acked_writes(&acked, target_ack_count).await;
-    cluster.nodes[0].process.kill();
-    writer.await.expect("writer task should not panic");
-
-    let acknowledged = acked.load_clone();
-    assert!(
-        !acknowledged.is_empty(),
-        "test must observe at least one acknowledged write"
-    );
-
-    cluster
-        .restart_node(0, Duration::from_secs(60))
-        .await
-        .expect("restart regolith node after kill");
-
-    let restarted = cluster.client(0);
-    let data = restarted
-        .query("query { CrashDoc { seq label } }")
-        .expect("query CrashDoc after restart");
-    let docs = data["CrashDoc"]
-        .as_array()
-        .expect("CrashDoc result should be an array");
-    let found: RapidHashSet<i64> = docs.iter().filter_map(|doc| doc["seq"].as_i64()).collect();
-
-    for seq in &acknowledged {
+        let acknowledged = acked.load_clone();
         assert!(
-            found.contains(seq),
-            "acknowledged write seq={seq} was missing after kill/restart"
+            !acknowledged.is_empty(),
+            "test must observe at least one acknowledged write"
         );
-    }
+
+        cluster
+            .restart_node(0, Duration::from_secs(60))
+            .await
+            .expect("restart regolith node after kill");
+
+        let restarted = cluster.client(0);
+        let data = restarted
+            .query("query { CrashDoc { seq label } }")
+            .expect("query CrashDoc after restart");
+        let docs = data["CrashDoc"]
+            .as_array()
+            .expect("CrashDoc result should be an array");
+        let found: RapidHashSet<i64> = docs.iter().filter_map(|doc| doc["seq"].as_i64()).collect();
+
+        for seq in &acknowledged {
+            assert!(
+                found.contains(seq),
+                "acknowledged write seq={seq} was missing after kill/restart"
+            );
+        }
+    })
+    .await;
 }

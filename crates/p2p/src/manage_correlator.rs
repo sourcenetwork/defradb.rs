@@ -12,7 +12,7 @@
 //! Both mirror the SE query correlator ([`crate::se_correlator`]) exactly:
 //! a shared lock-free map + Drop-cleanup guard, keyed by message-ID `String`.
 
-use tokio::sync::oneshot;
+use crate::rt::oneshot;
 use tracing::debug;
 
 use crate::message::{ManageQueryReply, ManageReply};

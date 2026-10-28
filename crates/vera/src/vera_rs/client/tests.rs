@@ -1,13 +1,13 @@
 use super::*;
 use alloy_primitives::Address;
+use nuclei::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use nuclei::net::TcpListener;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
 
-async fn server(response: String) -> (VeraRsClient, tokio::task::JoinHandle<Value>) {
+async fn server(response: String) -> (VeraRsClient, nuclei::Task<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
+    let url = format!("http://{}", listener.get_ref().local_addr().unwrap());
+    let task = nuclei::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut stream = BufReader::new(stream);
         let mut length = 0;
@@ -29,6 +29,7 @@ async fn server(response: String) -> (VeraRsClient, tokio::task::JoinHandle<Valu
             .write_all(response.as_bytes())
             .await
             .unwrap();
+        stream.get_mut().flush().await.unwrap();
         serde_json::from_slice(&body).unwrap()
     });
     (
@@ -44,7 +45,7 @@ fn http(body: &str) -> String {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rpc_binds_response_and_requires_a_result() {
     for body in [
         json!({"jsonrpc":"2.0", "id":2, "result":null}),
@@ -54,7 +55,7 @@ async fn rpc_binds_response_and_requires_a_result() {
         let (client, task) = server(http(&body.to_string())).await;
         let result = client.rpc::<Option<Value>>("test", json!([]), 4096).await;
         assert!(matches!(result, Err(ClientError::InvalidResponse(_))));
-        assert_eq!(task.await.unwrap()["id"], 1);
+        assert_eq!(task.join().await.unwrap()["id"], 1);
     }
     let (client, task) = server(http(r#"{"jsonrpc":"2.0","id":1,"result":null}"#)).await;
     assert!(client
@@ -62,10 +63,10 @@ async fn rpc_binds_response_and_requires_a_result() {
         .await
         .unwrap()
         .is_none());
-    task.await.unwrap();
+    task.join().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rpc_enforces_declared_and_streamed_byte_limits() {
     for response in [
         http(&" ".repeat(65)),
@@ -76,11 +77,11 @@ async fn rpc_enforces_declared_and_streamed_byte_limits() {
             client.rpc::<Value>("test", json!([]), 64).await,
             Err(ClientError::InvalidResponse("response exceeds byte limit"))
         ));
-        task.await.unwrap();
+        task.join().await.unwrap();
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn submission_id_must_match_locally_signed_bytes() {
     let signer = vera_client::BlsSigner::random(9001).unwrap();
     let wire = signer
@@ -99,21 +100,21 @@ async fn submission_id_must_match_locally_signed_bytes() {
                 Err(ClientError::InvalidResponse("submission ID mismatch"))
             ));
         }
-        let request = task.await.unwrap();
+        let request = task.join().await.unwrap();
         assert_eq!(request["method"], "vera_sendNativeTx");
         assert_eq!(request["params"], json!([Bytes::copy_from_slice(&wire)]));
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let client = VeraRsClient::new(
-        format!("http://{}", listener.local_addr().unwrap()),
+        format!("http://{}", listener.get_ref().local_addr().unwrap()),
         Duration::from_millis(100),
     )
     .unwrap();
-    let (result, connection) = tokio::join!(
+    let (result, connection) = nuclei::join!(
         client.rpc::<Value>("test", json!([]), 64),
         listener.accept()
     );
@@ -129,6 +130,6 @@ async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
             .await
             .unwrap_err();
         assert_eq!(error.retryable(), retryable);
-        task.await.unwrap();
+        task.join().await.unwrap();
     }
 }

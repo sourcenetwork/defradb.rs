@@ -28,7 +28,7 @@ fn blocks(count: usize) -> Vec<Block> {
 }
 
 async fn settle(h: &Harness) -> Option<usize> {
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    nuclei::time::sleep(Duration::from_millis(50)).await;
     h.server.ledger_wants(h.peer).await
 }
 
@@ -41,7 +41,7 @@ async fn fill_with_missing(h: &mut Harness) -> Vec<Cid> {
     missing
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn one_message_queues_at_most_the_cap_of_tasks() {
     let all = blocks(2000);
     let mut h = start(&all, ServerConfig::default());
@@ -56,7 +56,7 @@ async fn one_message_queues_at_most_the_cap_of_tasks() {
     assert_eq!(served, 1024);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn one_message_records_at_most_the_cap_of_wants() {
     let mut h = start(&[], ServerConfig::default());
 
@@ -69,7 +69,7 @@ async fn one_message_records_at_most_the_cap_of_wants() {
     assert_eq!(settle(&h).await, Some(1024));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_zero_cap_disables_the_bound() {
     let config = ServerConfig {
         max_queued_wantlist_entries_per_peer: 0,
@@ -86,7 +86,7 @@ async fn a_zero_cap_disables_the_bound() {
     assert_eq!(settle(&h).await, Some(2000));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn absent_wants_are_evicted_before_lower_priority_ones() {
     let present = blocks(CAP);
     let mut h = start(&present, capped());
@@ -102,7 +102,7 @@ async fn absent_wants_are_evicted_before_lower_priority_ones() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn overflow_replaces_an_existing_want_of_no_higher_priority() {
     let present = blocks(CAP + 1);
     let mut h = start(&present, capped());
@@ -122,7 +122,7 @@ async fn overflow_replaces_an_existing_want_of_no_higher_priority() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn overflow_that_fits_nowhere_is_dropped_without_dont_have() {
     let present = blocks(CAP);
     let dropped = cid_v1(b"dropped");
@@ -140,7 +140,7 @@ async fn overflow_that_fits_nowhere_is_dropped_without_dont_have() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn cancel_frees_room_at_the_cap() {
     let wanted = block_v1(b"wanted");
     let mut h = start(std::slice::from_ref(&wanted), capped());
@@ -154,7 +154,7 @@ async fn cancel_frees_room_at_the_cap() {
     assert_eq!(h.server.ledger_wants(h.peer).await, Some(CAP - 1));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn full_wantlist_replaces_the_ledger_at_the_cap() {
     let present = blocks(CAP);
     let mut h = start(&present, capped());
@@ -173,7 +173,7 @@ async fn full_wantlist_replaces_the_ledger_at_the_cap() {
     assert_eq!(h.server.ledger_wants(h.peer).await, Some(0));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn updating_a_cid_already_in_the_ledger_is_not_overflow() {
     let mut h = start(&[], capped());
     let missing = fill_with_missing(&mut h).await;
@@ -209,7 +209,7 @@ impl Store for HangingStore {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn eviction_never_calls_the_store_from_the_engine() {
     let present = blocks(CAP + 1);
     let armed = Arc::new(AtomicBool::new(false));

@@ -3,7 +3,7 @@
 use cli::commands::client::http_client::{
     GraphQLError, GraphQLRequest, GraphQLResponse, HttpClient,
 };
-use reqwest::StatusCode;
+use net::http::StatusCode;
 
 #[test]
 fn test_http_client_new() {

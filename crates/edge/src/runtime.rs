@@ -16,7 +16,7 @@ use crate::platform::Owner;
 /// [`EdgeConfig::stop`] for blocking work, then drop the runtime on its own
 /// owner thread, outside any async context. Dropping an `EdgeRuntime`
 /// starts the same shutdown without waiting for it. Natively the runtime is
-/// a tokio runtime; on wasm32 it is the browser's event loop, where nothing
+/// a nuclei runtime; on wasm32 it is the browser's event loop, where nothing
 /// is dropped.
 pub struct EdgeRuntime {
     edge: Edge,
@@ -40,9 +40,7 @@ impl EdgeRuntime {
     }
 
     /// Shuts down in order and waits on the calling thread until the
-    /// runtime is gone. From a thread inside a single-threaded executor it
-    /// does not wait: the shutdown goes on by itself and the call returns
-    /// [`EdgeError::WouldBlock`].
+    /// runtime is gone.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(mut self) -> Result<Drained, EdgeError> {
         self.stop_accepting();

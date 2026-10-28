@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use n0_future::time::Instant;
+use crate::rt::time::Instant;
 use regolith::sync::HopscotchMap;
 
 use crate::transport::{PeerFetchStats, PeerId};

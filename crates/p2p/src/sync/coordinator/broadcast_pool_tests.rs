@@ -18,10 +18,10 @@ async fn coordinator() -> Arc<SyncCoordinator<DefraBlockstore<RegolithStore>, No
     Arc::new(coordinator)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn spawn_or_run_detaches_while_a_slot_is_free() {
     let coordinator = coordinator().await;
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = crate::rt::oneshot::channel::<()>();
     let finished = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&finished);
 
@@ -39,10 +39,10 @@ async fn spawn_or_run_detaches_while_a_slot_is_free() {
     let _ = release_tx.send(());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn spawn_or_run_runs_inline_when_the_pool_is_full() {
     let coordinator = coordinator().await;
-    let hold = Arc::new(tokio::sync::Notify::new());
+    let hold = Arc::new(crate::rt::Notify::new());
     for _ in 0..NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT {
         let hold = Arc::clone(&hold);
         coordinator.spawn_non_authoritative_broadcast_task("filler", async move {

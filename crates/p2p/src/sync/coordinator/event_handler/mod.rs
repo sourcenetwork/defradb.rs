@@ -957,7 +957,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_root_only_relay_cannot_become_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
@@ -1001,7 +1001,7 @@ mod tests {
     /// can use: `transport.connected_peers()` does not list it, so a durable
     /// obligation bound to it defers "until the provider reconnects" forever.
     /// Such a hint must stay advisory.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_origin_unknown_to_transport_does_not_create_durable_obligation() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
@@ -1047,7 +1047,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_routable_authenticated_origin_is_the_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
@@ -1092,7 +1092,7 @@ mod tests {
 
         assert!(events.try_recv().is_err());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1115,7 +1115,7 @@ mod tests {
         assert_eq!(records[0].1.source_peer.as_deref(), Some("origin-peer"));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn unsigned_gossip_origin_cannot_become_a_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
@@ -1155,7 +1155,7 @@ mod tests {
     /// clock (a single dispatch site) performs the actual fetch. This
     /// prevents simultaneous connects from re-driving the same root more
     /// than once per tick.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn peer_connect_expedites_and_clock_dispatches_once() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1181,7 +1181,7 @@ mod tests {
 
         assert!(events.try_recv().is_err());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1204,7 +1204,7 @@ mod tests {
             .record_pending_dag_fetch_failure(&root_cid, "synthetic exhaustion");
 
         // Less than the first backoff rung (4s after one claim): not due yet.
-        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(2)).await;
 
         // Act: a peer connects. Connect must only expedite, never dispatch.
         coordinator
@@ -1221,7 +1221,7 @@ mod tests {
         // One clock tick: the expedited root is now due.
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].0, root_cid);
         for (due_root, dag) in &due {
@@ -1248,7 +1248,7 @@ mod tests {
         // above already re-armed the root to the next backoff rung.
         let due_again = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert!(due_again.is_empty());
         assert!(
             events.try_recv().is_err(),
@@ -1268,7 +1268,7 @@ mod tests {
     /// #1116 stage 2: `SyncStatus` must surface the retry-clock counters and
     /// the earliest due retry time so operators can see the clock's state
     /// without instrumenting the manager directly.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn sync_status_surfaces_pending_dag_retry_clock() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1303,7 +1303,7 @@ mod tests {
         assert_eq!(before_clock.pending_dag_retry_dispatched, 0);
         assert!(before_clock.next_pending_retry_in_ms.is_some());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1327,7 +1327,7 @@ mod tests {
         // A same-instant claim attempt is suppressed.
         assert!(!coordinator
             .manager()
-            .try_claim_pending_dag_dispatch(&root_cid, n0_future::time::Instant::now()));
+            .try_claim_pending_dag_dispatch(&root_cid, crate::rt::time::Instant::now()));
         assert_eq!(
             coordinator.sync_status().await.pending_dag_retry_suppressed,
             1
@@ -1363,7 +1363,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn receiver_clock_rejects_zero_interval_before_and_after_shutdown() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1393,7 +1393,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn receiver_clock_wakes_for_new_work_without_waiting_for_retry_tick() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1403,7 +1403,7 @@ mod tests {
                 .expect("coordinator");
         let coordinator = Arc::new(coordinator);
         let runner = Arc::clone(&coordinator);
-        let clock = n0_future::task::spawn(async move {
+        let clock = crate::rt::spawn(async move {
             runner
                 .run_pending_dag_retry_clock(Duration::from_secs(60))
                 .await
@@ -1411,8 +1411,8 @@ mod tests {
         });
         // Let the initial tick run before admitting work. No virtual time
         // advances until after the assertion below.
-        tokio::task::yield_now().await;
-        let now = n0_future::time::Instant::now();
+        crate::rt::yield_now().await;
+        let now = crate::rt::time::Instant::now();
         let (field_cid, _) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("wake", "name", field_cid);
         coordinator
@@ -1425,20 +1425,20 @@ mod tests {
             )
             .await
             .expect("register pending root");
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
         assert!(
             matches!(events.try_recv(), Ok(SyncEvent::DagNeedsFetch { root_cid: root, .. }) if root == root_cid)
         );
-        assert_eq!(n0_future::time::Instant::now(), now);
+        assert_eq!(crate::rt::time::Instant::now(), now);
         assert_eq!(
             coordinator.sync_status().await.pending_dag_retry_dispatched,
             1
         );
         coordinator.shutdown().await;
-        clock.await.expect("retry owner exits on shutdown");
+        clock.join().await.expect("retry owner exits on shutdown");
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn receiver_clock_does_not_claim_behind_the_fetch_task_bound() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1467,7 +1467,7 @@ mod tests {
         }
 
         let retained_before = coordinator.sync_status().await.retained_background_tasks;
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         assert_eq!(
             coordinator.dispatch_due_pending_dag_fetches_for_test(now),
             1

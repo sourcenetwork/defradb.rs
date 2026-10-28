@@ -209,17 +209,23 @@ async fn commits_height_filter_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_commits_height_filter() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    commits_height_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        commits_height_filter_test(cluster).await;
+    })
+    .await;
 }
 
 /// Known upstream gap: Go DefraDB returns `{"data": null}` for `_commits`
 /// height-filter queries that pass on Rust.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_commits_height_filter() {
-    let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
-    commits_height_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
+        commits_height_filter_test(cluster).await;
+    })
+    .await;
 }

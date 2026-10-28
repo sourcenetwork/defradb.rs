@@ -191,7 +191,7 @@ impl P2PTransport for TestTransport {
             next
         });
         if !self.send_delay.is_zero() {
-            n0_future::time::sleep(self.send_delay).await;
+            crate::rt::time::sleep(self.send_delay).await;
         }
         Ok(self
             .replies
@@ -325,7 +325,7 @@ impl P2PTransport for TestTransport {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rate_limited_head_hint_is_nacked_once_for_durable_redrive() {
     let transport = TestTransport::new(vec![
         PushLogReply::error("first", RATE_LIMITED_MESSAGE),
@@ -354,7 +354,7 @@ async fn rate_limited_head_hint_is_nacked_once_for_durable_redrive() {
     assert_eq!(transport.sent_cids(), vec![cid1.to_bytes()]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn head_hint_stops_immediately_on_capacity_nack_and_parks_the_peer() {
     // defradb#1112: a saturated receiver is a PEER-WIDE, structural condition —
     // it cannot accept any new root until it drains. Answering it with the
@@ -402,7 +402,7 @@ async fn head_hint_stops_immediately_on_capacity_nack_and_parks_the_peer() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn head_hint_timeout_is_terminal_for_the_live_attempt() {
     let transport = TestTransport::new(vec![PushLogReply::success("first")])
         .with_send_delay(Duration::from_millis(25));

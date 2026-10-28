@@ -9,9 +9,9 @@ gRPC client that delegates document signing to an external Orbis ring's threshol
 - Build `SignRequest`s and mint short-lived JWT bearer tokens (via `identity`) carrying
   the `SigningAuthorization` context (Policy {policy_id, resource, object_id, permission}
   or Decision {decision_id}).
-- Bridge sync→async: a dedicated current-thread tokio runtime lets `sign_sync()` (called
-  from the block builder under `spawn_blocking`) drive the async RPC, hopping to a plain
-  OS thread when already on a runtime to avoid nested `block_on`.
+- Bridge sync→async: `sign_sync()` (called from the block builder under `spawn_blocking`)
+  blocks on the network runtime the client is given (`Edge::block_on`); inside a nuclei
+  task the wait nests, so no thread hop is needed.
 
 ## State machines
 None. The only lifecycle is connect → derive-pubkey → (sign)*; no status enum, no

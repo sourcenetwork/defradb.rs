@@ -101,8 +101,9 @@ fn assert_counter_history_matches(
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_cross_runtime_block_cid_equivalence() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
         .go_nodes(1)
@@ -206,4 +207,6 @@ async fn go_cross_runtime_block_cid_equivalence() {
     assert_eq!(recreated_id, doc_id(&go_recreate, "add_Pair"));
     assert_ne!(recreated_id, pair_id);
     assert_commits_match(&rust, &go, &recreated_id, 3, "recreate Pair");
+})
+    .await;
 }

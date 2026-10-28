@@ -35,6 +35,7 @@ members = [
     "crates/replication-filter",
     "crates/telemetry",
     "crates/edge",
+    "crates/net",
     "crates/workers",
     "crates/inputs",
     "tools/lens-host",
@@ -57,7 +58,7 @@ repository = "https://github.com/sourcenetwork/defradb.rs"
 #
 # `await_holding_lock` and `await_holding_refcell_ref` catch the
 # concrete bug pattern where a sync mutex (or RefCell) guard is held
-# across an `.await` point. This blocks the tokio worker thread for the
+# across an `.await` point. This blocks the runtime's worker thread for the
 # entire duration of the future and can deadlock a multi-threaded
 # runtime. The audit in #673 confirmed no current site triggers this,
 # but the lint enforces the discipline going forward so future
@@ -90,9 +91,14 @@ kovan-channel = "0.2.2"
 rustls = { version = "0.23", default-features = false }
 
 # Async runtime
-tokio = { version = "1.35" }
+# Runs every task, timer and socket of ours natively. A library that needs a
+# tokio runtime is reached through `edge::compat`, the one caller of
+# async-compat.
+nuclei = "0.5.0"
+async-compat = { version = "0.2.6", features = ["multi-thread"] }
 async-trait = "0.1.92"
 futures = "0.3"
+futures-lite = "2.6"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -104,11 +110,13 @@ serde_bytes = "0.11"
 ciborium = "0.2"
 
 web-time = "1.1"
-# Task and timer shims: tokio natively, wasm-bindgen-futures in a browser.
+# Task and timer shims in a browser; natively only iroh-gossip's clock type.
 n0-future = "0.3"
 
 # P2P networking
 # Keep these on the same libp2p-swarm release line.
+# `tcp` stays on only because libp2p 0.56's builder names libp2p-tcp whenever
+# `websocket`, `dns` and `tokio` are on; our TCP is `net::libp2p`.
 libp2p = { version = "0.56", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "identify", "relay", "dns", "quic", "websocket", "secp256k1"] }
 asynchronous-codec = "0.7"
 libp2p-stream = "0.4.0-alpha"
@@ -168,8 +176,10 @@ bm25 = "2.3"
 graphql-parser = "0.4"
 
 # HTTP
-axum = { version = "0.8.9", features = ["ws"] }
-tower = { version = "0.5", features = ["timeout", "limit"] }
+# The router only: it is served by `net::server` on nuclei sockets, so the
+# tokio-bound `serve` and WebSocket features stay off.
+axum = { version = "0.8.9", default-features = false, features = ["form", "json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
+tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "normalize-path", "trace"] }
 hyper = "1.9.0"
 
@@ -177,7 +187,9 @@ hyper = "1.9.0"
 thiserror = "2"
 
 # gRPC (Orbis ring integration)
-tonic = "0.14"
+# Codegen only: generated clients run on `net::grpc`, servers on
+# `net::server`; tonic's tokio transport stays off.
+tonic = { version = "0.14", default-features = false, features = ["codegen"] }
 tonic-prost = "0.14"
 prost = "0.14"
 tonic-build = "0.14"
@@ -197,15 +209,13 @@ tracing = "0.1"
 
 # Testing
 proptest = "1.11.0"
-criterion = { version = "0.6", features = ["async_tokio"] }
+criterion = { version = "0.6", features = ["async"] }
 
 # Synchronization (non-poisoning locks)
 
 # Caching
 lru = "0.18.2"
 
-# Async streams
-tokio-stream = "0.1"
 
 [profile.dev]
 opt-level = 0

@@ -144,32 +144,32 @@ async fn names(query: &str) -> Vec<String> {
 
 /// The regression: a request for one collection used to answer with all of
 /// them.
-#[tokio::test]
+#[nuclei::test]
 async fn a_name_selects_only_that_collection() {
     assert_eq!(names("?name=Users").await, vec!["Users"]);
     assert_eq!(names("?name=Books").await, vec!["Books"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_unknown_name_selects_nothing() {
     assert!(names("?name=Nope").await.is_empty());
 }
 
 /// Go returns a named version whether or not it is active, which is why
 /// `version_id` alone reaches the inactive one.
-#[tokio::test]
+#[nuclei::test]
 async fn a_version_id_selects_that_version_even_when_inactive() {
     assert_eq!(names("?version_id=users-v1").await, vec!["Users"]);
     assert_eq!(names("?version_id=orders-v1").await, vec!["Orders"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_collection_id_selects_its_active_version() {
     assert_eq!(names("?collection_id=users-c").await, vec!["Users"]);
     assert!(names("?collection_id=orders-c").await.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn get_inactive_widens_to_the_inactive_versions() {
     assert_eq!(
         names("?get_inactive=true").await,
@@ -181,7 +181,7 @@ async fn get_inactive_widens_to_the_inactive_versions() {
 /// Stage one of Go's lookup is a switch, so a name with `get_inactive` false
 /// wins outright and a disagreeing collection id never applies. A flat AND
 /// over the selectors would wrongly answer with nothing here.
-#[tokio::test]
+#[nuclei::test]
 async fn a_name_outranks_a_disagreeing_collection_id() {
     assert_eq!(
         names("?name=Users&collection_id=books-c").await,
@@ -191,7 +191,7 @@ async fn a_name_outranks_a_disagreeing_collection_id() {
 
 /// The case Go's switch exists for: name plus `get_inactive` skips the
 /// active-by-name arm and is narrowed by the stage-two name filter instead.
-#[tokio::test]
+#[nuclei::test]
 async fn a_name_with_get_inactive_reaches_an_inactive_version() {
     assert_eq!(
         names("?name=Orders&get_inactive=true").await,
@@ -200,7 +200,7 @@ async fn a_name_with_get_inactive_reaches_an_inactive_version() {
     assert!(names("?name=Orders").await.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_listing_preserves_each_selected_version() {
     let (status, body) = get(router(), "?collection_id=users-c&get_inactive=true").await;
     assert_eq!(status, StatusCode::OK);
@@ -218,7 +218,7 @@ async fn collection_listing_preserves_each_selected_version() {
 /// holds inactive P2P-synced collections, so the unnarrowed listing used to
 /// name a collection the narrowed one dropped. Both read the stored versions
 /// now, as Go does, so an inactive collection is absent from both.
-#[tokio::test]
+#[nuclei::test]
 async fn an_inactive_collection_is_absent_from_narrowed_and_unnarrowed_alike() {
     assert!(
         !names("").await.contains(&"Orders".to_string()),
@@ -232,7 +232,7 @@ async fn an_inactive_collection_is_absent_from_narrowed_and_unnarrowed_alike() {
 
 /// Every request reads the same source, so a missing version store fails the
 /// same way for all of them rather than quietly answering from somewhere else.
-#[tokio::test]
+#[nuclei::test]
 async fn every_request_needs_the_version_store() {
     for query in ["", "?name=Users"] {
         let (status, _) = get(router_without_versions(), query).await;
@@ -244,7 +244,7 @@ async fn every_request_needs_the_version_store() {
 }
 
 /// A selector Rust cannot parse must be refused, not dropped.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unparseable_selector_is_refused() {
     for query in ["?get_inactive=maybe", "?get_inactive="] {
         let response = get_response(router(), query).await;
@@ -260,7 +260,7 @@ async fn an_unparseable_selector_is_refused() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn get_inactive_accepts_every_go_boolean_form() {
     for value in ["1", "t", "T", "true", "TRUE", "True"] {
         assert_eq!(
@@ -278,7 +278,7 @@ async fn get_inactive_accepts_every_go_boolean_form() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn view_refresh_uses_the_same_json_selector_error() {
     let response = router()
         .oneshot(
@@ -299,7 +299,7 @@ async fn view_refresh_uses_the_same_json_selector_error() {
     assert!(error["error"].as_str().is_some(), "{error}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_transaction_header_reads_transaction_visible_collections() {
     assert!(names("?name=MockCollection").await.is_empty());
 
@@ -316,7 +316,7 @@ async fn a_transaction_header_reads_transaction_visible_collections() {
 /// the empty string, not an absent selector. It matches nothing and comes back
 /// as an empty list (`http/handler_store.go:391`, then the stage-two name
 /// filter drops the zero-value collection because it is not active).
-#[tokio::test]
+#[nuclei::test]
 async fn an_empty_name_or_collection_id_selects_nothing() {
     for query in [
         "?name=",
@@ -337,7 +337,7 @@ async fn an_empty_name_or_collection_id_selects_nothing() {
 /// which its error mapping turns into a 404 (`internal/db/collection.go:210`,
 /// `GetCollectionByID`). An unknown name is swallowed into an empty list, but
 /// an unknown version id is not, so a typo must not read as success.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unknown_version_id_is_a_404() {
     for query in ["?version_id=nope", "?version_id="] {
         let (status, body) = get(router(), query).await;
@@ -350,7 +350,7 @@ async fn an_unknown_version_id_is_a_404() {
 /// 200. `collection describe --collection-name X --version-id Y` sends exactly
 /// that combination (`cli/collection.go:86-100`), so getting this wrong 404s a
 /// working CLI call.
-#[tokio::test]
+#[nuclei::test]
 async fn a_name_pre_empts_the_version_lookup_so_a_bad_version_is_not_a_404() {
     for query in [
         "?name=Users&version_id=nope",
@@ -364,7 +364,7 @@ async fn a_name_pre_empts_the_version_lookup_so_a_bad_version_is_not_a_404() {
 
 /// The name arm selects the active version before the version id filters it.
 /// A matching active id survives, while an inactive id cannot replace it.
-#[tokio::test]
+#[nuclei::test]
 async fn a_name_filters_its_active_candidate_by_version_id() {
     assert_eq!(
         names("?name=Users&version_id=users-v2").await,
@@ -376,7 +376,7 @@ async fn a_name_filters_its_active_candidate_by_version_id() {
 /// `get_inactive` takes the name arm out of the running, so the version
 /// lookup runs again and an id that exists is not an error even when the name
 /// filters it away.
-#[tokio::test]
+#[nuclei::test]
 async fn get_inactive_restores_the_version_lookup() {
     let (status, body) = get(
         router(),
@@ -397,7 +397,7 @@ async fn get_inactive_restores_the_version_lookup() {
 }
 
 /// Go's message for this is `collection not found` (`client/errors.go:29`).
-#[tokio::test]
+#[nuclei::test]
 async fn the_not_found_body_matches_gos_message() {
     let (_, body) = get(router(), "?version_id=nope").await;
     assert!(
@@ -409,7 +409,7 @@ async fn the_not_found_body_matches_gos_message() {
 /// Inactive versions cost a scan of every stored version. A selector that does
 /// not ask for them must take the active listing, the same branch
 /// `refresh_views` makes on the same selector.
-#[tokio::test]
+#[nuclei::test]
 async fn a_selector_that_needs_no_inactive_versions_takes_the_cheap_listing() {
     for query in ["?name=Users", "?name=Users&version_id=users-v2"] {
         let versions = Arc::new(Versions::default());
@@ -427,7 +427,7 @@ async fn a_selector_that_needs_no_inactive_versions_takes_the_cheap_listing() {
 
 /// The converse: asking for inactive versions, or for a version by id, does
 /// need the full listing.
-#[tokio::test]
+#[nuclei::test]
 async fn a_selector_that_needs_inactive_versions_takes_the_full_listing() {
     for query in ["?get_inactive=true", "?version_id=users-v1"] {
         let versions = Arc::new(Versions::default());

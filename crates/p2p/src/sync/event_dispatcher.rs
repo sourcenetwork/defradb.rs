@@ -10,8 +10,8 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use n0_future::task::{JoinError, JoinSet};
-use tokio::sync::Semaphore;
+use crate::rt::Semaphore;
+use crate::rt::{JoinError, JoinSet};
 
 use super::dispatch_queue::{DispatchSource, Queued};
 use crate::transport::TransportEvent;
@@ -231,10 +231,9 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     let mut tasks = JoinSet::new();
 
     loop {
-        tokio::select! {
+        crate::rt::select! {
             biased;
-            // The browser JoinSet has no join_next; poll_join_next exists on both.
-            result = std::future::poll_fn(|cx| tasks.poll_join_next(cx)), if !tasks.is_empty() => {
+                    result = crate::rt::join_next(&mut tasks), if !tasks.is_empty() => {
                 report_join_result(result.expect("dispatcher task set was non-empty"));
             }
             queued = events.next(completion_slots.available_permits() > 0) => {
@@ -319,7 +318,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     }
 
     tasks.abort_all();
-    while let Some(result) = std::future::poll_fn(|cx| tasks.poll_join_next(cx)).await {
+    while let Some(result) = crate::rt::join_next(&mut tasks).await {
         report_join_result(result);
     }
 }
@@ -337,8 +336,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::rt::{mpsc, Semaphore};
     use regolith::sync::SegQueue;
-    use tokio::sync::{mpsc, Semaphore};
 
     use super::*;
 
@@ -380,7 +379,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn saturation_rejects_work_and_still_drains_completion() {
         let (tx, rx) = mpsc::channel(64);
         let observed = Arc::new(SegQueue::new());
@@ -391,7 +390,7 @@ mod tests {
             let observed = Arc::clone(&observed);
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::new(DispatchDiagnostics::default()),
                 move |event, admission| {
@@ -419,7 +418,7 @@ mod tests {
             .unwrap();
         tx.send(TestEvent::Completion).await.unwrap();
 
-        n0_future::time::timeout(
+        crate::rt::time::timeout(
             std::time::Duration::from_secs(1),
             started.acquire_many(MAX_ACTIVE_REQUESTS as u32),
         )
@@ -428,7 +427,7 @@ mod tests {
         .unwrap()
         .forget();
 
-        n0_future::time::timeout(std::time::Duration::from_secs(1), async {
+        crate::rt::time::timeout(std::time::Duration::from_secs(1), async {
             let mut events = Vec::new();
             loop {
                 while let Some(event) = observed.pop() {
@@ -443,7 +442,7 @@ mod tests {
                 if rejected && completed {
                     break;
                 }
-                tokio::task::yield_now().await;
+                crate::rt::yield_now().await;
             }
         })
         .await
@@ -451,10 +450,10 @@ mod tests {
 
         release.add_permits(MAX_ACTIVE_REQUESTS);
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn saturated_admission_does_not_block_recovery_serving() {
         let (tx, rx) = mpsc::channel(64);
         let requests_started = Arc::new(Semaphore::new(0));
@@ -466,7 +465,7 @@ mod tests {
             let requests_started = Arc::clone(&requests_started);
             let release_requests = Arc::clone(&release_requests);
             let recovery_observed = Arc::clone(&recovery_observed);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -499,7 +498,7 @@ mod tests {
             .forget();
         tx.send(TestEvent::Recovery(0)).await.unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), recovery_observed.acquire())
+        crate::rt::time::timeout(Duration::from_secs(1), recovery_observed.acquire())
             .await
             .expect("ownership admission saturation must not block CAR serving")
             .unwrap()
@@ -511,10 +510,10 @@ mod tests {
 
         release_requests.add_permits(MAX_ACTIVE_REQUESTS);
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn recovery_serving_has_a_bounded_actionable_overflow() {
         let (tx, rx) = mpsc::channel(32);
         let started = Arc::new(Semaphore::new(0));
@@ -526,7 +525,7 @@ mod tests {
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
             let rejected = Arc::clone(&rejected);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -561,7 +560,7 @@ mod tests {
             .await
             .unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), rejected.acquire())
+        crate::rt::time::timeout(Duration::from_secs(1), rejected.acquire())
             .await
             .expect("recovery overflow must produce an actionable rejection")
             .unwrap()
@@ -573,10 +572,10 @@ mod tests {
 
         release.add_permits(MAX_ACTIVE_RECOVERY);
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn stalled_capacity_rejection_does_not_block_completion() {
         let (tx, rx) = mpsc::channel(64);
         let started = Arc::new(Semaphore::new(0));
@@ -590,7 +589,7 @@ mod tests {
             let release_requests = Arc::clone(&release_requests);
             let release_rejection = Arc::clone(&release_rejection);
             let completion = Arc::clone(&completion);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -632,7 +631,7 @@ mod tests {
         }
         tx.send(TestEvent::Completion).await.unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), completion.acquire())
+        crate::rt::time::timeout(Duration::from_secs(1), completion.acquire())
             .await
             .expect("a stalled nack must not park the transport drain")
             .unwrap()
@@ -646,22 +645,22 @@ mod tests {
 
         release_rejection.add_permits(MAX_ACTIVE_REJECTIONS);
         release_requests.add_permits(MAX_ACTIVE_REQUESTS);
-        n0_future::time::timeout(Duration::from_secs(1), async {
+        crate::rt::time::timeout(Duration::from_secs(1), async {
             loop {
                 let snapshot = diagnostics.snapshot();
                 if snapshot.active_requests == 0 && snapshot.active_rejections == 0 {
                     break;
                 }
-                tokio::task::yield_now().await;
+                crate::rt::yield_now().await;
             }
         })
         .await
         .expect("completed dispatcher handles must be reaped while the event channel stays open");
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn stalled_completion_does_not_block_recovery_serving() {
         let (tx, rx) = mpsc::channel(8);
         let completion_started = Arc::new(Semaphore::new(0));
@@ -673,7 +672,7 @@ mod tests {
             let completion_started = Arc::clone(&completion_started);
             let release_completion = Arc::clone(&release_completion);
             let request_observed = Arc::clone(&request_observed);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -700,7 +699,7 @@ mod tests {
         completion_started.acquire().await.unwrap().forget();
         tx.send(TestEvent::Recovery(0)).await.unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire())
+        crate::rt::time::timeout(Duration::from_secs(1), request_observed.acquire())
             .await
             .expect("durable completion work must not head-of-line block CAR serving")
             .unwrap()
@@ -709,11 +708,11 @@ mod tests {
 
         release_completion.add_permits(1);
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
         assert_eq!(diagnostics.snapshot().active_completions, 0);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn full_completion_workers_do_not_block_requests_on_a_per_class_queue() {
         let (tx, rx) = crate::sync::dispatch_queue(64);
         let completions_started = Arc::new(regolith::sync::Semaphore::new(0));
@@ -724,7 +723,7 @@ mod tests {
             let completions_started = Arc::clone(&completions_started);
             let release_completions = Arc::clone(&release_completions);
             let request_observed = Arc::clone(&request_observed);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::new(DispatchDiagnostics::default()),
                 move |event, _admission| {
@@ -755,17 +754,17 @@ mod tests {
         tx.send(TestEvent::Completion).await.unwrap();
         tx.send(TestEvent::Request(0)).await.unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire(1))
+        crate::rt::time::timeout(Duration::from_secs(1), request_observed.acquire(1))
             .await
             .expect("busy completion workers must not hold up a request")
             .forget();
 
         release_completions.add_permits(MAX_ACTIVE_COMPLETIONS + 1);
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn a_lease_is_held_until_its_handler_returns() {
         struct Flag(Arc<std::sync::atomic::AtomicBool>);
         impl Drop for Flag {
@@ -782,7 +781,7 @@ mod tests {
             let handled = Arc::clone(&handled);
             let released = Arc::clone(&released);
             let released_during_handler = Arc::clone(&released_during_handler);
-            n0_future::task::spawn(run_event_dispatcher(
+            crate::rt::spawn(run_event_dispatcher(
                 rx,
                 Arc::new(DispatchDiagnostics::default()),
                 move |_event: TestEvent, _admission| {
@@ -790,7 +789,7 @@ mod tests {
                     let released_during_handler = Arc::clone(&released_during_handler);
                     let handled = Arc::clone(&handled);
                     async move {
-                        tokio::task::yield_now().await;
+                        crate::rt::yield_now().await;
                         released_during_handler
                             .store(released.load(Ordering::SeqCst), Ordering::SeqCst);
                         handled.add_permits(1);
@@ -804,7 +803,7 @@ mod tests {
             .unwrap();
         handled.acquire(1).await.forget();
         drop(tx);
-        dispatcher.await.unwrap();
+        dispatcher.join().await.unwrap();
 
         assert!(!released_during_handler.load(Ordering::SeqCst));
         assert!(released.load(Ordering::SeqCst));

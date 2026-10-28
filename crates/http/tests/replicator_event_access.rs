@@ -46,7 +46,7 @@ async fn frame(can_list: bool, message: Message) -> serde_json::Value {
     assert_eq!(response.status(), StatusCode::OK);
     bus.publish(message);
     let mut body = response.into_body().into_data_stream();
-    let bytes = tokio::time::timeout(Duration::from_secs(1), body.next())
+    let bytes = nuclei::time::timeout(Duration::from_secs(1), body.next())
         .await
         .expect("completion event must be delivered")
         .unwrap()
@@ -68,7 +68,7 @@ fn completion() -> Message {
     })
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn wildcard_redacts_replicator_details_without_list_permission() {
     assert_eq!(
         frame(false, completion()).await,
@@ -76,7 +76,7 @@ async fn wildcard_redacts_replicator_details_without_list_permission() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn wildcard_includes_replicator_details_with_list_permission() {
     let frame = frame(true, completion()).await;
     assert_eq!(frame["name"], "replicator-completed");
@@ -89,7 +89,7 @@ async fn wildcard_includes_replicator_details_with_list_permission() {
     assert_eq!(frame["data"]["error"], "private replay error");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn legacy_completion_stays_payloadless_for_both_permissions() {
     for can_list in [false, true] {
         assert_eq!(

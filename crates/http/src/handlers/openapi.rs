@@ -27,7 +27,7 @@ mod tests {
             })
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn serves_the_pinned_go_openapi_document() {
         let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
             .router()
@@ -59,7 +59,7 @@ mod tests {
         assert_eq!(body.as_ref(), OPENAPI_JSON.as_bytes());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn every_documented_path_exists_in_the_rust_router() {
         let app = Server::new(MockQueryExecutor::new(), edge::testing::edge())
             .router()

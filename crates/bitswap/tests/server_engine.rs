@@ -12,7 +12,7 @@ mod server_harness;
 use common::{block_v1, cid_v1};
 use server_harness::{cancel, has_block, has_dont_have, has_have, start, want, Sent};
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn want_have_of_small_block_is_answered_with_the_block() {
     let small = block_v1(&[1; 100]);
     let mut h = start(std::slice::from_ref(&small), ServerConfig::default());
@@ -24,7 +24,7 @@ async fn want_have_of_small_block_is_answered_with_the_block() {
     assert_eq!(messages[0].pending_bytes(), 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn want_have_of_block_over_replace_size_is_answered_with_have() {
     let big = block_v1(&[2; 1025]);
     let sentinel = block_v1(b"sentinel");
@@ -42,7 +42,7 @@ async fn want_have_of_block_over_replace_size_is_answered_with_have() {
     assert!(has_block(&messages, &big.cid));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn missing_want_block_with_send_dont_have_is_answered_with_dont_have() {
     let missing = cid_v1(b"missing");
     let mut h = start(&[], ServerConfig::default());
@@ -55,7 +55,7 @@ async fn missing_want_block_with_send_dont_have_is_answered_with_dont_have() {
     assert_eq!(sent.message.blocks_len(), 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn missing_want_without_send_dont_have_is_not_answered() {
     let missing = cid_v1(b"missing");
     let sentinel = block_v1(b"sentinel");
@@ -68,7 +68,7 @@ async fn missing_want_without_send_dont_have_is_not_answered() {
     assert!(!has_dont_have(&messages, &missing));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn server_without_dont_haves_never_sends_them() {
     let missing = cid_v1(b"missing");
     let sentinel = block_v1(b"sentinel");
@@ -94,7 +94,7 @@ fn deny(denied: Cid) -> Box<dyn bitswap::PeerBlockRequestFilter> {
     )
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn filter_denied_want_gets_dont_have_even_when_the_block_exists() {
     let secret = block_v1(b"secret");
     let mut h = start(
@@ -113,7 +113,7 @@ async fn filter_denied_want_gets_dont_have_even_when_the_block_exists() {
     assert_eq!(sent.message.blocks_len(), 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn filter_denied_want_without_send_dont_have_is_silent() {
     let secret = block_v1(b"secret");
     let sentinel = block_v1(b"sentinel");
@@ -133,7 +133,7 @@ async fn filter_denied_want_without_send_dont_have_is_silent() {
     assert!(!has_dont_have(&messages, &secret.cid));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn cancel_before_the_tick_removes_the_task() {
     let wanted = block_v1(b"wanted");
     let sentinel = block_v1(b"sentinel");
@@ -147,7 +147,7 @@ async fn cancel_before_the_tick_removes_the_task() {
     assert!(!has_block(&messages, &wanted.cid));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn full_wantlist_clears_the_ledger_so_a_later_cancel_finds_nothing() {
     let wanted = block_v1(b"wanted");
     let sentinel = block_v1(b"sentinel");
@@ -162,7 +162,7 @@ async fn full_wantlist_clears_the_ledger_so_a_later_cancel_finds_nothing() {
     assert!(has_block(&messages, &wanted.cid));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn outstanding_cap_holds_back_work_until_tasks_are_done() {
     const SIZE: usize = 600_000;
     let blocks: Vec<Block> = (1..=3u8).map(|i| block_v1(&vec![i; SIZE])).collect();
@@ -185,7 +185,7 @@ async fn outstanding_cap_holds_back_work_until_tasks_are_done() {
     assert_eq!(first.message.blocks_len(), 1);
     assert_eq!(second.message.blocks_len(), 1);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     assert!(h.sent.try_recv().is_err(), "cap must hold the third block");
 
     let Sent {
@@ -207,7 +207,7 @@ async fn outstanding_cap_holds_back_work_until_tasks_are_done() {
     assert_eq!(cids, expected);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn disconnect_drops_the_ledger_but_not_queued_work() {
     let wanted = block_v1(b"wanted");
     let mut h = start(std::slice::from_ref(&wanted), ServerConfig::default());
@@ -220,7 +220,7 @@ async fn disconnect_drops_the_ledger_but_not_queued_work() {
     assert!(has_block(&messages, &wanted.cid));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn tasks_wait_for_a_send_slot_when_all_workers_are_busy() {
     let blocks: Vec<Block> = (1..=3u8).map(|i| block_v1(&[i; 50_000])).collect();
     let config = ServerConfig {
@@ -238,7 +238,7 @@ async fn tasks_wait_for_a_send_slot_when_all_workers_are_busy() {
     h.send(message);
 
     let first = h.next().await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    nuclei::time::sleep(Duration::from_secs(1)).await;
     assert!(
         h.sent.try_recv().is_err(),
         "one worker means one message in flight"

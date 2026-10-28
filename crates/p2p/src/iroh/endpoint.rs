@@ -1,6 +1,6 @@
 //! Background event loop owning all iroh state.
 //!
-//! `IrohEndpoint` runs as a spawned tokio task and processes:
+//! `IrohEndpoint` runs as a spawned task and processes:
 //! - Incoming QUIC connections
 //! - The gossip driver, which rides those connections
 //! - Commands from the `IrohTransport` facade
@@ -10,10 +10,10 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
+use crate::rt::mpsc;
+use crate::rt::Task;
 use iroh::Endpoint;
 use kovan_map::HopscotchMap;
-use n0_future::task::JoinHandle;
-use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use defra_core::thread_bounds::MaybeSend;
@@ -87,10 +87,10 @@ async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
     let task_count = tasks.len();
     let drain = async move {
         for task in tasks {
-            let _ = task.await;
+            let _ = task.join().await;
         }
     };
-    if n0_future::time::timeout(std::time::Duration::from_secs(5), drain)
+    if crate::rt::time::timeout(std::time::Duration::from_secs(5), drain)
         .await
         .is_err()
     {
@@ -110,7 +110,7 @@ pub async fn spawn_endpoint(
     mpsc::Sender<IrohCommand>,
     crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
     Arc<ReplicatorRegistry>,
-    JoinHandle<()>,
+    Task<()>,
 )> {
     // Every Defra protocol, gossip included, is multiplexed over one ALPN. The
     // version before gossip moved onto it is still served, without gossip.
@@ -139,7 +139,7 @@ pub async fn spawn_endpoint(
     builder = apply_discovery_config(builder, &config.discovery)?;
     builder = apply_bind_config(builder, config.bind_addr, config.bind_port)?;
 
-    let endpoint = builder.bind().await.map_err(|e| {
+    let endpoint = crate::rt::compat(builder.bind()).await.map_err(|e| {
         crate::error::Error::Transport(format!("failed to bind iroh endpoint: {}", e))
     })?;
 
@@ -149,14 +149,14 @@ pub async fn spawn_endpoint(
     >(EVENT_LANE_CAPACITY);
     let replicators = Arc::new(ReplicatorRegistry::new());
 
-    let task = n0_future::task::spawn(run_event_loop(
+    let task = crate::rt::spawn(crate::rt::compat(run_event_loop(
         endpoint,
         node_identity,
         admission,
         command_rx,
         event_tx,
         replicators.clone(),
-    ));
+    )));
 
     Ok((command_tx, event_rx, replicators, task))
 }
@@ -229,7 +229,7 @@ async fn run_event_loop(
         if command_rx.is_closed() {
             break;
         }
-        tokio::select! {
+        crate::rt::select! {
             cmd = command_rx.recv() => {
                 let Some(cmd) = cmd else { break };
                 let mut pending_cmd = Some(cmd);

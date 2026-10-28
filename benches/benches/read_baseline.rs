@@ -198,7 +198,7 @@ async fn run(fixture: &Fixture, shape: Shape, readers: usize, operations: usize)
     let off_pool = stats.snapshot().off_pool_calls;
     let tasks = fixture.pool_tasks();
     let start = Instant::now();
-    let mut set = tokio::task::JoinSet::new();
+    let mut set = nuclei::task::JoinSet::new();
     for reader in 0..readers {
         let (router, ids) = (fixture.router.clone(), fixture.ids.clone());
         set.spawn(async move {

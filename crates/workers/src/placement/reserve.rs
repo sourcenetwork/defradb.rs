@@ -25,7 +25,7 @@ use crate::topology::{CpuSet, Topology};
 
 /// How often a pool plans again after other pools took CPUs it had planned
 /// on, before it settles for sharing.
-const ATTEMPTS: usize = 16;
+pub(super) const ATTEMPTS: usize = 16;
 
 /// A pool's plan and the CPUs it holds for it.
 pub(crate) struct Reserved<'a> {

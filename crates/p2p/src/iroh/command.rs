@@ -1,8 +1,8 @@
 //! Commands sent from `IrohTransport` to the background `IrohEndpoint` event loop.
 
+use crate::rt::oneshot;
 use cid::Cid;
 use iroh::endpoint::SendStream;
-use tokio::sync::oneshot;
 
 use crate::message::{
     BranchableSyncRequest, DocSyncRequest, ManageQueryReply, ManageQueryRequest, ManageReply,

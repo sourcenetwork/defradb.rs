@@ -25,12 +25,12 @@ pub(super) fn spawn_event_handler<S, B>(
     transport: IrohTransport,
     manage_hooks: ManageHooksCell,
     #[cfg(not(target_arch = "wasm32"))] se_correlator: p2p::SeQueryCorrelator,
-) -> n0_future::task::JoinHandle<()>
+) -> p2p::rt::Task<()>
 where
     S: Store + 'static,
     B: blockstore::Blockstore + 'static,
 {
-    n0_future::task::spawn(async move {
+    p2p::rt::spawn(async move {
         let dispatcher = Arc::clone(&coordinator);
         dispatcher
             .run_event_dispatcher(events, move |event, admission| {

@@ -51,13 +51,13 @@ pub fn scoped_current_identity(did: Option<String>) -> CurrentIdentityGuard {
 
 // Request-scoped acting identity for the multithreaded async (REST) path.
 //
-// REST handlers run on the multithreaded tokio runtime where `.await` may hop
-// OS threads, so the `thread_local` above cannot carry the caller's identity
+// REST handlers run on a multithreaded runtime where `.await` may hop OS
+// threads, so the `thread_local` above cannot carry the caller's identity
 // through to DB-layer NAC checks. A `task_local` is bound to the request task
 // and survives `.await`, mirroring Go's `identity.FromContext(ctx)`. The HTTP
 // middleware scopes it around the whole request.
 #[cfg(not(target_arch = "wasm32"))]
-tokio::task_local! {
+nuclei::task_local! {
     static SCOPED_IDENTITY: Option<String>;
 }
 

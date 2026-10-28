@@ -6,6 +6,17 @@ use schema::VectorEmbeddingDescription;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+// HTTP: nuclei sockets natively, the browser's fetch on wasm32. Both have
+// the same names.
+#[cfg(target_arch = "wasm32")]
+use n0_future::time::timeout as with_deadline;
+#[cfg(not(target_arch = "wasm32"))]
+use net::http as http_client;
+#[cfg(not(target_arch = "wasm32"))]
+use nuclei::time::timeout as with_deadline;
+#[cfg(target_arch = "wasm32")]
+use reqwest as http_client;
+
 const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434/api";
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com/v1";
 
@@ -575,7 +586,7 @@ async fn post_embedding_request(
     if let Some(api_key) = bearer {
         request = request.bearer_auth(api_key);
     }
-    let transport = |error: reqwest::Error| EmbeddingCallError {
+    let transport = |error: http_client::Error| EmbeddingCallError {
         message: error.to_string(),
         retryable: true,
     };
@@ -591,7 +602,7 @@ async fn post_embedding_request(
         }
         resp.json::<serde_json::Value>().await.map_err(transport)
     };
-    n0_future::time::timeout(timeout, exchange)
+    with_deadline(timeout, exchange)
         .await
         .map_err(|_| EmbeddingCallError {
             message: format!("embedding provider gave no answer within {timeout:?}"),
@@ -663,9 +674,9 @@ fn normalize_embedding(embedding: &mut [f64]) -> Result<(), EmbeddingError> {
     Ok(())
 }
 
-fn embedding_client() -> &'static reqwest::Client {
-    static CLIENT: regolith::sync::Lazy<reqwest::Client> =
-        regolith::sync::Lazy::new(reqwest::Client::new);
+fn embedding_client() -> &'static http_client::Client {
+    static CLIENT: regolith::sync::Lazy<http_client::Client> =
+        regolith::sync::Lazy::new(http_client::Client::new);
     &CLIENT
 }
 

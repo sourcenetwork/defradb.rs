@@ -3,11 +3,12 @@
 use std::path::Path;
 use std::time::Duration;
 
+use net::http::tls::Certificate;
+use net::http::{Client, StatusCode};
+use nuclei::process::{Child, Command};
+use nuclei::time::{sleep, timeout};
 use rcgen::generate_simple_self_signed;
-use reqwest::{Certificate, Client, StatusCode};
 use tempfile::TempDir;
-use tokio::process::{Child, Command};
-use tokio::time::{sleep, timeout};
 
 struct RunningNode {
     child: Child,
@@ -34,7 +35,6 @@ impl RunningNode {
             .arg("--rootdir")
             .arg(root.path())
             .env("RUST_LOG", "info")
-            .env("TOKIO_WORKER_THREADS", "2")
             .stdout(log.try_clone().unwrap())
             .stderr(log)
             .kill_on_drop(true);
@@ -86,17 +86,14 @@ fn write_certificate(root: &Path) -> Certificate {
 }
 
 fn client(certificate: Option<Certificate>) -> Client {
-    let mut builder = Client::builder()
-        .use_rustls_tls()
-        .no_proxy()
-        .timeout(Duration::from_secs(2));
+    let mut builder = Client::builder().no_proxy().timeout(Duration::from_secs(2));
     if let Some(certificate) = certificate {
         builder = builder.add_root_certificate(certificate);
     }
     builder.build().unwrap()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn certificate_flags_serve_https_and_reject_plaintext() {
     let root = tempfile::tempdir().unwrap();
     let certificate = write_certificate(root.path());
@@ -110,7 +107,7 @@ async fn certificate_flags_serve_https_and_reject_plaintext() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.version(), reqwest::Version::HTTP_2);
+    assert_eq!(response.version(), net::http::Version::HTTP_2);
     assert_eq!(response.status(), StatusCode::OK);
 
     assert!(untrusted
@@ -124,13 +121,15 @@ async fn certificate_flags_serve_https_and_reject_plaintext() {
         .await
         .is_err());
     // Failed handshakes must not kill the listener or block other clients.
-    let _idle_connection = tokio::net::TcpStream::connect(&node.address).await.unwrap();
+    let _idle_connection = nuclei::net::TcpStream::connect(&node.address)
+        .await
+        .unwrap();
     node.healthy(&client(Some(certificate)), "https").await;
     assert!(node.logs().contains(&format!("https://{}", node.address)));
     node.stop().await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn node_shutdown_closes_existing_https_connections() {
     let root = tempfile::tempdir().unwrap();
     let certificate = write_certificate(root.path());
@@ -149,12 +148,11 @@ async fn node_shutdown_closes_existing_https_connections() {
     config.api.privkey_path = root.path().join("key.pem").display().to_string();
     let url = format!("https://{}/health-check", config.api.address);
     let client = Client::builder()
-        .use_rustls_tls()
         .no_proxy()
         .add_root_certificate(certificate)
         .http1_only()
-        .min_tls_version(reqwest::tls::Version::TLS_1_2)
-        .max_tls_version(reqwest::tls::Version::TLS_1_2)
+        .min_tls_version(net::http::tls::Version::Tls12)
+        .max_tls_version(net::http::tls::Version::Tls12)
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
@@ -162,12 +160,12 @@ async fn node_shutdown_closes_existing_https_connections() {
         .await
         .unwrap();
     let shutdown = node.shutdown_tx.clone();
-    let task = tokio::spawn(node.run());
+    let task = nuclei::spawn(node.run());
     timeout(Duration::from_secs(10), async {
         loop {
             if let Ok(response) = client.get(&url).send().await {
                 assert_eq!(response.status(), StatusCode::OK);
-                assert_eq!(response.version(), reqwest::Version::HTTP_11);
+                assert_eq!(response.version(), net::http::Version::HTTP_11);
                 assert_eq!(response.json::<String>().await.unwrap(), "Healthy");
                 break;
             }
@@ -178,7 +176,7 @@ async fn node_shutdown_closes_existing_https_connections() {
     .unwrap();
 
     shutdown.send(()).await.unwrap();
-    timeout(Duration::from_secs(5), task)
+    timeout(Duration::from_secs(5), task.join())
         .await
         .unwrap()
         .unwrap()
@@ -187,14 +185,14 @@ async fn node_shutdown_closes_existing_https_connections() {
     assert!(client.get(&url).send().await.is_err());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn absent_certificate_flags_keep_plain_http() {
     let mut node = RunningNode::start(tempfile::tempdir().unwrap(), false);
     node.healthy(&client(None), "http").await;
     node.stop().await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn config_file_enables_tls_with_root_relative_paths() {
     let root = tempfile::tempdir().unwrap();
     let certificate = write_certificate(root.path());
@@ -211,7 +209,7 @@ async fn config_file_enables_tls_with_root_relative_paths() {
     node.stop().await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn invalid_tls_configuration_fails_before_serving() {
     for case in ["missing", "bad certificate", "bad key", "mismatched key"] {
         let root = tempfile::tempdir().unwrap();
@@ -246,7 +244,7 @@ async fn invalid_tls_configuration_fails_before_serving() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn default_certificate_directory_enables_https() {
     let root = tempfile::tempdir().unwrap();
     let certificate = write_certificate(root.path());
@@ -264,7 +262,7 @@ async fn default_certificate_directory_enables_https() {
     node.stop().await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn partial_default_certificate_pair_fails_before_serving() {
     for filename in ["server.crt", "server.key"] {
         let root = tempfile::tempdir().unwrap();
@@ -281,7 +279,7 @@ async fn partial_default_certificate_pair_fails_before_serving() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn explicit_certificates_override_default_directory() {
     let root = tempfile::tempdir().unwrap();
     let certificate = write_certificate(root.path());

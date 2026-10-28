@@ -41,7 +41,7 @@ impl Drop for ReplayOwner {
         if let Some(plan) = self.plan.take() {
             let pusher = Arc::clone(&self.pusher);
             let bus = self.bus.clone();
-            n0_future::task::spawn(async move {
+            p2p::rt::spawn(async move {
                 if let Err(error) = pusher
                     .finish_replicator_install(
                         &plan,
@@ -55,7 +55,8 @@ impl Drop for ReplayOwner {
                 {
                     tracing::error!(%error, "failed to persist cancelled replicator install");
                 }
-            });
+            })
+            .detach();
         }
     }
 }

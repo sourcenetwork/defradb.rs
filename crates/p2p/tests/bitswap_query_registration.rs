@@ -16,9 +16,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use defra_core::{Block as DefraBlock, CompositeDeltaPayload, CrdtDelta};
+use nuclei::time::timeout;
 use p2p::testutil::{MockBitswapStore, BITSWAP_REGISTER_STALL_MS};
 use p2p::{HostEvent, P2PHost};
-use tokio::time::timeout;
 
 /// A fetch with nothing to fetch ends in single-digit milliseconds, so this is
 /// two orders of magnitude more than enough for it to finish inside the window.
@@ -35,11 +35,11 @@ fn make_data_block() -> cid::Cid {
     defra_core::block::generate_cid_from_bytes(&bytes).unwrap()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_fetch_completing_before_registration_leaves_no_query_behind() {
     let cid = make_data_block();
     let (host, handle, mut events, _) = P2PHost::new(MockBitswapStore::new()).await.unwrap();
-    tokio::spawn(host.run());
+    nuclei::spawn(host.run()).detach();
 
     BITSWAP_REGISTER_STALL_MS.store(STALL.as_millis() as u64, Ordering::Relaxed);
     // Nothing missing, so the fetch task runs straight to completion.

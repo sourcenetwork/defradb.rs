@@ -27,7 +27,7 @@ thread_local! {
 type BearerScope = (Option<String>, Option<String>);
 
 #[cfg(not(target_arch = "wasm32"))]
-tokio::task_local! {
+nuclei::task_local! {
     static TASK_CREATOR: Option<String>;
     static TASK_BEARER: BearerScope;
 }

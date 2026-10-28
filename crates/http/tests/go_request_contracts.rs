@@ -13,7 +13,7 @@ use common::*;
 
 /// Go sends the policy as a raw body with no content type. An extractor that
 /// demanded JSON would reject every real Go request.
-#[tokio::test]
+#[nuclei::test]
 async fn a_raw_policy_body_needs_no_content_type() {
     let (status, body) = Call::post("/api/v0/acp/document/policy")
         .body(POLICY)
@@ -23,7 +23,7 @@ async fn a_raw_policy_body_needs_no_content_type() {
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_empty_policy_body_is_rejected() {
     let (status, body) = Call::post("/api/v0/acp/document/policy")
         .authenticated()
@@ -35,7 +35,7 @@ async fn an_empty_policy_body_is_rejected() {
 
 /// The exact response the cross-runtime probe saw from Go at this path, where
 /// Rust answered 404.
-#[tokio::test]
+#[nuclei::test]
 async fn a_policy_without_an_identity_is_rejected() {
     let (status, body) = Call::post("/api/v0/acp/document/policy")
         .body(POLICY)
@@ -45,7 +45,7 @@ async fn a_policy_without_an_identity_is_rejected() {
     assert!(body.contains("policy creator can not be empty"), "{body}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_policy_response_is_gos_shape() {
     let (status, body) = Call::post("/api/v0/acp/document/policy")
         .body(POLICY)
@@ -73,7 +73,7 @@ async fn transform_reaching_the_view_layer(body: &str) -> (StatusCode, Option<Op
 
 /// Go's client marshals the field as `TransformCID`. Read as `Transform`, the
 /// key was silently ignored and the view was built without its lens transform.
-#[tokio::test]
+#[nuclei::test]
 async fn gos_transform_cid_survives() {
     let (status, seen) =
         transform_reaching_the_view_layer(r#"{"Query":"q","SDL":"s","TransformCID":"bafy"}"#).await;
@@ -82,7 +82,7 @@ async fn gos_transform_cid_survives() {
 }
 
 /// Go marshals an absent option as `null`, not by omitting the key.
-#[tokio::test]
+#[nuclei::test]
 async fn gos_null_transform_cid_is_none() {
     let (status, seen) =
         transform_reaching_the_view_layer(r#"{"Query":"q","SDL":"s","TransformCID":null}"#).await;
@@ -90,7 +90,7 @@ async fn gos_null_transform_cid_is_none() {
     assert_eq!(seen, Some(None));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_rust_transform_key_still_works() {
     let (status, seen) =
         transform_reaching_the_view_layer(r#"{"Query":"q","SDL":"s","Transform":"bafy"}"#).await;
@@ -100,7 +100,7 @@ async fn the_rust_transform_key_still_works() {
 
 /// Both spellings at once is ambiguous, so it is a client error rather than a
 /// silent winner.
-#[tokio::test]
+#[nuclei::test]
 async fn both_transform_keys_is_a_client_error() {
     let (status, _) = transform_reaching_the_view_layer(
         r#"{"Query":"q","SDL":"s","Transform":"a","TransformCID":"b"}"#,
@@ -109,7 +109,7 @@ async fn both_transform_keys_is_a_client_error() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_view_without_a_query_or_sdl_is_rejected() {
     for body in [r#"{"SDL":"s"}"#, r#"{"Query":"q"}"#] {
         let (status, _) = transform_reaching_the_view_layer(body).await;
@@ -133,7 +133,7 @@ async fn refresh_options_for(call: Call) -> (StatusCode, Option<db::CollectionSe
 /// and `RefreshViews` passes a nil body, so the header is present and the body
 /// is empty. Against `Json<T>` that is a 400 "EOF while parsing", which is why
 /// the body is read directly instead.
-#[tokio::test]
+#[nuclei::test]
 async fn gos_real_refresh_request_is_accepted() {
     let (status, options) = refresh_options_for(Call::post("/api/v0/view/refresh").json("")).await;
     assert_eq!(status, StatusCode::OK);
@@ -143,7 +143,7 @@ async fn gos_real_refresh_request_is_accepted() {
 }
 
 /// A client that omits the header entirely, which `Json` answers with 415.
-#[tokio::test]
+#[nuclei::test]
 async fn a_refresh_without_any_content_type_is_accepted() {
     let (status, options) = refresh_options_for(Call::post("/api/v0/view/refresh")).await;
     assert_eq!(status, StatusCode::OK);
@@ -152,14 +152,14 @@ async fn a_refresh_without_any_content_type_is_accepted() {
     assert!(!options.get_inactive);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn gos_name_selector_narrows_the_refresh() {
     let (status, options) = refresh_options_for(Call::post("/api/v0/view/refresh?name=Foo")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(options.unwrap().names, Some(vec!["Foo".to_string()]));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn gos_remaining_selectors_are_honoured() {
     let (status, options) = refresh_options_for(Call::post(
         "/api/v0/view/refresh?version_id=v1&collection_id=c1&get_inactive=true",
@@ -173,7 +173,7 @@ async fn gos_remaining_selectors_are_honoured() {
 }
 
 /// Go returns 400 from `strconv.ParseBool` for the same input.
-#[tokio::test]
+#[nuclei::test]
 async fn a_malformed_bool_is_rejected() {
     let (status, options) =
         refresh_options_for(Call::post("/api/v0/view/refresh?get_inactive=notabool")).await;
@@ -181,7 +181,7 @@ async fn a_malformed_bool_is_rejected() {
     assert!(options.is_none(), "a rejected request must not refresh");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_rust_names_body_still_works() {
     let (status, options) =
         refresh_options_for(Call::post("/api/v0/view/refresh").json(r#"{"Names":["A","B"]}"#))
@@ -195,7 +195,7 @@ async fn the_rust_names_body_still_works() {
 
 /// Both are "restrict to these views", so they union. Neither silently widens
 /// the refresh to everything.
-#[tokio::test]
+#[nuclei::test]
 async fn body_names_and_query_name_union() {
     let (status, options) =
         refresh_options_for(Call::post("/api/v0/view/refresh?name=Foo").json(r#"{"Names":["A"]}"#))
@@ -225,7 +225,7 @@ const GO_ACP_CLIENT_CALLS: &[(&str, &str)] = &[
     ("GET", "/api/v1/acp/node/status"),
 ];
 
-#[tokio::test]
+#[nuclei::test]
 async fn every_acp_path_gos_client_calls_resolves() {
     for (method, path) in GO_ACP_CLIENT_CALLS {
         let method = Method::from_bytes(method.as_bytes()).expect("a valid method");
@@ -252,7 +252,7 @@ async fn every_acp_path_gos_client_calls_resolves() {
 /// not fit the type, which is a status a Go-compatible client does not expect.
 /// This is the same divergence the issue's comment recorded for
 /// `acp/document/relationship`, and it must not ship on the routes added here.
-#[tokio::test]
+#[nuclei::test]
 async fn a_malformed_view_body_is_gos_400_not_422() {
     for body in [
         r#"{"SDL":"s"}"#,
@@ -268,7 +268,7 @@ async fn a_malformed_view_body_is_gos_400_not_422() {
 }
 
 /// Not valid JSON at all is 400 on both runtimes, and stays so.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unparseable_view_body_is_400() {
     let (status, _) = Call::post("/api/v0/view").json("{not json").send().await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -277,7 +277,7 @@ async fn an_unparseable_view_body_is_400() {
 /// `Json` silently discards a body sent without `Content-Type: application/json`.
 /// For this route that would widen a one-view refresh to every view, with a 200
 /// and no way for the caller to tell, so the body is read directly instead.
-#[tokio::test]
+#[nuclei::test]
 async fn a_body_without_a_content_type_is_still_honoured() {
     let mut call = Call::post("/api/v0/view/refresh");
     call.body = r#"{"Names":["A"]}"#.to_string();
@@ -289,7 +289,7 @@ async fn a_body_without_a_content_type_is_still_honoured() {
 
 /// A body that is present but unparseable is refused, not ignored, and with
 /// Go's 400 rather than axum's 422.
-#[tokio::test]
+#[nuclei::test]
 async fn an_unparseable_refresh_body_is_gos_400() {
     for body in [r#"{"Names":5}"#, "{not json"] {
         let mut call = Call::post("/api/v0/view/refresh");
@@ -305,7 +305,7 @@ async fn an_unparseable_refresh_body_is_gos_400() {
 
 /// An empty body selects nothing, which is what Go does with the body it never
 /// reads, so every view refreshes.
-#[tokio::test]
+#[nuclei::test]
 async fn an_empty_body_selects_nothing() {
     for call in [
         Call::post("/api/v0/view/refresh"),

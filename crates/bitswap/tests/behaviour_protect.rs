@@ -71,13 +71,13 @@ async fn protect(network: &Network, peer: PeerId) {
 /// Unprotects the peer, returning the handler events queued and the answer the caller got.
 async fn unprotect(behaviour: &mut Behaviour, peer: PeerId) -> (Vec<(usize, bool)>, bool) {
     let network = behaviour.network().clone();
-    let pending = tokio::spawn(async move { network.unprotect_peer(peer).await });
-    tokio::task::yield_now().await;
+    let pending = nuclei::spawn_local(async move { network.unprotect_peer(peer).await });
+    nuclei::task::yield_now().await;
     let events = drain(behaviour);
-    (events, pending.await.unwrap())
+    (events, pending.join().await.unwrap())
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn protect_and_unprotect_reach_every_connection() {
     let mut b = behaviour();
     let peer = PeerId::random();
@@ -93,7 +93,7 @@ async fn protect_and_unprotect_reach_every_connection() {
     assert!(was_protected);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_connection_made_while_protected_starts_protected() {
     let mut b = behaviour();
     let peer = PeerId::random();
@@ -110,7 +110,7 @@ async fn a_connection_made_while_protected_starts_protected() {
     assert!(drain(&mut b).is_empty(), "no longer protected");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn protect_is_ignored_for_a_peer_not_known_to_speak_bitswap() {
     let mut b = behaviour();
     let peer = PeerId::random();

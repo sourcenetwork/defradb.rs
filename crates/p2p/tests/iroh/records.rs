@@ -3,7 +3,8 @@
 //! `proofs/lean/ServiceRecord` describe.
 
 use iroh::SecretKey;
-use n0_future::time::{Duration, Instant};
+use nuclei::time::Instant;
+use std::time::Duration;
 
 use super::book::Offered;
 use super::*;

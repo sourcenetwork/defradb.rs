@@ -177,7 +177,7 @@ impl Node {
 
         let coordinator_for_replication = coordinator.clone();
         let rebroadcast_on_merge = config.net.p2p_rebroadcast_on_merge;
-        let replication_task = tokio::spawn(async move {
+        let replication_task = nuclei::spawn(async move {
             info!("Starting replication loop for P2P sync");
             p2p::sync::ReplicationLoop::run(
                 coordinator_for_replication,
@@ -237,7 +237,7 @@ impl Node {
         let se_transport_serve = p2p::Libp2pTransport::new(handle.clone());
         let se_correlator_for_events = se_correlator.clone();
         let se_event_bus = event_bus.clone();
-        let event_handler_task = Some(tokio::spawn(async move {
+        let event_handler_task = Some(nuclei::spawn(async move {
             let handler_coordinator = coordinator_for_events.clone();
             coordinator_for_events.run_event_dispatcher(events, move |event, admission| {
                 let coordinator_for_events = handler_coordinator.clone();

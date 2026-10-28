@@ -29,41 +29,47 @@ async fn assert_refused(
     assert_eq!(outcome, Outcome::Quarantined);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[nuclei::test]
 #[serial]
 async fn update_to_another_owners_protected_document_is_refused() {
-    let owner = author(0x11);
-    let attacker = author(0x22);
-    let node = ProtectedNode::start(&owner).await;
-    let (doc_id, parent) = node.create(&owner, "Alice", 30);
+    edge::compat(async move {
+        let owner = author(0x11);
+        let attacker = author(0x22);
+        let node = ProtectedNode::start(&owner).await;
+        let (doc_id, parent) = node.create(&owner, "Alice", 30);
 
-    // Signed by the attacker, while the envelope names the owner as creator.
-    let hijack = with_creator(
-        &update(
+        // Signed by the attacker, while the envelope names the owner as creator.
+        let hijack = with_creator(
+            &update(
+                &parent,
+                &aged(666),
+                &node.collection.version_id,
+                &attacker,
+                Signing::EveryBlock,
+            ),
+            &owner.did,
+        );
+        assert_refused(&node, &owner, &doc_id, &parent, &hijack).await;
+    })
+    .await;
+}
+
+#[nuclei::test]
+#[serial]
+async fn unsigned_update_to_protected_document_is_refused() {
+    edge::compat(async move {
+        let owner = author(0x11);
+        let node = ProtectedNode::start(&owner).await;
+        let (doc_id, parent) = node.create(&owner, "Alice", 30);
+
+        let unsigned = update(
             &parent,
             &aged(666),
             &node.collection.version_id,
-            &attacker,
-            Signing::EveryBlock,
-        ),
-        &owner.did,
-    );
-    assert_refused(&node, &owner, &doc_id, &parent, &hijack).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn unsigned_update_to_protected_document_is_refused() {
-    let owner = author(0x11);
-    let node = ProtectedNode::start(&owner).await;
-    let (doc_id, parent) = node.create(&owner, "Alice", 30);
-
-    let unsigned = update(
-        &parent,
-        &aged(666),
-        &node.collection.version_id,
-        &owner,
-        Signing::Unsigned,
-    );
-    assert_refused(&node, &owner, &doc_id, &parent, &unsigned).await;
+            &owner,
+            Signing::Unsigned,
+        );
+        assert_refused(&node, &owner, &doc_id, &parent, &unsigned).await;
+    })
+    .await;
 }

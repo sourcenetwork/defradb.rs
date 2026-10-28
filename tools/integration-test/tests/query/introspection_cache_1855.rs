@@ -30,7 +30,7 @@ async fn txn_schema_add_is_scoped_under_warm_cache(cluster: TestCluster) {
     }
 
     let tx_id = client.tx_create().expect("tx_create failed");
-    let resp = reqwest::Client::new()
+    let resp = net::http::Client::new()
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", &tx_id)
         .body("type CacheWidget { name: String }")
@@ -80,9 +80,12 @@ async fn txn_schema_add_is_scoped_under_warm_cache(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_schema_add_is_scoped_under_warm_cache() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_schema_add_is_scoped_under_warm_cache(cluster).await;
+    edge::compat(async {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_schema_add_is_scoped_under_warm_cache(cluster).await;
+    })
+    .await;
 }

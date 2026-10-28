@@ -127,8 +127,11 @@ async fn exhaustive_relation_order_includes_orphans_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_exhaustive_relation_order_includes_orphans() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    exhaustive_relation_order_includes_orphans_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        exhaustive_relation_order_includes_orphans_test(cluster).await;
+    })
+    .await;
 }

@@ -1,13 +1,12 @@
 use std::error::Error;
-use std::io::{Error as IoError, ErrorKind};
+use std::io::{Error as IoError, ErrorKind, Read};
 use std::path::PathBuf;
 
 use lens::{LensConfig, TransformStore, WasmTransformStore};
-use tokio::io::AsyncReadExt;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-#[tokio::main]
+#[nuclei::main]
 async fn main() {
     if let Err(err) = run().await {
         eprintln!("{err}");
@@ -17,7 +16,7 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let config_path = config_path()?;
-    let config_bytes = tokio::fs::read(config_path).await?;
+    let config_bytes = nuclei::fs::read(config_path).await?;
     let config: LensConfig = serde_json::from_slice(&config_bytes)?;
 
     let input = read_stdin_json_array().await?;
@@ -47,8 +46,14 @@ fn config_path() -> Result<PathBuf> {
 }
 
 async fn read_stdin_json_array() -> Result<Vec<serde_json::Value>> {
-    let mut input_bytes = Vec::new();
-    tokio::io::stdin().read_to_end(&mut input_bytes).await?;
+    let input_bytes = nuclei::spawn_blocking(|| {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .lock()
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    })
+    .await?;
 
     match serde_json::from_slice::<serde_json::Value>(&input_bytes)? {
         serde_json::Value::Array(values) => Ok(values),

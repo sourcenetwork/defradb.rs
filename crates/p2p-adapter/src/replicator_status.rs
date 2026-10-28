@@ -166,7 +166,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn status_update_persists_first_transition_only() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store);
@@ -232,7 +232,7 @@ mod tests {
         .unwrap());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn scope_generation_fences_late_replicator_status_updates() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store);
@@ -282,7 +282,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn retry_status_requires_same_incarnation_and_no_pending_markers() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store);

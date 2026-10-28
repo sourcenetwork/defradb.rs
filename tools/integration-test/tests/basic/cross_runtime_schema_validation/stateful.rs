@@ -58,8 +58,9 @@ fn policy_id(policy: &Value) -> &str {
         .unwrap_or_else(|| panic!("PolicyID missing from {policy}"))
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_schema_stateful_validation_parity() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
         .go_nodes(1)
@@ -231,4 +232,6 @@ async fn go_schema_stateful_validation_parity() {
         &rust_result,
         &go_result,
     );
+})
+    .await;
 }

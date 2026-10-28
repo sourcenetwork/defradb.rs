@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(graphql["data"]["users"][0]["name"], "Alice");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn get_executes_hex_encoded_graphql() {
         let response = response(
             Method::GET,
@@ -159,7 +159,7 @@ mod tests {
         assert_graphql_response(response).await;
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn post_executes_hex_encoded_graphql() {
         let body = json!({
             "sender": "0x1234",
@@ -170,7 +170,7 @@ mod tests {
         assert_graphql_response(response).await;
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn malformed_hex_is_a_bad_request() {
         let body = json!({"sender": "0x1234", "data": "0xnot-hex"});
         let response = response(Method::POST, "/api/v0/ccip", Body::from(body.to_string())).await;
@@ -178,14 +178,14 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn malformed_json_is_a_bad_request() {
         let response = response(Method::POST, "/api/v0/ccip", Body::from("{")).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn subscriptions_are_rejected() {
         let body = json!({
             "sender": "0x1234",

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use nuclei::sync::mpsc;
+use nuclei::task::Task;
 use tracing::{info, warn};
 
 use crate::config::{Config, DatastoreType};
@@ -15,11 +15,11 @@ pub(super) enum P2PTasks {
         /// Coordinator-owned background replication shutdown.
         coordinator: p2p::sync::SyncShutdownHandle,
         /// P2P host event loop task
-        host_task: JoinHandle<()>,
+        host_task: Task<()>,
         /// Replication loop task (processes incoming blocks)
-        replication_task: JoinHandle<()>,
+        replication_task: Task<()>,
         /// Host event handler task (processes P2P events through coordinator)
-        event_handler_task: Option<JoinHandle<()>>,
+        event_handler_task: Option<Task<()>>,
         /// Records push failures for retry, on the worker pool
         failure_recorder_task: workers::Background,
         /// Periodically retries failed doc pushes with exponential backoff, on

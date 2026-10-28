@@ -21,16 +21,20 @@ defra-core = { path = "../defra-core" }
 regolith = { workspace = true }
 # The worker pool whose stuck-poll monitor runs on the edge's timer.
 workers = { path = "../workers" }
-# Task and timer types: tokio's natively, wasm-bindgen-futures and browser
-# timers on wasm32, with one API.
-n0-future.workspace = true
+# `catch_unwind` and `or` on futures, on every target.
+futures-lite.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# The one runtime. `net` gives it an I/O driver whatever the rest of the graph
-# enables.
-tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"] }
+# The one runtime.
+nuclei.workspace = true
+# The way into a library that needs a tokio runtime (`compat`).
+async-compat.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Tasks and timers on the browser's event loop.
+n0-future.workspace = true
 
 [lints]
 workspace = true

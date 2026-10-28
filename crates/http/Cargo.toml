@@ -19,12 +19,11 @@ server = [
     "dep:async-stream",
     "dep:axum",
     "dep:edge",
-    "dep:axum-server",
+    "dep:net",
+    "dep:nuclei",
     "dep:hyper",
     "dep:rustls",
     "dep:telemetry",
-    "dep:tokio",
-    "dep:tokio-stream",
     "dep:tower",
     "dep:tower-http",
     "dep:workers",
@@ -56,8 +55,6 @@ cid.workspace = true
 edge = { path = "../edge", optional = true }
 # The worker pool the data-path routes run on.
 workers = { path = "../workers", optional = true }
-tokio = { workspace = true, features = ["rt", "net", "time"], optional = true }
-tokio-stream = { workspace = true, optional = true }
 async-trait.workspace = true
 futures.workspace = true
 async-stream = { version = "0.3", optional = true }
@@ -76,7 +73,6 @@ kovan-queue.workspace = true
 
 # HTTP server
 axum = { workspace = true, optional = true }
-axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }
 rustls = { workspace = true, features = ["ring", "std", "tls12"], optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
@@ -93,13 +89,15 @@ telemetry = { path = "../telemetry", optional = true }
 
 # db's native runtime is the only one it builds with off-wasm, server or not.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The server's sockets, accept loop and TLS.
+net = { path = "../net", optional = true }
+nuclei = { workspace = true, optional = true }
 db = { path = "../db", default-features = false, features = ["native"] }
 
 [dev-dependencies]
 regolith.workspace = true
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }
 tower = { workspace = true, features = ["util"] }
 urlencoding = "2.1"
 crypto = { path = "../crypto" }

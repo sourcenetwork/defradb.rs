@@ -7,6 +7,7 @@ use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
     PushLogReply, PushLogRequest, PushSEArtifactsRequest,
 };
+use crate::rt::mpsc;
 use crate::sync::manager::SyncEvent;
 use crate::topics::DefraTopic;
 use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
@@ -24,7 +25,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage::RegolithStore;
-use tokio::sync::mpsc;
 
 type StreamedBlocks = Arc<AtomOption<Vec<(Cid, Vec<u8>)>>>;
 type CompletionSlot = Arc<AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>;
@@ -378,7 +378,7 @@ impl P2PTransport for TestTransport {
             return Ok(());
         }
         if self.hang_car_requests.load(Ordering::SeqCst) {
-            n0_future::time::sleep(Duration::from_secs(600)).await;
+            crate::rt::time::sleep(Duration::from_secs(600)).await;
             return Ok(());
         }
         self.blockstore
@@ -479,12 +479,13 @@ impl P2PTransport for TestTransport {
                         .map(|data| (*cid, data.clone()))
                 })
                 .collect();
-            n0_future::task::spawn(async move {
-                n0_future::time::sleep(delay).await;
+            crate::rt::spawn(async move {
+                crate::rt::time::sleep(delay).await;
                 for (cid, data) in blocks {
                     blockstore.put(&cid, &data).await.unwrap();
                 }
-            });
+            })
+            .detach();
             return Ok(query_id);
         }
         let streamed_blocks = self
@@ -496,16 +497,17 @@ impl P2PTransport for TestTransport {
             let completion = self.stream_completion.load().as_deref().cloned();
             let stream_block_delay = self.stream_block_delay();
             let stream_completed = Arc::clone(&self.stream_completed);
-            n0_future::task::spawn(async move {
+            crate::rt::spawn(async move {
                 for (cid, data) in streamed_blocks {
-                    n0_future::time::sleep(stream_block_delay).await;
+                    crate::rt::time::sleep(stream_block_delay).await;
                     blockstore.put(&cid, &data).await.unwrap();
                 }
                 stream_completed.store(true, Ordering::SeqCst);
                 if let Some(completion) = completion {
                     completion.complete(query_id, true);
                 }
-            });
+            })
+            .detach();
             return Ok(query_id);
         }
         if call_index < self.skip_serving_syncs.load(Ordering::SeqCst) {
@@ -570,7 +572,7 @@ impl P2PTransport for TestTransport {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -648,7 +650,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn poll_fetch_dag_uses_known_missing_frontier_without_recursive_car() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -696,7 +698,7 @@ async fn poll_fetch_dag_uses_known_missing_frontier_without_recursive_car() {
     assert_eq!(transport.sync_batches(), vec![vec![child_cid]]);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn rooted_selective_response_drains_before_query_is_reaped() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -757,7 +759,7 @@ async fn rooted_selective_response_drains_before_query_is_reaped() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -781,7 +783,7 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         PeerId::new("remote-peer".to_string()),
     )
     .with_block_sync_completions(completion);
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &root_cid,
@@ -794,11 +796,11 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
     .await;
 
     assert_eq!(outcome, ProviderWindowOutcome::Complete);
-    assert_eq!(n0_future::time::Instant::now(), started);
+    assert_eq!(crate::rt::time::Instant::now(), started);
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn exact_selective_failure_before_waiter_registration_is_observed_immediately() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -823,7 +825,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         PeerId::new("remote-peer".to_string()),
     )
     .with_block_sync_completions(completion);
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &root_cid,
@@ -837,14 +839,14 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
 
     assert_eq!(outcome, ProviderWindowOutcome::Stalled);
     assert_eq!(
-        n0_future::time::Instant::now(),
+        crate::rt::time::Instant::now(),
         started,
         "an early terminal result must not burn the 30-second watchdog"
     );
     assert_eq!(transport.cancelled_queries(), vec![1]);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn contended_car_ingest_defers_to_root_clock_without_fetch_exhaustion() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -888,7 +890,7 @@ async fn contended_car_ingest_defers_to_root_clock_without_fetch_exhaustion() {
     assert_eq!(snapshot.pending_dag_fetch_exhausted, 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -961,7 +963,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
 /// 25-deep chain needs 24 selective iterations; the previous `0..20` cap
 /// abandoned it unmerged (no `DagReady`) even though every iteration was
 /// still making progress.
-#[tokio::test]
+#[nuclei::test]
 async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1039,7 +1041,7 @@ fn single_child_dag() -> (Cid, Vec<u8>, Cid, Vec<u8>) {
 
 /// A dead source peer must not fail the walk: the batch rotates to the
 /// alternate provider and the fetch completes on the first attempt.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_rotates_to_alternate_provider_on_no_progress() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1086,7 +1088,7 @@ async fn poll_fetch_dag_rotates_to_alternate_provider_on_no_progress() {
 
 /// An attempt that stalls (no blocks served) must be retried after
 /// backoff and succeed once the provider starts serving.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_retries_incomplete_fetch_and_succeeds() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1131,7 +1133,7 @@ async fn poll_fetch_dag_retries_incomplete_fetch_and_succeeds() {
 
 /// When every attempt stalls against every provider the fetcher stops
 /// after MAX_FETCH_ATTEMPTS without emitting DagReady (terminal failure).
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1212,7 +1214,7 @@ async fn dead_bitswap_publisher_fetch(
 /// answering the rooted CAR request while serving no block for the root it
 /// announced is what separates that from a peer that has nothing to serve,
 /// so the fetcher hangs up on the publisher — and only on the publisher.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1243,7 +1245,7 @@ async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
 /// The same fetch on a transport that owns its own connection retirement.
 /// Iroh keeps no Bitswap message queue, so the generic path must
 /// not hang up on an Iroh peer.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn rooted_sync_transports_keep_their_connection_after_exhaustion() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1271,7 +1273,7 @@ async fn rooted_sync_transports_keep_their_connection_after_exhaustion() {
 /// Without the CAR answer there is no evidence about the peer at all: the
 /// publisher may be unreachable, or busy, or simply slower than the budget.
 /// Silence is not grounds to discard a connection.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn unanswered_publisher_keeps_its_connection_after_exhaustion() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1313,7 +1315,7 @@ async fn unanswered_publisher_keeps_its_connection_after_exhaustion() {
 /// That interval belongs to the existing per-root retry clock: it must not
 /// burn the inner fetch budget or be reported as terminal exhaustion. Once
 /// the same qualified provider reconnects, a later clock dispatch completes.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1380,7 +1382,7 @@ async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
 /// Every issued block-sync query must be reaped via `cancel_sync` at the
 /// end of its poll window: a stalled provider's transport-side work must
 /// not outlive rotation, the limiter permit, or terminal failure.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_cancels_every_issued_query() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1425,7 +1427,7 @@ async fn poll_fetch_dag_cancels_every_issued_query() {
 /// provider has burned a full window, remaining batches in the attempt
 /// fail fast without issuing transport queries, so dead-provider attempt
 /// time does not scale with the width of the missing frontier.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_stall_budget_caps_stalled_batches_per_attempt() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1487,7 +1489,7 @@ async fn poll_fetch_dag_stall_budget_caps_stalled_batches_per_attempt() {
 /// unresponsive) must not stall the attempt beyond the CAR budget — the
 /// fetch falls back to the selective path and completes, instead of
 /// waiting out the transport's full internal timeout chain.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_bounds_hung_car_request() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1537,7 +1539,7 @@ async fn poll_fetch_dag_bounds_hung_car_request() {
 /// (source-peer-only rotation), not abort the fetch: composed exactly as
 /// the event-handler call sites do, the fetch still completes from the
 /// source peer.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1606,7 +1608,7 @@ async fn fetch_providers(transport: &TestTransport, root_cid: &Cid) -> Vec<PeerI
 
 /// Connected peers alone fill the alternates cap, so a record provider is
 /// kept only through its reserved slot: the best one, skipping the source.
-#[tokio::test]
+#[nuclei::test]
 async fn record_provider_keeps_an_alternate_slot_past_connected_peers() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1651,7 +1653,7 @@ async fn record_provider_keeps_an_alternate_slot_past_connected_peers() {
 /// The limiter permit must be released during retry backoff: a second
 /// waiter acquires the single permit while the first fetch is sleeping
 /// between attempts, not after all of its retries complete.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1668,7 +1670,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
 
     let limiter = DagFetchLimiter::new(1);
     let (event_tx, mut event_rx) = mpsc::channel(1);
-    let fetch = n0_future::task::spawn(poll_fetch_dag(
+    let fetch = crate::rt::spawn(poll_fetch_dag(
         transport.clone(),
         blockstore.clone(),
         event_tx,
@@ -1686,7 +1688,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     // Let attempt 1 start (and therefore hold the only permit) before
     // competing for it.
     while transport.sync_batches().is_empty() {
-        n0_future::time::sleep(Duration::from_millis(10)).await;
+        crate::rt::time::sleep(Duration::from_millis(10)).await;
     }
 
     // Resolves as soon as attempt 1's permit drops (start of backoff);
@@ -1703,7 +1705,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     assert_eq!(transport.sync_batches().len(), 1);
 
     drop(permits);
-    fetch.await.unwrap();
+    fetch.join().await.unwrap();
 
     assert!(event_rx.recv().await.is_none());
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
@@ -1715,7 +1717,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
 /// and the DAG then completes through the manager path 25 ms later. A Success
 /// completion means every block has already been handed to this node; it must
 /// not be read as a stall.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1736,7 +1738,7 @@ async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
         PeerId::new("remote-peer".to_string()),
     )
     .with_block_sync_completions(completion);
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &root_cid,
@@ -1755,7 +1757,7 @@ async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
     );
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
     assert!(
-        n0_future::time::Instant::now().duration_since(started) < Duration::from_secs(1),
+        crate::rt::time::Instant::now().duration_since(started) < Duration::from_secs(1),
         "the landing blocks are local; waiting for them must not cost a fetch window"
     );
 }
@@ -1765,7 +1767,7 @@ async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
 /// the four fetch slots, and the root is usually resolved by the manager path
 /// before the retry even runs. At B0 saturation that sleep was ~70% of all
 /// fetch-slot time.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1781,7 +1783,7 @@ async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff()
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_early_success_completion(completion.clone());
     let (event_tx, mut event_rx) = mpsc::channel(1);
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     poll_fetch_dag(
         transport.clone(),
@@ -1804,7 +1806,7 @@ async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff()
         event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
-    let elapsed = n0_future::time::Instant::now().duration_since(started);
+    let elapsed = crate::rt::time::Instant::now().duration_since(started);
     assert!(
         elapsed < Duration::from_secs(1),
         "fetch slot held {elapsed:?}: the first attempt slept through retry_backoff(2) \
@@ -1816,7 +1818,7 @@ async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff()
 /// its blocks then land after `BLOCK_SYNC_COMPLETION_WATCHDOG` would have
 /// expired. The grace has to outlive the watchdog, or a Success arriving late
 /// in the window gets no grace at all and burns the retry backoff anyway.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn late_success_completion_keeps_the_full_landing_grace() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1840,13 +1842,14 @@ async fn late_success_completion_keeps_the_full_landing_grace() {
     .with_block_sync_completions(completion.clone());
 
     let landing_store = blockstore.clone();
-    n0_future::task::spawn(async move {
-        n0_future::time::sleep(BLOCK_SYNC_COMPLETION_WATCHDOG - Duration::from_millis(150)).await;
+    crate::rt::spawn(async move {
+        crate::rt::time::sleep(BLOCK_SYNC_COMPLETION_WATCHDOG - Duration::from_millis(150)).await;
         // First (and only) sync_blocks call of this poll window.
         completion.complete(QueryId(1), true);
-        n0_future::time::sleep(SUCCESS_LANDING_GRACE / 2).await;
+        crate::rt::time::sleep(SUCCESS_LANDING_GRACE / 2).await;
         landing_store.put(&child_cid, &child_data).await.unwrap();
-    });
+    })
+    .detach();
 
     let outcome = poll_fetch_blocks(
         &root_cid,

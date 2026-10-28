@@ -1,5 +1,5 @@
+use nuclei::process::Command;
 use std::path::Path;
-use tokio::process::Command;
 
 use crate::config::{
     CBINDGEN_CONFIG, FFI_LIB_NAME, GO_FFI_LIB_NAME, HEADER_DESTINATION, LIBRARY_DESTINATION,
@@ -60,7 +60,7 @@ async fn generate_header(ctx: &WorktreeContext, verbose: bool) -> Result<()> {
 
     // Ensure destination directory exists
     if let Some(parent) = header_dest.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        nuclei::fs::create_dir_all(parent).await?;
     }
 
     let output = Command::new("cbindgen")
@@ -104,7 +104,7 @@ async fn copy_library(ctx: &WorktreeContext, verbose: bool) -> Result<()> {
     let lib_dir = ctx.go_path.join(LIBRARY_DESTINATION);
 
     // Ensure destination directory exists
-    tokio::fs::create_dir_all(&lib_dir).await?;
+    nuclei::fs::create_dir_all(&lib_dir).await?;
 
     // Platform-specific library names
     #[cfg(target_os = "macos")]
@@ -136,7 +136,7 @@ async fn copy_library(ctx: &WorktreeContext, verbose: bool) -> Result<()> {
         );
     }
 
-    tokio::fs::copy(&src_path, &dst_path).await?;
+    nuclei::fs::copy(&src_path, &dst_path).await?;
 
     if verbose {
         println!("Library copied successfully");

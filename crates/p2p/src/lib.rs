@@ -23,7 +23,7 @@
 //! use blockstore::DefraBlockstore;
 //! use std::sync::Arc;
 //!
-//! #[tokio::main]
+//! #[nuclei::main]
 //! async fn main() -> p2p::Result<()> {
 //!     // Create a blockstore for Bitswap
 //!     let blockstore = Arc::new(DefraBlockstore::new(/* storage backend */));
@@ -33,7 +33,7 @@
 //!     let (host, handle, mut events) = P2PHost::new(bitswap_store)?;
 //!
 //!     // Spawn the host event loop
-//!     n0_future::task::spawn(host.run());
+//!     p2p::rt::spawn(host.run()).detach();
 //!
 //!     // Start listening
 //!     handle.listen("/ip4/0.0.0.0/tcp/9000".parse().unwrap()).await?;
@@ -75,6 +75,7 @@ pub mod protocol;
 #[cfg(any(feature = "kms", feature = "libp2p-transport"))]
 pub mod pubsub_rpc;
 pub mod replicator;
+pub mod rt;
 pub mod se_correlator;
 pub mod signing;
 pub mod sync;

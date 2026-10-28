@@ -37,7 +37,7 @@ async fn multi_layer_self_ref_relations_test(cluster: TestCluster) {
     let client = cluster.client(0);
     client.schema_add(SCHEMA).expect("add schema");
 
-    let collections: Vec<Value> = reqwest::get(format!(
+    let collections: Vec<Value> = net::http::get(format!(
         "{}/api/v0/collections?get_inactive=true",
         cluster.api_url(0)
     ))
@@ -62,8 +62,11 @@ async fn multi_layer_self_ref_relations_test(cluster: TestCluster) {
     assert_relative_id(route, "after", "1");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_multi_layer_self_ref_relations() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    multi_layer_self_ref_relations_test(cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        multi_layer_self_ref_relations_test(cluster).await;
+    })
+    .await;
 }

@@ -67,7 +67,7 @@ pub type FailureRecorder = n0_future::task::JoinHandle<()>;
 /// channel closes or it is aborted.
 pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
     peerstore: storage::stores::Peerstore<S>,
-    mut failures: tokio::sync::mpsc::Receiver<p2p::sync::PushFailure>,
+    mut failures: p2p::rt::mpsc::Receiver<p2p::sync::PushFailure>,
 ) -> FailureRecorder {
     #[cfg(not(target_arch = "wasm32"))]
     let pool = peerstore.pool().cloned();
@@ -272,7 +272,7 @@ async fn redial_replicator<S, T>(
         .filter(|(addressed_peer, _)| addressed_peer == peer_id)
         .flat_map(|(_, addrs)| addrs)
         .collect();
-    match n0_future::time::timeout(RECONNECT_DIAL_TIMEOUT, transport.dial(peer_id, addrs)).await {
+    match p2p::rt::time::timeout(RECONNECT_DIAL_TIMEOUT, transport.dial(peer_id, addrs)).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::debug!(%peer_id, %error, "replicator retry redial failed"),
         Err(_) => tracing::debug!(%peer_id, "replicator retry redial timed out"),
@@ -296,12 +296,12 @@ const RECONNECT_DIALS_PER_PASS: usize = 8;
 /// When a disconnected peer may next be probed, and how far its backoff has
 /// walked. Held by the reconnect loop only; nothing here is durable.
 struct ReconnectProbe {
-    next_attempt: n0_future::time::Instant,
+    next_attempt: p2p::rt::time::Instant,
     backoff: std::time::Duration,
 }
 
 impl ReconnectProbe {
-    fn new(now: n0_future::time::Instant) -> Self {
+    fn new(now: p2p::rt::time::Instant) -> Self {
         Self {
             next_attempt: now,
             backoff: RECONNECT_BACKOFF_MIN,
@@ -310,7 +310,7 @@ impl ReconnectProbe {
 
     /// Charge the backoff *before* dialling, so a dial that hangs to its
     /// timeout still defers the next probe instead of retrying immediately.
-    fn charge(&mut self, now: n0_future::time::Instant) {
+    fn charge(&mut self, now: p2p::rt::time::Instant) {
         self.next_attempt = now + self.backoff;
         self.backoff = (self.backoff * 2).min(RECONNECT_BACKOFF_MAX);
     }
@@ -347,7 +347,7 @@ async fn run_reconnect_pass<S, T>(
     let scheduled: RapidHashSet<&str> = peers.iter().map(|(peer_id, _)| peer_id.as_str()).collect();
     probes.retain(|peer_id, _| scheduled.contains(peer_id.as_str()));
 
-    let now = n0_future::time::Instant::now();
+    let now = p2p::rt::time::Instant::now();
     let mut dialled = 0usize;
     for (peer_id_str, _) in peers {
         let peer_id = PeerId::new(peer_id_str.clone());
@@ -450,7 +450,7 @@ pub async fn run_retry_pass<S, T>(
             ),
         }
 
-        let deadline = n0_future::time::Instant::now() + MAX_PEER_PASS;
+        let deadline = p2p::rt::time::Instant::now() + MAX_PEER_PASS;
         let mut attempted = 0usize;
         let mut failed = false;
         let mut progressed = false;
@@ -475,8 +475,7 @@ pub async fn run_retry_pass<S, T>(
             {
                 continue;
             }
-            if attempted >= MAX_MARKERS_PER_PEER_PASS || n0_future::time::Instant::now() >= deadline
-            {
+            if attempted >= MAX_MARKERS_PER_PEER_PASS || p2p::rt::time::Instant::now() >= deadline {
                 report.truncated = true;
                 break;
             }
@@ -503,7 +502,7 @@ pub async fn run_retry_pass<S, T>(
                         .await
                 }
             };
-            match n0_future::time::timeout(REPLAY_TIMEOUT, replay).await {
+            match p2p::rt::time::timeout(REPLAY_TIMEOUT, replay).await {
                 Ok(Ok(())) => {
                     progressed = true;
                     // The PushLog acknowledgement already made the marker
@@ -745,12 +744,12 @@ where
                 run_reconnect_pass(&peerstore, &transport, &mut probes).await;
             }
         };
-        tokio::join!(replay, reconnect);
+        futures_lite::future::zip(replay, reconnect).await;
     };
     // A stopping edge ends its sleeps early: the sweeps stop with it.
     let closing = edge.closing();
     edge.spawn(async move {
-        tokio::select! {
+        p2p::rt::select! {
             () = sweeps => {}
             () = closing => {}
         }
@@ -1105,7 +1104,7 @@ mod tests {
             .next_retry_unix
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn observation_failure_leaves_every_peer_alone() {
         let peerstore = in_memory_peerstore();
         for index in 0..4 {
@@ -1127,7 +1126,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn reconnect_probe_leaves_the_configured_retry_deadline_alone() {
         let peerstore = in_memory_peerstore();
         seed_retry_peer(&peerstore, "peer-a", "/memory/1").await;
@@ -1150,7 +1149,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn a_hung_dial_is_bounded_and_does_not_strand_later_peers() {
         let peerstore = in_memory_peerstore();
         seed_retry_peer(&peerstore, "peer-a", "/memory/1").await;
@@ -1158,7 +1157,7 @@ mod tests {
         let transport = FakeTransport::hanging(Some(Vec::new()));
         let mut probes = RapidHashMap::new();
 
-        let start = n0_future::time::Instant::now();
+        let start = p2p::rt::time::Instant::now();
         run_reconnect_pass(&peerstore, &transport, &mut probes).await;
 
         assert_eq!(
@@ -1167,12 +1166,12 @@ mod tests {
             "a dial that hangs must not strand the peers queued behind it"
         );
         assert_eq!(
-            n0_future::time::Instant::now() - start,
+            p2p::rt::time::Instant::now() - start,
             RECONNECT_DIAL_TIMEOUT * 2
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn many_disconnected_peers_cost_a_bounded_number_of_dials_per_pass() {
         let peerstore = in_memory_peerstore();
         let peers = RECONNECT_DIALS_PER_PASS * 5;
@@ -1197,7 +1196,7 @@ mod tests {
         assert_eq!(probes.len(), peers);
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn per_peer_backoff_doubles_and_clears_on_reconnect() {
         let peerstore = in_memory_peerstore();
         seed_retry_peer(&peerstore, "peer-a", "/memory/1").await;
@@ -1211,7 +1210,7 @@ mod tests {
         run_reconnect_pass(&peerstore, &disconnected, &mut probes).await;
         assert_eq!(disconnected.dialled().len(), 1, "still inside the backoff");
 
-        tokio::time::advance(RECONNECT_BACKOFF_MIN).await;
+        nuclei::time::advance(RECONNECT_BACKOFF_MIN).await;
         run_reconnect_pass(&peerstore, &disconnected, &mut probes).await;
         assert_eq!(disconnected.dialled().len(), 2);
         assert_eq!(probes["peer-a"].backoff, RECONNECT_BACKOFF_MIN * 4);
@@ -1235,14 +1234,14 @@ mod tests {
 
         use super::*;
 
-        #[tokio::test]
+        #[nuclei::test]
         async fn a_stopped_iroh_endpoint_reads_as_observation_failure() {
             let peerstore = in_memory_peerstore();
             for index in 0..4 {
                 seed_retry_peer(&peerstore, &format!("peer-{index}"), "addr").await;
             }
             let key = load_or_generate_secret_key(None).await.expect("key");
-            let (command_tx, command_rx) = tokio::sync::mpsc::channel(4);
+            let (command_tx, command_rx) = p2p::rt::mpsc::channel(4);
             // A dropped receiver is what a stopped endpoint task looks like
             // from the transport: every command fails.
             drop(command_rx);
@@ -1257,7 +1256,7 @@ mod tests {
             );
         }
 
-        #[tokio::test]
+        #[nuclei::test]
         async fn an_unreachable_iroh_peer_is_probed_off_the_replay_ladder() {
             let peerstore = in_memory_peerstore();
             let key = load_or_generate_secret_key(None).await.expect("local key");
@@ -1362,10 +1361,10 @@ mod tests {
     }
 
     async fn check_live_admission(
-        tx: &tokio::sync::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = tokio::sync::oneshot::channel();
+        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
         let mut check = failure(false);
         check.admission_only = true;
         check.marker_generation = Some(marker_generation);
@@ -1375,11 +1374,11 @@ mod tests {
     }
 
     async fn record_terminal_failure(
-        tx: &tokio::sync::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
         retry_after: Option<Duration>,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = tokio::sync::oneshot::channel();
+        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.marker_generation = Some(marker_generation);
@@ -1390,10 +1389,10 @@ mod tests {
     }
 
     async fn record_initial_failure(
-        tx: &tokio::sync::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
         initial_registration: bool,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = tokio::sync::oneshot::channel();
+        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.initial_registration = initial_registration;
@@ -1402,7 +1401,7 @@ mod tests {
         durable_rx.await.unwrap()
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn shared_failure_recorder_registers_then_clears_current_scope() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(Arc::clone(&store));
@@ -1416,10 +1415,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let (tx, rx) = p2p::rt::mpsc::channel(2);
         let task = spawn_failure_recorder(storage::stores::Peerstore::new(Arc::clone(&store)), rx);
 
-        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let (registered_tx, registered_rx) = p2p::rt::oneshot::channel();
         let mut announced = failure(false);
         announced.durable_tx = Some(registered_tx);
         tx.send(announced).await.unwrap();
@@ -1429,7 +1428,7 @@ mod tests {
             1
         );
 
-        let (cleared_tx, cleared_rx) = tokio::sync::oneshot::channel();
+        let (cleared_tx, cleared_rx) = p2p::rt::oneshot::channel();
         let mut acknowledged = failure(true);
         acknowledged.marker_generation = Some(generation);
         acknowledged.durable_tx = Some(cleared_tx);
@@ -1445,7 +1444,7 @@ mod tests {
         task.await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn retry_after_live_admission_reads_persisted_state_after_recorder_restart() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store.clone());
@@ -1464,10 +1463,10 @@ mod tests {
             .await
             .unwrap();
         for _ in 0..2 {
-            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let (tx, rx) = p2p::rt::mpsc::channel(2);
             let recorder =
                 spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
-            let (response, allowed) = tokio::sync::oneshot::channel();
+            let (response, allowed) = p2p::rt::oneshot::channel();
             let mut check = failure(false);
             check.admission_only = true;
             check.durable_tx = Some(response);
@@ -1482,7 +1481,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn live_admission_requires_current_peer_scope_generation_and_elapsed_deadline() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store.clone());
@@ -1498,7 +1497,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = p2p::rt::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A normal first push is admitted only while its exact marker is live.
@@ -1541,7 +1540,7 @@ mod tests {
         recorder.await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn terminal_failure_refresh_is_cas_fenced_by_source_generation() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store.clone());
@@ -1557,7 +1556,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let (tx, rx) = p2p::rt::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A failure for the admitted generation refreshes the retry obligation
@@ -1605,7 +1604,7 @@ mod tests {
         recorder.await.unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn missing_worker_generation_does_not_fall_back_to_initial_registration() {
         let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
         let peerstore = storage::stores::Peerstore::new(store.clone());
@@ -1616,7 +1615,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (tx, rx) = p2p::rt::mpsc::channel(4);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A terminal worker failure with a missing source token is dropped;

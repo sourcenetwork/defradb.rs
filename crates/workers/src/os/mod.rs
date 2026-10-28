@@ -89,9 +89,8 @@ pub(crate) fn system() -> &'static dyn Os {
     &SYSTEM
 }
 
-/// The calling thread's CPU mask, read through the platform.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn current_affinity() -> Option<CpuSet> {
+/// The calling thread's CPU mask, where the platform says.
+pub fn current_affinity() -> Option<CpuSet> {
     system().thread_affinity().ok()
 }
 

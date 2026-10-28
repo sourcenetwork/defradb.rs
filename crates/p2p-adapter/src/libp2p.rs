@@ -64,7 +64,7 @@ async fn wait_for_branchable_merges(
             break;
         }
 
-        match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
+        match p2p::rt::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
             Ok(Some(msg)) => {
                 if let Some(data) = msg.as_merge_complete() {
                     if data.collection_id == collection_id {
@@ -564,7 +564,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                n0_future::task::spawn(async move {
+                p2p::rt::spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
@@ -580,7 +580,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     replay
                         .complete(result.err().map(|error| error.to_string()))
                         .await;
-                });
+                }).detach();
             } else {
                 replay.complete(None).await;
             }
@@ -924,8 +924,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         let mut pending_heads = unmerged_heads(coord.blockstore().as_ref(), heads).await;
 
         while !pending_heads.is_empty() && start.elapsed() < overall_timeout {
-            match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await
-            {
+            match p2p::rt::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
@@ -1022,14 +1021,14 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             let request_clone = request.clone();
             let handle = self.handle.clone();
             let peer_id = *peer_id;
-            n0_future::task::spawn(async move {
+            p2p::rt::spawn(async move {
                 if let Err(error) = handle
                     .send_branchable_sync_request(peer_id, request_clone)
                     .await
                 {
                     tracing::warn!(peer_id = %peer_id, error = %error, "failed to send BranchableSyncRequest");
                 }
-            });
+            }).detach();
         }
 
         wait_for_branchable_merges(
@@ -1125,7 +1124,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn merged_heads_are_not_pending() {
         let blockstore = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
         let merged =
@@ -1147,7 +1146,7 @@ mod tests {
     /// branch runs: a silent peer plus a head we have already merged is a
     /// success in Go (its `result` map holds the head), so the timeout check
     /// must read the raw advertisement and only then drop merged heads.
-    #[tokio::test]
+    #[nuclei::test]
     async fn already_merged_head_from_one_peer_is_not_a_timeout() {
         let blockstore = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
         let merged =
@@ -1234,7 +1233,7 @@ mod tests {
                 start.elapsed() < std::time::Duration::from_secs(5),
                 "timed out waiting for connection to {peer_id}"
             );
-            n0_future::time::sleep(std::time::Duration::from_millis(50)).await;
+            p2p::rt::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 
@@ -1253,7 +1252,7 @@ mod tests {
                 start.elapsed() < std::time::Duration::from_secs(5),
                 "timed out waiting for disconnection from {peer_id}"
             );
-            n0_future::time::sleep(std::time::Duration::from_millis(50)).await;
+            p2p::rt::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 
@@ -1288,7 +1287,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn identity_lookup_checks_nac_before_parsing_or_network_io() {
         let (_host, handle, _events, _replicators) =
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
@@ -1311,7 +1310,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn authenticated_identity_lookup_is_fresh_and_unconfigured_is_none() {
         let first_responder_identity = Arc::new(
             identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap(),
@@ -1337,8 +1336,8 @@ mod tests {
             .await
             .unwrap();
 
-        let task_a = n0_future::task::spawn(host_a.run());
-        let task_b = n0_future::task::spawn(host_b.run());
+        let task_a = p2p::rt::spawn(host_a.run());
+        let task_b = p2p::rt::spawn(host_b.run());
         connect_hosts(&handle_a, &handle_b).await;
 
         let adapter = identity_test_adapter(handle_a.clone());
@@ -1350,7 +1349,7 @@ mod tests {
 
         let responder_peer = handle_b.local_peer_id_cached();
         handle_b.shutdown().await.unwrap();
-        task_b.await.unwrap();
+        task_b.join().await.unwrap();
         wait_until_disconnected(&handle_a, responder_peer).await;
 
         let second_responder_identity = Arc::new(
@@ -1366,7 +1365,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let replacement_task = n0_future::task::spawn(replacement_host.run());
+        let replacement_task = p2p::rt::spawn(replacement_host.run());
         assert_eq!(replacement_handle.local_peer_id_cached(), responder_peer);
         connect_hosts(&handle_a, &replacement_handle).await;
 
@@ -1377,8 +1376,8 @@ mod tests {
 
         handle_a.shutdown().await.unwrap();
         replacement_handle.shutdown().await.unwrap();
-        task_a.await.unwrap();
-        replacement_task.await.unwrap();
+        task_a.join().await.unwrap();
+        replacement_task.join().await.unwrap();
 
         let (host_c, handle_c, _events_c, _replicators_c) =
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
@@ -1388,16 +1387,16 @@ mod tests {
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
                 .await
                 .unwrap();
-        let task_c = n0_future::task::spawn(host_c.run());
-        let task_d = n0_future::task::spawn(host_d.run());
+        let task_c = p2p::rt::spawn(host_c.run());
+        let task_d = p2p::rt::spawn(host_d.run());
         connect_hosts(&handle_c, &handle_d).await;
         let adapter = identity_test_adapter(handle_c.clone());
         let peer = TransportPeerId::new(handle_d.local_peer_id_cached().to_string()).unwrap();
         assert_eq!(adapter.resolve_peer_identity(&peer).await.unwrap(), None);
         handle_c.shutdown().await.unwrap();
         handle_d.shutdown().await.unwrap();
-        task_c.await.unwrap();
-        task_d.await.unwrap();
+        task_c.join().await.unwrap();
+        task_d.join().await.unwrap();
     }
 
     /// Characterization, libp2p counterpart of the iroh test: a peer that
@@ -1405,7 +1404,7 @@ mod tests {
     /// Ok. libp2p's send is fire-and-forget, unlike iroh's, which awaits a
     /// reply and so fails against an unresponsive peer and exits via the
     /// `!any_sent` branch instead.
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_with_unresponsive_peer_returns_ok() {
         let (host_a, handle_a, _events_a, _replicators_a) =
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
@@ -1416,8 +1415,8 @@ mod tests {
                 .await
                 .expect("host b");
 
-        n0_future::task::spawn(host_a.run());
-        n0_future::task::spawn(host_b.run());
+        p2p::rt::spawn(host_a.run()).detach();
+        p2p::rt::spawn(host_b.run()).detach();
 
         let adapter = P2PAdapter::<NoopBlockstore> {
             handle: handle_a.clone(),

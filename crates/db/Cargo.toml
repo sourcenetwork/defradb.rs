@@ -24,7 +24,6 @@ bench = false
 web-time.workspace = true
 # Async runtime
 async-trait.workspace = true
-n0-future.workspace = true
 futures.workspace = true
 
 # Serialization
@@ -71,14 +70,6 @@ hex.workspace = true
 
 libp2p = { workspace = true, optional = true }
 
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "charset",
-    "http2",
-    "system-proxy",
-    "rustls-tls-native-roots",
-] }
-
 # Internal crates
 storage = { path = "../storage" }
 datastore = { path = "../datastore" }
@@ -100,11 +91,16 @@ events = { path = "../events", default-features = false }
 lens = { path = "../lens", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Embedding requests on nuclei sockets; the browser's fetch on wasm32.
+net = { path = "../net" }
+nuclei.workspace = true
 p2p = { path = "../p2p", default-features = false }
 
 # A browser peer replicates over the relay-only iroh transport; libp2p has no
 # browser build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+n0-future.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
 p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
@@ -115,6 +111,7 @@ defra-core = { path = "../defra-core", features = ["ambient"] }
 # The test network runtime the P2P push tests wait on.
 edge = { path = "../edge", features = ["testing"] }
 proptest.workspace = true
+futures-lite.workspace = true
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"

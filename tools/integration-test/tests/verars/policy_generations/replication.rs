@@ -21,7 +21,7 @@ pub(super) fn connect(nodes: &[DefraClient], owner: &str) {
         .expect("authorize protected collection replication");
 }
 
-async fn verified_height(http: &reqwest::Client, url: &str) -> u64 {
+async fn verified_height(http: &net::http::Client, url: &str) -> u64 {
     let status: serde_json::Value = http
         .get(format!("{url}/api/v0/acp/status"))
         .send()
@@ -35,8 +35,8 @@ async fn verified_height(http: &reqwest::Client, url: &str) -> u64 {
     status["height"].as_u64().expect("verified ACP height")
 }
 
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
+fn http_client() -> net::http::Client {
+    net::http::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap()
@@ -45,14 +45,14 @@ fn http_client() -> reqwest::Client {
 pub(super) async fn wait_for_height(cluster: &TestCluster, minimum: u64) {
     let http = http_client();
     for index in 0..cluster.len() {
-        tokio::time::timeout(Duration::from_secs(30), async {
+        nuclei::time::timeout(Duration::from_secs(30), async {
             loop {
                 let height = verified_height(&http, cluster.api_url(index)).await;
                 if height >= minimum {
                     eprintln!("replica {index}: verified ACP height {height} >= {minimum}");
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                nuclei::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -75,7 +75,7 @@ pub(super) async fn wait_for_document(
     owner: &str,
     expected_commits: &[String],
 ) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let result = receiver
             .query_with_identity("query { User { _docID name } }", owner)
@@ -94,9 +94,9 @@ pub(super) async fn wait_for_document(
             break;
         }
         assert!(
-            tokio::time::Instant::now() < deadline,
+            std::time::Instant::now() < deadline,
             "receiver did not converge to document {document} and exact CIDs: expected {expected_commits:?}, got {actual_commits:?}; document result {result}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }

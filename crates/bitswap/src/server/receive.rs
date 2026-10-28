@@ -9,7 +9,7 @@ use std::time::Duration;
 use cid::Cid;
 use kovan_channel::{bounded, unbounded};
 use libp2p::PeerId;
-use tokio::time::{timeout_at, Instant};
+use nuclei::time::{timeout_at, Instant};
 use tracing::{debug, warn};
 
 use super::engine::{Command, Received, Want};

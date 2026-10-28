@@ -44,8 +44,9 @@ fn stored(client: &DefraClient) -> Value {
         .clone()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_update_applies_each_op_and_keeps_field_keyed_input() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let (client, doc_id) = note(&cluster).await;
 
@@ -76,99 +77,111 @@ async fn graphql_update_applies_each_op_and_keeps_field_keyed_input() {
         stored(&client),
         json!({"title": "b", "body": "bold world", "views": 4})
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_update_explains_an_op_on_the_wrong_field() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let (client, doc_id) = note(&cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let (client, doc_id) = note(&cluster).await;
 
-    for (input, expected) in [
-        (r#"{increment: {title: 1}}"#, "do not support increment"),
-        (
-            r#"{insert: {title: {at: 0, value: "x"}}}"#,
-            "do not support edit",
-        ),
-        (r#"{set: {views: 0}}"#, "use `increment`"),
-        (r#"{increment: {views: -1}}"#, "cannot be negative"),
-        (r#"{set: "x"}"#, "keyed by field name"),
-        (r#"{title: "x", set: {title: "y"}}"#, "more than one op"),
-    ] {
-        let error = client
-            .query(&format!(
-                r#"mutation {{ update_Note(docID: "{doc_id}", input: {input}) {{ _docID }} }}"#
-            ))
-            .expect_err(input)
-            .to_string();
-        assert!(error.contains(expected), "{input}: {error}");
-    }
-    assert_eq!(
-        stored(&client),
-        json!({"title": "a", "body": "hello world", "views": 1})
-    );
+        for (input, expected) in [
+            (r#"{increment: {title: 1}}"#, "do not support increment"),
+            (
+                r#"{insert: {title: {at: 0, value: "x"}}}"#,
+                "do not support edit",
+            ),
+            (r#"{set: {views: 0}}"#, "use `increment`"),
+            (r#"{increment: {views: -1}}"#, "cannot be negative"),
+            (r#"{set: "x"}"#, "keyed by field name"),
+            (r#"{title: "x", set: {title: "y"}}"#, "more than one op"),
+        ] {
+            let error = client
+                .query(&format!(
+                    r#"mutation {{ update_Note(docID: "{doc_id}", input: {input}) {{ _docID }} }}"#
+                ))
+                .expect_err(input)
+                .to_string();
+            assert!(error.contains(expected), "{input}: {error}");
+        }
+        assert_eq!(
+            stored(&client),
+            json!({"title": "a", "body": "hello world", "views": 1})
+        );
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn http_update_takes_ops_in_its_patch() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let (client, doc_id) = note(&cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let (client, doc_id) = note(&cluster).await;
 
-    let response = reqwest::Client::new()
-        .patch(format!(
-            "{}/api/v0/collections/Note/document/{doc_id}",
-            cluster.api_url(0)
-        ))
-        .json(&json!({"insert": {"body": {"at": 11, "value": "!"}}, "increment": {"views": 4}}))
-        .send()
-        .await
-        .expect("update request");
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    assert!(status.is_success(), "update failed: {status} {body}");
+        let response = net::http::Client::new()
+            .patch(format!(
+                "{}/api/v0/collections/Note/document/{doc_id}",
+                cluster.api_url(0)
+            ))
+            .json(&json!({"insert": {"body": {"at": 11, "value": "!"}}, "increment": {"views": 4}}))
+            .send()
+            .await
+            .expect("update request");
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        assert!(status.is_success(), "update failed: {status} {body}");
 
-    let response = reqwest::Client::new()
-        .patch(format!("{}/api/v0/collections/Note", cluster.api_url(0)))
-        .json(&json!({
-            "filter": r#"{title: {_eq: "a"}}"#,
-            "updater": r#"{"set": {"title": "c"}}"#,
-        }))
-        .send()
-        .await
-        .expect("filtered update request");
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    assert!(
-        status.is_success(),
-        "filtered update failed: {status} {body}"
-    );
+        let response = net::http::Client::new()
+            .patch(format!("{}/api/v0/collections/Note", cluster.api_url(0)))
+            .json(&json!({
+                "filter": r#"{title: {_eq: "a"}}"#,
+                "updater": r#"{"set": {"title": "c"}}"#,
+            }))
+            .send()
+            .await
+            .expect("filtered update request");
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        assert!(
+            status.is_success(),
+            "filtered update failed: {status} {body}"
+        );
 
-    assert_eq!(
-        stored(&client),
-        json!({"title": "c", "body": "hello world!", "views": 5})
-    );
+        assert_eq!(
+            stored(&client),
+            json!({"title": "c", "body": "hello world!", "views": 5})
+        );
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cli_update_takes_ops_in_its_updater() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let (client, doc_id) = note(&cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let (client, doc_id) = note(&cluster).await;
 
-    client
-        .collection_update(
-            "Note",
-            &doc_id,
-            r#"{"insert": {"body": {"at": 0, "value": "> "}}, "set": {"title": "u"}}"#,
-        )
-        .expect("CLI update");
+        client
+            .collection_update(
+                "Note",
+                &doc_id,
+                r#"{"insert": {"body": {"at": 0, "value": "> "}}, "set": {"title": "u"}}"#,
+            )
+            .expect("CLI update");
 
-    assert_eq!(
-        stored(&client),
-        json!({"title": "u", "body": "> hello world", "views": 1})
-    );
+        assert_eq!(
+            stored(&client),
+            json!({"title": "u", "body": "> hello world", "views": 1})
+        );
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_field_named_like_an_op_is_that_field() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client
@@ -203,10 +216,13 @@ async fn a_field_named_like_an_op_is_that_field() {
         updated["update_Doc"][0],
         json!({"set": {"name": "x"}, "name": "a"})
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_update_refuses_a_relation_and_its_id_together() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client
@@ -229,4 +245,6 @@ async fn graphql_update_refuses_a_relation_and_its_id_together() {
         .expect_err("relation and its ID in one update")
         .to_string();
     assert!(error.contains("more than one op"), "{error}");
+})
+    .await;
 }

@@ -130,14 +130,14 @@ mod tests {
                 Instant::now() < deadline,
                 "the duplicate never joined the owner"
             );
-            n0_future::time::sleep(backoff).await;
+            crate::rt::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_millis(20));
         }
     }
 
     /// Two PushLogs of one CID at once: the second waits for the first,
     /// finds the block registered, and acks without processing it again.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_duplicate_waits_for_the_owner_and_acks_the_block_it_registered() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let manager = manager(&store);
@@ -147,7 +147,7 @@ mod tests {
             .await;
         let (cid, message) = head();
 
-        let owner = n0_future::task::spawn({
+        let owner = crate::rt::spawn({
             let (manager, message) = (Arc::clone(&manager), Arc::clone(&message));
             async move {
                 manager
@@ -156,7 +156,7 @@ mod tests {
             }
         });
         pending_store.register_entered.notified().await;
-        let duplicate = n0_future::task::spawn({
+        let duplicate = crate::rt::spawn({
             let (manager, message) = (Arc::clone(&manager), Arc::clone(&message));
             async move {
                 manager
@@ -167,8 +167,13 @@ mod tests {
         joined(&manager, 1).await;
         pending_store.register_release.notify_one();
 
-        owner.await.unwrap().expect("the owner registers the block");
+        owner
+            .join()
+            .await
+            .unwrap()
+            .expect("the owner registers the block");
         duplicate
+            .join()
             .await
             .unwrap()
             .expect("the duplicate acks once the owner registered the block");
@@ -187,7 +192,7 @@ mod tests {
     /// The owner lets the CID go without leaving the block merged or
     /// registered, as a failed attempt does: the waiting duplicate takes the
     /// guard and processes its own copy.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_duplicate_processes_its_own_copy_when_the_owner_failed() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let manager = manager(&store);
@@ -197,7 +202,7 @@ mod tests {
             .try_acquire_nowait(&cid)
             .expect("an owner whose attempt fails");
 
-        let duplicate = n0_future::task::spawn({
+        let duplicate = crate::rt::spawn({
             let (manager, message) = (Arc::clone(&manager), Arc::clone(&message));
             async move {
                 manager
@@ -209,6 +214,7 @@ mod tests {
         drop(owner);
 
         duplicate
+            .join()
             .await
             .unwrap()
             .expect("the duplicate processes its own copy");
@@ -221,7 +227,7 @@ mod tests {
 
     /// An owner that never lets go: the duplicate waits out its deadline,
     /// then answers the retry-later nack, owning nothing.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_duplicate_falls_back_to_in_flight_at_its_deadline() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let manager = manager(&store);
@@ -232,7 +238,7 @@ mod tests {
             .expect("an owner that never lets go");
 
         let started = Instant::now();
-        let result = n0_future::time::timeout(
+        let result = crate::rt::time::timeout(
             Duration::from_secs(5),
             manager.process_pushlog(&message, Some("peer-2"), false, None),
         )

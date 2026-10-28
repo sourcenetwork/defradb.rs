@@ -7,7 +7,7 @@
 //! relays it, and node B authorizes the actor via NAC before applying the op.
 //!
 //! The harness `DefraClient` is CLI-only (no generic HTTP method), so these
-//! endpoints are exercised with a raw `reqwest` POST against `cluster.api_url`.
+//! endpoints are exercised with a raw `net::http` POST against `cluster.api_url`.
 //! Tokens are minted inline with the `identity` crate, mirroring
 //! `cli::mint_manage_token` / `p2p-adapter::manage::auth::mint_token_for`.
 
@@ -15,7 +15,7 @@
 
 use std::time::Duration;
 
-use reqwest::StatusCode;
+use net::http::StatusCode;
 use serde_json::{json, Value};
 
 /// Mint an actor JWT signed by `private_key_hex` with `aud` = `target_peer_id`.
@@ -64,7 +64,7 @@ pub async fn post_manage(
 ) -> StatusCode {
     let body = json!({ "Target": target, "AuthToken": auth_token, "Op": op });
     let token = bearer_token(api_url, caller_key);
-    reqwest::Client::new()
+    net::http::Client::new()
         .post(format!("{api_url}/api/v0/p2p/manage"))
         .bearer_auth(token)
         .json(&body)
@@ -87,7 +87,7 @@ pub async fn post_manage_query(
 ) -> (StatusCode, Value) {
     let body = json!({ "Target": target, "AuthToken": auth_token, "Op": op });
     let token = bearer_token(api_url, caller_key);
-    let resp = reqwest::Client::new()
+    let resp = net::http::Client::new()
         .post(format!("{api_url}/api/v0/p2p/manage/query"))
         .bearer_auth(token)
         .json(&body)

@@ -10,7 +10,7 @@ async fn txn_schema_add_and_mutate(cluster: TestCluster) {
     let tx_id = client.tx_create().expect("tx_create failed");
 
     // 2. Add a schema within the transaction via HTTP
-    let http_client = reqwest::Client::new();
+    let http_client = net::http::Client::new();
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", tx_id.to_string())
@@ -71,11 +71,14 @@ async fn txn_schema_add_and_mutate(cluster: TestCluster) {
     assert_eq!(committed_widgets[0]["weight"], 42);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_schema_add_and_mutate() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_schema_add_and_mutate(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_schema_add_and_mutate(cluster).await;
+    })
+    .await;
 }
 
 async fn txn_schema_add_via_header_is_scoped(cluster: TestCluster) {
@@ -83,7 +86,7 @@ async fn txn_schema_add_via_header_is_scoped(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
 
-    let http_client = reqwest::Client::new();
+    let http_client = net::http::Client::new();
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", &tx_id)
@@ -120,18 +123,21 @@ async fn txn_schema_add_via_header_is_scoped(cluster: TestCluster) {
     assert_eq!(after_commit["HeaderWidget"][0]["name"], "scoped");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_schema_add_via_header_is_scoped() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_schema_add_via_header_is_scoped(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_schema_add_via_header_is_scoped(cluster).await;
+    })
+    .await;
 }
 
 async fn txn_collection_listing_via_header_is_scoped(cluster: TestCluster) {
     let client = cluster.client(0);
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
-    let http_client = reqwest::Client::new();
+    let http_client = net::http::Client::new();
 
     let response = http_client
         .post(format!("{}/api/v0/collections", api_url))
@@ -181,7 +187,7 @@ for_each_runtime!(
 
 async fn concurrent_txn_endpoint_is_not_exposed(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new()
         .post(format!("{}/api/v0/tx/concurrent", api_url))
         .send()
         .await
@@ -189,18 +195,21 @@ async fn concurrent_txn_endpoint_is_not_exposed(cluster: TestCluster) {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
 
-    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(status, net::http::StatusCode::BAD_REQUEST);
     assert!(
         body.contains("invalid transaction id"),
         "expected invalid transaction id error, got: {body}"
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_concurrent_txn_endpoint_is_not_exposed() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    concurrent_txn_endpoint_is_not_exposed(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        concurrent_txn_endpoint_is_not_exposed(cluster).await;
+    })
+    .await;
 }
 
 async fn update_with_filter_sees_txn_scoped_state(cluster: TestCluster) {
@@ -208,7 +217,7 @@ async fn update_with_filter_sees_txn_scoped_state(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
 
-    let http_client = reqwest::Client::new();
+    let http_client = net::http::Client::new();
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", tx_id.to_string())
@@ -253,11 +262,14 @@ async fn update_with_filter_sees_txn_scoped_state(cluster: TestCluster) {
     assert_eq!(after_commit["TxnFilterUser"][0]["age"], 27);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_update_with_filter_sees_txn_scoped_state() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    update_with_filter_sees_txn_scoped_state(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        update_with_filter_sees_txn_scoped_state(cluster).await;
+    })
+    .await;
 }
 
 async fn transactions_test(cluster: TestCluster) {
@@ -395,7 +407,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
     let (sse_handle, events) = open_events_sse(api_url, "update").await;
 
     // Drain any startup events from schema add
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    nuclei::time::sleep(Duration::from_millis(200)).await;
     let baseline = events.lock().unwrap().len();
 
     // Open a transaction and do three writes inside it
@@ -433,7 +445,7 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
         .to_string();
 
     // Critical assertion: zero events while tx is uncommitted
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    nuclei::time::sleep(Duration::from_millis(300)).await;
     {
         let observed = events.lock().unwrap();
         let count_after_writes = observed.len();
@@ -532,11 +544,14 @@ async fn txn_commit_publishes_update_events(cluster: TestCluster) {
     sse_handle.abort();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_commit_publishes_update_events() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_commit_publishes_update_events(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_commit_publishes_update_events(cluster).await;
+    })
+    .await;
 }
 
 async fn txn_discard_publishes_no_events(cluster: TestCluster) {
@@ -548,7 +563,7 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
         .expect("schema add");
 
     let (sse_handle, events) = open_events_sse(api_url, "update").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    nuclei::time::sleep(Duration::from_millis(200)).await;
     let baseline = events.lock().unwrap().len();
 
     let tx_id = client.tx_create().expect("tx_create failed");
@@ -563,7 +578,7 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
     client.tx_discard(&tx_id).expect("tx_discard failed");
 
     // Wait long enough that an event would have arrived if it were going to
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
     let observed = events.lock().unwrap();
     assert_eq!(
         observed.len(),
@@ -575,11 +590,14 @@ async fn txn_discard_publishes_no_events(cluster: TestCluster) {
     sse_handle.abort();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_discard_publishes_no_events() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_discard_publishes_no_events(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_discard_publishes_no_events(cluster).await;
+    })
+    .await;
 }
 
 /// Two overlapping interactive txns creating different documents that share a
@@ -621,11 +639,14 @@ async fn txn_create_shared_block_commits_both(cluster: TestCluster) {
     assert!(books.iter().any(|book| book["name"] == "Book By Online"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_create_shared_block_commits_both() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_create_shared_block_commits_both(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_create_shared_block_commits_both(cluster).await;
+    })
+    .await;
 }
 
 /// An `encrypt: true` create inside an interactive txn must commit: the KMS
@@ -655,9 +676,12 @@ async fn txn_encrypted_create_commits(cluster: TestCluster) {
     assert_eq!(read["TxnVault"][0]["name"], "Alice");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_txn_encrypted_create_commits() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_encrypted_create_commits(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        txn_encrypted_create_commits(cluster).await;
+    })
+    .await;
 }

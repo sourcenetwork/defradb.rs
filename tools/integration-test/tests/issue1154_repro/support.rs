@@ -3,7 +3,7 @@ use integration_test::TestCluster;
 use super::PUSHERS;
 
 pub(super) async fn pending_dags(hub_api: &str) -> u64 {
-    let Ok(response) = reqwest::get(format!("{hub_api}/api/v0/p2p/sync/status")).await else {
+    let Ok(response) = net::http::get(format!("{hub_api}/api/v0/p2p/sync/status")).await else {
         return 0;
     };
     response
@@ -15,7 +15,7 @@ pub(super) async fn pending_dags(hub_api: &str) -> u64 {
 }
 
 pub(super) async fn sync_status(cluster: &TestCluster, node: usize) -> serde_json::Value {
-    reqwest::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)))
+    net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)))
         .await
         .expect("sync status request")
         .json()

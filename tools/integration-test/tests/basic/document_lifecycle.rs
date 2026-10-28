@@ -174,7 +174,7 @@ async fn filtered_document_update_http_contract(cluster: TestCluster) {
         .query(r#"mutation { add_HttpFilterUser(input: {name: "Bob", age: 25}) { _docID } }"#)
         .expect("create Bob");
 
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new()
         .patch(format!(
             "{}/api/v0/collections/HttpFilterUser",
             cluster.api_url(0)
@@ -303,11 +303,14 @@ async fn filter_mutations_return_post_update_docs(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_filter_mutations_return_post_update_docs() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    filter_mutations_return_post_update_docs(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        filter_mutations_return_post_update_docs(cluster).await;
+    })
+    .await;
 }
 
 async fn filtered_document_delete_http_contract(cluster: TestCluster) {
@@ -326,7 +329,7 @@ async fn filtered_document_delete_http_contract(cluster: TestCluster) {
         .query(r#"mutation { add_HttpDeleteUser(input: {name: "Bob"}) { _docID } }"#)
         .expect("create Bob");
 
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new()
         .delete(format!(
             "{}/api/v0/collections/HttpDeleteUser",
             cluster.api_url(0)

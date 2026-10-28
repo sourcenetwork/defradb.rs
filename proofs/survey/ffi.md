@@ -4,8 +4,8 @@
 C-compatible FFI binding layer. Exposes DefraDB.rs to Go (and other languages)
 via a staticlib matching Go's `cbindings/` interface, so the Go test suite runs
 against the Rust implementation. Every exported `extern "C"` fn marshals C
-strings <-> Rust, validates an opaque `usize` handle, enters the shared tokio
-runtime, and **delegates to an underlying crate** (`db`, `query`, `p2p`,
+strings <-> Rust, validates an opaque `usize` handle, enters the shared network
+runtime (`edge`), and **delegates to an underlying crate** (`db`, `query`, `p2p`,
 `acp`, `embedded`, `events`). Modules: node lifecycle, schema, collection,
 document, query, txn, index, p2p, acp/nac, subscription, backup, lens, mobile,
 encrypted_index.

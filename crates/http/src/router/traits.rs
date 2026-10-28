@@ -1232,7 +1232,7 @@ mod transport_peer_id_tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn default_identity_resolution_fails_closed() {
         let peer = TransportPeerId::new("peer-id").unwrap();
         assert!(matches!(

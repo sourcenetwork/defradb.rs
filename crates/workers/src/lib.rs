@@ -33,7 +33,9 @@ pub use config::{
 };
 pub use error::Error;
 pub use hook::{Hook, HookFactory, HookProgress};
-pub use os::{ContextSwitches, Outcome};
+pub use os::{current_affinity, ContextSwitches, Outcome};
+#[cfg(not(target_family = "wasm"))]
+pub use placement::{edge_cores, EdgeCores};
 pub use pool::{
     default_pool, delay, delay_on, run_on, spawn, spawn_background, spawn_detached, timeout,
     timeout_on, Background, Delay, Driver, Monitor, MonitorDriver, PlacedEnv, Pool, Report, Stats,

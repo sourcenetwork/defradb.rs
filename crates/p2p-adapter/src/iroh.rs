@@ -428,7 +428,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             std::time::Duration::from_secs(5)
         };
 
-        n0_future::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
+        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
             .await
             .map_err(|_| {
                 P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
@@ -746,7 +746,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                n0_future::task::spawn(async move {
+                p2p::rt::spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
@@ -762,7 +762,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     replay
                         .complete(result.err().map(|error| error.to_string()))
                         .await;
-                });
+                }).detach();
             } else {
                 replay.complete(None).await;
             }
@@ -1067,14 +1067,14 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             let request_clone = request.clone();
             let transport = self.transport.clone();
             let peer = peer.clone();
-            n0_future::task::spawn(async move {
+            p2p::rt::spawn(async move {
                 if let Err(error) = transport
                     .send_branchable_sync_request(&peer, request_clone)
                     .await
                 {
                     tracing::warn!(peer_id = %peer, error = %error, "failed to send BranchableSyncRequest");
                 }
-            });
+            }).detach();
         }
 
         Ok(())
@@ -1101,11 +1101,12 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .as_ref()
             .ok_or_else(|| P2PError::unsupported("version syncer required"))?
             .clone();
-        n0_future::task::spawn(async move {
+        p2p::rt::spawn(async move {
             if let Err(error) = syncer.sync_versions(version_ids, connected_peers).await {
                 tracing::warn!(error = %error, "version sync failed");
             }
-        });
+        })
+        .detach();
 
         Ok(())
     }
@@ -1225,7 +1226,7 @@ mod tests {
     /// and failed; post-fix, the live connection short-circuits the dial. The
     /// base32 spelling exercises the canonical-form comparison
     /// (`canonical_peer_id`) rather than raw string equality.
-    #[tokio::test]
+    #[nuclei::test]
     async fn connect_peer_is_noop_when_already_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
@@ -1261,7 +1262,7 @@ mod tests {
 
     /// Negative control: the already-connected check must not blanket-accept.
     /// With no connection to the target, an undialable address still fails.
-    #[tokio::test]
+    #[nuclei::test]
     async fn connect_peer_still_dials_when_not_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
@@ -1286,7 +1287,7 @@ mod tests {
     /// canonical peer id and delegate to the transport. Regression for the
     /// runtime-authorization path: `IrohTransport::allow_peer` is unreachable
     /// from anything above the transport unless the adapter passes it through.
-    #[tokio::test]
+    #[nuclei::test]
     async fn allow_peer_authorizes_a_peer_refused_by_the_allowlist() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
@@ -1322,7 +1323,7 @@ mod tests {
                 connected.is_empty(),
                 "a peer refused by the allowlist must never appear connected"
             );
-            tokio::task::yield_now().await;
+            p2p::rt::yield_now().await;
         }
 
         // Clear a's stale local view of the refused attempt before redialing,
@@ -1357,7 +1358,7 @@ mod tests {
     /// already-live connection must not redial. The undialable address proves
     /// the internal `transport.dial` is skipped; registration still succeeds
     /// and the replicator is listed.
-    #[tokio::test]
+    #[nuclei::test]
     async fn add_replicator_skips_dial_when_already_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
@@ -1416,7 +1417,7 @@ mod tests {
     /// This fails if iroh's send ever becomes fire-and-forget like libp2p's: a
     /// one-way send ignores what the peer does with the stream and returns
     /// `Ok`, which would turn this sync into a silent success.
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_with_unresponsive_peer_errors() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
@@ -1446,13 +1447,12 @@ mod tests {
         // Endpoint B has no coordinator behind it, so it accepts the doc-sync
         // request at the transport layer and never produces a reply or a merge.
         // Dropping each event drops the reply token with it.
-        let drain_b =
-            n0_future::task::spawn(async move { while events_b.recv().await.is_some() {} });
+        let drain_b = p2p::rt::spawn(async move { while events_b.recv().await.is_some() {} });
 
         let dial_addr = dialable_ticket(&transport_b).await;
         adapter.connect_peer(&dial_addr).await.expect("dial b");
 
-        let result = n0_future::time::timeout(
+        let result = p2p::rt::time::timeout(
             std::time::Duration::from_secs(10),
             adapter.sync_documents("Users", vec!["bae-does-not-matter".to_string()], None),
         )

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kovan_queue::seg_queue::SegQueue;
-use n0_future::task::JoinHandle;
 use p2p::iroh::IrohTransport;
+use p2p::rt::Task;
 use p2p::P2PTransport;
 
 const TASK_STOP_TIMEOUT: Duration = Duration::from_secs(1);
@@ -22,9 +22,9 @@ pub struct IrohPeerShutdown {
 struct Parts {
     transport: IrohTransport,
     coordinator: p2p::sync::SyncShutdownHandle,
-    endpoint_task: JoinHandle<()>,
+    endpoint_task: Task<()>,
     retry_loop_task: edge::Task<()>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Vec<Task<()>>,
     failure_recorder_task: crate::FailureRecorder,
 }
 
@@ -32,9 +32,9 @@ impl IrohPeerShutdown {
     pub(super) fn new(
         transport: IrohTransport,
         coordinator: p2p::sync::SyncShutdownHandle,
-        endpoint_task: JoinHandle<()>,
+        endpoint_task: Task<()>,
         retry_loop_task: edge::Task<()>,
-        tasks: Vec<JoinHandle<()>>,
+        tasks: Vec<Task<()>>,
         failure_recorder_task: crate::FailureRecorder,
     ) -> Self {
         let parts = SegQueue::new();
@@ -57,7 +57,7 @@ impl IrohPeerShutdown {
         let Some(Parts {
             transport,
             coordinator,
-            mut endpoint_task,
+            endpoint_task,
             retry_loop_task,
             tasks,
             failure_recorder_task,
@@ -74,21 +74,33 @@ impl IrohPeerShutdown {
         drop(transport);
 
         for task in tasks {
-            stop_task(task, JoinHandle::abort).await;
+            stop_rt_task(task).await;
         }
         stop_task(failure_recorder_task, crate::FailureRecorder::abort).await;
 
-        if n0_future::time::timeout(ENDPOINT_STOP_TIMEOUT, &mut endpoint_task)
+        let abort = endpoint_task.abort_handle();
+        let mut endpoint = std::pin::pin!(endpoint_task.join());
+        if p2p::rt::time::timeout(ENDPOINT_STOP_TIMEOUT, endpoint.as_mut())
             .await
             .is_err()
         {
             tracing::warn!("iroh endpoint did not stop after graceful shutdown; aborting");
-            stop_task(endpoint_task, JoinHandle::abort).await;
+            abort.abort();
+            let _ = p2p::rt::time::timeout(TASK_STOP_TIMEOUT, endpoint).await;
         }
     }
 }
 
-async fn stop_task<T: std::future::Future>(task: T, abort: impl FnOnce(&T)) {
+async fn stop_rt_task(task: Task<()>) {
+    task.abort();
+    let _ = p2p::rt::time::timeout(TASK_STOP_TIMEOUT, task.join()).await;
+}
+
+async fn stop_task<T, A>(task: T, abort: A)
+where
+    T: std::future::Future,
+    A: FnOnce(&T),
+{
     abort(&task);
-    let _ = n0_future::time::timeout(TASK_STOP_TIMEOUT, task).await;
+    let _ = p2p::rt::time::timeout(TASK_STOP_TIMEOUT, task).await;
 }

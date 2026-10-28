@@ -199,20 +199,29 @@ async fn exhaustive_execution_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_order_panic_1594_debug_explain_asc() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    debug_explain_asc_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        debug_explain_asc_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_order_panic_1594_debug_explain_desc() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    debug_explain_desc_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        debug_explain_desc_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_relation_order_panic_1594_exhaustive_execution() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    exhaustive_execution_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        exhaustive_execution_test(cluster).await;
+    })
+    .await;
 }

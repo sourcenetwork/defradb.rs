@@ -1,8 +1,8 @@
 //! P2P host handle for interacting with the host.
 
+use crate::rt::{mpsc, oneshot};
 use cid::Cid;
 use libp2p::{gossipsub, identity::Keypair, Multiaddr, PeerId};
-use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{Error, Result};
 use crate::explicit_replay::ExplicitReplayCapabilityCache;
@@ -876,16 +876,16 @@ impl P2PHostHandle {
         peer_id: PeerId,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = crate::rt::time::Instant::now() + timeout;
         loop {
             let connected = self.connected_peers().await?;
             if connected.contains(&peer_id) {
                 return Ok(());
             }
-            if tokio::time::Instant::now() >= deadline {
+            if crate::rt::time::Instant::now() >= deadline {
                 return Err(Error::ConnectionTimeout(peer_id.to_string()));
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            crate::rt::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 
@@ -916,7 +916,7 @@ impl P2PHostHandle {
             if all_resolved || attempt == 4 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            crate::rt::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
         // Append cached addresses for unresolved peers

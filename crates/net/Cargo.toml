@@ -1,0 +1,66 @@
+[package]
+name = "net"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP, TLS and gRPC on nuclei sockets: the server loop, the HTTP client and the gRPC channel"
+
+[lib]
+bench = false
+
+[features]
+# libp2p's TCP transport on nuclei sockets, and a swarm on it.
+libp2p = ["dep:libp2p", "dep:futures", "dep:rapidhash", "dep:socket2", "dep:if-addrs"]
+
+# Native only: nuclei has no wasm32 build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nuclei.workspace = true
+regolith.workspace = true
+futures-io = "0.3"
+futures-core = "0.3"
+hyper = { workspace = true, features = ["client", "server", "http1", "http2"] }
+# The pooled client, its proxy matcher and CONNECT tunnel, and the server's
+# HTTP/1 and HTTP/2 detection. The runtime hooks are ours (`rt`).
+hyper-util = { version = "0.1.20", default-features = false, features = [
+    "client-legacy",
+    "client-proxy",
+    "client-proxy-system",
+    "server-auto",
+    "service",
+    "http1",
+    "http2",
+] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+tower-service = "0.3"
+tower-layer = "0.3"
+pin-project-lite = "0.2"
+bytes.workspace = true
+url = "2"
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded = "0.7"
+rustls = { workspace = true, features = ["ring", "std", "tls12"] }
+futures-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-native-certs = "0.8"
+thiserror.workspace = true
+tracing.workspace = true
+libp2p = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+rapidhash = { workspace = true, optional = true }
+# The TCP transport's sockets, set up as libp2p-tcp sets them up, and the
+# interface addresses a listener on an unspecified address reports.
+socket2 = { version = "0.6", optional = true }
+if-addrs = { version = "0.15", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rcgen = "0.13"
+futures = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

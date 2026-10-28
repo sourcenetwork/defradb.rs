@@ -93,8 +93,7 @@ where
                 break;
             }
 
-            match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await
-            {
+            match p2p::rt::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
@@ -149,8 +148,8 @@ where
     D::Peer: Clone + std::fmt::Display + 'static,
 {
     let mut peer_iter = peers.iter().cloned();
-    let mut tasks = n0_future::task::JoinSet::new();
-    let now = n0_future::time::Instant::now();
+    let mut tasks = p2p::rt::JoinSet::new();
+    let now = p2p::rt::time::Instant::now();
     let deadline = now
         .checked_add(remaining)
         .unwrap_or_else(|| now + std::time::Duration::from_secs(86_400 * 365));
@@ -167,8 +166,8 @@ where
             let dispatch = Arc::clone(dispatch);
             let request = request.clone();
             tasks.spawn(async move {
-                let result = n0_future::time::timeout(
-                    deadline.saturating_duration_since(n0_future::time::Instant::now()),
+                let result = p2p::rt::time::timeout(
+                    deadline.saturating_duration_since(p2p::rt::time::Instant::now()),
                     dispatch.send_doc_sync_request(&peer, request),
                 )
                 .await;
@@ -180,8 +179,7 @@ where
             break;
         }
 
-        // The browser JoinSet has no join_next; poll_join_next exists on both.
-        match std::future::poll_fn(|cx| tasks.poll_join_next(cx)).await {
+        match p2p::rt::join_next(&mut tasks).await {
             Some(Ok((peer, Ok(Ok(()))))) => {
                 outcome.any_sent = true;
                 tracing::debug!(peer_id = %peer, "sent DocSync request");
@@ -217,7 +215,7 @@ mod tests {
     /// an error rather than success. The attempt count is asserted first — it
     /// is what proves the dispatch loop actually tried every peer instead of
     /// short-circuiting somewhere earlier.
-    #[tokio::test]
+    #[nuclei::test]
     async fn all_sends_failing_is_an_error() {
         let dispatch = Arc::new(FailingDispatch::with_peers(2));
         let bus = Arc::new(events::ChannelBus::default());
@@ -248,7 +246,7 @@ mod tests {
     /// timeout, so an unbounded dispatch outruns any shorter caller deadline.
     /// The wall clock is the assertion — before the bound this took ~30s
     /// against a 200ms budget.
-    #[tokio::test]
+    #[nuclei::test]
     async fn dispatch_is_bounded_by_the_caller_deadline() {
         let dispatch = Arc::new(SlowDispatch::new(2, Duration::from_secs(30)));
         let bus = Arc::new(events::ChannelBus::default());
@@ -277,7 +275,7 @@ mod tests {
     /// parallelism of 16, any node with more peers than that overruns the
     /// caller's deadline by roughly one budget per wave. Three peers at
     /// parallelism 1 is the smallest shape that has waves at all.
-    #[tokio::test]
+    #[nuclei::test]
     async fn the_deadline_covers_the_whole_round_not_each_wave() {
         let dispatch = Arc::new(SlowDispatch::new(3, Duration::from_millis(500)));
         let bus = Arc::new(events::ChannelBus::default());
@@ -302,7 +300,7 @@ mod tests {
     /// #1314 review: one peer answered, one stayed silent, nothing merged.
     /// Where a send confirms a reply that is Go's `pendingPeers` condition
     /// (`sync_doc.go:155-158`), so it is a timeout, not a success.
-    #[tokio::test]
+    #[nuclei::test]
     async fn silent_peer_with_no_merges_is_a_timeout_when_sends_confirm_replies() {
         let dispatch = Arc::new(MixedDispatch::<true>::new(2, 1));
         let bus = Arc::new(events::ChannelBus::default());
@@ -326,7 +324,7 @@ mod tests {
     /// The mirror on a fire-and-forget transport, where a failed send says the
     /// bytes did not leave rather than that the peer declined to answer.
     /// Reporting a timeout here would be a false positive, so this stays `Ok`.
-    #[tokio::test]
+    #[nuclei::test]
     async fn silent_peer_is_not_a_timeout_when_sends_do_not_confirm_replies() {
         let dispatch = Arc::new(MixedDispatch::<false>::new(2, 1));
         let bus = Arc::new(events::ChannelBus::default());
@@ -346,7 +344,7 @@ mod tests {
     /// documents present it leaves the deadline already expired, so no request
     /// is ever sent — the deadline-expired-with-no-response case, not a
     /// success.
-    #[tokio::test]
+    #[nuclei::test]
     async fn already_expired_deadline_is_a_timeout() {
         let dispatch = Arc::new(MixedDispatch::<false>::new(1, 0));
         let bus = Arc::new(events::ChannelBus::default());
@@ -370,7 +368,7 @@ mod tests {
     /// Completion is checked before the deadline so an empty `docIDs` — which
     /// the handler does not reject — keeps returning `Ok` instead of becoming
     /// a timeout for having dispatched nothing.
-    #[tokio::test]
+    #[nuclei::test]
     async fn empty_doc_ids_is_not_a_timeout() {
         let dispatch = Arc::new(MixedDispatch::<false>::new(1, 0));
         let bus = Arc::new(events::ChannelBus::default());
@@ -390,7 +388,7 @@ mod tests {
     /// nothing newer to send, and the deadline expired. Go's loop succeeds
     /// when its peers answer with empty results, so this must not become an
     /// error.
-    #[tokio::test]
+    #[nuclei::test]
     async fn deadline_after_a_successful_dispatch_is_not_a_timeout() {
         let dispatch = Arc::new(MixedDispatch::<false>::new(1, 0));
         let bus = Arc::new(events::ChannelBus::default());

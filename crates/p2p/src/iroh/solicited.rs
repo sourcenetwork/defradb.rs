@@ -8,11 +8,12 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::rt::time::Instant;
 use iroh::EndpointId;
 use kovan_queue::seg_queue::SegQueue;
-use n0_future::time::{Duration, Instant};
 use rapidhash::fast::RandomState;
 use regolith::sync::HopscotchMap;
+use std::time::Duration;
 
 /// How long a reply is expected: twice the longest requester timeout (manage
 /// requests, 30 s), so a slow but valid reply is not refused.

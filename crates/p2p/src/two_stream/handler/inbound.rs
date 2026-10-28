@@ -28,7 +28,7 @@ impl TwoStreamHandler {
         tracing::info!(peer_id = %peer_id, "Reading message from two-stream request");
 
         let mut buf = Vec::new();
-        tokio::time::timeout(
+        crate::rt::time::timeout(
             stream_read_timeout,
             (&mut stream).take(max_msg_size).read_to_end(&mut buf),
         )
@@ -123,7 +123,7 @@ impl TwoStreamHandler {
         use futures::AsyncReadExt;
 
         let mut buf = Vec::new();
-        tokio::time::timeout(
+        crate::rt::time::timeout(
             stream_read_timeout,
             (&mut stream).take(max_msg_size).read_to_end(&mut buf),
         )

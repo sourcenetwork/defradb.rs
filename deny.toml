@@ -106,46 +106,29 @@ allow = []
 # upstream: governor and commonware-parallel, pulled by commonware through
 # vera.rs and backbone's acp-light-client (pinned revs), and iroh-relay, whose
 # server feature (not one this workspace enables by default) uses it.
-# tokio is the network runtime's alone (plan 5.7, R20): the `edge` crate holds
-# it and the network components that take an `edge::Edge` use its types; the
-# data path names no runtime. A crate may depend on tokio directly only when
-# it is listed here. The graph checked is normal and build dependencies
-# (`[graph] exclude-dev` above): the data-path crates' tests still run on
-# tokio test runtimes. Regenerate the third-party list with
+# No crate of ours depends on tokio: nuclei runs our tasks, timers and
+# sockets, and a library that needs a tokio runtime is reached through
+# `edge::compat` (async-compat, `edge`'s alone). tokio stays in the graph only
+# under the third-party crates listed here, which bring it themselves. `just
+# check-no-tokio` checks the same for every dependency kind, dev-dependencies
+# included, which this graph (`[graph] exclude-dev` above) leaves out. Regenerate the third-party list with
 #   cargo tree -i tokio -e normal,build --depth 1 --workspace --target all
 deny = [
     { name = "dashmap", wrappers = ["commonware-parallel", "governor", "iroh-relay"] },
+    { name = "async-compat", wrappers = ["edge"] },
     { name = "tokio", wrappers = [
-        # The holder and the network components given an Edge.
-        "edge", "cli", "defra-http", "defra-node", "defra-p2p-adapter", "embedded",
-        "p2p", "pg-compat", "vera",
-        # Data-path crates not confined yet, each until its last tokio use
-        # goes: defra-core and query keep the request context in tokio
-        # task-locals until it travels in the request (dl10/context).
-        "defra-core", "query",
-        # storage's library never names tokio; its conformance suite (the
-        # `test-suite` feature, enabled only by its own dev-dependency for its
-        # integration test) drives tokio tasks, and the resolved graph keeps
-        # that feature's edge.
-        "storage",
-        # Workspace tools.
-        "ffi-test", "integration-test", "lens-host",
         # Third-party crates that are themselves network or runtime code.
-        "acp-light-client", "axum", "axum-server", "backon", "commonware-macros",
-        "commonware-runtime", "commonware-utils", "deadqueue", "defra-harness",
-        "fs-err", "h2", "hickory-net", "hickory-proto", "hickory-resolver",
-        "hyper", "hyper-rustls", "hyper-timeout", "hyper-tls", "hyper-util",
-        "if-watch", "igd-next", "iroh", "iroh-bitswap", "iroh-dns",
-        "iroh-gossip", "iroh-metrics", "iroh-relay", "irpc",
-        "jsonrpsee-client-transport", "jsonrpsee-core", "jsonrpsee-server",
-        "libp2p-quic", "libp2p-swarm", "libp2p-tcp", "n0-future", "netlink-sys",
-        "netwatch", "noq", "opentelemetry_sdk", "pgwire", "portmapper", "quinn",
-        "reloadable-state", "reqwest", "rtnetlink", "rustls-cert-file-reader",
-        "tendermint-rpc", "test-infra", "tokio-context", "tokio-native-tls",
-        "tokio-rustls", "tokio-rustls-acme", "tokio-stream", "tokio-tungstenite",
-        "tokio-util", "tokio-websockets", "tonic", "tower", "vera-backend",
-        "vera-client", "vera-consensus", "vera-executor", "vera-harness",
-        "vera-jsonrpc", "vera-node",
+        "acp-light-client", "async-compat", "axum", "backon", "commonware-macros",
+        "commonware-runtime", "commonware-utils", "defra-harness", "h2", "hickory-proto",
+        "hickory-resolver", "hyper", "hyper-rustls", "hyper-tls", "hyper-util", "if-watch",
+        "igd-next", "iroh", "iroh-dns", "iroh-relay", "jsonrpsee-client-transport",
+        "jsonrpsee-core", "jsonrpsee-server", "libp2p-quic", "libp2p-swarm", "libp2p-tcp",
+        "n0-dns-resolver", "n0-future", "netlink-sys", "netwatch", "noq", "opentelemetry_sdk",
+        "pgwire", "portmapper", "quinn", "reqwest", "rtnetlink", "tendermint-rpc",
+        "test-infra", "tokio-native-tls", "tokio-rustls", "tokio-stream", "tokio-tungstenite",
+        "tokio-util", "tokio-websockets", "tower", "vera-backend", "vera-client",
+        "vera-consensus", "vera-executor", "vera-harness", "vera-jsonrpc", "vera-node",
+        "vera-test-infra",
     ] },
 ]
 highlight = "lowest-version"

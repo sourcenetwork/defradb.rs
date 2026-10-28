@@ -231,7 +231,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         let replication_bus = Arc::clone(&event_bus);
         let replication_peer = local_peer_id.clone();
         tracing::info!("Starting replication loop for P2P sync (iroh)");
-        let replication_task = n0_future::task::spawn(async move {
+        let replication_task = p2p::rt::spawn(async move {
             p2p::sync::ReplicationLoop::run(
                 replication_coordinator,
                 sync_events,
@@ -405,9 +405,9 @@ impl<S: Store + 'static> IrohPeer<S> {
     }
 }
 
-async fn stop_endpoint(transport: &IrohTransport, endpoint_task: n0_future::task::JoinHandle<()>) {
+async fn stop_endpoint(transport: &IrohTransport, endpoint_task: p2p::rt::Task<()>) {
     if let Err(error) = transport.shutdown().await {
         tracing::debug!(%error, "failed to signal iroh endpoint during setup rollback");
     }
-    let _ = endpoint_task.await;
+    let _ = endpoint_task.join().await;
 }

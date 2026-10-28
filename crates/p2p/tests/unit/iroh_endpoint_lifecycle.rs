@@ -1,10 +1,10 @@
 use super::*;
 use crate::iroh::{IrohDiscoveryConfig, IrohRelayModeConfig};
+use nuclei::sync::oneshot;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
-use tokio::sync::oneshot;
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn endpoint_discards_buffered_commands_when_last_sender_drops() {
     let config = IrohEndpointConfig {
         relay_mode: IrohRelayModeConfig::Disabled,
@@ -20,11 +20,11 @@ async fn endpoint_discards_buffered_commands_when_last_sender_drops() {
         .unwrap();
     drop(commands);
 
-    let stopped = tokio::time::timeout(Duration::from_secs(5), &mut task).await;
+    let stopped = nuclei::time::timeout(Duration::from_secs(5), &mut task).await;
     if stopped.is_err() {
         task.abort();
-        let _ = task.await;
+        let _ = task.join().await;
     }
-    stopped.expect("endpoint did not stop").unwrap();
+    stopped.expect("endpoint did not stop");
     assert!(response.await.is_err(), "queued command was dispatched");
 }

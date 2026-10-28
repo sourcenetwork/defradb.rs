@@ -168,45 +168,54 @@ async fn acp_p2p_test(cluster: TestCluster) {
     assert!(anon_names.contains(&"Protected"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_test(cluster).await;
+    })
+    .await;
 }

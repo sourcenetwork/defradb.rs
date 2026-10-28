@@ -20,10 +20,10 @@ use libp2p::swarm::{
     ToSwarm,
 };
 use libp2p::Multiaddr;
-use libp2p::{noise, tcp, yamux, PeerId, StreamProtocol, Swarm, SwarmBuilder};
+use libp2p::{PeerId, StreamProtocol, Swarm};
+use nuclei::sync::mpsc;
+use nuclei::time::Instant;
 use serde_json::Value;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
 
 use super::fixtures::{cid, s};
 use super::mem_store::MemStore;
@@ -62,18 +62,7 @@ fn server_swarm(store: MemStore, deny: RapidHashSet<Cid>) -> Swarm<Bitswap<MemSt
     let mut config = Config::default();
     config.server.as_mut().unwrap().peer_block_request_filter = Some(Box::new(deny_filter(deny)));
     let bitswap = Bitswap::new(peer_id, store, config);
-    SwarmBuilder::with_existing_identity(keypair)
-        .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )
-        .unwrap()
-        .with_behaviour(|_| bitswap)
-        .unwrap()
-        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
-        .build()
+    net::libp2p::swarm(&keypair, bitswap, Duration::from_secs(120)).unwrap()
 }
 
 struct OfferedProtocols {
@@ -218,24 +207,18 @@ fn probe_swarm(
     let stream = libp2p_stream::Behaviour::new();
     let control = stream.new_control();
     let (sink, inbound) = mpsc::unbounded_channel();
-    let swarm = SwarmBuilder::with_new_identity()
-        .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )
-        .unwrap()
-        .with_behaviour(|_| Probe {
+    let swarm = net::libp2p::swarm(
+        &libp2p::identity::Keypair::generate_ed25519(),
+        Probe {
             stream,
             accept: AcceptAll {
                 protocols: accept,
                 sink,
             },
-        })
-        .unwrap()
-        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
-        .build();
+        },
+        Duration::from_secs(120),
+    )
+    .unwrap();
     (swarm, control, inbound)
 }
 
@@ -288,7 +271,7 @@ async fn collect(rx: &mut mpsc::UnboundedReceiver<Rx>, max_window: Duration) -> 
     let mut out = Vec::new();
     loop {
         let deadline = (last + IDLE_WINDOW).min(start + max_window);
-        match tokio::time::timeout_at(deadline, rx.recv()).await {
+        match nuclei::time::timeout_at(deadline, rx.recv()).await {
             Ok(Some(r)) => {
                 out.push(r);
                 last = Instant::now();
@@ -341,7 +324,7 @@ pub async fn run(scenario: &Value) -> Vec<StepRun> {
             break address;
         }
     };
-    let server_task = tokio::spawn(async move {
+    let server_task = nuclei::spawn(async move {
         loop {
             server.select_next_some().await;
         }
@@ -356,10 +339,10 @@ pub async fn run(scenario: &Value) -> Vec<StepRun> {
         .collect();
     let (mut probe, mut control, mut inbound) = probe_swarm(accept);
     let (tx, mut rx) = mpsc::unbounded_channel::<Rx>();
-    let accept_task = tokio::spawn(async move {
+    let accept_task = nuclei::spawn(async move {
         let mut seq = 0usize;
         while let Some((stream, protocol)) = inbound.recv().await {
-            tokio::spawn(read_frames(stream, protocol.to_string(), seq, tx.clone()));
+            nuclei::spawn(read_frames(stream, protocol.to_string(), seq, tx.clone())).detach();
             seq += 1;
         }
     });
@@ -369,12 +352,12 @@ pub async fn run(scenario: &Value) -> Vec<StepRun> {
             break;
         }
     }
-    let probe_task = tokio::spawn(async move {
+    let probe_task = nuclei::spawn(async move {
         loop {
             probe.select_next_some().await;
         }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    nuclei::time::sleep(Duration::from_millis(300)).await;
 
     let mut streams: RapidHashMap<u64, libp2p::Stream> = RapidHashMap::new();
     let mut runs: Vec<StepRun> = Vec::new();
@@ -402,7 +385,7 @@ pub async fn run(scenario: &Value) -> Vec<StepRun> {
                 stream.write_all(&frame).await?;
                 stream.flush().await
             };
-            match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            match nuclei::time::timeout(WRITE_TIMEOUT, write).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => error = Some(format!("write: {e}")),
                 Err(_) => error = Some("write: timed out".to_string()),

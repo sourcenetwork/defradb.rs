@@ -7,10 +7,10 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
+use crate::rt::time::{timeout, Instant};
+use crate::rt::Task;
 use bytes::Bytes;
 use iroh::SecretKey;
-use n0_future::task::JoinHandle;
-use n0_future::time::{timeout, Instant};
 
 use super::endpoint_config::AdmissionAuthority;
 use super::{
@@ -36,7 +36,7 @@ fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpoint
     }
 }
 
-async fn spawn_node(allowlist: IrohAllowlistConfig) -> (IrohTransport, Events, JoinHandle<()>) {
+async fn spawn_node(allowlist: IrohAllowlistConfig) -> (IrohTransport, Events, Task<()>) {
     let secret_key = SecretKey::generate();
     let (command_tx, events, _replicators, task) =
         spawn_endpoint(config(secret_key.clone(), allowlist))
@@ -93,14 +93,14 @@ async fn wait_gossip_message(events: &mut Events, dialer: &IrohTransport) {
 /// A peer refused by the allowlist must never appear connected on the
 /// accepting side, for as long as we keep checking.
 async fn assert_never_connects(dialer: &IrohTransport, server: &IrohTransport, window: Duration) {
-    let deadline = n0_future::time::Instant::now() + window;
-    while n0_future::time::Instant::now() < deadline {
+    let deadline = crate::rt::time::Instant::now() + window;
+    while crate::rt::time::Instant::now() < deadline {
         let connected = server.connected_peers().await.unwrap();
         assert!(
             !connected.iter().any(|p| p == dialer.local_peer_id()),
             "a peer refused by the allowlist must never appear connected on the accepting side"
         );
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
     }
 }
 
@@ -123,7 +123,7 @@ async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &Iroh
             {
                 return;
             }
-            tokio::task::yield_now().await;
+            crate::rt::yield_now().await;
         }
     })
     .await
@@ -133,29 +133,29 @@ async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &Iroh
 async fn shutdown_all(
     dialer: IrohTransport,
     server: IrohTransport,
-    dialer_task: JoinHandle<()>,
-    server_task: JoinHandle<()>,
+    dialer_task: Task<()>,
+    server_task: Task<()>,
 ) {
     dialer.shutdown().await.unwrap();
     server.shutdown().await.unwrap();
-    dialer_task.await.unwrap();
-    server_task.await.unwrap();
+    dialer_task.join().await.unwrap();
+    server_task.join().await.unwrap();
 }
 
 /// Poll `transport`'s own view of `connected_peers` until it no longer names
 /// `peer_id`, or panic once `window` has passed without that happening.
 async fn poll_until_not_connected(transport: &IrohTransport, peer_id: &PeerId, window: Duration) {
-    let deadline = tokio::time::Instant::now() + window;
+    let deadline = crate::rt::time::Instant::now() + window;
     loop {
         let connected = transport.connected_peers().await.unwrap();
         if !connected.iter().any(|p| p == peer_id) {
             return;
         }
         assert!(
-            tokio::time::Instant::now() < deadline,
+            crate::rt::time::Instant::now() < deadline,
             "timed out waiting for {peer_id} to disconnect"
         );
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
     }
 }
 
@@ -167,7 +167,7 @@ const GOSSIP_OBSERVATION_WINDOW: Duration = Duration::from_secs(2);
 /// A peer not on the allowlist is refused: it never appears connected on the
 /// accepting side, and no gossip message crosses (the gossip ALPN connection
 /// the mesh would open is refused by the same check).
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn refuses_a_peer_not_on_the_allowlist_and_blocks_gossip() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     // An allowlist naming someone else only: the dialer is never in it.
@@ -214,7 +214,7 @@ async fn refuses_a_peer_not_on_the_allowlist_and_blocks_gossip() {
 
 /// A peer on the allowlist connects and exchanges gossip exactly as it would
 /// without one configured.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn accepts_a_peer_on_the_allowlist_and_exchanges_gossip() {
     let (dialer, mut dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, mut server_events, server_task) = spawn_node(IrohAllowlistConfig::Explicit(
@@ -253,7 +253,7 @@ async fn accepts_a_peer_on_the_allowlist_and_exchanges_gossip() {
 /// Neither side names the other: relies entirely on `IrohAllowlistConfig`'s
 /// `Default` (`AcceptAll`), matching the transport's behavior before this
 /// allowlist existed.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn default_allowlist_accepts_every_peer_like_before() {
     let (dialer, mut dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::default()).await;
     let (server, mut server_events, server_task) = spawn_node(IrohAllowlistConfig::default()).await;
@@ -288,7 +288,7 @@ async fn default_allowlist_accepts_every_peer_like_before() {
 
 /// A peer added to the allowlist while the endpoint is running is accepted
 /// on the very next dial, without a restart.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn allow_peer_authorizes_a_peer_added_at_runtime() {
     let (dialer, mut dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, mut server_events, server_task) =
@@ -342,7 +342,7 @@ async fn allow_peer_authorizes_a_peer_added_at_runtime() {
 /// peer's `connected_peers` empties too. The second half only happens if the
 /// underlying QUIC connection was actually torn down; a set-only removal on
 /// the server would leave the dialer still believing it is connected.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn deny_peer_closes_an_already_open_connection() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let dialer_id = dialer.local_peer_id().clone();
@@ -381,7 +381,7 @@ async fn deny_peer_closes_an_already_open_connection() {
 /// allowlist: an endpoint configured to accept everyone has no entry to
 /// remove, but it must still be able to cut off a single peer without
 /// turning into an explicit allowlist for every other peer on the network.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn deny_peer_under_accept_all_bars_only_that_peer() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let dialer_id = dialer.local_peer_id().clone();
@@ -411,7 +411,7 @@ async fn deny_peer_under_accept_all_bars_only_that_peer() {
         .expect("revoking one peer must not narrow who else may connect");
 
     other.shutdown().await.unwrap();
-    other_task.await.unwrap();
+    other_task.join().await.unwrap();
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }
 
@@ -424,7 +424,7 @@ async fn deny_peer_under_accept_all_bars_only_that_peer() {
 /// accept path alone is re-dialled BY US within seconds and regains full
 /// stream service over the connection we opened. This pins the outbound
 /// refusal directly, without waiting on that sweep.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn deny_peer_refuses_our_own_outbound_dial_to_the_revoked_peer() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
@@ -469,7 +469,7 @@ async fn deny_peer_refuses_our_own_outbound_dial_to_the_revoked_peer() {
 /// through `handle_dial`, and that path dials independently of the explicit
 /// `Dial` command. A revoked peer must be refused there too, or ordinary RPC
 /// traffic quietly re-opens exactly the connection `deny_peer` just closed.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_revoked_peer_cannot_be_reached_by_an_outbound_rpc() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
@@ -517,7 +517,7 @@ async fn a_revoked_peer_cannot_be_reached_by_an_outbound_rpc() {
 /// The peer must stay barred in BOTH directions after the refusal, because a
 /// half-applied transition (allowlist widened, bar left in place) would
 /// restore the peer the moment anyone lifted the bar for an unrelated reason.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn a_caller_without_revoke_authority_cannot_undo_a_revocation() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let dialer_id = dialer.local_peer_id().clone();
@@ -573,7 +573,7 @@ async fn a_caller_without_revoke_authority_cannot_undo_a_revocation() {
 /// otherwise finish after the deletion and put the records back. Checking only
 /// before starting is the wrong end of the race; this is the query that makes
 /// the after-check possible.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn is_peer_revoked_reports_the_bar_a_registration_has_to_undo() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
@@ -614,7 +614,7 @@ async fn is_peer_revoked_reports_the_bar_a_registration_has_to_undo() {
 /// A device may log back in: denying then re-allowing must restore the
 /// ability to connect, exactly as `allow_peer_authorizes_a_peer_added_at_runtime`
 /// proves for a peer that was never connected in the first place.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn deny_peer_then_allow_peer_again_permits_reconnection() {
     let (dialer, mut dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let dialer_id = dialer.local_peer_id().clone();

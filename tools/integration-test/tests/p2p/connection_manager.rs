@@ -144,53 +144,57 @@ async fn start_pruning_cluster() -> (tempfile::TempDir, Vec<RunningNode>) {
     (temp_dir, nodes)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_connection_manager_prunes_to_low_water() {
-    let (_temp_dir, nodes) = start_pruning_cluster().await;
-    let clients = nodes.iter().map(client).collect::<Vec<_>>();
-    let target = &clients[0];
-    let target_addr = first_p2p_addr(target);
-    let peer_addrs = clients[1..].iter().map(first_p2p_addr).collect::<Vec<_>>();
-    let peer_ids = peer_addrs
-        .iter()
-        .map(|addr| peer_id_from_addr(addr))
-        .collect::<Vec<_>>();
-
-    for (index, (peer_client, peer_id)) in clients[1..4].iter().zip(peer_ids.iter()).enumerate() {
-        peer_client
-            .p2p_connect(&[&target_addr])
-            .unwrap_or_else(|error| panic!("peer {} failed to connect: {error}", index + 1));
-        wait_for_active_peer(target, peer_id).await;
-        tokio::time::sleep(Duration::from_millis(GRACE_PERIOD_MS + 75)).await;
-    }
-
-    let active_before_prune = active_peer_ids(target);
-    assert_eq!(
-        active_before_prune.len(),
-        HIGH_WATER as usize,
-        "expected target to have exactly the high-water number of peers before pruning"
-    );
-    assert!(
-        peer_ids
+    edge::compat(async {
+        let (_temp_dir, nodes) = start_pruning_cluster().await;
+        let clients = nodes.iter().map(client).collect::<Vec<_>>();
+        let target = &clients[0];
+        let target_addr = first_p2p_addr(target);
+        let peer_addrs = clients[1..].iter().map(first_p2p_addr).collect::<Vec<_>>();
+        let peer_ids = peer_addrs
             .iter()
-            .take(3)
-            .all(|peer_id| active_before_prune.contains(peer_id)),
-        "expected first three peers to be active before pruning: {active_before_prune:?}"
-    );
+            .map(|addr| peer_id_from_addr(addr))
+            .collect::<Vec<_>>();
 
-    clients[4]
-        .p2p_connect(&[&target_addr])
-        .expect("fourth peer failed to connect");
-    wait_for_active_peer(target, &peer_ids[3]).await;
+        for (index, (peer_client, peer_id)) in clients[1..4].iter().zip(peer_ids.iter()).enumerate()
+        {
+            peer_client
+                .p2p_connect(&[&target_addr])
+                .unwrap_or_else(|error| panic!("peer {} failed to connect: {error}", index + 1));
+            wait_for_active_peer(target, peer_id).await;
+            nuclei::time::sleep(Duration::from_millis(GRACE_PERIOD_MS + 75)).await;
+        }
 
-    // The endpoint reports unique peers while watermarks count physical connections.
-    // Exact oldest-first selection is covered by the connection manager unit tests.
-    // A pruned peer may reconnect after the trim, so only require observing low water.
-    poll_until(
-        || active_peer_ids(target).len() <= LOW_WATER as usize,
-        Duration::from_secs(10),
-        POLL_INTERVAL,
-        "connection manager did not prune to low water",
-    )
+        let active_before_prune = active_peer_ids(target);
+        assert_eq!(
+            active_before_prune.len(),
+            HIGH_WATER as usize,
+            "expected target to have exactly the high-water number of peers before pruning"
+        );
+        assert!(
+            peer_ids
+                .iter()
+                .take(3)
+                .all(|peer_id| active_before_prune.contains(peer_id)),
+            "expected first three peers to be active before pruning: {active_before_prune:?}"
+        );
+
+        clients[4]
+            .p2p_connect(&[&target_addr])
+            .expect("fourth peer failed to connect");
+        wait_for_active_peer(target, &peer_ids[3]).await;
+
+        // The endpoint reports unique peers while watermarks count physical connections.
+        // Exact oldest-first selection is covered by the connection manager unit tests.
+        // A pruned peer may reconnect after the trim, so only require observing low water.
+        poll_until(
+            || active_peer_ids(target).len() <= LOW_WATER as usize,
+            Duration::from_secs(10),
+            POLL_INTERVAL,
+            "connection manager did not prune to low water",
+        )
+        .await;
+    })
     .await;
 }
