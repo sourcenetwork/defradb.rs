@@ -4831,7 +4831,6 @@ name = "ffi"
 version = "0.5.0"
 dependencies = [
  "acp",
- "async-trait",
  "base64 0.23.1",
  "blockstore",
  "cbindgen",
