@@ -17,7 +17,6 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
-//! - `POST /api/v1/tx/concurrent` - Begin a concurrent transaction
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!
