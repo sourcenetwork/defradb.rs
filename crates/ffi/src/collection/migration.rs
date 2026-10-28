@@ -5,9 +5,8 @@ use acp::nac::NodePermission;
 use crate::ffi_node_db_async_body;
 use crate::helpers::{get_node_database, require_c_str};
 use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
 use crate::types::FfiResult;
-use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, ffi_entry, try_ffi};
 
 /// Eagerly migrate and cache every known-version document in a collection.
 ///
@@ -145,28 +144,24 @@ pub unsafe extern "C" fn set_migration_in_txn(
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
         let config_str = try_ffi!(require_c_str(config, "config"));
 
-        // Get the transaction registry
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
 
         // The caller acts in the call's context, so the NAC checks the body
         // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            // Parse the LensConfig from JSON
-            let lens_config: lens::LensConfig = serde_json::from_str(&config_str)
-                .map_err(|e| format!("failed to parse lens config: {}", e))?;
-
-            // Register the migration within the transaction
-            let transform_id = registry
-                .set_migration_in_txn_as(&context, &txn_str, lens_config)
+            let transform_id = runner
+                .set_migration_as(&context, &config_str)
                 .await
                 .map_err(|e| format!("failed to set migration in txn: {}", e))?;
 
-            Ok(transform_id.to_string())
+            Ok(transform_id)
         })
     }
 }

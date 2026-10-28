@@ -9,11 +9,13 @@ mod subscription;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
 use crate::state::NODES;
+#[cfg(test)]
 use crate::types::c_str_to_string;
 
 // Re-export all public items so external imports remain unchanged.
@@ -42,6 +44,7 @@ pub(crate) fn nac_permission_for_query(query_str: &str) -> NodePermission {
 
 /// Whether the identity has the `DacBypass` NAC permission (NAC
 /// admin/owner), the request's DAC bypass.
+#[cfg(test)]
 pub(crate) fn resolve_dac_bypass(node_ptr: usize, identity_did: *const c_char) -> bool {
     // SAFETY: `identity_did` is either null or a valid C string from the FFI caller.
     let identity = unsafe { c_str_to_string(identity_did) };
