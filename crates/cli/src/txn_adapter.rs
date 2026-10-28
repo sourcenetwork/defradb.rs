@@ -11,7 +11,6 @@ use async_trait::async_trait;
 use defra_core::RequestContext;
 
 use defra_http::router::TransactionOperations;
-use identity::Did;
 use storage::corekv::Store;
 
 /// Adapter that implements TransactionOperations using a shared DbTransactionRegistry.
@@ -20,7 +19,6 @@ where
     S: Store + 'static,
 {
     registry: Arc<db::DbTransactionRegistry<S>>,
-    document_acp: Option<Arc<dyn acp::DocumentACP>>,
     /// The request this adapter serves, for one bound to it.
     context: Option<RequestContext>,
 }
@@ -33,19 +31,6 @@ where
     pub fn new_arc(registry: Arc<db::DbTransactionRegistry<S>>) -> Arc<dyn TransactionOperations> {
         Arc::new(Self {
             registry,
-            document_acp: None,
-            context: None,
-        })
-    }
-
-    /// Create an Arc-wrapped adapter with document ACP registration support.
-    pub fn new_arc_with_acp(
-        registry: Arc<db::DbTransactionRegistry<S>>,
-        document_acp: Arc<dyn acp::DocumentACP>,
-    ) -> Arc<dyn TransactionOperations> {
-        Arc::new(Self {
-            registry,
-            document_acp: Some(document_acp),
             context: None,
         })
     }
@@ -64,7 +49,6 @@ where
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn TransactionOperations>> {
         Some(Arc::new(Self {
             registry: Arc::clone(&self.registry),
-            document_acp: self.document_acp.clone(),
             context: Some(context.clone()),
         }))
     }
@@ -94,22 +78,8 @@ where
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>, String> {
-        let context = self.context();
-        // Fail closed: a present-but-malformed acting identity must error, not
-        // silently degrade a permissioned collection to public (unregistered).
-        let creator = context
-            .identity()
-            .map(Did::new)
-            .transpose()
-            .map_err(|e| format!("malformed acting identity: {}", e))?;
         self.registry
-            .add_collection_in_txn_with_acp_as(
-                &context,
-                txn_id,
-                sdl,
-                self.document_acp.clone(),
-                creator,
-            )
+            .add_collection_in_txn_as(&self.context(), txn_id, sdl)
             .await
             .map_err(|e| e.to_string())
     }

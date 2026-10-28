@@ -33,20 +33,6 @@ type EmbeddedTxnRegistry<S> = db::DbTransactionRegistry<S>;
 pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>, bool) + Send>;
 pub(crate) type WireKmsCallback = Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>;
 
-/// Resolve the identity acting in `context` into a creator DID for ACP
-/// registration. Returns `Ok(None)` when no identity is present (the
-/// collection stays public/unregistered, as intended), but fails closed when an
-/// identity string is present yet malformed, never silently degrading a
-/// permissioned collection to public.
-fn resolve_creator_identity(context: &RequestContext) -> Result<Option<identity::Did>> {
-    match context.identity() {
-        Some(raw) => Ok(Some(
-            identity::Did::new(raw).map_err(Error::InvalidActingIdentity)?,
-        )),
-        None => Ok(None),
-    }
-}
-
 /// Embedded DefraDB node assembled for native/mobile embedding.
 pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub database: Arc<db::DB<S>>,
@@ -112,22 +98,10 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
 
     pub async fn add_collection(&self, sdl: &str) -> Result<()> {
         let context = self.node_context();
-        let (database, document_acp) = (Arc::clone(&self.database), self.document_acp.clone());
+        let database = Arc::clone(&self.database);
         let sdl = sdl.to_owned();
         self.on_pool(move || async move {
-            let collections = query::parse_sdl(&sdl).map_err(Error::SchemaParse)?;
-            schema::definition_validation::validate_new_collections(&collections)
-                .map_err(Error::SchemaValidation)?;
-            let creator = resolve_creator_identity(&context)?;
-            database
-                .create_collections_atomic_with_acp_registration_as(
-                    &context,
-                    collections,
-                    document_acp,
-                    creator,
-                )
-                .await
-                .map_err(Error::CollectionCreate)?;
+            database.add_collection(&context, &sdl).await?;
             Ok(())
         })
         .await
@@ -849,6 +823,13 @@ where
     // live. First-call-wins via the DB's OnceCell setter. Covers both the
     // embedded node and the FFI node (which also builds via `build_with_store`).
     database.set_nac_manager(nac_manager.clone());
+    if let Some(store) = &local_zanzibar_store {
+        database.set_policy_lookup(Arc::new(acp::StorePolicies(store.clone())));
+    }
+    #[cfg(feature = "vera")]
+    if let Some(vera) = &vera_acp {
+        database.set_policy_lookup(vera.clone());
+    }
 
     if let Some(ref mut setup) = p2p_setup {
         #[cfg(feature = "libp2p")]

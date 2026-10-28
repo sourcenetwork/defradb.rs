@@ -6,6 +6,7 @@
 //! - Querying and listing collections
 //! - Managing collection versions and active states
 
+mod add;
 mod create;
 mod delete;
 mod lookup;
@@ -18,6 +19,7 @@ use crate::collection::snapshot::CollectionSnapshot;
 use crate::collection::{populate_collection_root_id, Collection};
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
+pub use add::AddCollectionError;
 use datastore::NamespaceView;
 use rapidhash::HashMapExt;
 use schema::CollectionVersion;

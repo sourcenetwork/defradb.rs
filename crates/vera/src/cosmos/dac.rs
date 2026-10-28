@@ -657,3 +657,15 @@ impl DocumentACP for VeraDocumentACP {
 
 #[cfg(test)]
 mod tests;
+
+#[async_trait::async_trait]
+impl acp::PolicyLookup for VeraDocumentACP {
+    async fn get_policy(
+        &self,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, String> {
+        VeraDocumentACP::get_policy(self, policy_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}

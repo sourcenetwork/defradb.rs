@@ -4,6 +4,7 @@ mod common;
 
 mod acp;
 mod activation;
+mod add_collection;
 mod cache;
 mod delete;
 mod index_actions;

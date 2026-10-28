@@ -1166,6 +1166,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Add collection",
+        name: "INV_NoCollectionUnlessAllChecksPass / INV_AllOrNone",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
+        model_ref: "MC_AddCollection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,

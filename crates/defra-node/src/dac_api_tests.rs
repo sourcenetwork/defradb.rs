@@ -116,7 +116,8 @@ fn add_collection_rejects_unregistered_policy_id() {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("schema policy validation error"),
+            err.to_string()
+                .contains("policyID specified does not exist with acp. PolicyID: deadbeef"),
             "{err:#}"
         );
 
