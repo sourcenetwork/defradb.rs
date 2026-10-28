@@ -1,3 +1,21 @@
 mod add;
+mod await_patch;
+mod delete;
+mod list;
+mod list_filtered;
+mod patch;
+mod set_active_version;
+mod sync_branchable;
+mod sync_versions;
+mod truncate;
 
 pub use add::AddCollection;
+pub use await_patch::Await;
+pub use delete::DeleteCollection;
+pub use list::GetCollections;
+pub use list_filtered::GetCollectionsFiltered;
+pub use patch::PatchCollection;
+pub use set_active_version::SetActiveCollectionVersion;
+pub use sync_branchable::SyncBranchableCollection;
+pub use sync_versions::SyncCollectionVersions;
+pub use truncate::Truncate;

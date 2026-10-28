@@ -1,10 +1,14 @@
 use std::path::PathBuf;
 
 pub mod actions;
+mod client_type;
 mod cross_runtime;
 mod feature_binaries;
 mod purge;
+pub mod scenario;
 pub mod test_case;
+
+pub use scenario::m;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
 pub use feature_binaries::{build_cli_variant, vera_cli_binary};
@@ -254,4 +258,14 @@ macro_rules! for_each_p2p_topology_3_ignored {
             }
         }
     };
+}
+
+/// The path of the enclosing test function, for naming an exported scenario.
+#[macro_export]
+macro_rules! scenario_id {
+    () => {{
+        fn here() {}
+        let name = ::std::any::type_name_of_val(&here);
+        &name[..name.len() - "::here".len()]
+    }};
 }
