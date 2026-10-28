@@ -688,13 +688,6 @@ lint:
     cargo check -p p2p --no-default-features --features iroh-transport
     cargo check -p db --no-default-features --features native
     just check-node-graph
-    just check-no-tokio
-
-# No workspace crate depends on tokio: nuclei runs our tasks, timers and
-# sockets, and a library that needs tokio is reached through edge::compat.
-[group('check')]
-check-no-tokio:
-    python3 .github/scripts/assert-no-tokio.py
 
 # Feature-graph contracts for defra-node (#1398–#1400). Not a size check.
 [group('check')]

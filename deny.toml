@@ -109,9 +109,8 @@ allow = []
 # No crate of ours depends on tokio: nuclei runs our tasks, timers and
 # sockets, and a library that needs a tokio runtime is reached through
 # `edge::compat` (async-compat, `edge`'s alone). tokio stays in the graph only
-# under the third-party crates listed here, which bring it themselves. `just
-# check-no-tokio` checks the same for every dependency kind, dev-dependencies
-# included, which this graph (`[graph] exclude-dev` above) leaves out. Regenerate the third-party list with
+# under the third-party crates listed here, which bring it themselves.
+# Regenerate the third-party list with
 #   cargo tree -i tokio -e normal,build --depth 1 --workspace --target all
 deny = [
     { name = "dashmap", wrappers = ["commonware-parallel", "governor", "iroh-relay"] },

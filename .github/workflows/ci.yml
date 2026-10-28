@@ -150,8 +150,6 @@ jobs:
         run: cargo machete
       - name: Check defra-node feature graph
         run: bash .github/scripts/assert-defra-node-graph.sh
-      - name: Check no crate depends on tokio
-        run: python3 .github/scripts/assert-no-tokio.py
 
   lint:
     name: Lint

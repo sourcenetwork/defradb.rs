@@ -319,7 +319,7 @@ that is correct but slower is not done.
 - The network runtime runs on cores of its own: sized from the machine, it holds a third of the cores alone in the
   workers' CPU ledger (`workers::EdgeCores`), one nuclei shard pinned per CPU there, and a worker pool plans its
   workers on the rest and sets nothing aside for it. Network threads and database workers never share a core.
-- No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included (`just check-no-tokio`).
+- No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included.
   Every socket of ours is a nuclei socket: `net` serves HTTP and gRPC, is the HTTP client in place of reqwest, and is
   the gRPC channel tonic's clients run on; libp2p's TCP and WebSocket transports run on nuclei sockets too. A library
   that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
