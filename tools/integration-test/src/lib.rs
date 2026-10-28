@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod actions;
 mod client_type;
+pub mod clients;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;

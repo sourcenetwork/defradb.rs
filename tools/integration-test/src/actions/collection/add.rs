@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use testo::prelude::*;
@@ -38,6 +39,17 @@ impl Op for AddCollection {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.check_arguments()?;
+        state
+            .block_on(state.node().add_collection(self.sdl.as_str()))
+            .map(|()| json!({}))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
+}
+
+impl AddCollection {
+    /// Fails on the arguments no client supports yet.
+    fn check_arguments(&self) -> Result<(), Failure> {
         self.common.plain(Self::name())?;
         if !self.expected_results.is_null() {
             return Err(Failure::unsupported(format!(
@@ -51,10 +63,7 @@ impl Op for AddCollection {
                 Self::name()
             )));
         }
-        state
-            .block_on(state.node().add_collection(self.sdl.as_str()))
-            .map(|()| json!({}))
-            .map_err(|e| Failure::operation(e.to_string()))
+        Ok(())
     }
 }
 
@@ -63,5 +72,30 @@ impl Action for AddCollection {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for AddCollection {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.check_arguments()?;
+            let sdl = action.sdl.as_str().to_owned();
+            state
+                .http(|client| async move { client.schema_add(&sdl, None).await })
+                .map(|_| json!({}))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for AddCollection {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.check_arguments()?;
+            state
+                .defra_client(&["collection", "add", action.sdl.as_str()])
+                .map(|_| json!({}))
+                .map_err(Failure::operation)
+        });
     }
 }

@@ -42,6 +42,7 @@ macro_rules! registry {
                         group.actions.iter().flat_map(Actions::wires).collect()
                     }
                     $(Self::$op(action) => vec![to_wire(action, &[$($variant),+])],)*
+                    client => client.base().map(|base| base.wires()).unwrap_or_default(),
                 }
             }
         }

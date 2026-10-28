@@ -42,81 +42,151 @@ use serde::{Deserialize, Serialize};
 use testo::derive::Action;
 use testo::prelude::*;
 
+use crate::client_type::ClientType;
+use crate::clients::{Cli, Http};
 use crate::test_case::State;
 
-/// Every action a test can run, named after the action Go's suite has for it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Action)]
-#[TState = "State"]
-pub enum Actions {
-    Connect(Connect),
-    IntrospectionRequest(IntrospectionRequest),
-    Parallel(Parallel),
-    ActivePeers(ActivePeers),
-    AddCollection(AddCollection),
-    AddCollectionSubscription(AddCollectionSubscription),
-    AddDACActorRelationship(AddDACActorRelationship),
-    AddDACPolicy(AddDACPolicy),
-    AddDoc(AddDoc),
-    AddDocumentSubscription(AddDocumentSubscription),
-    AddLens(AddLens),
-    AddNACActorRelationship(AddNACActorRelationship),
-    AddReplicator(AddReplicator),
-    AddView(AddView),
-    Await(Await),
-    Benchmark(Benchmark),
-    Close(Close),
-    ConfigureMigration(ConfigureMigration),
-    ConnectPeers(ConnectPeers),
-    DeleteCollection(DeleteCollection),
-    DeleteCollectionSubscription(DeleteCollectionSubscription),
-    DeleteDACActorRelationship(DeleteDACActorRelationship),
-    DeleteDoc(DeleteDoc),
-    DeleteDocumentSubscription(DeleteDocumentSubscription),
-    DeleteEncryptedIndex(DeleteEncryptedIndex),
-    DeleteIndex(DeleteIndex),
-    DeleteNACActorRelationship(DeleteNACActorRelationship),
-    DeleteReplicator(DeleteReplicator),
-    DeleteWithFilter(DeleteWithFilter),
-    DisableNAC(DisableNAC),
-    DisconnectPeers(DisconnectPeers),
-    ExportBackup(ExportBackup),
-    GetCollections(GetCollections),
-    GetNACStatus(GetNACStatus),
-    GetNodeIdentity(GetNodeIdentity),
-    ImportBackup(ImportBackup),
-    ListActions(ListActions),
-    ListAllEncryptedIndexes(ListAllEncryptedIndexes),
-    ListEncryptedIndexes(ListEncryptedIndexes),
-    ListIndexes(ListIndexes),
-    ListLenses(ListLenses),
-    ListP2PCollections(ListP2PCollections),
-    ListP2PDocuments(ListP2PDocuments),
-    ListReplicators(ListReplicators),
-    NewEncryptedIndex(NewEncryptedIndex),
-    NewIndex(NewIndex),
-    NewNode(NewNode),
-    PatchCollection(PatchCollection),
-    PeerInfo(PeerInfo),
-    ReEnableNAC(ReEnableNAC),
-    RefreshViews(RefreshViews),
-    Request(Request),
-    Restart(Restart),
-    SetActiveCollectionVersion(SetActiveCollectionVersion),
-    Start(Start),
-    SubscriptionRequest(SubscriptionRequest),
-    SyncBranchableCollection(SyncBranchableCollection),
-    SyncCollectionVersions(SyncCollectionVersions),
-    SyncDocs(SyncDocs),
-    Truncate(Truncate),
-    TxnBegin(TxnBegin),
-    TxnCommit(TxnCommit),
-    TxnDiscard(TxnDiscard),
-    UpdateDoc(UpdateDoc),
-    UpdateWithFilter(UpdateWithFilter),
-    VerifyBlockSignature(VerifyBlockSignature),
-    Wait(Wait),
-    WaitForIndexReady(WaitForIndexReady),
-    WaitForPeersEvents(WaitForPeersEvents),
-    WaitForSESync(WaitForSESync),
-    WaitForSync(WaitForSync),
+/// Builds [`Actions`] from two lists. Each action in the first runs with its
+/// own body for every client: it gets an `Http…` and a `Cli…` variant, which
+/// compile only once the action implements `HttpRun` and `CliRun`, and the
+/// arm that swaps it for the client's version. An action in the second list
+/// runs the same way under every client.
+macro_rules! client_actions {
+    (clients: [$($client:ident),* $(,)?], shared: [$($shared:ident),* $(,)?] $(,)?) => {
+        paste::paste! {
+            $(
+                pub type [<Http $client>] = Http<$client>;
+                pub type [<Cli $client>] = Cli<$client>;
+            )*
+
+            /// Every action a test can run, named after the action Go's suite has for it.
+            #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Action)]
+            #[TState = "State"]
+            pub enum Actions {
+                $(
+                    $client($client),
+                    [<Http $client>]([<Http $client>]),
+                    [<Cli $client>]([<Cli $client>]),
+                )*
+                $($shared($shared),)*
+            }
+
+            impl Actions {
+                /// The version of this action `client` runs, when it has its own.
+                fn swap(&self, client: ClientType) -> Option<Self> {
+                    match (client, self) {
+                        $(
+                            (ClientType::RustHttp | ClientType::GoHttp, Self::$client(action)) => {
+                                Some(Self::[<Http $client>](Http(action.clone())))
+                            }
+                            (ClientType::Cli, Self::$client(action)) => {
+                                Some(Self::[<Cli $client>](Cli(action.clone())))
+                            }
+                        )*
+                        _ => None,
+                    }
+                }
+
+                /// The action a client's version wraps.
+                pub fn base(&self) -> Option<Self> {
+                    match self {
+                        $(
+                            Self::[<Http $client>](Http(action)) | Self::[<Cli $client>](Cli(action)) => {
+                                Some(Self::$client(action.clone()))
+                            }
+                        )*
+                        _ => None,
+                    }
+                }
+            }
+        }
+    };
+}
+
+client_actions! {
+    clients: [AddCollection, IntrospectionRequest, Request],
+    shared: [
+        Connect,
+        Parallel,
+        ActivePeers,
+        AddCollectionSubscription,
+        AddDACActorRelationship,
+        AddDACPolicy,
+        AddDoc,
+        AddDocumentSubscription,
+        AddLens,
+        AddNACActorRelationship,
+        AddReplicator,
+        AddView,
+        Await,
+        Benchmark,
+        Close,
+        ConfigureMigration,
+        ConnectPeers,
+        DeleteCollection,
+        DeleteCollectionSubscription,
+        DeleteDACActorRelationship,
+        DeleteDoc,
+        DeleteDocumentSubscription,
+        DeleteEncryptedIndex,
+        DeleteIndex,
+        DeleteNACActorRelationship,
+        DeleteReplicator,
+        DeleteWithFilter,
+        DisableNAC,
+        DisconnectPeers,
+        ExportBackup,
+        GetCollections,
+        GetNACStatus,
+        GetNodeIdentity,
+        ImportBackup,
+        ListActions,
+        ListAllEncryptedIndexes,
+        ListEncryptedIndexes,
+        ListIndexes,
+        ListLenses,
+        ListP2PCollections,
+        ListP2PDocuments,
+        ListReplicators,
+        NewEncryptedIndex,
+        NewIndex,
+        NewNode,
+        PatchCollection,
+        PeerInfo,
+        ReEnableNAC,
+        RefreshViews,
+        Restart,
+        SetActiveCollectionVersion,
+        Start,
+        SubscriptionRequest,
+        SyncBranchableCollection,
+        SyncCollectionVersions,
+        SyncDocs,
+        Truncate,
+        TxnBegin,
+        TxnCommit,
+        TxnDiscard,
+        UpdateDoc,
+        UpdateWithFilter,
+        VerifyBlockSignature,
+        Wait,
+        WaitForIndexReady,
+        WaitForPeersEvents,
+        WaitForSESync,
+        WaitForSync,
+    ],
+}
+
+impl Actions {
+    /// This action as `client` runs it: its own version for that client when
+    /// it has one, and a parallel group with each child swapped.
+    pub(crate) fn for_client(&self, client: ClientType) -> Self {
+        match self {
+            Self::Parallel(group) => Self::Parallel(Parallel {
+                actions: group.actions.iter().map(|a| a.for_client(client)).collect(),
+                ..group.clone()
+            }),
+            other => other.swap(client).unwrap_or_else(|| other.clone()),
+        }
+    }
 }
