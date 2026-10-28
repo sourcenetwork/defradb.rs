@@ -248,6 +248,12 @@ RUNS=(
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED" # NAC: admin write accepted while disabled
   "MC_TxnRegistry_Green.cfg        MC_TxnRegistry_Green.tla        GREEN" # txn cleanup never evicts a live transaction
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn
+  "MC_TxnContext_Green.cfg TxnContext.tla GREEN" # a transaction in the request context: only its opener runs in it, read-only writes nothing, finished runs nothing, discard leaves nothing, clashing commit fails
+  "MC_TxnContext_Red_NoOwnerCheck.cfg TxnContext.tla RED" # another caller's transaction ID trusted (INV_OnlyOwnerRuns)
+  "MC_TxnContext_Red_ReadOnlyWrites.cfg TxnContext.tla RED" # read-only flag unchecked at the write (INV_ReadOnlyNeverWrites)
+  "MC_TxnContext_Red_RunAfterEnd.cfg TxnContext.tla RED" # a finished transaction still runs requests (INV_FinishedNeverRuns)
+  "MC_TxnContext_Red_DiscardLeaks.cfg TxnContext.tla RED" # discard applies its writes (INV_DiscardLeavesNothing)
+  "MC_TxnContext_Red_NoConflictCheck.cfg TxnContext.tla RED" # commit skips the conflict check (INV_NoLostUpdate)
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
   "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)

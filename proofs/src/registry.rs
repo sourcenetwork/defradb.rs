@@ -763,6 +763,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A transaction ID travels in the request context. Only the caller
+        // that opened the transaction runs in it, a read-only transaction
+        // refuses writes, a finished transaction runs nothing, a discard
+        // leaves nothing in the store, and a commit that clashes with a
+        // newer commit fails.
+        family: "Explicit transactions in the request context",
+        name: "INV_OnlyOwnerRuns / INV_ReadOnlyNeverWrites / INV_FinishedNeverRuns / INV_DiscardLeavesNothing / INV_NoLostUpdate",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/basic/txn_context.rs",
+        model_ref: "MC_TxnContext_{Green,Red_NoOwnerCheck,Red_ReadOnlyWrites,Red_RunAfterEnd,Red_DiscardLeaks,Red_NoConflictCheck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,
