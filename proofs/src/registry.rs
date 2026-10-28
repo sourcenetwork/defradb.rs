@@ -1019,6 +1019,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // An embedded node checks its config before it opens anything, hands
+        // its retry ladder to every retry site of either transport, stops a
+        // host whose listen failed, enables NAC owned by the node identity,
+        // and dials bootstrap peers only once NAC is in place, logging a peer
+        // that does not answer.
+        family: "Embedded node startup",
+        name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
+        axis: Tla,
+        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Embedded node startup",
+        name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
+        model_ref: "RetrySchedule (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Inbound stream admission",
         name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
         axis: Tla,
