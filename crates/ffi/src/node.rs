@@ -497,6 +497,7 @@ mod tests {
                 crate::query::exec_request(
                     node,
                     std::ptr::null(),
+                    std::ptr::null(),
                     mutation.as_ptr(),
                     std::ptr::null(),
                     std::ptr::null(),
