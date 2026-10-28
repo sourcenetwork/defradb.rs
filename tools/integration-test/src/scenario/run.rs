@@ -63,14 +63,16 @@ where
     Some(expected)
 }
 
-fn poll_until<A>(
+fn poll_until<A, R>(
     state: &State,
     action: &A,
     expected: &Value,
     timing: &Eventually,
+    call: &R,
 ) -> Result<Value, Failure>
 where
     A: Op,
+    R: Fn(&A, &State) -> Result<Value, Failure>,
 {
     let common = action.common();
     let timeout = timing
@@ -81,7 +83,7 @@ where
         .map_or(EVENTUALLY_INTERVAL, Duration::from_millis);
     let deadline = Instant::now() + timeout;
     loop {
-        let outcome = action.run(state);
+        let outcome = call(action, state);
         let reason = match &outcome {
             Err(failure) if failure.kind == FailureKind::Unsupported => return outcome,
             Err(failure) => failure.message.clone(),
@@ -130,9 +132,10 @@ fn match_envelope(
     }
 }
 
-fn run<A>(original: &A, state: &mut State) -> Result<(), String>
+fn run<A, R>(original: &A, state: &mut State, call: &R) -> Result<(), String>
 where
     A: Op,
+    R: Fn(&A, &State) -> Result<Value, Failure>,
 {
     let args = serde_json::to_value(original).map_err(|e| e.to_string())?;
     let args = resolve(&args, &state.captures).map_err(|e| e.to_string())?;
@@ -140,9 +143,9 @@ where
     let common = action.common();
     let expected = expectation(&action);
     let outcome = match (&common.eventually, &expected) {
-        (Some(timing), Some(expected)) => poll_until(state, &action, expected, timing),
-        _ if common.retry => with_retry(|| action.run(state)),
-        _ => action.run(state),
+        (Some(timing), Some(expected)) => poll_until(state, &action, expected, timing, call),
+        _ if common.retry => with_retry(|| call(&action, state)),
+        _ => call(&action, state),
     };
     if let Err(failure) = &outcome {
         if failure.kind == FailureKind::Unsupported {
@@ -197,13 +200,23 @@ fn describe(outcome: &Result<Value, Failure>) -> String {
     }
 }
 
-/// Runs an action: resolves the captures it names, runs the op with its
-/// retry or polling, and checks the result against what the action expects.
+/// Runs an action in-process: [`execute_with`] its own [`Op::run`].
 pub fn execute<A>(action: &A, state: &mut State)
 where
     A: Op,
 {
-    if let Err(message) = run(action, state) {
+    execute_with(action, state, A::run);
+}
+
+/// Runs an action with `call`, one client's body for it: resolves the
+/// captures it names, calls it with its retry or polling, and checks the
+/// result against what the action expects.
+pub fn execute_with<A, R>(action: &A, state: &mut State, call: R)
+where
+    A: Op,
+    R: Fn(&A, &State) -> Result<Value, Failure>,
+{
+    if let Err(message) = run(action, state, &call) {
         let args = serde_json::to_string(action).unwrap_or_default();
         let args: String = args.chars().take(300).collect();
         panic!("{message}\n  action: {} {args}", A::name());

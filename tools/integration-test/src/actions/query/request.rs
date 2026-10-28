@@ -2,6 +2,7 @@ use defra_node::QueryRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use testo::prelude::*;
@@ -108,5 +109,34 @@ impl Action for Request {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for Request {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.check_arguments()?;
+            let request = action.request.as_str().to_owned();
+            state
+                .http(|client| async move { client.graphql(&request, None, None).await })
+                .map(|response| {
+                    envelope(
+                        response.data,
+                        response.errors.iter().map(|e| e.message.as_str()),
+                    )
+                })
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for Request {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.check_arguments()?;
+            state
+                .defra_client(&["query", action.request.as_str()])
+                .map_err(Failure::operation)
+        });
     }
 }
