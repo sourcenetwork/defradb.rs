@@ -21,7 +21,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
-use super::{EmbeddedNode, P2PConfig, QueryResponse};
+use super::{EmbeddedNode, P2PConfig, PeerKeySource, QueryResponse, SyncTuning};
 
 /// Document-set sizes each benchmark is run against.
 const DOC_COUNTS: &[usize] = &[1, 50, 500];
@@ -60,7 +60,7 @@ const BENCH_SDL: &str = "type User { name: String age: Int }";
 
 fn bench_p2p_config() -> P2PConfig {
     P2PConfig {
-        port: 0,
+        port: Some(0),
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
@@ -68,12 +68,8 @@ fn bench_p2p_config() -> P2PConfig {
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
         load_persisted_collections: false,
-        max_concurrent_dag_fetches: p2p::sync::DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
-        max_concurrent_push_tasks: p2p::sync::DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-        max_doc_sync_request_doc_ids: p2p::sync::DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
-        rate_limit_burst: p2p::sync::DEFAULT_RATE_LIMIT_BURST,
-        rate_limit_rate: p2p::sync::DEFAULT_RATE_LIMIT_RATE,
-        max_pending_dags: p2p::sync::DEFAULT_MAX_PENDING_DAGS,
+        peer_key: PeerKeySource::File,
+        sync: SyncTuning::default(),
         rebroadcast_on_merge: false,
     }
 }

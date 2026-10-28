@@ -29,13 +29,14 @@ optional at-rest encryption, Vera or local ACP) and carries a full HTTP client s
 (`defra client ...`: acp, backup, blocks, collections, documents, graphql, indexes,
 lens, p2p, txns, views), plus keyring, identity and SDL utilities.
 
-## Embedded (`crates/embedded`, `crates/defra-node`)
+## Embedded (`crates/defra-node`)
 
-Two builders: `defra-node` (the newer, minimal builder: pool, optional network edge
-started only if needed, background tasks) and `embedded` (the older embedder API with
-transport and ACP configuration). Both place the store on a pool
-(`storage::start_pool`) and expose the same DB core; a node with no network starts no
-network runtime.
+One node assembly, two entry points: `NodeBuilder`, which opens a regolith store itself
+(server or embedded sizing profile), and `build_with_store`, which takes a store the
+application opened. Both fill in one `NodeConfig` (transport: libp2p or iroh, signing,
+document ACP, node access control, query limits, sync knobs) and place the store on a
+pool (`storage::start_pool`); a node with no network starts no network runtime. FFI is
+built on it.
 
 ## FFI (`crates/ffi`)
 

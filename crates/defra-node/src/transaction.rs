@@ -7,12 +7,18 @@ use query::{TransactionError, TransactionGuard};
 /// or runtime shutdown. Cloned handles are non-owning. Cancellation after a
 /// durable commit cannot undo it; see [`TransactionGuard`].
 #[must_use = "dropping the transaction abandons its uncommitted writes"]
-pub struct EmbeddedTransaction<'a> {
-    node: &'a EmbeddedNode,
+pub struct EmbeddedTransaction<'a, S = storage::RegolithStore>
+where
+    S: storage::corekv::Store + 'static,
+{
+    node: &'a EmbeddedNode<S>,
     guard: TransactionGuard<'a, dyn QueryExecutor>,
 }
 
-impl EmbeddedNode {
+impl<S> EmbeddedNode<S>
+where
+    S: storage::corekv::Store + 'static,
+{
     /// Begin a transaction that is abandoned automatically unless finalized.
     ///
     /// ```no_run
@@ -29,7 +35,7 @@ impl EmbeddedNode {
     pub async fn begin_transaction_guard(
         &self,
         readonly: bool,
-    ) -> Result<EmbeddedTransaction<'_>, TransactionError> {
+    ) -> Result<EmbeddedTransaction<'_, S>, TransactionError> {
         let guard =
             TransactionGuard::begin_as(self.runner().as_ref(), self.node_context(), readonly)
                 .await?;
@@ -37,7 +43,10 @@ impl EmbeddedNode {
     }
 }
 
-impl EmbeddedTransaction<'_> {
+impl<S> EmbeddedTransaction<'_, S>
+where
+    S: storage::corekv::Store + 'static,
+{
     /// Borrow the non-owning ID for APIs that accept a transaction handle.
     pub fn handle(&self) -> &TransactionHandle {
         self.guard.handle().expect("active transaction")
@@ -66,7 +75,10 @@ impl EmbeddedTransaction<'_> {
     }
 }
 
-impl EmbeddedNode {
+impl<S> EmbeddedNode<S>
+where
+    S: storage::corekv::Store + 'static,
+{
     /// Read authenticated owners in the same explicit transaction as its rows.
     /// The node remains the transaction actor. A supplied document-read identity
     /// follows the ordinary GraphQL permission path; it does not borrow another

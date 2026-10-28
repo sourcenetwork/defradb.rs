@@ -454,7 +454,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Go test is t.Skip'd (issue #4789). Searched for diverged branchable versions with encrypted docs and bidirectional sync (`diverg`, `4789`, branchable + encrypt in tools/integration-test, crates/embedded/tests, crates/db/tests); none found."
+    "note": "Go test is t.Skip'd (issue #4789). Searched for diverged branchable versions with encrypted docs and bidirectional sync (`diverg`, `4789`, branchable + encrypt in tools/integration-test, crates/defra-node/tests, crates/db/tests); none found."
   },
   {
     "id": "go.searchable_encryption.index.create",

@@ -48,7 +48,7 @@ pub unsafe extern "C" fn p2p_peer_info(node_ptr: usize, identity_did: *const c_c
 
                     let full_addrs = match p2p.system.kind() {
                         #[cfg(feature = "libp2p")]
-                        embedded::TransportKind::Libp2p => {
+                        defra_node::TransportKind::Libp2p => {
                             let peer_id = p2p
                                 .system
                                 .ops_for(&context)
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn p2p_peer_info(node_ptr: usize, identity_did: *const c_c
                                 .collect::<Vec<_>>()
                         }
                         #[cfg(feature = "iroh")]
-                        embedded::TransportKind::Iroh => addresses,
+                        defra_node::TransportKind::Iroh => addresses,
                         _ => addresses,
                     };
 

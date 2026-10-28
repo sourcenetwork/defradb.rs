@@ -107,10 +107,13 @@ pub type FfiTransactionRegistry = db::DbTransactionRegistry<FfiStore>;
 
 /// State held for each FFI node.
 pub struct NodeState {
+    /// The node itself, held so its network scope and tasks outlive the
+    /// handles copied out of it below.
+    pub _node: defra_node::EmbeddedNode<FfiStore>,
     /// The database instance.
     pub database: Arc<FfiDatabase>,
     /// Background tasks owned by the embedded node (e.g. the downsample worker).
-    pub background_tasks: Arc<embedded::BackgroundTasks>,
+    pub background_tasks: Arc<defra_node::BackgroundTasks>,
     /// The transaction registry for managing explicit transactions.
     pub txn_registry: Arc<FfiTransactionRegistry>,
     /// The query runner for executing GraphQL queries.
@@ -150,8 +153,8 @@ impl NodeState {
         self.node_identity_did.load().map(|did| did.to_string())
     }
 
-    pub fn replicator_push_options(&self) -> embedded::ReplicatorPushOptions {
-        embedded::ReplicatorPushOptions {
+    pub fn replicator_push_options(&self) -> defra_node::ReplicatorPushOptions {
+        defra_node::ReplicatorPushOptions {
             se_encryption_key: self
                 .se_encryption_key
                 .load()
