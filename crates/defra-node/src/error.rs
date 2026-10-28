@@ -171,12 +171,15 @@ pub enum Error {
     #[error("P2P is not enabled for this node")]
     P2pDisabled,
     /// A peer ID did not parse.
+    #[cfg(feature = "managed-p2p")]
     #[error("invalid peer ID: {0}")]
     InvalidPeerId(#[source] defra_http::P2PError),
     /// Authorizing a peer failed.
+    #[cfg(feature = "managed-p2p")]
     #[error("failed to authorize peer: {0}")]
     PeerAuthorize(#[source] defra_http::P2PError),
     /// Revoking a peer failed.
+    #[cfg(feature = "managed-p2p")]
     #[error("failed to revoke peer: {0}")]
     PeerRevoke(#[source] defra_http::P2PError),
     /// The Iroh peer did not start.

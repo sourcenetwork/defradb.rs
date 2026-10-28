@@ -1,7 +1,7 @@
 # Survey: node assembly in `crates/defra-node/`
 
 ## Purpose
-Node-assembly / wiring layer. `build_with_store` composes an `EmbeddedNode` from
+Node-assembly / wiring layer. `assemble` composes an `EmbeddedNode` from
 components owned by other crates: transport (libp2p / iroh), `SyncCoordinator`,
 merge handler, document-ACP + NAC, KMS transport, SE query transport, and the
 replicator-retry loops. The crate is the embedded-node equivalent of the CLI's

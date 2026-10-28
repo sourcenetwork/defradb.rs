@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kovan::AtomOption;
 
 use crate::ffi_entry;
-use crate::state::{FfiStore, NodeState, P2PState, PolicyStore, NODES};
+use crate::state::{NodeState, P2PState, PolicyStore, NODES};
 use crate::try_ffi;
 use crate::types::{c_str_to_string, FfiResult, NewNodeResult, NodeInitOptions};
 use crate::ERR_INVALID_NODE_HANDLE;
@@ -41,11 +41,8 @@ pub(crate) async fn build_node_state(
     transport: defra_node::TransportConfig,
     edge: edge::Edge,
 ) -> Result<NodeState, String> {
-    // The data path's worker pool comes before the store, which places its
-    // compaction threads by the pool's plan.
-    let pool = defra_node::start_node_pool(None, Some(&edge)).map_err(|error| error.to_string())?;
-    let (store, persistence, db_path_opt) = resolve_store(&options, &pool)?;
-    let mut config = resolve_embedded_config(&options, persistence)?;
+    let db_path_opt = resolve_store(&options)?;
+    let mut config = resolve_embedded_config(&options)?;
     config.transport = with_derived_iroh_key_path(transport, &db_path_opt);
     #[cfg(any(feature = "libp2p", feature = "iroh"))]
     match &mut config.transport {
@@ -57,9 +54,14 @@ pub(crate) async fn build_node_state(
     }
     config.edge = Some(edge);
 
-    let node = defra_node::build_with_store_on_pool(store, config, pool)
-        .await
-        .map_err(|error| error.to_string())?;
+    // A persistent store opens with the server profile, as FFI always has.
+    let mut builder = defra_node::NodeBuilder::default()
+        .with_config(config)
+        .with_store_profile(defra_node::StoreProfile::Server);
+    if let Some(path) = &db_path_opt {
+        builder = builder.data_path(path);
+    }
+    let node = builder.build().await.map_err(|error| error.to_string())?;
 
     Ok(NodeState {
         database: node.database().clone(),
@@ -88,55 +90,34 @@ pub(crate) async fn build_node_state(
     })
 }
 
-fn resolve_store(
-    options: &NodeInitOptions,
-    pool: &workers::Pool,
-) -> Result<(Arc<FfiStore>, defra_node::Persistence, Option<String>), String> {
+/// The names a datastore backend may be given; the CLI accepts the same ones,
+/// `badger` being Go's name for regolith.
+fn backend_is_known(name: &str) -> bool {
+    matches!(name, "" | "regolith" | "badger")
+}
+
+/// Where the node's data lives: `None` keeps it in memory, `Some` is the path
+/// of a regolith database.
+fn resolve_store(options: &NodeInitOptions) -> Result<Option<String>, String> {
     let backend_name = unsafe { c_str_to_string(options.datastore_backend) }
         .unwrap_or_default()
         .to_lowercase();
-
     if options.in_memory != 0 || backend_name == "memory" || options.db_path.is_null() {
-        return Ok((
-            Arc::new(FfiStore::Regolith(
-                storage::RegolithStore::open_with_options(
-                    "regolith-memory",
-                    storage::RegolithStoreOptions::memory().placed_on(pool),
-                )
-                .map_err(|error| format!("failed to open in-memory regolith store: {}", error))?,
-            )),
-            defra_node::Persistence::Memory,
-            None,
+        return Ok(None);
+    }
+    if !backend_is_known(&backend_name) {
+        return Err(format!(
+            "unknown datastore backend '{}'. Supported: regolith, memory",
+            backend_name
         ));
     }
 
     let path = unsafe { c_str_to_string(options.db_path) }
         .ok_or_else(|| "db_path is not valid UTF-8".to_string())?;
-    match backend_name.as_str() {
-        "" | "regolith" => {}
-        other => {
-            return Err(format!(
-                "unknown datastore backend '{}'. Supported: regolith, memory",
-                other
-            ));
-        }
-    }
-
-    let store = Arc::new(FfiStore::Regolith(
-        storage::RegolithStore::open_with_options(
-            &path,
-            storage::RegolithStoreOptions::default().placed_on(pool),
-        )
-        .map_err(|error| format!("failed to open regolith store at '{}': {}", path, error))?,
-    ));
-
-    Ok((store, defra_node::Persistence::Persistent, Some(path)))
+    Ok(Some(path))
 }
 
-fn resolve_embedded_config(
-    options: &NodeInitOptions,
-    persistence: defra_node::Persistence,
-) -> Result<defra_node::NodeConfig, String> {
+fn resolve_embedded_config(options: &NodeInitOptions) -> Result<defra_node::NodeConfig, String> {
     let key = if !options.signing_private_key.is_null() && options.signing_private_key_len > 0 {
         if options.signing_private_key_len > MAX_PRIVATE_KEY_LEN {
             return Err(format!(
@@ -228,7 +209,6 @@ fn resolve_embedded_config(
 
     Ok(defra_node::NodeConfig {
         peer_keyring: None,
-        persistence,
         transport: defra_node::TransportConfig::None,
         edge: None,
         signing,

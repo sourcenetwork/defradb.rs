@@ -13,10 +13,7 @@ use crate::{EmbeddedNode, Error};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S> client::Client for EmbeddedNode<S>
-where
-    S: storage::corekv::Store + 'static,
-{
+impl client::Client for EmbeddedNode {
     async fn add_collection(
         &self,
         context: &RequestContext,

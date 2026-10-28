@@ -6,7 +6,7 @@ use std::time::Duration;
 
 #[cfg(feature = "p2p")]
 use crate::assemble::check_access_hooks;
-use crate::assemble::{assemble, Extras, PoolSource};
+use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 use crate::EmbeddedNode;
 #[cfg(feature = "otel")]
@@ -425,8 +425,8 @@ impl NodeBuilder {
             NodeSigning::RegisteredIdentity { did } => Some(did.clone()),
             _ => None,
         };
-        let pool = PoolSource::Start(self.workers.take().map(Box::new));
-        let node = assemble(|pool| self.open_store(pool, crdts), config, pool, extras).await?;
+        let workers = self.workers.take();
+        let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
 
         // Spawn the HTTP server if configured.
         #[cfg(feature = "http")]

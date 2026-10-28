@@ -31,7 +31,7 @@ resources:
         types:
           - actor"#;
 
-pub type Node = EmbeddedNode<storage::RegolithStore>;
+pub type Node = EmbeddedNode;
 
 pub fn new_identity() -> Result<Did> {
     let raw = identity::RawIdentity::from_ed25519(crypto::generate_ed25519()?)?;

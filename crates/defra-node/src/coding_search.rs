@@ -154,10 +154,7 @@ pub struct CodingHybridSearchResponse {
     pub hits: Vec<CodingHybridSearchHit>,
 }
 
-impl<S> EmbeddedNode<S>
-where
-    S: storage::corekv::Store + 'static,
-{
+impl EmbeddedNode {
     /// Run hybrid BM25 + dense retrieval over the coding benchmark corpus.
     pub async fn hybrid_search_coding(
         &self,
@@ -191,10 +188,7 @@ where
     }
 }
 
-async fn lookup_session_doc_id<S>(node: &EmbeddedNode<S>, session_id: &str) -> Result<String>
-where
-    S: storage::corekv::Store + 'static,
-{
+async fn lookup_session_doc_id(node: &EmbeddedNode, session_id: &str) -> Result<String> {
     let query = format!(
         r#"{{
   CodingSession(filter: {{ session_id: {{ _eq: "{session_id}" }} }}, limit: 1) {{

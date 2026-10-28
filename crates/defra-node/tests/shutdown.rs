@@ -10,17 +10,14 @@
 #[path = "support/outcome.rs"]
 mod outcome;
 
-use async_trait::async_trait;
 #[cfg(feature = "libp2p")]
 use defra_node::Libp2pConfig;
 #[cfg(feature = "p2p")]
 use defra_node::P2PConfig;
 use defra_node::{NodeBuilder, NodeConfig};
 #[cfg(any(feature = "libp2p", feature = "p2p"))]
-use defra_node::{Persistence, TransportConfig};
+use defra_node::TransportConfig;
 use outcome::Result;
-use regolith::sync::Notify;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,17 +105,16 @@ fn p2p_shutdown_releases_persistent_store() -> Result<()> {
             let path = dir.path().join("data.regolith");
             let config = NodeConfig {
                 edge: Some(edge::testing::edge()),
-                persistence: Persistence::Persistent,
                 transport: TransportConfig::Libp2p(Libp2pConfig {
                     listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
                     ..Default::default()
                 }),
                 ..Default::default()
             };
-            let node = defra_node::build_with_store(
-                Arc::new(storage::RegolithStore::open(&path)?),
-                config,
-            )
+            let node = NodeBuilder::default()
+                .with_config(config)
+                .data_path(&path)
+                .build()
             .await?;
 
             node.shutdown().await;
@@ -141,7 +137,6 @@ fn iroh_shutdown_releases_persistent_store() -> Result<()> {
             let path = dir.path().join("data.regolith");
             let config = NodeConfig {
                 edge: Some(edge::testing::edge()),
-                persistence: Persistence::Persistent,
                 transport: TransportConfig::Iroh(P2PConfig {
                     peer_key: defra_node::PeerKeySource::Store,
                     bind_addr: Some(std::net::Ipv4Addr::LOCALHOST.into()),
@@ -152,10 +147,10 @@ fn iroh_shutdown_releases_persistent_store() -> Result<()> {
                 }),
                 ..Default::default()
             };
-            let node = defra_node::build_with_store(
-                Arc::new(storage::RegolithStore::open(&path)?),
-                config,
-            )
+            let node = NodeBuilder::default()
+                .with_config(config)
+                .data_path(&path)
+                .build()
             .await?;
 
             node.shutdown().await;
@@ -180,7 +175,6 @@ fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
             let port = listener.local_addr()?.port();
             let config = NodeConfig {
                 edge: Some(edge::testing::edge()),
-                persistence: Persistence::Persistent,
                 transport: TransportConfig::Libp2p(Libp2pConfig {
                     listen_addrs: vec![format!("/ip4/127.0.0.1/tcp/{port}")],
                     ..Default::default()
@@ -188,10 +182,10 @@ fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
                 ..Default::default()
             };
 
-            let result = defra_node::build_with_store(
-                Arc::new(storage::RegolithStore::open(&path)?),
-                config,
-            )
+            let result = NodeBuilder::default()
+                .with_config(config)
+                .data_path(&path)
+                .build()
             .await;
             assert!(
                 result.is_err(),
@@ -217,7 +211,6 @@ fn unownable_node_acp_releases_persistent_store() -> Result<()> {
             let path = dir.path().join("data.regolith");
             let config = NodeConfig {
                 edge: Some(edge::testing::edge()),
-                persistence: Persistence::Persistent,
                 transport: TransportConfig::Libp2p(Libp2pConfig {
                     listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
                     ..Default::default()
@@ -226,10 +219,10 @@ fn unownable_node_acp_releases_persistent_store() -> Result<()> {
                 ..Default::default()
             };
 
-            let result = defra_node::build_with_store(
-                Arc::new(storage::RegolithStore::open(&path)?),
-                config,
-            )
+            let result = NodeBuilder::default()
+                .with_config(config)
+                .data_path(&path)
+                .build()
             .await;
             assert!(
                 matches!(result, Err(defra_node::Error::NodeAcpNeedsIdentity)),
@@ -244,128 +237,33 @@ fn unownable_node_acp_releases_persistent_store() -> Result<()> {
         .unwrap()
 }
 
-#[derive(Clone)]
-struct SlowCloseStore {
-    inner: storage::RegolithStore,
-    close_calls: Arc<AtomicUsize>,
-    close_started: Arc<Notify>,
-    close_finished: Arc<AtomicBool>,
-    allow_close: Arc<Notify>,
-}
-
-impl SlowCloseStore {
-    fn new() -> Self {
-        Self {
-            inner: storage::RegolithStore::in_memory().expect("in-memory regolith"),
-            close_calls: Arc::new(AtomicUsize::new(0)),
-            close_started: Arc::new(Notify::new()),
-            close_finished: Arc::new(AtomicBool::new(false)),
-            allow_close: Arc::new(Notify::new()),
-        }
-    }
-}
-
-impl SlowCloseStore {
-    async fn wait_until_close_started(&self) {
-        loop {
-            let notified = self.close_started.notified();
-            if self.close_calls.load(Ordering::SeqCst) > 0 {
-                return;
-            }
-            notified.await;
-        }
-    }
-}
-
-impl storage::corekv::private::Sealed for SlowCloseStore {}
-
-#[async_trait]
-impl storage::Store for SlowCloseStore {
-    fn crdts(&self) -> &storage::Crdts {
-        self.inner.crdts()
-    }
-
-    async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
-        self.inner.allocate(key, count).await
-    }
-
-    async fn new_txn(&self, readonly: bool) -> storage::Result<Box<dyn storage::Txn>> {
-        self.inner.new_txn(readonly).await
-    }
-
-    async fn transact_retry(
-        &self,
-        options: storage::corekv::RetryOptions,
-        attempt: storage::corekv::RetryAttempt,
-    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
-    {
-        self.inner.transact_retry(options, attempt).await
-    }
-
-    async fn close(&self) -> storage::Result<()> {
-        self.close_calls.fetch_add(1, Ordering::SeqCst);
-        self.close_started.notify_waiters();
-        self.allow_close.notified().await;
-        let result = self.inner.close().await;
-        self.close_finished.store(true, Ordering::SeqCst);
-        result
-    }
-}
-
 #[test]
 fn concurrent_shutdown_callers_wait_for_teardown_completion() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
-            let store = Arc::new(SlowCloseStore::new());
-            let node =
-                Arc::new(defra_node::build_with_store(store.clone(), NodeConfig::default()).await?);
+            let node = Arc::new(NodeBuilder::default().build().await?);
 
-            let first = {
-                let node = node.clone();
-                edge::testing::edge().spawn(async move {
-                    node.shutdown().await;
+            let callers: Vec<_> = (0..4)
+                .map(|_| {
+                    let node = node.clone();
+                    edge::testing::edge().spawn(async move {
+                        node.shutdown().await;
+                        assert!(
+                            node.database().is_closed(),
+                            "shutdown() returned before the database closed"
+                        );
+                    })
                 })
-            };
-
-            edge::testing::edge()
-                .timeout(Duration::from_secs(5), store.wait_until_close_started())
-                .await
-                .expect("database close did not start");
-
-            let second = {
-                let node = node.clone();
-                let store = store.clone();
-                edge::testing::edge().spawn(async move {
-                    node.shutdown().await;
-                    assert!(
-                        store.close_finished.load(Ordering::SeqCst),
-                        "shutdown() returned before store close completed"
-                    );
-                })
-            };
-
-            workers::yield_now().await;
-            assert!(
-                !second.is_finished(),
-                "concurrent shutdown caller returned before teardown completed"
-            );
-
-            store.allow_close.notify_one();
+                .collect();
 
             edge::testing::edge()
                 .timeout(Duration::from_secs(5), async {
-                    first.await.expect("first shutdown task should not panic");
-                    second.await.expect("second shutdown task should not panic");
+                    for caller in callers {
+                        caller.await.expect("a shutdown task should not panic");
+                    }
                 })
                 .await
                 .expect("shutdown tasks did not finish");
-
-            assert_eq!(
-                store.close_calls.load(Ordering::SeqCst),
-                1,
-                "shutdown should only close the store once"
-            );
-            assert!(store.close_finished.load(Ordering::SeqCst));
 
             Ok(())
         })

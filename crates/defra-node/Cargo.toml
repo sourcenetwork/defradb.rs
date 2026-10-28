@@ -12,10 +12,14 @@ test = false
 
 [features]
 default = ["native", "vera", "wasmtime-runtime"]
-http = ["dep:axum"]
+http = ["dep:defra-http", "dep:axum"]
+# The managed P2P system (transport kind, push options, KMS) without a transport:
+# what FFI needs on a node with no network. Every transport feature implies it.
+managed-p2p = ["dep:defra-http", "dep:defra-p2p-adapter", "dep:kms", "dep:blockstore"]
 # Iroh/QUIC. Implies native. Does not enable libp2p.
 p2p = [
     "native",
+    "managed-p2p",
     "dep:p2p",
     "dep:replication-filter",
     "p2p/iroh-transport",
@@ -29,6 +33,7 @@ iroh = ["p2p"]
 # libp2p transport. Off by default: the default node's graph has no libp2p.
 libp2p = [
     "native",
+    "managed-p2p",
     "dep:libp2p",
     "dep:p2p",
     "dep:replication-filter",
@@ -40,7 +45,7 @@ libp2p = [
 # Opt in only when the application uses the OS keyring backend.
 system-keyring = ["keyring/system"]
 # Native host (event channel). Default-on.
-native = ["db/native", "defra-p2p-adapter/native"]
+native = ["db/native", "defra-p2p-adapter?/native"]
 # Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
 sourcehub = ["vera"]
@@ -49,7 +54,7 @@ wasmtime-runtime = [
     "db/wasmtime-runtime",
     
     "lens/wasmtime-runtime",
-    "defra-p2p-adapter/wasmtime-runtime",
+    "defra-p2p-adapter?/wasmtime-runtime",
 ]
 # Compile in OpenTelemetry exporter support. Mirrors the CLI's `otel` feature
 # and the underlying `telemetry/otlp` gate. Off by default — embedded users
@@ -62,8 +67,6 @@ bench = false
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
-kms = { path = "../kms" }
-blockstore = { path = "../blockstore" }
 regolith.workspace = true
 crypto = { path = "../crypto" }
 hex.workspace = true
@@ -100,12 +103,14 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# The P2P operations trait and the replicator options a node hands out
-defra-http = { path = "../http" }
+# Optional — HTTP server and the P2P operations trait
+defra-http = { path = "../http", optional = true }
 
 # Optional — P2P replication (IROH transport)
 p2p = { path = "../p2p", optional = true }
-defra-p2p-adapter = { workspace = true, default-features = false }
+defra-p2p-adapter = { workspace = true, optional = true, default-features = false }
+kms = { path = "../kms", optional = true }
+blockstore = { path = "../blockstore", optional = true }
 replication-filter = { path = "../replication-filter", optional = true }
 libp2p = { workspace = true, optional = true }
 
@@ -122,6 +127,8 @@ document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 axum.workspace = true
+# The mock embedding server binds its listener through the HTTP crate.
+defra-http = { path = "../http" }
 futures.workspace = true
 kovan.workspace = true
 crypto = { path = "../crypto" }

@@ -157,7 +157,6 @@ impl ManagedP2PSystem {
     }
 
     /// Stops the transport and leaves the signing identities alone.
-    #[cfg(any(feature = "libp2p", feature = "p2p"))]
     pub(crate) async fn stop_transport(&self) {
         self.shutdown.stop().await;
     }
