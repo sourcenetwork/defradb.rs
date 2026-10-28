@@ -1897,6 +1897,7 @@ impl NodeBuilder {
             acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
         #[cfg(not(feature = "vera"))]
         let policy_lookup = acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store);
+        database.set_policy_lookup(Arc::new(policy_lookup.clone()));
         let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
             database.clone(),
             query_limits,

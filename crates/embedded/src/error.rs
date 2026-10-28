@@ -39,12 +39,8 @@ pub enum Error {
     #[error("P2P setup did not finish on the network runtime: {0}")]
     NetworkSetup(#[source] edge::EdgeError),
 
-    #[error("SDL parse error: {0}")]
-    SchemaParse(#[source] query::QueryError),
-    #[error("schema validation error: {0}")]
-    SchemaValidation(String),
-    #[error("create collection error: {0}")]
-    CollectionCreate(#[source] db::Error),
+    #[error(transparent)]
+    AddCollection(#[from] db::AddCollectionError),
     #[error("get collection error: {0}")]
     CollectionLookup(#[source] db::Error),
     #[error("collection '{0}' not found")]
@@ -80,8 +76,6 @@ pub enum Error {
     #[error("invalid replicator retry intervals: {0}")]
     InvalidRetrySchedule(String),
 
-    #[error("malformed acting identity: {0}")]
-    InvalidActingIdentity(#[source] identity::Error),
     #[error("failed to load {curve} key: {source}")]
     KeyLoad {
         curve: &'static str,

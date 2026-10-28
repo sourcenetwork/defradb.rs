@@ -152,6 +152,12 @@ RUNS=(
   "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
   "MC_WritePipeline_Red_Direct.cfg WritePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
   "MC_WritePipeline_Red_FirstMiss.cfg WritePipeline.tla RED" # the first missing key ends the attempt: a second wave (INV_OneWave)
+  "MC_AddCollection_Green.cfg AddCollection.tla GREEN" # #2319: add_collection checks nac, parse, validate, policy in order, then creates all collections or none
+  "MC_AddCollection_Red_Nac.cfg AddCollection.tla RED" # NAC check left out: a caller without CollectionPatch creates collections (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Parse.cfg AddCollection.tla RED" # parse check left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Validate.cfg AddCollection.tla RED" # schema validation left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Policy.cfg AddCollection.tla RED" # @policy check left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_OneByOne.cfg AddCollection.tla RED" # collections created one at a time: a later failure leaves earlier ones (INV_AllOrNone)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)

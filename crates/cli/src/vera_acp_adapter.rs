@@ -13,6 +13,13 @@ use defra_http::router::{AcpLightClientStatus, AcpOperations, PolicyInfo};
 /// Placeholder: Vera assigns the id, so this value never reaches storage.
 const UNASSIGNED_ID_COUNTER: u64 = 1;
 
+#[async_trait]
+impl acp::PolicyLookup for VeraAcpAdapter {
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {
+        self.get_or_cache_policy(policy_id).await
+    }
+}
+
 /// Adapter that implements AcpOperations with Vera for writes and local store for reads.
 pub struct VeraAcpAdapter {
     vera_acp: Arc<vera::VeraDocumentACP>,
@@ -31,14 +38,6 @@ impl VeraAcpAdapter {
             local_store,
             nac_checker,
         }
-    }
-
-    pub fn new_arc(
-        vera_acp: Arc<vera::VeraDocumentACP>,
-        local_store: Arc<dyn ZanzibarStore>,
-        nac_checker: Arc<dyn db::NodeAccessChecker>,
-    ) -> Arc<dyn AcpOperations> {
-        Arc::new(Self::new(vera_acp, local_store, nac_checker))
     }
 
     async fn get_or_cache_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {

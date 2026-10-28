@@ -64,6 +64,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "JSON CRDT per-path merge",
     "Custom CRDT types",
     "Document write pipeline",
+    "Add collection",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

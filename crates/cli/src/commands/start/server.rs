@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use super::node::{Node, ServerSetup};
 use super::server_http::HttpServerArgs;
-use crate::config::Config;
+use crate::config::{AcpDocumentType, Config};
 use crate::error::{Error, Result};
 use identity::Identity;
 
@@ -153,6 +153,10 @@ impl Node {
             edge,
         )
         .await?;
+
+        if config.acp.document_type != AcpDocumentType::None {
+            database.set_policy_lookup(acp_setup.policy_lookup.clone());
+        }
 
         let mut p2p_setup = Self::setup_p2p(
             store.clone(),
@@ -327,8 +331,6 @@ impl Node {
             None
         };
 
-        #[cfg(feature = "postgres")]
-        let zanzibar_store_for_pg = zanzibar_store.clone();
         let http_server = Self::build_http_server(HttpServerArgs {
             database: database.clone(),
             config,
@@ -344,13 +346,7 @@ impl Node {
             edge: edge.clone(),
         })?;
         #[cfg(feature = "postgres")]
-        let pg_server = Self::build_pg_server(
-            database.clone(),
-            config,
-            &query_setup,
-            &acp_setup,
-            zanzibar_store_for_pg,
-        )?;
+        let pg_server = Self::build_pg_server(database.clone(), config, &query_setup)?;
 
         Ok(ServerSetup {
             database,
