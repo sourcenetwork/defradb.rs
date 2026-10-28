@@ -1,6 +1,6 @@
 //! Property tests mirroring the Lean theorems in `proofs/lean/ChunkSplit`.
 
-use db::chunk::split::{cut_sentences, cut_words, fence_before, paragraphs, split, ChunkConfig};
+use chunk_split::split::{cut_sentences, cut_words, fence_before, paragraphs, split, ChunkConfig};
 use proptest::prelude::*;
 
 fn word() -> impl Strategy<Value = String> {
@@ -53,14 +53,15 @@ proptest! {
         }
     }
 
-    // `LevelsJoin` in Covers.lean: the cutters only cut.
+    // Mirrors `LevelsJoin` in Covers.lean: cutting never adds or drops text.
     #[test]
     fn cutters_join_back(text in text()) {
         prop_assert_eq!(cut_sentences(&text).concat(), text.clone());
         prop_assert_eq!(cut_words(&text).concat(), text);
     }
 
-    // `covers`: the cores tile the text, and each chunk ends with its core.
+    // Mirrors `covers`: the chunks' own texts cover the text, and each chunk ends
+    // with its own text.
     #[test]
     fn covers(text in text(), config in config()) {
         let chunks = split(&text, &config);
@@ -76,7 +77,7 @@ proptest! {
         prop_assert_eq!(offset, chars.len());
     }
 
-    // `bounded`: every chunk has between 1 and `max_chars` characters, overlap included.
+    // Mirrors `bounded`: every chunk has 1 to `max_chars` characters, repeats included.
     #[test]
     fn bounded(text in text(), config in config()) {
         for chunk in split(&text, &config) {
@@ -85,8 +86,8 @@ proptest! {
         }
     }
 
-    // `local_edit`: an edit inside one paragraph that keeps its fences leaves every
-    // chunk outside its segment the same.
+    // Mirrors `local_edit`: editing one paragraph without moving a boundary leaves
+    // every chunk outside its segment unchanged.
     #[test]
     fn local_edit(text in text(), config in config(), pick in any::<prop::sample::Index>(), insert in "[a-z]{1,6}") {
         let max = config.max_chars;

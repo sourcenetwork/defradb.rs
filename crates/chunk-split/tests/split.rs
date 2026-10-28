@@ -1,10 +1,10 @@
-use db::chunk::split::{cut_sentences, cut_words, paragraphs, split, ChunkConfig};
+use chunk_split::split::{cut_sentences, cut_words, paragraphs, split, ChunkConfig};
 
 fn config(max_chars: usize, overlap: usize) -> ChunkConfig {
     ChunkConfig { max_chars, overlap }
 }
 
-fn cores<'a>(text: &'a str, chunks: &[db::chunk::split::Chunk]) -> Vec<&'a str> {
+fn cores<'a>(text: &'a str, chunks: &[chunk_split::split::Chunk]) -> Vec<&'a str> {
     let offsets: Vec<usize> = text
         .char_indices()
         .map(|(i, _)| i)
@@ -64,6 +64,14 @@ fn heading_stays_with_the_text_under_it() {
     let chunks = split(text, &config(200, 0));
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].text, text);
+}
+
+#[test]
+fn heading_keeps_its_text_whatever_the_hash_picks() {
+    for i in 0..200 {
+        let text = format!("# Title {i}\n\nBody number {i}.\n");
+        assert_eq!(split(&text, &config(200, 0)).len(), 1, "{text}");
+    }
 }
 
 #[test]

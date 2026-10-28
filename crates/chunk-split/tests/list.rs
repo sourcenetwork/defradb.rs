@@ -1,5 +1,5 @@
-use db::chunk::list::{chunk_list, describes, distinct, text_hash};
-use db::chunk::split::{split, ChunkConfig};
+use chunk_split::list::{chunk_list, describes, distinct, text_hash};
+use chunk_split::split::{split, ChunkConfig};
 
 #[test]
 fn list_starts_with_the_text_hash_then_chunks_in_order() {

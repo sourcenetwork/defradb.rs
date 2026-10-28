@@ -11,3 +11,6 @@ repository.workspace = true
 hex.workspace = true
 rapidhash.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

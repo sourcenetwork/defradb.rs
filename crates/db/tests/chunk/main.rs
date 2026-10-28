@@ -1,9 +1,6 @@
-//! Text chunking: the splitter, the parent's chunk list, and chunk documents.
+//! Text chunking: chunk schemas and windows.
 #[path = "../common/mod.rs"]
 mod common;
 
-mod list;
 mod schema;
-mod split;
-mod split_props;
 mod window;
