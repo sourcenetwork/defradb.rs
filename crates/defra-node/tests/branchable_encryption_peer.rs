@@ -12,7 +12,6 @@ mod clock;
 mod outcome;
 mod support;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use clock::sleep;

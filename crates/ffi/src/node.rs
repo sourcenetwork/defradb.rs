@@ -90,26 +90,26 @@ pub(crate) async fn build_node_state(
     })
 }
 
-/// The names a datastore backend may be given; the CLI accepts the same ones,
-/// `badger` being Go's name for regolith.
-fn backend_is_known(name: &str) -> bool {
-    matches!(name, "" | "regolith" | "badger")
-}
-
 /// Where the node's data lives: `None` keeps it in memory, `Some` is the path
 /// of a regolith database.
 fn resolve_store(options: &NodeInitOptions) -> Result<Option<String>, String> {
     let backend_name = unsafe { c_str_to_string(options.datastore_backend) }
         .unwrap_or_default()
         .to_lowercase();
-    if options.in_memory != 0 || backend_name == "memory" || options.db_path.is_null() {
+    if options.in_memory != 0 || options.db_path.is_null() {
         return Ok(None);
     }
-    if !backend_is_known(&backend_name) {
-        return Err(format!(
-            "unknown datastore backend '{}'. Supported: regolith, memory",
-            backend_name
-        ));
+    if !backend_name.is_empty() {
+        match defra_core::parse_store_backend(&backend_name) {
+            Some(defra_core::StoreBackend::Memory) => return Ok(None),
+            Some(defra_core::StoreBackend::Regolith) => {}
+            None => {
+                return Err(format!(
+                    "unknown datastore backend '{}'. Supported: regolith, memory",
+                    backend_name
+                ));
+            }
+        }
     }
 
     let path = unsafe { c_str_to_string(options.db_path) }

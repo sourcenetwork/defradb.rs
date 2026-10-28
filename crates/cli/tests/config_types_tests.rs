@@ -106,24 +106,20 @@ fn test_datastore_type_from_str_valid() {
     );
 }
 
-/// The removed backends are refused rather than silently resolving to
-/// regolith. A config naming one is a config written against a version that
-/// stored data this binary cannot read, so starting anyway and pointing the
-/// engine at that directory is the wrong kindness: it either fails deeper in
-/// or opens something the operator did not ask for.
+/// The backends regolith replaced still load, as regolith, so an existing
+/// config file or `--store` flag keeps working. Unknown names stay refused.
 #[test]
-fn removed_backend_names_are_refused() {
-    for name in ["lark", "redb", "fjall", "rocksdb", "leveldb"] {
-        assert!(
-            name.parse::<DatastoreType>().is_err(),
-            "{name} must not parse as a datastore"
+fn legacy_backend_names_resolve_to_regolith() {
+    for name in ["lark", "redb", "fjall", "rocksdb", "badger"] {
+        assert_eq!(
+            name.parse::<DatastoreType>().unwrap(),
+            DatastoreType::Regolith
         );
-        let parsed: Result<DatastoreConfig, _> = toml::from_str(&format!("store = \"{name}\"\n"));
-        assert!(
-            parsed.is_err(),
-            "config file with store = \"{name}\" must not load"
-        );
+        let parsed: DatastoreConfig = toml::from_str(&format!("store = \"{name}\"\n")).unwrap();
+        assert_eq!(parsed.store, DatastoreType::Regolith, "{name}");
     }
+    assert!("leveldb".parse::<DatastoreType>().is_err());
+    assert!(toml::from_str::<DatastoreConfig>("store = \"leveldb\"\n").is_err());
 }
 
 #[test]

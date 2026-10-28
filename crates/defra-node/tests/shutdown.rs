@@ -12,11 +12,11 @@ mod outcome;
 
 #[cfg(feature = "libp2p")]
 use defra_node::Libp2pConfig;
+use defra_node::NodeBuilder;
 #[cfg(feature = "p2p")]
 use defra_node::P2PConfig;
 #[cfg(any(feature = "libp2p", feature = "p2p"))]
-use defra_node::TransportConfig;
-use defra_node::{NodeBuilder, NodeConfig};
+use defra_node::{NodeConfig, TransportConfig};
 use outcome::Result;
 use std::sync::Arc;
 use std::time::Duration;
