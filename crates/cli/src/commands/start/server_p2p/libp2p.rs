@@ -107,7 +107,7 @@ impl Node {
 
         // Build the KMS pubsub transport and install it on the coordinator so
         // raw gossip on the encryption topic is routed to it (mirrors
-        // crates/embedded/src/node_p2p.rs::setup_libp2p).
+        // crates/defra-node/src/libp2p_runtime.rs::setup_libp2p).
         let kms_transport = p2p::kms::PubsubKeyTransport::new(
             p2p::Libp2pTransport::new(handle.clone()),
             Arc::new(p2p::HandlePeerIdentityResolver::new(handle.clone())),

@@ -1,7 +1,7 @@
 //! The node's API calls run on the database's worker pool: none of the
 //! storage calls they make is made off the pool, which the store counts.
 
-use super::EmbeddedNode;
+use super::Node;
 
 const POLICY_YAML: &str = r#"
 name: Notes
@@ -17,7 +17,7 @@ resources:
 "#;
 const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 
-fn off_pool_calls(node: &EmbeddedNode) -> u64 {
+fn off_pool_calls(node: &Node) -> u64 {
     node.transaction_stats()
         .expect("the node's store is regolith")
         .off_pool_calls
@@ -26,7 +26,7 @@ fn off_pool_calls(node: &EmbeddedNode) -> u64 {
 #[test]
 fn api_calls_make_no_storage_call_off_the_pool() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await.unwrap();
+        let node = Node::builder().build().await.unwrap();
         let before = off_pool_calls(&node);
 
         let policy_id = node.add_dac_policy(OWNER, POLICY_YAML).await.unwrap();

@@ -1,9 +1,9 @@
-//! An `EmbeddedNode` runs the database's periodic tasks itself, as the CLI
+//! An `Node` runs the database's periodic tasks itself, as the CLI
 //! and the `embedded` node do (#1991).
 
 use std::time::{Duration, Instant};
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 
 const ROLLUP_SDL: &str = r#"
 type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
@@ -23,7 +23,7 @@ type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
 #[test]
 fn downsample_view_refreshes_without_a_manual_refresh() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Metric { label: String  ts: DateTime  value: Int }")
         .await
         .unwrap();
@@ -55,7 +55,7 @@ fn downsample_view_refreshes_without_a_manual_refresh() {
         workers::delay(Duration::from_millis(100)).unwrap().await.unwrap();
     }
 
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
 })
     .unwrap()
 }

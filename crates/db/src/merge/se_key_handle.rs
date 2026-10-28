@@ -1,7 +1,7 @@
 //! Lazy SE-key handle shared between the SE options callback (writer side) and
 //! the SE query transport (owner/querier side).
 //!
-//! The CLI knows the SE key at P2P-setup time, but embedded nodes receive it at
+//! The CLI knows the SE key at P2P-setup time, but nodes receive it at
 //! RUNTIME via `set_se_options` (FFI `set_se_encryption_key` →
 //! `ReplicatorPushOptions`). The query transport therefore reads the key
 //! LAZILY (at query time) through this handle rather than holding a fixed key.

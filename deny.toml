@@ -128,7 +128,7 @@ deny = [
     { name = "dashmap", wrappers = ["commonware-parallel", "governor", "iroh-relay"] },
     { name = "tokio", wrappers = [
         # The holder and the network components given an Edge.
-        "edge", "cli", "defra-http", "defra-node", "defra-p2p-adapter", "embedded",
+        "edge", "cli", "defra-http", "defra-node", "defra-p2p-adapter",
         "p2p", "pg-compat", "vera",
         # Data-path crates not confined yet, each until its last tokio use
         # goes: defra-core and query keep the request context in tokio

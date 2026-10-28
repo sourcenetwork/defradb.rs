@@ -5,7 +5,7 @@
 //! its locally stored artifacts (`fetch_doc_ids`). This is the consumer half of
 //! Go's `internal/se` producer-consumer model.
 //!
-//! Both the standalone CLI and the embedded node route inbound SE events here so
+//! Both the standalone CLI and the node route inbound SE events here so
 //! the serve/receive logic lives in one place.
 
 #[cfg(feature = "p2p")]

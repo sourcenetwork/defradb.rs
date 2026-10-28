@@ -623,7 +623,7 @@
   "id": "go.query.one_to_one.join",
   "verdict": "partial",
   "rust_tests": [
-   "crates/embedded/tests/one_to_one_primary.rs::primary_side_commits"
+   "crates/defra-node/tests/one_to_one_primary.rs::primary_side_commits"
   ],
   "evidence": "one_to_one_primary.rs:84-87 asserts `Book { publisher { name } }` renders a single object from the secondary side",
   "note": "Unverified: the primary-side direction, several linked pairs, null when no counterpart exists, and relation selections inside (nested) named fragments."
@@ -718,7 +718,7 @@
   "id": "go.query.one_to_many_to_one.joins",
   "verdict": "partial",
   "rust_tests": [
-   "crates/embedded/tests/one_to_one_primary.rs::primary_side_commits"
+   "crates/defra-node/tests/one_to_one_primary.rs::primary_side_commits"
   ],
   "evidence": "one_to_one_primary.rs:84-87 asserts `Book { title publisher { name } }` on the Author-Book-Publisher fixture",
   "note": "Only one hop. Unverified: `Author { book { publisher } }` two-hop rendering, `Book { author publisher }`, null publisher, and empty list for an author without books."

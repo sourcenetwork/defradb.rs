@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use serde::{Deserialize, Serialize};
 use testo::prelude::*;
 
@@ -10,7 +10,7 @@ use crate::test_case::State;
 /// How a test reaches its database. The Go suite's `DEFRA_CLIENT_*` switches.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientType {
-    /// Calls the embedded node directly.
+    /// Calls the node directly.
     InProcess,
 }
 
@@ -45,8 +45,8 @@ impl Multiplier<Actions> for ClientType {
     }
 }
 
-fn start_node() -> EmbeddedNode {
-    workers::block_on(EmbeddedNode::builder().build())
+fn start_node() -> Node {
+    workers::block_on(Node::builder().build())
         .expect("run builder")
         .expect("start node")
 }

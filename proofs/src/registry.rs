@@ -1046,25 +1046,25 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node shutdown order",
         name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
         tiers: &[Boundary],
     },
     Property {
-        // An embedded node checks its config before it opens anything, hands
+        // A node checks its config before it opens anything, hands
         // its retry ladder to every retry site of either transport, stops a
         // host whose listen failed, enables NAC owned by the node identity,
         // and dials bootstrap peers only once NAC is in place, logging a peer
         // that does not answer.
-        family: "Embedded node startup",
+        family: "Node startup",
         name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
         axis: Tla,
-        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
-        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/libp2p_runtime.rs setup_libp2p, assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/defra-node/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_NodeStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
         tiers: &[Boundary],
     },
     Property {
-        family: "Embedded node startup",
+        family: "Node startup",
         name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
         axis: Lean,
         anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
