@@ -67,7 +67,11 @@ where
         let request = QueryRequest::new(format!("{{ {collection}(docID: {ids}) {{ _docID }} }}"))
             .with_identity(identity)
             .with_context(context.clone());
-        let runner = self.for_query(&request);
+        let runner = if node_authorized {
+            self.for_request(context.clone())
+        } else {
+            self.for_query(&request)
+        };
         let collection = collection.to_owned();
         let doc_ids = doc_ids.to_vec();
         let job = txn_job(move |turn| {

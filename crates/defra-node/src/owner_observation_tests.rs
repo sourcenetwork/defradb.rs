@@ -54,7 +54,9 @@ fn node_transaction_visibility_uses_actor_dac_and_node_nac() {
         let doc = response.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
         let node_context = actor(&owner);
         let handle = node.runner().begin_txn_as(&node_context, true).await.unwrap();
+        defra_core::dac_bypass::set_dac_bypass(true);
         let denied = node.observe_document_visibility_in_txn(&handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.unwrap();
+        defra_core::dac_bypass::set_dac_bypass(false);
         assert!(!denied[0].visible);
         assert!(node.runner().observe_document_visibility_in_txn(actor(B), &handle, "Users", std::slice::from_ref(&doc), Did::new(B).unwrap()).await.is_err());
         node.runner().discard_txn_as(&node_context, &handle).await.unwrap();
