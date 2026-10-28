@@ -367,6 +367,7 @@ impl<S: Store + 'static> IrohPeer<S> {
                 retry_loop_task,
                 vec![event_handler_task, replication_task],
                 failure_recorder_task,
+                edge.clone(),
             ),
             transport,
             coordinator,

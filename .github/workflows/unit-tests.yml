@@ -41,6 +41,8 @@ jobs:
             packages: >-
               -p defra-http -p cli -p ffi -p defra-node
               -p lens-host -p defra-wasm -p benches -p ffi-test
+          - group: node-p2p
+            packages: -p defra-node --features p2p,http,libp2p
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
