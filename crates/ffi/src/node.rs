@@ -250,6 +250,7 @@ fn resolve_embedded_config(
         } else {
             None
         },
+        ..Default::default()
     })
 }
 
