@@ -5,10 +5,7 @@ use crate::Result;
 
 pub use db::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 
-impl<S> Node<S>
-where
-    S: storage::corekv::Store + 'static,
-{
+impl Node {
     /// Embed free-form text using the node's configured embedding runtime.
     pub async fn embed_text(&self, text: &str, model: Option<&str>) -> Result<Vec<f64>> {
         Ok(db::embed_text(self.embedding_config(), text, model).await?)

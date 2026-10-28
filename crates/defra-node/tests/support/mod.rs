@@ -6,7 +6,7 @@ use crate::clock::sleep;
 use crate::outcome::Result;
 use acp::StorePolicyOptions;
 use defra_core::current_identity::with_scoped_identity;
-use defra_node::Node;
+pub use defra_node::Node;
 use identity::{Did, Identity};
 use query::{QueryRequest, QueryResponse};
 use std::time::Instant;
@@ -30,8 +30,6 @@ resources:
       - name: reader
         types:
           - actor"#;
-
-pub type Node = Node<storage::RegolithStore>;
 
 pub fn new_identity() -> Result<Did> {
     let raw = identity::RawIdentity::from_ed25519(crypto::generate_ed25519()?)?;

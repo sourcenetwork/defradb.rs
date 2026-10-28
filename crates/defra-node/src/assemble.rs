@@ -1,5 +1,4 @@
-//! The one node assembly: [`build_with_store`] and [`crate::NodeBuilder`] both
-//! end here.
+//! The one node assembly, which [`crate::NodeBuilder::build`] ends in.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -40,7 +39,7 @@ pub(crate) struct Extras {
 /// The worker pool a node's data path runs on: `config` (the pool's
 /// defaults when unset), with the network runtime's timer running its
 /// stuck-poll monitor when the node has one.
-pub fn start_node_pool(
+fn start_node_pool(
     config: Option<workers::Config>,
     edge: Option<&edge::Edge>,
 ) -> Result<workers::Pool> {
@@ -49,69 +48,6 @@ pub fn start_node_pool(
         edge.map(edge::Edge::pool_monitor),
     )
     .map_err(Error::WorkerPoolStart)
-}
-
-/// A node over a store the application opened, on a worker pool of the
-/// pool's default configuration. The store's own threads are not placed by
-/// the pool: [`crate::NodeBuilder`] opens the store on the pool and places them.
-///
-/// `config`'s store-independent settings apply; a transport with no network
-/// runtime in `config.edge` gets one the node starts itself.
-pub async fn build_with_store<S>(store: Arc<S>, config: NodeConfig) -> Result<Node<S>>
-where
-    S: storage::corekv::Store + 'static,
-{
-    assemble(
-        move |_| Ok(store),
-        config,
-        PoolSource::Start(None),
-        Extras::default(),
-    )
-    .await
-}
-
-/// A node over a store the application opened on `pool`
-/// ([`storage::RegolithStoreOptions::placed_on`]), whose data path runs on
-/// it. Start the pool with [`start_node_pool`].
-pub async fn build_with_store_on_pool<S>(
-    store: Arc<S>,
-    config: NodeConfig,
-    pool: workers::Pool,
-) -> Result<Node<S>>
-where
-    S: storage::corekv::Store + 'static,
-{
-    assemble(
-        move |_| Ok(store),
-        config,
-        PoolSource::Given(pool),
-        Extras::default(),
-    )
-    .await
-}
-
-/// Build an iroh node whose access control the app supplies. Fails when
-/// `hooks` is set and the transport is not iroh.
-#[cfg(feature = "p2p")]
-pub async fn build_with_store_and_access_hooks<S>(
-    store: Arc<S>,
-    config: NodeConfig,
-    hooks: Option<AccessHooks>,
-) -> Result<Node<S>>
-where
-    S: storage::corekv::Store + 'static,
-{
-    check_access_hooks(&config, hooks.as_ref())?;
-    assemble(
-        move |_| Ok(store),
-        config,
-        PoolSource::Start(None),
-        Extras {
-            access_hooks: hooks,
-            ..Extras::default()
-        },
-    )
-    .await
 }
 
 /// Access hooks need the iroh transport.
@@ -123,23 +59,14 @@ pub(crate) fn check_access_hooks(config: &NodeConfig, hooks: Option<&AccessHooks
     Ok(())
 }
 
-/// Where the node's worker pool comes from.
-pub(crate) enum PoolSource {
-    /// A pool the application started.
-    Given(workers::Pool),
-    /// One the node starts, with this configuration (the defaults when unset).
-    Start(Option<Box<workers::Config>>),
-}
-
-pub(crate) async fn assemble<S, O>(
+pub(crate) async fn assemble<O>(
     open_store: O,
     config: NodeConfig,
-    pool: PoolSource,
+    workers: Option<workers::Config>,
     extras: Extras,
-) -> Result<Node<S>>
+) -> Result<Node>
 where
-    S: storage::corekv::Store + 'static,
-    O: FnOnce(&workers::Pool) -> Result<Arc<S>>,
+    O: FnOnce(&workers::Pool) -> Result<Arc<storage::RegolithStore>>,
 {
     let NodeConfig {
         peer_keyring,
@@ -199,13 +126,7 @@ where
     // The data path's worker pool comes before the store, which places its
     // compaction threads by the pool's plan; the network runtime's timer,
     // when the node has one, runs the pool's stuck-poll monitor.
-    let pool = match pool {
-        PoolSource::Given(pool) => pool,
-        PoolSource::Start(config) => start_node_pool(
-            config.map(|config| *config),
-            network.as_ref().map(NodeEdge::edge),
-        )?,
-    };
+    let pool = start_node_pool(workers, network.as_ref().map(NodeEdge::edge))?;
     let store = open_store(&pool)?;
 
     let mut db_options = db::DbOptions::default().with_pool(pool);
@@ -389,95 +310,98 @@ where
         registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval)
     });
 
-    // The KMS comes once document ACP and NAC exist: a blockstore-backed key
-    // store, the NAC/DAC release policy and, when the node has P2P, its
-    // pubsub transport. Without it encrypted blocks replicate but no peer can
-    // fetch the DEK, so encrypted documents never become readable on replicas.
-    let kms: Arc<dyn kms::KmsService> = {
-        // The KMS serves DEKs for ANY encrypted write by reading and writing
-        // the node's durable encstore->blockstore, not a RAM-only map. The DB
-        // owns the blockstore Arc (set_kms_blockstore) so the adapter can hold
-        // a Weak and avoid the lock-pinning cycle (#976).
-        let kms_blockstore = database.set_kms_blockstore(Arc::new(
-            blockstore::DefraBlockstore::new(store.clone(), true)
-                .with_max_txn_retries(database.options().max_txn_retries())
-                .placed_on(database.pool()),
-        ));
-        let enc_block_store: Arc<dyn kms::EncBlockStore> =
-            Arc::new(db::DbEncBlockStore::new(database.clone(), kms_blockstore));
-        let key_store: Arc<dyn kms::KeyStore> =
-            Arc::new(kms::BlockstoreKeyStore::new(enc_block_store));
-        let doc_lookup: Arc<dyn kms::DocCollectionLookup> =
-            Arc::new(db::DbDocCollectionLookup::new(database.clone()));
-        let policy = Arc::new(kms::NacDacPolicy::new(document_acp.clone(), doc_lookup));
-        policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(nac_manager.clone())));
+    #[cfg(feature = "managed-p2p")]
+    {
+        // The KMS comes once document ACP and NAC exist: a blockstore-backed key
+        // store, the NAC/DAC release policy and, when the node has P2P, its
+        // pubsub transport. Without it encrypted blocks replicate but no peer can
+        // fetch the DEK, so encrypted documents never become readable on replicas.
+        let kms: Arc<dyn kms::KmsService> = {
+            // The KMS serves DEKs for ANY encrypted write by reading and writing
+            // the node's durable encstore->blockstore, not a RAM-only map. The DB
+            // owns the blockstore Arc (set_kms_blockstore) so the adapter can hold
+            // a Weak and avoid the lock-pinning cycle (#976).
+            let kms_blockstore = database.set_kms_blockstore(Arc::new(
+                blockstore::DefraBlockstore::new(store.clone(), true)
+                    .with_max_txn_retries(database.options().max_txn_retries())
+                    .placed_on(database.pool()),
+            ));
+            let enc_block_store: Arc<dyn kms::EncBlockStore> =
+                Arc::new(db::DbEncBlockStore::new(database.clone(), kms_blockstore));
+            let key_store: Arc<dyn kms::KeyStore> =
+                Arc::new(kms::BlockstoreKeyStore::new(enc_block_store));
+            let doc_lookup: Arc<dyn kms::DocCollectionLookup> =
+                Arc::new(db::DbDocCollectionLookup::new(database.clone()));
+            let policy = Arc::new(kms::NacDacPolicy::new(document_acp.clone(), doc_lookup));
+            policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(nac_manager.clone())));
 
-        // Node identity used for cross-peer DEK requests. Anonymous nodes use
-        // a stable placeholder DID.
-        let kms_node_did = database.node_did().unwrap_or_else(|| {
-            identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
-                .expect("static anonymous DID parses")
-        });
+            // Node identity used for cross-peer DEK requests. Anonymous nodes use
+            // a stable placeholder DID.
+            let kms_node_did = database.node_did().unwrap_or_else(|| {
+                identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
+                    .expect("static anonymous DID parses")
+            });
 
-        #[cfg(any(feature = "p2p", feature = "libp2p"))]
-        let transports: Vec<Arc<dyn kms::KeyTransport>> = match p2p_setup.as_ref() {
-            Some(setup) => vec![setup.kms_transport.clone()],
-            None => vec![],
+            #[cfg(any(feature = "p2p", feature = "libp2p"))]
+            let transports: Vec<Arc<dyn kms::KeyTransport>> = match p2p_setup.as_ref() {
+                Some(setup) => vec![setup.kms_transport.clone()],
+                None => vec![],
+            };
+            #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
+            let transports: Vec<Arc<dyn kms::KeyTransport>> = vec![];
+
+            Arc::new(kms::DefraKms::with_inputs(
+                key_store,
+                transports,
+                policy as Arc<dyn kms::AccessPolicy>,
+                Arc::new(db::DbBlockDocIDResolver::new(database.clone())),
+                kms_node_did,
+                network
+                    .as_ref()
+                    .map(|network| kms::KmsInputs::on(network.edge()))
+                    .unwrap_or_default(),
+            ))
         };
-        #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
-        let transports: Vec<Arc<dyn kms::KeyTransport>> = vec![];
 
-        Arc::new(kms::DefraKms::with_inputs(
-            key_store,
-            transports,
-            policy as Arc<dyn kms::AccessPolicy>,
-            Arc::new(db::DbBlockDocIDResolver::new(database.clone())),
-            kms_node_did,
-            network
-                .as_ref()
-                .map(|network| kms::KmsInputs::on(network.edge()))
-                .unwrap_or_default(),
-        ))
-    };
+        // Bind this node's transport peer id into the KMS so served ECIES
+        // replies carry the correct AAD peer id, and wire the KMS into the
+        // transport's serve handler and merge handler.
+        #[cfg(any(feature = "p2p", feature = "libp2p"))]
+        if let Some(setup) = p2p_setup.as_mut() {
+            kms.set_local_peer_id(setup.local_peer_id.clone());
 
-    // Bind this node's transport peer id into the KMS so served ECIES
-    // replies carry the correct AAD peer id, and wire the KMS into the
-    // transport's serve handler and merge handler.
-    #[cfg(any(feature = "p2p", feature = "libp2p"))]
-    if let Some(setup) = p2p_setup.as_mut() {
-        kms.set_local_peer_id(setup.local_peer_id.clone());
-
-        // A Weak ref breaks the transport<->kms Arc cycle (transport holds
-        // handler -> kms -> transports -> transport).
-        struct KmsServeHandler {
-            kms: std::sync::Weak<dyn kms::KmsService>,
-        }
-        #[async_trait::async_trait]
-        impl kms::IncomingHandler for KmsServeHandler {
-            async fn handle(
-                &self,
-                from: kms::PeerIdentity,
-                req: kms::FetchEncryptionKeyRequest,
-            ) -> kms::Result<kms::FetchEncryptionKeyReply> {
-                match self.kms.upgrade() {
-                    Some(kms) => kms.serve_request(from, req).await,
-                    None => Err(kms::Error::Internal("kms dropped".into())),
+            // A Weak ref breaks the transport<->kms Arc cycle (transport holds
+            // handler -> kms -> transports -> transport).
+            struct KmsServeHandler {
+                kms: std::sync::Weak<dyn kms::KmsService>,
+            }
+            #[async_trait::async_trait]
+            impl kms::IncomingHandler for KmsServeHandler {
+                async fn handle(
+                    &self,
+                    from: kms::PeerIdentity,
+                    req: kms::FetchEncryptionKeyRequest,
+                ) -> kms::Result<kms::FetchEncryptionKeyReply> {
+                    match self.kms.upgrade() {
+                        Some(kms) => kms.serve_request(from, req).await,
+                        None => Err(kms::Error::Internal("kms dropped".into())),
+                    }
                 }
             }
-        }
-        setup
-            .kms_transport
-            .install_handler(Arc::new(KmsServeHandler {
-                kms: Arc::downgrade(&kms),
-            }));
+            setup
+                .kms_transport
+                .install_handler(Arc::new(KmsServeHandler {
+                    kms: Arc::downgrade(&kms),
+                }));
 
-        if let Some(wire_kms) = setup.wire_kms.take() {
-            wire_kms(kms.clone());
+            if let Some(wire_kms) = setup.wire_kms.take() {
+                wire_kms(kms.clone());
+            }
         }
+
+        // Wire the KMS into the write path (DB-held, read by doc_mutator).
+        database.set_kms(kms);
     }
-
-    // Wire the KMS into the write path (DB-held, read by doc_mutator).
-    database.set_kms(kms);
 
     // Assemble query runner
     let pool = database.pool().cloned();
@@ -567,8 +491,8 @@ where
 
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     let p2p = p2p_setup.map(|setup| setup.system);
-    #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
-    let p2p = None;
+    #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]
+    let p2p: Option<Arc<crate::ManagedP2PSystem>> = None;
 
     Ok(Node {
         database,
@@ -598,6 +522,7 @@ where
         txn_cleanup_task: crate::single_slot(txn_cleanup_task),
         #[cfg(not(target_arch = "wasm32"))]
         background_tasks,
+        #[cfg(feature = "managed-p2p")]
         p2p,
         shutdown_started: AtomicBool::new(false),
         shutdown_finished: AtomicBool::new(false),

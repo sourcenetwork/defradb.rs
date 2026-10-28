@@ -44,6 +44,7 @@ mod libp2p_recovery;
 mod libp2p_runtime;
 #[cfg(feature = "libp2p")]
 mod libp2p_tasks;
+#[cfg(feature = "managed-p2p")]
 mod managed_p2p;
 mod network;
 mod node_acp;
@@ -73,9 +74,6 @@ pub use access_hooks::AccessHooks;
 /// Re-exported so callers can name `Arc<dyn DocumentACP>` (the type
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
-#[cfg(feature = "p2p")]
-pub use assemble::build_with_store_and_access_hooks;
-pub use assemble::{build_with_store, build_with_store_on_pool, start_node_pool};
 #[cfg(not(target_arch = "wasm32"))]
 pub use background_tasks::BackgroundTasks;
 pub use coding_search::{
@@ -95,6 +93,7 @@ pub use config::{
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
+#[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use error::{Error, Result};
@@ -102,6 +101,7 @@ pub use events::EventName;
 pub use keyring;
 pub use keyring::Keyring;
 pub use lens::{LensConfig, LensModule, TransformId};
+#[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
 pub use peer_keyring::PeerKeyring;
@@ -217,15 +217,9 @@ trait BlockOps: Send + Sync {
 }
 
 /// An embedded DefraDB node with query execution and event subscription.
-///
-/// `S` is the store the node runs on. [`NodeBuilder`] opens regolith itself;
-/// [`build_with_store`] takes a store the application opened.
-pub struct Node<S = storage::RegolithStore>
-where
-    S: storage::corekv::Store + 'static,
-{
-    database: Arc<db::DB<S>>,
-    txn_registry: Arc<db::DbTransactionRegistry<S>>,
+pub struct Node {
+    database: Arc<db::DB<storage::RegolithStore>>,
+    txn_registry: Arc<db::DbTransactionRegistry<storage::RegolithStore>>,
     nac_manager: Arc<dyn db::NacManagerApi>,
     local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     #[cfg(feature = "vera")]
@@ -258,6 +252,7 @@ where
     /// the Vera redrive. Each holds the database open until aborted.
     #[cfg(not(target_arch = "wasm32"))]
     background_tasks: Arc<BackgroundTasks>,
+    #[cfg(feature = "managed-p2p")]
     p2p: Option<Arc<ManagedP2PSystem>>,
     /// Idempotency guard for [`Node::shutdown`]: set by its first caller.
     shutdown_started: std::sync::atomic::AtomicBool,
@@ -293,12 +288,7 @@ impl Node {
     pub fn builder() -> NodeBuilder {
         NodeBuilder::default()
     }
-}
 
-impl<S> Node<S>
-where
-    S: storage::corekv::Store + 'static,
-{
     /// Execute a GraphQL query or mutation.
     ///
     /// A configured node identity is used as the document ACP actor. Prepared
@@ -790,28 +780,31 @@ where
     }
 
     /// Access P2P operations (if P2P is enabled and configured).
+    #[cfg(feature = "managed-p2p")]
     pub fn p2p(&self) -> Option<&dyn defra_http::P2POperations> {
         self.p2p.as_deref().map(|system| system.ops().as_ref())
     }
 
     /// Cloneable P2P operations handle for background tasks.
+    #[cfg(feature = "managed-p2p")]
     pub fn p2p_arc(&self) -> Option<Arc<dyn defra_http::P2POperations>> {
         self.p2p.as_ref().map(|system| Arc::clone(system.ops()))
     }
 
     /// The managed P2P system: transport kind, replicator push options, the
     /// retry trigger and the management requester.
+    #[cfg(feature = "managed-p2p")]
     pub fn p2p_system(&self) -> Option<&Arc<ManagedP2PSystem>> {
         self.p2p.as_ref()
     }
 
     /// The database the node runs on.
-    pub fn database(&self) -> &Arc<db::DB<S>> {
+    pub fn database(&self) -> &Arc<db::DB<storage::RegolithStore>> {
         &self.database
     }
 
     /// The registry of the node's explicit transactions.
-    pub fn txn_registry(&self) -> &Arc<db::DbTransactionRegistry<S>> {
+    pub fn txn_registry(&self) -> &Arc<db::DbTransactionRegistry<storage::RegolithStore>> {
         &self.txn_registry
     }
 
@@ -874,6 +867,7 @@ where
     /// already accepts every inbound peer. Returns an error if P2P is not
     /// enabled, or if the active transport has no concept of an inbound
     /// allowlist.
+    #[cfg(feature = "managed-p2p")]
     pub async fn allow_p2p_peer(&self, peer_id: &str) -> Result<()> {
         let ops = self.p2p().ok_or(Error::P2pDisabled)?;
         let peer_id = defra_http::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
@@ -902,6 +896,7 @@ where
     ///
     /// Returns an error if P2P is not enabled, or if the active transport has
     /// no concept of peer admission.
+    #[cfg(feature = "managed-p2p")]
     pub async fn deny_p2p_peer(&self, peer_id: &str) -> Result<()> {
         let ops = self.p2p().ok_or(Error::P2pDisabled)?;
         let peer_id = defra_http::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
@@ -943,7 +938,7 @@ where
 
         // The transport and the tasks around it stop first and are awaited, so
         // none still reaches storage when the drain and the close come.
-        #[cfg(any(feature = "p2p", feature = "libp2p"))]
+        #[cfg(feature = "managed-p2p")]
         if let Some(p2p) = &self.p2p {
             p2p.stop_transport().await;
         }
@@ -1030,14 +1025,11 @@ where
 
 /// Adds the encrypted index [`Node::add_encrypted_index`] names, on
 /// the worker it runs on.
-async fn add_encrypted_index<S>(
-    database: Arc<db::DB<S>>,
+async fn add_encrypted_index(
+    database: Arc<db::DB<storage::RegolithStore>>,
     collection: String,
     field_name: String,
-) -> Result<()>
-where
-    S: storage::corekv::Store + 'static,
-{
+) -> Result<()> {
     use storage::corekv::Key;
 
     let (collection, field_name) = (collection.as_str(), field_name.as_str());

@@ -85,7 +85,7 @@ vera = { path = "../vera", optional = true }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p" }
 blockstore = { path = "../blockstore" }
-defra-node = { path = "../defra-node", default-features = false }
+defra-node = { path = "../defra-node", default-features = false, features = ["managed-p2p"] }
 
 # IPLD
 cid.workspace = true

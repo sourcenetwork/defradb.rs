@@ -31,12 +31,11 @@ lens, p2p, txns, views), plus keyring, identity and SDL utilities.
 
 ## Embedded (`crates/defra-node`)
 
-One node assembly, two entry points: `NodeBuilder`, which opens a regolith store itself
-(server or embedded sizing profile), and `build_with_store`, which takes a store the
-application opened. Both fill in one `NodeConfig` (transport: libp2p or iroh, signing,
-document ACP, node access control, query limits, sync knobs) and place the store on a
-pool (`storage::start_pool`); a node with no network starts no network runtime. FFI is
-built on it.
+One node assembly, reached through `NodeBuilder`, which opens a regolith store (server or
+embedded sizing profile, in memory or at a path). The builder fills in one `NodeConfig`
+(transport: libp2p or iroh, signing, document ACP, node access control, query limits, sync
+knobs) and places the store on a pool (`storage::start_pool`); a node with no network starts
+no network runtime. FFI is built on it.
 
 ## FFI (`crates/ffi`)
 
