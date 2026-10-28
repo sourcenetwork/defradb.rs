@@ -7,6 +7,10 @@ license = "Apache-2.0 OR MIT"
 autotests = false
 
 [[test]]
+name = "matchers"
+path = "tests/matchers.rs"
+
+[[test]]
 name = "basic"
 path = "tests/basic.rs"
 
@@ -132,16 +136,21 @@ serde_json = "1.0"
 futures = "0.3"
 paste = "1.0"
 ctor = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4" }
 defra-node = { path = "../../crates/defra-node" }
+defra-core = { path = "../../crates/defra-core" }
+serde.workspace = true
+thiserror.workspace = true
 workers = { path = "../../crates/workers" }
 testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "79d83b0adedf00f85f9fd9aecc6fd009ed41332a" }
 kovan.workspace = true
 regolith.workspace = true
+rapidhash.workspace = true
+cid = { workspace = true }
+base64 = "0.23"
 
 [dev-dependencies]
 mantra-macros = "0.9"
-rapidhash.workspace = true
 keyring = { path = "../../crates/keyring" }
 vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
 vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
@@ -154,10 +163,7 @@ libc = "0.2"
 identity = { path = "../../crates/identity" }
 crypto = { path = "../../crates/crypto" }
 p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
-base64 = "0.23"
 hex = "0.4"
-cid = { workspace = true }
-defra-core = { path = "../../crates/defra-core" }
 ciborium = { workspace = true }
 serial_test = "3"
 
