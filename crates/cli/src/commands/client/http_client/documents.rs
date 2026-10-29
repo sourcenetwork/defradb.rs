@@ -134,7 +134,7 @@ impl HttpClient {
 
     /// Send `body` to `path` under the API root, in transaction `txn`, as
     /// Go's HTTP client does: the transaction travels in its header alone.
-    async fn send(
+    pub(super) async fn send(
         &self,
         method: Method,
         path: &str,

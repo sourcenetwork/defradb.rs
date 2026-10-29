@@ -87,7 +87,7 @@ impl TransformStore for SetVerifiedStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 
@@ -166,7 +166,7 @@ impl TransformStore for BlockingVerifiedStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 
@@ -243,7 +243,7 @@ impl TransformStore for StepTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 

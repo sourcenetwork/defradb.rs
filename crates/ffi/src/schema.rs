@@ -6,12 +6,10 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 
-use acp::nac::NodePermission;
 use identity::Did;
 
 use crate::ffi_entry;
 use crate::helpers::{get_node_database, require_c_str};
-use crate::nac_check::check_nac_for_node;
 use crate::policy_yaml;
 use crate::state::PolicyStore;
 use crate::types::FfiResult;
@@ -125,88 +123,53 @@ pub unsafe extern "C" fn add_schema_in_txn(
     }
 }
 
-/// Get all collections from the database.
-///
-/// Returns a JSON array of collection descriptions.
+/// Every collection version, active or not, as a JSON array; the Go
+/// wrapper applies Go's `GetCollections` options to it.
 ///
 /// # Safety
 ///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn get_collections(
     node_ptr: usize,
     identity_did: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionGet
-        ));
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        ffi_async!(node_ptr, {
-            // Return all collection versions from the system store (active + inactive + placeholders).
-            // The Go wrapper handles GetInactive filtering on its side.
-            let collections = database
-                .get_all_collection_versions()
-                .await
-                .map_err(|e| format!("failed to get collections: {}", e))?;
-
-            // Return JSON array
-            let json = serde_json::to_string(&collections)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-        })
-    }
+    ffi_entry! { collections(node_ptr, std::ptr::null(), identity_did) }
 }
 
-/// Get all collection versions visible within a specific transaction.
-///
-/// This reads from the transaction's systemstore, which includes uncommitted
-/// writes (e.g., placeholders from set_migration_in_txn).
+/// [`get_collections`] in transaction `txn_id`, its uncommitted writes
+/// included.
 ///
 /// # Safety
 ///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// Both string pointers must be null or valid null-terminated UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn get_collections_in_txn(
     node_ptr: usize,
     txn_id: *const c_char,
     identity_did: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionGet
-        ));
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
+    ffi_entry! { collections(node_ptr, txn_id, identity_did) }
+}
 
-        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
-        let txn = try_ffi!(txn_str
-            .parse::<defra_core::TxnId>()
-            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default()
-            .with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()))
-            .with_txn(Some(txn));
-
-        ffi_async!(caller, {
-            let collections = runner
-                .collections_as(&context)
-                .await
-                .map_err(|e| format!("failed to get collections in txn: {}", e))?;
-
-            let json = serde_json::to_string(&collections)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-        })
-    }
+unsafe fn collections(
+    node_ptr: usize,
+    txn_id: *const c_char,
+    identity_did: *const c_char,
+) -> FfiResult {
+    let context = try_ffi!(crate::lens::call_context(identity_did, txn_id));
+    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+    let selector = schema::CollectionSelector {
+        get_inactive: true,
+        ..Default::default()
+    };
+    ffi_async!(caller, {
+        let collections = runner
+            .get_collections_as(&context, &selector)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&collections).map_err(|e| format!("failed to serialize result: {e}"))
+    })
 }
 
 /// Validate that a collection's policy references a valid, well-formed policy.

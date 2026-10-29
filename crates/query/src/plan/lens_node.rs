@@ -323,7 +323,7 @@ mod tests {
             Err(lens::Error::RuntimeUnavailable)
         }
 
-        async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
             Ok(RapidHashMap::default())
         }
 

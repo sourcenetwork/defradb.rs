@@ -18,12 +18,12 @@ mod acp;
 mod backup;
 mod block;
 mod collection;
+mod definitions;
 mod documents;
 mod dump;
 mod encrypted_index;
 mod graphql;
 mod index;
-mod lens;
 mod p2p;
 mod transaction;
 mod types;
@@ -32,7 +32,6 @@ mod view;
 pub use acp::{AcpAddPolicyRequest, AcpAddPolicyResponse, AcpPolicy, NacRelationshipRequest};
 pub use encrypted_index::EncryptedIndexInfo;
 pub use index::{IndexFieldInfo, IndexInfo};
-pub use lens::LensSetMigrationResponse;
 pub use p2p::{
     mint_manage_token, ManageQueryResultResponse, P2pCollectionRequest, P2pConnectRequest,
     P2pDocumentRequest, P2pInfo, P2pReplicatorInfo, P2pReplicatorRequest,
@@ -446,8 +445,6 @@ impl HttpClient {
     endpoint!(nac_re_enable,       POST "/api/v0/acp/node/re-enable" => JsonValue);
 
     // Lens
-    endpoint!(lens_list,           GET  "/api/v0/lens"               => JsonValue);
-    endpoint!(lens_reload,         POST "/api/v0/lens/reload");
 
     // Node
     endpoint!(node_identity,       GET  "/api/v0/node/identity"      => JsonValue);

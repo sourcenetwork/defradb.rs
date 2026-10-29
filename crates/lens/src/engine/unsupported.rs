@@ -30,7 +30,7 @@ impl TransformStore for UnsupportedTransformStore {
         Err(Error::RuntimeUnavailable)
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 

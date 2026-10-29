@@ -118,10 +118,6 @@ impl Node {
             info!("P2P remote management requester enabled");
         }
 
-        let lens_adapter = crate::lens_adapter::LensAdapter::new_arc(database.clone());
-        server = server.with_lens_arc(lens_adapter);
-        info!("Lens HTTP endpoint enabled");
-
         if let Some(adapter) = &nac_adapter {
             server = server
                 .with_nac_arc(adapter.clone() as Arc<dyn defra_http::router::NodeAcpOperations>);

@@ -63,7 +63,5 @@ async fn rust_lens_survives_restart() {
     let after_arr = after["Article"].as_array().expect("articles array");
     assert_eq!(after_arr.len(), 2, "should have 2 articles after restart");
 
-    // Verify lens subsystem is functional after restart
-    client.lens_reload().expect("lens_reload after restart");
     client.lens_list().expect("lens_list after restart");
 }

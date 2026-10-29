@@ -145,6 +145,6 @@ pub use mock::{
     FailingMockIndexOperations, FailingMockNodeAcpOperations, FailingMockP2POperations,
     FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
     MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
-    MockIndexOperations, MockLensOperations, MockNodeAcpOperations, MockP2POperations,
-    MockQueryExecutor, MockRestOperations,
+    MockIndexOperations, MockNodeAcpOperations, MockP2POperations, MockQueryExecutor,
+    MockRestOperations,
 };

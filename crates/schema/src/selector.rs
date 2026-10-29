@@ -12,7 +12,7 @@
 //! with `get_inactive` deliberately misses the active-by-name case, which is
 //! how Go reaches an inactive collection by name.
 
-use schema::CollectionVersion;
+use crate::CollectionVersion;
 
 /// Go's `GetCollectionsOptions`, as the collection lookup consumes them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -125,7 +125,7 @@ impl DocumentArgs {
 }
 
 /// The client a document write runs with, and the session transaction.
-fn write_client(ctx: &ClientContext) -> Result<(HttpClient, Option<String>)> {
+pub(crate) fn write_client(ctx: &ClientContext) -> Result<(HttpClient, Option<String>)> {
     let client = HttpClient::new(&ctx.url)?
         .with_auth_token(ctx.auth_token.clone())
         .with_verbose(ctx.verbose);

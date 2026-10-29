@@ -155,9 +155,10 @@ impl QueryExecutor for MockQueryExecutor {
         Ok(vec![mock_collection_version("MockCollection")])
     }
 
-    async fn collections_as(
+    async fn get_collections_as(
         &self,
         _context: &defra_core::RequestContext,
+        _selector: &schema::CollectionSelector,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
         Ok(vec![mock_collection_version("MockCollection")])
     }

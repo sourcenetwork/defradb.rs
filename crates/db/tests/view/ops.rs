@@ -1,6 +1,6 @@
 //! Which views a refresh touches, and which it refuses.
 //!
-//! The selector precedence itself is `collection::selector`; these are the
+//! The selector precedence itself is `schema::CollectionSelector`; these are the
 //! refresh-specific rules layered on top of it.
 
 use db::is_refreshable_view;

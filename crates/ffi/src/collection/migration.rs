@@ -79,55 +79,14 @@ pub unsafe extern "C" fn set_migration(
     identity_did: *const c_char,
     config: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::MigrationSet
-        ));
-        let config_str = try_ffi!(require_c_str(config, "config"));
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        ffi_async!(node_ptr, {
-            // Parse the LensConfig from JSON
-            let lens_config: lens::LensConfig = serde_json::from_str(&config_str)
-                .map_err(|e| format!("failed to parse lens config: {}", e))?;
-
-            // Register the migration with the lens store
-            let transform_id = database
-                .set_migration_as(&context, lens_config)
-                .await
-                .map_err(|e| format!("failed to set migration: {}", e))?;
-
-            Ok(transform_id.to_string())
-        })
-    }
+    ffi_entry! { set(node_ptr, std::ptr::null(), identity_did, config) }
 }
 
-/// Set a migration within an existing transaction.
-///
-/// This registers a lens migration configuration within the specified transaction.
-/// The migration will only be visible after the transaction is committed.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `txn_id` - Transaction ID from `begin_txn`
-/// * `identity_did` - Optional DID for permission checks (null for anonymous)
-/// * `config` - JSON string containing the lens configuration
-///
-/// # Returns
-///
-/// - Status 0: Success (value contains the transform ID)
-/// - Status 1: Error (error field contains message)
+/// Set a migration in transaction `txn_id`; see [`set_migration`].
 ///
 /// # Safety
 ///
-/// `txn_id` and `config` must be valid null-terminated UTF-8 strings.
+/// Every string pointer must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn set_migration_in_txn(
     node_ptr: usize,
@@ -135,35 +94,25 @@ pub unsafe extern "C" fn set_migration_in_txn(
     identity_did: *const c_char,
     config: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::MigrationSet
-        ));
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
-        let config_str = try_ffi!(require_c_str(config, "config"));
+    ffi_entry! { set(node_ptr, txn_id, identity_did, config) }
+}
 
-        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
-        let txn = try_ffi!(txn_str
-            .parse::<defra_core::TxnId>()
-            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default()
-            .with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()))
-            .with_txn(Some(txn));
-
-        ffi_async!(caller, {
-            let transform_id = runner
-                .set_migration_as(&context, &config_str)
-                .await
-                .map_err(|e| format!("failed to set migration in txn: {}", e))?;
-
-            Ok(transform_id)
-        })
-    }
+/// Go's `SetMigration` through the core: the lens ID.
+unsafe fn set(
+    node_ptr: usize,
+    txn_id: *const c_char,
+    identity_did: *const c_char,
+    config: *const c_char,
+) -> FfiResult {
+    let context = try_ffi!(crate::lens::call_context(identity_did, txn_id));
+    let config_str = try_ffi!(require_c_str(config, "config"));
+    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+    ffi_async!(caller, {
+        runner
+            .set_migration_as(&context, &config_str)
+            .await
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// Delete multiple collection versions by their version IDs.

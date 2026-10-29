@@ -3,11 +3,11 @@
 //! This module contains operations for refreshing and managing
 //! materialized view caches.
 
-use crate::collection::selector::CollectionSelector;
 use crate::error::{Error, Result};
 use datastore::NamespaceView;
 #[cfg(not(target_arch = "wasm32"))]
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+use schema::CollectionSelector;
 use schema::CollectionVersion;
 use std::sync::Arc;
 use std::time::Duration;

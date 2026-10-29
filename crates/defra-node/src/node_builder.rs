@@ -441,6 +441,7 @@ impl NodeBuilder {
             )
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
+            .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,

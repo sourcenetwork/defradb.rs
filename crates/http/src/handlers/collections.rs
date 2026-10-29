@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::handlers::collection_selector::CollectionSelectorQuery;
-use crate::handlers::txn_header::{rest_for_request, txn_context};
+use crate::handlers::txn_header::{call_context, rest_for_request};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -79,76 +79,20 @@ fn parse_collection_doc_ids_pagination(
     Ok(CollectionDocIdsPagination { limit, offset })
 }
 
-/// List collection names, narrowed by Go's selectors.
+/// The collection versions Go's selectors pick.
 ///
 /// GET /api/v0/collections?name=Users&version_id=..&collection_id=..&get_inactive=true
-///
-/// The selectors are Go's `GetCollectionsOptions` (`http/client.go:422-448`)
-/// and resolve through the shared `db::CollectionSelector`, the same lookup
-/// `POST /view/refresh` uses. Ignoring them, as this handler used to, answers
-/// a request for one collection with every collection and gives the caller no
-/// way to tell.
-///
-/// One source for every request, narrowed or not. Reading the unnarrowed case
-/// from a different place let the two disagree: the collection cache
-/// deliberately holds inactive P2P-synced collections
-/// (`db/src/merge/merge_handler/definition.rs`), so a node that synced `Users`
-/// without activating it listed it for `GET /collections` and not for
-/// `?name=Users`. Go answers both from the stored collections
-/// (`description.GetActiveCollections`), which is what the version store is.
-///
-/// Returns the full definition of each selected collection version.
-///
-/// Requires `CollectionGet` permission when NAC is enabled.
 pub async fn list_collections(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
     query: CollectionSelectorQuery,
 ) -> Result<Json<Vec<schema::CollectionVersion>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::CollectionGet).await?;
-
-    let selector = query.into_selector();
-
-    let versions = if let Some(context) = txn_context(&identity, &headers)? {
-        state
-            .executor
-            .collections_as(&context)
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        // The same branch `refresh_views` makes on the same selector: inactive
-        // versions cost a scan of every stored version, and a selector that
-        // does not ask for them is answerable from the active listing alone.
-        let collection_versions = state.require_collection_versions()?;
-        if selector.needs_all_versions() {
-            collection_versions.get_all_collections().await
-        } else {
-            collection_versions.get_active_collections().await
-        }
-    }
-    .map_err(http_error_from_backend_message)?;
-
-    // Go propagates not-found only from the direct version lookup, which the
-    // active-by-name arm pre-empts (`internal/db/collection.go:210-215`). So
-    // `?version_id=nope` is a 404 while `?name=Users&version_id=nope` is an
-    // empty 200, and an unknown name or collection id never errors at all.
-    if selector.resolves_by_version_lookup() {
-        let version_id = selector
-            .version_id
-            .as_ref()
-            .expect("a version lookup has a version id");
-        if !versions.iter().any(|v| &v.version_id == version_id) {
-            return Err(HttpError::NotFound("collection not found".into()));
-        }
-    }
-
-    let mut collections: Vec<_> = versions
-        .into_iter()
-        .filter(|version| selector.selects(version))
-        .collect();
-    collections.sort_by(|a, b| (&a.name, &a.version_id).cmp(&(&b.name, &b.version_id)));
-
+    let context = call_context(&identity, &headers)?;
+    let collections = state
+        .executor
+        .get_collections_as(&context, &query.into_selector())
+        .await?;
     Ok(Json(collections))
 }
 
@@ -183,52 +127,30 @@ pub async fn get_collection_doc_ids(
     }
 }
 
-/// Go-compatible request body for patching a collection schema.
+/// Go's request body for patching the collections: the patch, as its text
+/// or as the array itself, and the lens that migrates to the new versions.
 #[derive(Debug, serde::Deserialize)]
 pub struct PatchCollectionRequest {
-    #[serde(rename = "Patch", alias = "patch")]
+    #[serde(rename = "Patch")]
     pub patch: serde_json::Value,
-    #[serde(rename = "Migration", alias = "migration", default)]
+    #[serde(rename = "Migration", default)]
     pub migration: Option<lens::LensConfig>,
-    #[serde(
-        rename = "SetAsDefaultVersion",
-        alias = "set_as_default_version",
-        default
-    )]
-    pub set_as_default_version: Option<bool>,
 }
 
-/// Patch a collection schema.
+/// Patch the collections.
 ///
 /// PATCH /api/v0/collections
-///
-/// Applies a JSON Patch (RFC 6902) to a collection schema, creating a
-/// new schema version.
-///
-/// Requires `CollectionUpdate` permission when NAC is enabled.
 pub async fn patch_collection(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(body): Json<PatchCollectionRequest>,
 ) -> Result<StatusCode, HttpError> {
-    require_permission(&state, &identity, NodePermission::CollectionPatch).await?;
-
-    let collection_mgmt = bound(state.require_collection_mgmt()?, &identity.context());
-
-    // The Patch field may be a JSON string containing patch ops, or a JSON array directly
-    let patch_str = if body.patch.is_string() {
-        body.patch.as_str().unwrap().to_string()
-    } else {
-        serde_json::to_string(&body.patch)
-            .map_err(|e| HttpError::BadRequest(format!("invalid patch: {}", e)))?
+    let context = call_context(&identity, &headers)?;
+    let patch = match body.patch {
+        serde_json::Value::String(text) => text,
+        ops => ops.to_string(),
     };
-
-    // Parse the patch ops to extract the collection name from the first op's path
-    let patch_ops: serde_json::Value = serde_json::from_str(&patch_str)
-        .map_err(|e| HttpError::BadRequest(format!("invalid patch JSON: {}", e)))?;
-
-    let name = extract_collection_name_from_patch(&patch_ops)?;
-
     if !state.dev_mode {
         if let Some(migration) = &body.migration {
             migration
@@ -236,66 +158,29 @@ pub async fn patch_collection(
                 .map_err(|e| HttpError::BadRequest(e.to_string()))?;
         }
     }
-
-    collection_mgmt
-        .patch_collection(&name, &patch_str, body.migration)
-        .await
-        .map_err(http_error_from_backend_message)?;
-
+    state
+        .executor
+        .patch_collection_as(&context, &patch, body.migration)
+        .await?;
     Ok(StatusCode::OK)
 }
 
-/// Extract the collection name from the first patch operation's path.
-/// Go patches use paths like "/Users/Fields/-" where "Users" is the collection name.
-fn extract_collection_name_from_patch(patch_ops: &serde_json::Value) -> Result<String, HttpError> {
-    let ops = patch_ops
-        .as_array()
-        .ok_or_else(|| HttpError::BadRequest("patch must be a JSON array".into()))?;
-
-    let first_op = ops
-        .first()
-        .ok_or_else(|| HttpError::BadRequest("patch array is empty".into()))?;
-
-    let path = first_op
-        .get("path")
-        .and_then(|p| p.as_str())
-        .ok_or_else(|| HttpError::BadRequest("first patch op missing 'path' field".into()))?;
-
-    // Path format: "/<CollectionName>/Fields/-" or "/<CollectionName>/..."
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let name = segments
-        .first()
-        .ok_or_else(|| HttpError::BadRequest("patch path has no collection name".into()))?;
-
-    Ok(name.to_string())
-}
-
-/// Set the active collection version.
+/// Set the active collection version: the body is its version ID.
 ///
 /// POST /api/v0/collections/default
-///
-/// Accepts a plain text body containing the version ID to activate.
-/// Activates the specified version and deactivates other versions
-/// of the same collection.
-///
-/// Requires `CollectionUpdate` permission when NAC is enabled.
 pub async fn set_active(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<StatusCode, HttpError> {
-    require_permission(&state, &identity, NodePermission::CollectionPatch).await?;
-
+    let context = call_context(&identity, &headers)?;
     let version_id = String::from_utf8(body.to_vec())
         .map_err(|_| HttpError::BadRequest("invalid UTF-8".into()))?;
-
-    let collection_mgmt = bound(state.require_collection_mgmt()?, &identity.context());
-
-    collection_mgmt
-        .set_active_version(version_id.trim())
-        .await
-        .map_err(http_error_from_backend_message)?;
-
+    state
+        .executor
+        .set_active_collection_version_as(&context, version_id.trim())
+        .await?;
     Ok(StatusCode::OK)
 }
 

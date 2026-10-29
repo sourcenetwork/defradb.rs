@@ -1,7 +1,8 @@
-use crate::scenario::{Common, Op, Text};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `collection.setActiveVersion` op.
@@ -32,6 +33,17 @@ impl Op for SetActiveCollectionVersion {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        state
+            .block_on(state.node().set_active_collection_version_as(
+                &state.context(self.txn),
+                self.version_id.as_str(),
+            ))
+            .map(|()| json!({}))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
 }
 
 impl Action for SetActiveCollectionVersion {
@@ -39,5 +51,38 @@ impl Action for SetActiveCollectionVersion {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for SetActiveCollectionVersion {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let (txn, version_id) = (
+                state.txn_id(action.txn),
+                action.version_id.as_str().to_owned(),
+            );
+            state
+                .http(|client| async move {
+                    client
+                        .set_active_collection_version(txn.as_deref(), &version_id)
+                        .await
+                })
+                .map(|()| json!({}))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for SetActiveCollectionVersion {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let args = ["collection", "set-active", action.version_id.as_str()];
+            state
+                .defra_client_in(action.txn, &args)
+                .map(|_| json!({}))
+                .map_err(Failure::operation)
+        });
     }
 }

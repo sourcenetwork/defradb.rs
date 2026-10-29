@@ -93,7 +93,7 @@ impl Node {
 
     /// `context` acting as the node when it names no identity of its own, as
     /// [`Node::begin_transaction`] does.
-    fn caller(&self, context: &RequestContext) -> RequestContext {
+    pub(crate) fn caller(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),
             None => self.node_context(),
@@ -128,7 +128,7 @@ fn handle(id: TxnId) -> TransactionHandle {
 
 /// A transaction failure with Go's words: only a missing transaction has its
 /// own text.
-fn transaction_error(error: TransactionError) -> Error {
+pub(crate) fn transaction_error(error: TransactionError) -> Error {
     match error {
         TransactionError::NotFound(_) => Error::TransactionNotFound,
         TransactionError::Conflict(_) => Error::TransactionConflict,

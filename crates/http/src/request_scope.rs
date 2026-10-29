@@ -18,7 +18,7 @@ use query::rest::RestOperations;
 use crate::router::{
     AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
     CollectionOperations, DocumentAcpOperations, EncryptedIndexOperations, IndexOperations,
-    LensOperations, P2POperations, ViewOperations,
+    P2POperations, ViewOperations,
 };
 
 /// The context of the request a handler serves: the one the auth middleware
@@ -70,7 +70,6 @@ for_request!(
     DocumentAcpOperations,
     EncryptedIndexOperations,
     IndexOperations,
-    LensOperations,
     P2POperations,
     RestOperations,
     CollectionOperations,
