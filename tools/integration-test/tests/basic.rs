@@ -38,6 +38,8 @@ mod smoke;
 mod transactions;
 #[path = "basic/truncate_parallel.rs"]
 mod truncate_parallel;
+#[path = "basic/txn_context.rs"]
+mod txn_context;
 
 #[path = "basic/rest_transactions.rs"]
 mod rest_transactions;

@@ -41,8 +41,12 @@ impl Op for AddCollection {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
         state
-            .block_on(state.node().add_collection(self.sdl.as_str()))
-            .map(|()| json!({}))
+            .block_on(
+                state
+                    .node()
+                    .add_collection_as(&state.context(self.txn), self.sdl.as_str()),
+            )
+            .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
 }
@@ -54,12 +58,6 @@ impl AddCollection {
         if !self.expected_results.is_null() {
             return Err(Failure::unsupported(format!(
                 "{} argument expectedResults",
-                Self::name()
-            )));
-        }
-        if self.txn.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument transaction",
                 Self::name()
             )));
         }
@@ -80,8 +78,9 @@ impl HttpRun for AddCollection {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             let sdl = action.sdl.as_str().to_owned();
+            let txn = state.txn_id(action.txn);
             state
-                .http(|client| async move { client.schema_add(&sdl, None).await })
+                .http(|client| async move { client.schema_add(&sdl, txn.as_deref()).await })
                 .map(|_| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -93,7 +92,7 @@ impl CliRun for AddCollection {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             state
-                .defra_client(&["collection", "add", action.sdl.as_str()])
+                .defra_client_in(action.txn, &["collection", "add", action.sdl.as_str()])
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

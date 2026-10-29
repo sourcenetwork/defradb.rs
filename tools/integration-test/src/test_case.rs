@@ -2,8 +2,10 @@ use std::any::Any;
 use std::future::Future;
 use std::sync::Arc;
 
+use defra_core::{RequestContext, TxnId};
 use defra_node::Node;
 use rapidhash::RapidHashMap;
+use regolith::sync::Atom;
 use serde_json::Value;
 use testo::multiplier::get_active_multipliers;
 use testo::prelude::*;
@@ -23,9 +25,52 @@ pub struct State {
     pub held: Vec<Arc<dyn Any + Send + Sync>>,
     pub captures: RapidHashMap<String, Value>,
     pub bindings: Bindings,
+    /// The transactions the test began, in order; actions name one by index.
+    pub txns: Txns,
+}
+
+/// The transactions a test has begun. Shared by every clone of the state, and
+/// appended to by an op that only sees the state by reference.
+#[derive(Clone)]
+pub struct Txns(Arc<Atom<Vec<TxnId>>>);
+
+impl Default for Txns {
+    fn default() -> Self {
+        Self(Arc::new(Atom::new(Vec::new())))
+    }
+}
+
+impl Txns {
+    pub fn push(&self, id: TxnId) {
+        self.0.rcu(|ids| {
+            let mut next = ids.clone();
+            next.push(id);
+            next
+        });
+    }
+
+    pub fn get(&self, index: usize) -> Option<TxnId> {
+        self.0.load_clone().get(index).copied()
+    }
 }
 
 impl State {
+    /// The context a request runs in: inside transaction number `txn` when
+    /// the action names one.
+    pub fn context(&self, txn: Option<usize>) -> RequestContext {
+        let id = txn.map(|index| {
+            self.txns
+                .get(index)
+                .unwrap_or_else(|| panic!("no transaction {index}: TxnBegin did not run"))
+        });
+        RequestContext::ambient().with_txn(id)
+    }
+
+    /// Transaction number `txn`'s ID as the HTTP API and the CLI write it.
+    pub fn txn_id(&self, txn: Option<usize>) -> Option<String> {
+        self.context(txn).txn().map(|id| id.to_string())
+    }
+
     pub fn node(&self) -> &Node {
         self.node.as_deref().expect(
             "no in-process node: Connect did not run, or this client reaches the node by URL",

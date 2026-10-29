@@ -25,11 +25,12 @@ impl Action for IntrospectionRequest {
 
     fn execute(&self, state: &mut State) {
         assert!(self.txn.is_none(), "transactions are not supported yet");
-        let response = state.block_on(
-            state
-                .node()
-                .execute_request(QueryRequest::new(self.request.as_str())),
-        );
+        let response = state
+            .block_on(state.node().execute_request_as(
+                &state.context(self.txn),
+                QueryRequest::new(self.request.as_str()),
+            ))
+            .expect("run request");
         self.check(graphql_outcome(
             response.data,
             response.errors.iter().map(|e| e.message.as_str()),

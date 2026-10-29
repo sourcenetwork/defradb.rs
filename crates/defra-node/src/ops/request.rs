@@ -115,7 +115,7 @@ fn handle(id: TxnId) -> TransactionHandle {
 fn transaction_error(error: TransactionError) -> Error {
     match error {
         TransactionError::NotFound(_) => Error::TransactionNotFound,
-        TransactionError::Conflict(message) => Error::TransactionConflict(message),
+        TransactionError::Conflict(_) => Error::TransactionConflict,
         other => Error::Transaction(other),
     }
 }

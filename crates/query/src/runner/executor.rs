@@ -215,7 +215,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 runner.registry.run_as(&context, handle, deadline, job)
             })
             .await;
-        answered(Some(handle), outcome)
+        answered(outcome)
     }
 
     async fn observe_document_owners_in_txn(
@@ -347,7 +347,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             {
                 Err(TransactionError::NotSupported(_)) => {}
                 Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
-                    return answered(None, Err(error));
+                    return answered(Err(error));
                 }
                 Err(error) => {
                     return QueryResponse::error(format!(
@@ -355,7 +355,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         error
                     ));
                 }
-                outcome => return answered(None, outcome),
+                outcome => return answered(outcome),
             }
         }
 
