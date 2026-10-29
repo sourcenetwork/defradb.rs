@@ -274,6 +274,10 @@ pub struct P2PHost<S: Store> {
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
     pub(super) peer_addrs: RapidHashMap<PeerId, Multiaddr>,
+    /// Disconnect replies held until the peer's last connection closes, so
+    /// `ActivePeers` after `Disconnect` no longer lists it, as in Go.
+    pub(super) pending_disconnects:
+        RapidHashMap<PeerId, Vec<tokio::sync::oneshot::Sender<Result<()>>>>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
@@ -609,6 +613,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 rapidhash::fast::RandomState::default(),
             )),
             peer_addrs: RapidHashMap::new(),
+            pending_disconnects: RapidHashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
                 config.connection_manager_low_water,

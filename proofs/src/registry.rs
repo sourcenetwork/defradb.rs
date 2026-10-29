@@ -64,6 +64,16 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Disconnect answers only once the peer's last connection closed, so
+        // ActivePeers right after it no longer lists the peer, as in Go.
+        family: "Peer connection observation",
+        name: "INV_AnsweredMeansClosed / PROP_CallerAnswered",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_disconnect; crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/net/info/disconnect_peers.rs",
+        model_ref: "MC_PeerDisconnect_{Green,Red_EarlyAck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Peer connection observation",
         name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
         axis: Tla,

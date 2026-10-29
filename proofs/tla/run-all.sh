@@ -115,6 +115,8 @@ RUNS=(
   "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
+  "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
+  "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
