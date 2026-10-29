@@ -2,8 +2,9 @@
 //! model that proves it, the source it is anchored to, and how it is bound to
 //! the real binary.
 //!
-//! This table is the spine. `matrix::every_modeled_family_is_bound` asserts that
-//! each family in `proofs/README.md`'s *Modeled* list appears here, so a new
+//! This table is the spine: its distinct `family` values are the modeled
+//! families. `matrix::readme_lists_exactly_the_modeled_families` asserts that
+//! `proofs/README.md`'s *Modeled families* table lists exactly these, so a new
 //! model cannot land without declaring how it is kept honest against the code.
 
 /// Which proof tool establishes the property.
@@ -30,7 +31,7 @@ pub enum Tier {
 }
 
 pub struct Property {
-    /// Family name — must match a row in `proofs/README.md`'s Modeled table.
+    /// Family name — must match a row in `proofs/README.md`'s Modeled families table.
     pub family: &'static str,
     /// The headline invariant or theorem.
     pub name: &'static str,

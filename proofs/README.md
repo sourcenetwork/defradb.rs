@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 54 families (bounded model claims)
+### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
@@ -131,8 +131,10 @@ to its headline invariant, source anchor, the model that proves it, and its
 binding tier (`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
 *assumed*, never asserted (crypto, eventual connectivity, bounded-N, foreign
 substrate) — so a green run never reads as "this was proven against the
-artifact." `matrix::every_modeled_family_is_bound` fails if a model lands without
-a binding.
+artifact." The modeled families are the registry's families, so adding a model
+is one `PROPERTIES` entry and one row above;
+`matrix::readme_lists_exactly_the_modeled_families` names any family that has
+one without the other.
 
 ### Realized status — all 21 families bound
 
