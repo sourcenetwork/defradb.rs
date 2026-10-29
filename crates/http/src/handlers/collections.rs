@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::handlers::collection_selector::CollectionSelectorQuery;
-use crate::handlers::txn_header::{rest_for_request, txn_id_from_headers};
+use crate::handlers::txn_header::{rest_for_request, txn_context};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -110,10 +110,12 @@ pub async fn list_collections(
 
     let selector = query.into_selector();
 
-    let versions = if let Some(txn_id) = txn_id_from_headers(&headers)? {
-        bound(state.require_txn_ops()?, &identity.context())
-            .get_collections_in_txn(txn_id)
+    let versions = if let Some(context) = txn_context(&identity, &headers)? {
+        state
+            .executor
+            .collections_as(&context)
             .await
+            .map_err(|e| e.to_string())
     } else {
         // The same branch `refresh_views` makes on the same selector: inactive
         // versions cost a scan of every stored version, and a selector that

@@ -179,11 +179,6 @@ impl Node {
         server = server.with_collection_mgmt_arc(collection_mgmt_adapter);
         info!("Collection management HTTP endpoints enabled");
 
-        let txn_adapter =
-            crate::txn_adapter::TxnRegistryAdapter::new_arc(query_setup.registry.clone());
-        server = server.with_txn_ops_arc(txn_adapter);
-        info!("Transaction-scoped HTTP endpoints enabled");
-
         let index_adapter = crate::index_adapter::IndexAdapter::new_arc(database.clone());
         server = server.with_index_arc(index_adapter);
         info!("Index HTTP endpoints enabled");

@@ -275,6 +275,29 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.discard_as(context, handle).await
     }
 
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.add_collection_as(context, sdl).await
+    }
+
+    async fn collections_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.collections_as(context).await
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.set_migration_as(context, config).await
+    }
+
     fn abandon_txn(&self, handle: &TransactionHandle) {
         self.registry.abandon(handle);
     }

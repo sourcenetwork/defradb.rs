@@ -28,7 +28,7 @@ use crate::router::{
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
     CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
     EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
-    P2POperations, TransactionOperations, ViewOperations,
+    P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -117,7 +117,6 @@ pub struct Server {
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
-    txn_ops: Option<Arc<dyn TransactionOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -188,7 +187,6 @@ impl Server {
             doc_acp: None,
             view: None,
             dump: None,
-            txn_ops: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -373,12 +371,6 @@ impl Server {
         self
     }
 
-    /// Set transaction operations from an Arc.
-    pub fn with_txn_ops_arc(mut self, txn_ops: Arc<dyn TransactionOperations>) -> Self {
-        self.txn_ops = Some(txn_ops);
-        self
-    }
-
     /// Set event bus for GraphQL subscriptions.
     ///
     /// When an event bus is configured, the server enables WebSocket
@@ -484,9 +476,6 @@ impl Server {
         }
         if let Some(ref dump) = self.dump {
             builder = builder.with_dump(Arc::clone(dump));
-        }
-        if let Some(ref txn_ops) = self.txn_ops {
-            builder = builder.with_txn_ops(Arc::clone(txn_ops));
         }
         if let Some(ref event_bus) = self.event_bus {
             builder = builder.with_event_bus(Arc::clone(event_bus));

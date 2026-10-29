@@ -133,7 +133,7 @@ pub use router::{
     IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
     NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
     RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    ReplicatorInfo, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
@@ -147,5 +147,5 @@ pub use mock::{
     FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
     MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
     MockIndexOperations, MockLensOperations, MockNodeAcpOperations, MockP2POperations,
-    MockQueryExecutor, MockRestOperations, MockTransactionOperations,
+    MockQueryExecutor, MockRestOperations,
 };

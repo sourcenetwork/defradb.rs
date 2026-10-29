@@ -196,6 +196,42 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
     }
 
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let id = context_txn(context)?;
+        self.add_collection_in_txn_as(context, &id, sdl)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn collections_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let id = context_txn(context)?;
+        self.get_collections_in_txn_as(context, &id)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let id = context_txn(context)?;
+        let config: lens::LensConfig = serde_json::from_str(config).map_err(|e| {
+            TransactionError::operation(format!("failed to parse lens config: {e}"))
+        })?;
+        self.set_migration_in_txn_as(context, &id, config)
+            .await
+            .map(|transform| transform.to_string())
+            .map_err(operation_error)
+    }
+
     async fn discard(
         &self,
         handle: &TransactionHandle,
@@ -242,5 +278,23 @@ fn commit_error(handle: &str, error: crate::error::Error) -> TransactionError {
             }
             _ => TransactionError::execution(message),
         }
+    }
+}
+
+/// The transaction `context` runs in, as the text the registry's tables key
+/// on; a context without one names no transaction.
+fn context_txn(context: &RequestContext) -> std::result::Result<String, TransactionError> {
+    context
+        .txn()
+        .map(|id| id.to_string())
+        .ok_or_else(|| TransactionError::not_found("the request carries no transaction"))
+}
+
+/// A refused operation inside a transaction, in the words the core gave it;
+/// a missing or foreign transaction keeps its own variant.
+fn operation_error(error: crate::error::Error) -> TransactionError {
+    match error {
+        crate::error::Error::TransactionNotFound(message) => TransactionError::not_found(message),
+        other => TransactionError::operation(other.to_string()),
     }
 }
