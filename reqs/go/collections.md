@@ -275,13 +275,6 @@ With branched version histories each carrying its own migration, switching betwe
 
 A document replicated from a peer at an older, much older or newer collection version (also across a version-history gap or on another branch) is returned by the receiving node migrated up or down to its own active version, while the sender returns it as written.
 
-# `go.collection_version.migrations.query.restart`: Migrations survive restart
-
-- **Parents:** ["go.collection_version.migrations.query"]
-- **Go-Tests:** ["collection_version/migrations/query/with_restart_test.go::TestCollectionMigrationQueryWithRestart", "collection_version/migrations/query/with_restart_test.go::TestCollectionMigrationQueryWithRestartAndMigrationBeforePatchCollection"]
-
-Migrations configured before or after the patch are still applied to queries after the node restarts.
-
 # `go.collection`: Collection lifecycle operations
 
 - **Parents:** ["go"]

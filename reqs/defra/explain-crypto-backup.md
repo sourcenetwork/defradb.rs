@@ -322,3 +322,10 @@ Querying an encrypted document returns its plaintext fields, including a `pcount
 - **Go-Bug-Suspect:** "test is skipped ('t.Skip') for Go issue #4789: KMS authorisation needs the doc's collection version locally, which only the sync being authorised delivers, so Go deadlocks."
 
 Two peers whose `@branchable` collection versions have diverged each create an encrypted doc and sync bidirectionally; each must obtain the other's key and read both docs.
+
+# `go.searchable_encryption.index.patch`: Encrypted indexes are immutable via collection patch
+
+- **Parents:** ["go.searchable_encryption.index"]
+- **Scenarios:** ["searchable_encryption.patch-collection-modify-encrypted-index-should-error", "searchable_encryption.patch-collection-new-encrypted-index-should-error", "searchable_encryption.patch-collection-remove-encrypted-index-should-error"]
+
+A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fails with `collection encrypted indexes cannot be mutated`.

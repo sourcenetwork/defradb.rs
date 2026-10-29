@@ -202,3 +202,25 @@ Several aliased `add_User` fields in one mutation execute serially in the order 
 - **Scenarios:** ["mutation.delete.without-sub-selection", "mutation.delete.without-sub-selection-fields", "mutation.special.test-mutation-invalid-mutation"]
 
 An unknown mutation field fails with `Cannot query field "dostuff_User" on type "Mutation".`; `delete_User` without a selection set fails with `Field "delete_User" of type "[User]" must have a sub selection.`; an empty selection set fails with a `Syntax Error GraphQL` error.
+
+# `go.mutation.relation.one_to_many_link`: Linking a one-to-many from the many side
+
+- **Parents:** ["go.mutation.relation"]
+- **Scenarios:** ["mutation.add.field_kinds.one_to_many.alias-relation-name-and-internal-id-both-produce-same-doc-id", "mutation.add.field_kinds.one_to_many.aliased-relation-name-to-link-from-many-side", "mutation.add.field_kinds.one_to_many.relation-idto-link-from-many-side", "mutation.update.field_kinds.one_to_many.alias-relation-name-to-link-from-many-side", "mutation.update.field_kinds.one_to_many.relation-idto-link-from-many-side"]
+- **Scope:** "the same-docID test is excluded from the signed-docs multiplier (it asserts a hard-coded docID)"
+
+Setting `_authorID` or `author` on a `Book` links it, visible as `Author { published { name } }` and `Book { author { name } }`; re-pointing it to another author moves the book (the old author's `published` becomes empty). The alias and `_authorID` forms produce the same book docID (`bae-6dfd1924-d27b-55d0-9eaf-152b5d873fc1`).
+
+# `go.net.peers.disconnect`: Disconnecting peers
+
+- **Parents:** ["go.net.peers"]
+- **Scenarios:** ["net.info.net-info-disconnect-empty-list", "net.info.net-info-disconnect-multiple-peers", "net.info.net-info-disconnect-single-peer"]
+
+Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
+
+# `go.net.subscribe.collection_list`: Listing collection subscriptions
+
+- **Parents:** ["go.net.subscribe"]
+- **Scenarios:** ["net.simple.peer.subscribe.collection.p2-pcollection-add-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-get-all"]
+
+Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.

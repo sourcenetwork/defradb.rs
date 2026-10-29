@@ -307,11 +307,15 @@
   },
   {
     "id": "go.mutation.relation.one_to_many_link",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence"
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_alias.rs::mutation_add_one_to_many_aliased_relation_name_to_link_from_many_side",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_alias.rs::mutation_update_one_to_many_alias_relation_name_and_internal_id_both_produce_same_doc_id",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_simple.rs::mutation_add_one_to_many_relation_id_to_link_from_many_side",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_many/simple.rs::mutation_update_one_to_many_relation_id_to_link_from_many_side",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_many/with_alias.rs::mutation_update_one_to_many_alias_relation_name_to_link_from_many_side"
     ],
-    "evidence": "cross_runtime_queries.rs:181-201 creates Books with author: <id> and asserts that Author { published { author { name } } } and Book { author { name } } match Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Not asserted: the `_authorID` form, re-pointing a book to another author via update (old author's `published` empty), and the alias and `_authorID` forms producing the same docID."
   },
   {
@@ -626,13 +630,13 @@
   },
   {
     "id": "go.net.peers.disconnect",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/http/src/router/routes.rs::p2p_disconnect_removes_connected_peer",
-      "crates/p2p/tests/host_tests.rs::test_disconnect_drops_connected_peer",
-      "tools/integration-test/tests/p2p/manage_relay.rs::manage_peer_disconnect_severs_live_connection"
+      "tools/integration-test/tests/net/info/disconnect_peers.rs::net_info_disconnect_empty_list",
+      "tools/integration-test/tests/net/info/disconnect_peers.rs::net_info_disconnect_multiple_peers",
+      "tools/integration-test/tests/net/info/disconnect_peers.rs::net_info_disconnect_single_peer"
     ],
-    "evidence": "routes.rs:579 asserts connected_peers is empty after POST /p2p/disconnect (mock P2P); host_tests.rs:988 waits until the peer leaves connected_peers; manage_relay.rs:789-799 asserts C leaves B's active peers",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Single-peer disconnect only. Unverified: disconnecting several peers in one call against a real node. Empty list: Rust's disconnect handler (crates/http/src/handlers/p2p/peers.rs:172) loops over an empty Vec and returns 200, so Go's 'addresses cannot be empty' error is neither implemented nor tested (a parity gap, not just a test gap)."
   },
   {
@@ -674,15 +678,15 @@
   },
   {
     "id": "go.net.subscribe.collection_list",
-    "verdict": "diverges",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_get_all",
-      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_get_single",
-      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_get_multiple",
-      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_remove_get_single",
-      "tools/integration-test/tests/p2p_iroh/replication/collection_sub.rs::collection_add_remove_get_multiple"
+      "tools/integration-test/tests/net/simple/peer/subscribe/collection/with_add_get.rs::p2_p_collection_add_get_multiple",
+      "tools/integration-test/tests/net/simple/peer/subscribe/collection/with_add_get.rs::p2_p_collection_add_get_single",
+      "tools/integration-test/tests/net/simple/peer/subscribe/collection/with_add_get_remove.rs::p2_p_collection_add_remove_get_multiple",
+      "tools/integration-test/tests/net/simple/peer/subscribe/collection/with_add_get_remove.rs::p2_p_collection_add_remove_get_single",
+      "tools/integration-test/tests/net/simple/peer/subscribe/collection/with_get.rs::p2_p_collection_get_all"
     ],
-    "evidence": "collection_sub.rs:49 empty initially; collection_sub.rs:65 asserts the list returns the collection NAME 'Users'; collection_sub.rs:146 empty after remove; collection_sub.rs:169 one left after removing one",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Go adds, lists and removes P2P collections by collection ID; Rust takes and returns collection names (crates/p2p-adapter/src/iroh.rs:855-905 maps names to IDs and back). A Go client sending collection IDs would get 'not found'. The list/remove semantics match. The multi-collection checks assert counts only, not which collection is left."
   },
   {

@@ -126,14 +126,6 @@ Setting `_publishedID` or `published` (the `@primary` side) on create or update 
 
 Setting `author` or `_authorID` on `Book` (the non-primary side) on create or update fails with `cannot set relation from secondary side` through the collection API, and with `Argument "input" has invalid value` through GraphQL, because the GQL input type has no such field.
 
-# `go.mutation.relation.one_to_many_link`: Linking a one-to-many from the many side
-
-- **Parents:** ["go.mutation.relation"]
-- **Go-Tests:** ["mutation/add/field_kinds/one_to_many/with_simple_test.go::TestMutationAddOneToMany_RelationIDToLinkFromManySide", "mutation/add/field_kinds/one_to_many/with_alias_test.go::TestMutationAddOneToMany_AliasedRelationNameToLinkFromManySide", "mutation/add/field_kinds/one_to_many/with_alias_test.go::TestMutationUpdateOneToMany_AliasRelationNameAndInternalIDBothProduceSameDocID", "mutation/update/field_kinds/one_to_many/simple_test.go::TestMutationUpdateOneToMany_RelationIDToLinkFromManySide", "mutation/update/field_kinds/one_to_many/with_alias_test.go::TestMutationUpdateOneToMany_AliasRelationNameToLinkFromManySide"]
-- **Scope:** "the same-docID test is excluded from the signed-docs multiplier (it asserts a hard-coded docID)"
-
-Setting `_authorID` or `author` on a `Book` links it, visible as `Author { published { name } }` and `Book { author { name } }`; re-pointing it to another author moves the book (the old author's `published` becomes empty). The alias and `_authorID` forms produce the same book docID (`bae-6dfd1924-d27b-55d0-9eaf-152b5d873fc1`).
-
 # `go.mutation.relation.one_to_many_single_side`: Setting a one-to-many from the one side is rejected
 
 - **Parents:** ["go.mutation.relation"]
@@ -247,13 +239,6 @@ Connecting, listing and disconnecting peers.
 
 Listing active peers on a node without P2P, or connecting from one, fails with `no p2p system configured`. A fresh node lists no peers; after nodes 1 and 2 connect to node 0, node 0 lists both addresses, and nodes 1 and 2 also list each other because node 0 joined them into one network.
 
-# `go.net.peers.disconnect`: Disconnecting peers
-
-- **Parents:** ["go.net.peers"]
-- **Go-Tests:** ["net/info/disconnect_peers_test.go::TestNetInfoDisconnectSinglePeer", "net/info/disconnect_peers_test.go::TestNetInfoDisconnectMultiplePeers", "net/info/disconnect_peers_test.go::TestNetInfoDisconnectEmptyList"]
-
-Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
-
 # `go.net.peer_events`: Peer join and leave events per pubsub topic
 
 - **Parents:** ["go.net"]
@@ -286,13 +271,6 @@ When connected peers subscribe to the same document(s), node 0 receives a join e
 - **Parents:** ["go.net"]
 
 Adding, listing and removing the collections and documents a node follows over pubsub.
-
-# `go.net.subscribe.collection_list`: Listing collection subscriptions
-
-- **Parents:** ["go.net.subscribe"]
-- **Go-Tests:** ["net/simple/peer/subscribe/collection/with_get_test.go::TestP2PCollectionGetAll", "net/simple/peer/subscribe/collection/with_add_get_test.go::TestP2PCollectionAddGetSingle", "net/simple/peer/subscribe/collection/with_add_get_test.go::TestP2PCollectionAddGetMultiple", "net/simple/peer/subscribe/collection/with_add_get_remove_test.go::TestP2PCollectionAddRemoveGetSingle", "net/simple/peer/subscribe/collection/with_add_get_remove_test.go::TestP2PCollectionAddRemoveGetMultiple"]
-
-Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.
 
 # `go.net.subscribe.collection_sync`: Collection subscriptions control which new documents arrive
 

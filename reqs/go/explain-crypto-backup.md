@@ -188,13 +188,6 @@ Creating, listing, deleting and patching encrypted indexes.
 
 Listing per collection returns `{FieldName, Type: equality}` for each encrypted index, including ones added later; listing all returns them keyed by collection; deleting removes only the named index, after which it can be created again; deleting a missing one fails with `encrypted index does not exist on this field`.
 
-# `go.searchable_encryption.index.patch`: Encrypted indexes are immutable via collection patch
-
-- **Parents:** ["go.searchable_encryption.index"]
-- **Go-Tests:** ["searchable_encryption/patch_test.go::TestPatchCollection_NewEncryptedIndex_ShouldError", "searchable_encryption/patch_test.go::TestPatchCollection_RemoveEncryptedIndex_ShouldError", "searchable_encryption/patch_test.go::TestPatchCollection_ModifyEncryptedIndex_ShouldError"]
-
-A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fails with `collection encrypted indexes cannot be mutated`.
-
 # `go.searchable_encryption.query`: Encrypted queries
 
 - **Parents:** ["go.searchable_encryption"]
