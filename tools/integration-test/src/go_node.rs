@@ -50,6 +50,12 @@ impl GoNode {
                 "--no-p2p",
                 "--no-telemetry",
             ])
+            // Off by default, as backbone's TestCluster started Go nodes.
+            .args([
+                "--no-encryption",
+                "--no-searchable-encryption",
+                "--no-signing",
+            ])
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
