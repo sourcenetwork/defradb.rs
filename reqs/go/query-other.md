@@ -107,21 +107,6 @@ A malformed CID string (`"fhbnjfahfhfhanfhga"`, `"bafybeidfhbnjfahfhfhanfhga"`) 
 
 `_commits(filter: ...)` filters on commit fields, mainly `fieldName`.
 
-# `go.query.commits.filter.fieldname-eq`: Equality on fieldName
-
-- **Parents:** ["go.query.commits.filter"]
-- **Go-Tests:** ["query/commits/with_field_test.go::TestQueryCommitsWithField", "query/commits/with_field_test.go::TestQueryCommitsWithFieldId", "query/commits/with_doc_id_field_test.go::TestQueryCommitsWithDocIDAndField", "query/commits/with_doc_id_field_test.go::TestQueryCommitsWithDocIDAndUnknownField", "query/commits/with_doc_id_field_test.go::TestQueryCommitsWithDocIDAndUnknownFieldId"]
-
-`filter: {fieldName: {_eq: "age"}}` (alone or with `docID`) returns only the `age` field commit; a field ID string such as `"1"` or `"999999"`, or an unknown name such as `"not a field"`, matches nothing and returns an empty list rather than an error.
-
-# `go.query.commits.filter.composite`: Filtering on the composite block
-
-- **Parents:** ["go.query.commits.filter"]
-- **Go-Tests:** ["query/commits/with_field_test.go::TestQueryCommitsWithCompositeField", "query/commits/with_field_test.go::TestQueryCommitsWithCompositeFieldIdWithReturnedCollectionVersionID", "query/commits/with_field_test.go::TestQueryCommits_WithFilterFieldNameNotEqualComposite_ReturnsFieldCommits", "query/commits/with_doc_id_field_test.go::TestQueryCommitsWithDocIDAndCompositeField"]
-- **Go-Bug-Suspect:** "TestQueryCommitsWithCompositeFieldIdWithReturnedCollectionVersionID is marked 'for documentation reasons only. This is not desired behaviour (Users should not be specifying field ids)', though it now filters on '_C'; the comment looks stale"
-
-`filter: {fieldName: {_eq: "_C"}}` returns only the composite commit (with its `collectionVersionId`), with or without `docID`; `{fieldName: {_neq: "_C"}}` returns the `age` and `name` field commits.
-
 # `go.query.commits.filter.fieldname-cid`: fieldName filter combined with a CID
 
 - **Parents:** ["go.query.commits.filter"]
@@ -820,13 +805,6 @@ An SDL with mutually referential named relations (`Player`/`Deck`/`Game` with `d
 # `go.query.one_to_one_to_many`: One-to-one followed by one-to-many
 
 - **Parents:** ["go.query"]
-
-# `go.query.one_to_one_to_many.join`: Two-hop resolution in both directions
-
-- **Parents:** ["go.query.one_to_one_to_many"]
-- **Go-Tests:** ["query/one_to_one_to_many/simple_test.go::TestQueryOneToOneToMany", "query/one_to_one_to_many/simple_test.go::TestQueryOneToOneToManyFromSecondaryOnOneToMany", "query/one_to_one_to_many/simple_test.go::TestQueryOneToOneToManyFromSecondaryOnOneToOne", "query/one_to_one_to_many/simple_test.go::TestQueryOneToOneToManyFromSecondary"]
-
-With `Indicator`–`Observable` one-to-one (either side primary) and `Observable { observations: [Observation] }`, `Observation { observable { indicator } }` and `Indicator { observable { observations } }` both resolve.
 
 # `go.query.one_to_one_to_one`: Chains of one-to-one relations
 

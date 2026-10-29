@@ -57,11 +57,14 @@
   },
   {
     "id": "go.index.definition.patch-immutable",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/index/patch.rs::patch_collection_add_secondary_index_should_error",
+      "tools/integration-test/tests/index/patch.rs::patch_collection_modify_secondary_index_should_error",
+      "tools/integration-test/tests/index/patch.rs::patch_collection_modify_vector_index_metric_should_error",
+      "tools/integration-test/tests/index/patch.rs::patch_collection_remove_secondary_index_should_error"
     ],
-    "evidence": "cross_runtime_schema_validation.rs:221-224 patch replacing /PatchIndexes/Indexes with [] is expected rejected by both Rust and Go (assert_outcome at :32-45)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only removal is tested and only accept/reject is compared, not the 'collection indexes cannot be mutated' message; adding or modifying a secondary index and changing a vector index metric via patch are not tested."
   },
   {
@@ -887,10 +890,12 @@
     "id": "go.txn.definitions.same-txn-visibility",
     "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/transactions.rs::txn_collection_listing_via_header_is_scoped",
-      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_is_only_visible_inside_transaction"
+      "tools/integration-test/tests/txn/get_collections.rs::txn_get_collections_inside_txn_with_add_schema_succeeds",
+      "tools/integration-test/tests/txn/get_collections.rs::txn_get_collections_inside_txn_without_add_schema_no_collections",
+      "tools/integration-test/tests/txn/list_lenses.rs::txn_list_lenses_inside_txn_with_add_lens_succeeds",
+      "tools/integration-test/tests/txn/list_lenses.rs::txn_list_lenses_inside_txn_without_add_lens_no_lenses"
     ],
-    "evidence": "transactions.rs:160 GET /collections with the txn header lists the collection added in it and :172 without it does not; registry_suite.rs:379 list_lenses_in_txn returns the lens set in that txn and :373 the global list does not",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "The 'other' reader is the non-transactional path rather than a second explicit transaction; same visibility rule."
   },
   {
