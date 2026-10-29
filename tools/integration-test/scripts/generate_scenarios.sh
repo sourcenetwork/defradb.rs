@@ -6,7 +6,7 @@
 #
 # Environment:
 #   DEFRADB_GO_REPO   Go checkout holding commits 137dc624 and 307364d9d (required)
-#   MANTRA_REQS       mantra reqs/go directory (default ../defradb.rs-mantra/reqs/go)
+#   REQS              requirements root holding go/ and defra/ (default <repo>/reqs)
 #   CARGO_PROFILE     cargo profile (default super-dev)
 #   RUN_TESTS=1       also run each generated area with nextest and summarize it
 set -euo pipefail
@@ -15,7 +15,7 @@ scenarios=${1:?usage: generate_scenarios.sh <scenarios-dir> [area...]}
 shift
 root=$(git rev-parse --show-toplevel)
 profile=${CARGO_PROFILE:-super-dev}
-mantra=${MANTRA_REQS:-$root/../defradb.rs-mantra/reqs/go}
+reqs=${REQS:-$root/reqs}
 go_repo=${DEFRADB_GO_REPO:?set DEFRADB_GO_REPO}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -36,7 +36,7 @@ fi
 for area in $areas; do
   echo "== $area"
   "$gen" generate --scenarios "$scenarios" --tests tools/integration-test/tests \
-    --mantra "$mantra" --drift "$work/drift.txt" --area "$area" | grep -v '^  op '
+    --mantra "$reqs/go" --mantra "$reqs/defra" --drift "$work/drift.txt" --area "$area" | grep -v '^  op '
   if [ "${RUN_TESTS:-0}" = 1 ]; then
     bin=$area
     case $area in acp | backup | encryption | query) bin=${area}_scenarios ;; esac

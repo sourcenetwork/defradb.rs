@@ -1,7 +1,7 @@
 //! Generates the Rust conformance tests from the scenario corpus, and checks
 //! that exporting them again gives the corpus back.
 //!
-//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR --drift FILE [--area NAME]...
+//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR [--mantra DIR] --drift FILE [--area NAME]...
 //!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--area NAME]...
 
 mod check;
@@ -79,7 +79,7 @@ fn selected(loaded: &corpus::Loaded, areas: &[String]) -> bool {
 
 fn generate(args: &Args) -> Result<()> {
     let tests = args.one("tests")?;
-    let leaves = mantra::load(&args.one("mantra")?)?;
+    let leaves = mantra::load(&args.many("mantra"))?;
     let drifted = drift(args)?;
     let areas = args.many("area");
     let all = corpus::load(&args.one("scenarios")?)?;
@@ -147,7 +147,7 @@ fn generate(args: &Args) -> Result<()> {
                 name.push_str("_2");
             }
             let key = mantra::key(&item.scenario.source.path, &item.scenario.source.test);
-            let leaf = leaves.get(&key);
+            let leaf = leaves.get(&key).or_else(|| leaves.get(&item.scenario.id));
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }
