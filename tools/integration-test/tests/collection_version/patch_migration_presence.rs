@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::Lens;
-use integration_test::actions::{AddCollection, GetCollectionsFiltered, PatchCollection};
+use integration_test::actions::{AddCollection, GetCollections, PatchCollection};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -29,8 +29,9 @@ fn collection_version_patch_none_migration_no_transform_recorded() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -79,8 +80,9 @@ fn collection_version_patch_some_empty_migration_transform_recorded() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

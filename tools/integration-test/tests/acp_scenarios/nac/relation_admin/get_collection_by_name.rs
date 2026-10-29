@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddNACActorRelationship, GetCollectionsFiltered, NodeStopForRestart, Start,
+    AddCollection, AddNACActorRelationship, Close, GetCollections, Start,
 };
 use integration_test::m;
 use integration_test::scenario::Common;
@@ -15,7 +15,8 @@ fn nac_admin_relation_can_get_collection_by_name() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -40,9 +41,10 @@ fn nac_admin_relation_can_get_collection_by_name() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(false),
+                filtered: true,
                 expected_error: Some(
                     "not authorized to perform operation. Permission: get-collection".into(),
                 ),
@@ -64,9 +66,10 @@ fn nac_admin_relation_can_get_collection_by_name() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(false),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

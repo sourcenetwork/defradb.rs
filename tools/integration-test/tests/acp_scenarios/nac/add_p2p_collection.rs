@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, ConnectPeers, NodeOpenP2P, NodeStopForRestart,
-    PeerEventsStart, Start,
+    AddCollection, AddCollectionSubscription, Close, ConnectPeers, NewNode, Start,
+    WaitForPeersEvents,
 };
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -14,7 +14,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -22,7 +23,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -30,7 +32,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -38,7 +41,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -83,7 +87,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -106,7 +111,8 @@ fn nac_gates_add_p2_p_collection_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -147,7 +153,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -155,7 +162,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -163,7 +171,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -171,7 +180,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -216,7 +226,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -239,7 +250,8 @@ fn nac_gates_add_p2_p_collection_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -282,7 +294,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -290,7 +303,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -298,7 +312,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -306,7 +321,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -351,7 +367,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -374,7 +391,8 @@ fn nac_gates_add_p2_p_collection_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

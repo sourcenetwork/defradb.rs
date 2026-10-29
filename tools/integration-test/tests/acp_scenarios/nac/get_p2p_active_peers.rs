@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/get_p2p_active_peers_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{ActivePeers, NodeOpenP2P, NodeStopForRestart, Start};
+use integration_test::actions::{ActivePeers, Close, NewNode, Start};
 use integration_test::m;
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -13,7 +13,8 @@ fn nac_gates_get_active_peers_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -21,7 +22,8 @@ fn nac_gates_get_active_peers_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -29,7 +31,8 @@ fn nac_gates_get_active_peers_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -37,7 +40,8 @@ fn nac_gates_get_active_peers_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -90,7 +94,8 @@ fn nac_gates_get_active_peers_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -98,7 +103,8 @@ fn nac_gates_get_active_peers_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -106,7 +112,8 @@ fn nac_gates_get_active_peers_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -114,7 +121,8 @@ fn nac_gates_get_active_peers_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -168,7 +176,8 @@ fn nac_gates_get_active_peers_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -176,7 +185,8 @@ fn nac_gates_get_active_peers_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -184,7 +194,8 @@ fn nac_gates_get_active_peers_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -192,7 +203,8 @@ fn nac_gates_get_active_peers_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

@@ -1,11 +1,9 @@
 //! Generated from the conformance scenarios of tests/integration/index/async_backfill_migration_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::shared::{IndexField, IndexSpec, Lens, LensModule};
+use integration_test::actions::shared::{IndexField, IndexGate, IndexSpec, Lens, LensModule};
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, Await, IndexReleaseBuildGate, IndexWaitBuildBlocked,
-    IndexWaitBuildCollections, ListIndexes, NewIndex, NodeOpenIndexGatedPersistent,
-    NodeOpenIndexMultiGatedPersistent, NodeOpenIndexWatermarkGatedPersistent, PatchCollection,
+    Actions, AddCollection, AddDoc, Await, ListIndexes, NewIndex, NewNode, PatchCollection,
     Request, Restart, WaitForIndexReady,
 };
 use integration_test::m;
@@ -20,7 +18,9 @@ fn async_backfill_epoch_advanced_mid_build_live_epoch_complete() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexGatedPersistent {
+            NewNode {
+                index_gate: Some(IndexGate::Single),
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
@@ -1115,7 +1115,8 @@ fn async_backfill_epoch_advanced_mid_build_live_epoch_complete() {
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),
@@ -1124,7 +1125,7 @@ fn async_backfill_epoch_advanced_mid_build_live_epoch_complete() {
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),
@@ -1329,7 +1330,9 @@ fn async_backfill_epoch_advanced_mid_build_live_epoch_complete() {
 fn async_backfill_restart_after_non_zero_watermark_resumes_to_ready_actions_0(
 ) -> Vec<ActionInstance<Actions>> {
     vec![
-        NodeOpenIndexWatermarkGatedPersistent {
+        NewNode {
+            index_gate: Some(IndexGate::Watermark),
+            database_dir: Some("".into()),
             ..Default::default()
         }
         .into(),
@@ -3864,7 +3867,8 @@ fn async_backfill_restart_after_non_zero_watermark_resumes_to_ready_actions_1(
             ..Default::default()
         }
         .into(),
-        IndexWaitBuildBlocked {
+        WaitForIndexReady {
+            blocked: true,
             ..Default::default()
         }
         .into(),
@@ -3872,12 +3876,13 @@ fn async_backfill_restart_after_non_zero_watermark_resumes_to_ready_actions_1(
             ..Default::default()
         }
         .into(),
-        IndexReleaseBuildGate {
+        WaitForIndexReady {
+            release_gate: true,
             ..Default::default()
         }
         .into(),
         WaitForIndexReady {
-            collection: "User".into(),
+            collection: Some("User".into()),
             ..Default::default()
         }
         .into(),
@@ -4193,7 +4198,9 @@ fn async_backfill_two_collections_migrated_together_both_reindex_concurrently_an
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexMultiGatedPersistent {
+            NewNode {
+                index_gate: Some(IndexGate::Multi),
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
@@ -4250,8 +4257,8 @@ fn async_backfill_two_collections_migrated_together_both_reindex_concurrently_an
                 ..Default::default()
             }
             .into(),
-            IndexWaitBuildCollections {
-                expected_count: 2,
+            WaitForIndexReady {
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -4297,7 +4304,8 @@ fn async_backfill_two_collections_migrated_together_both_reindex_concurrently_an
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),

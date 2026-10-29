@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/net/info/connect_peers_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{ActivePeers, ConnectPeers, NewNode, NodeOpenP2P, PeerInfo, Wait};
+use integration_test::actions::{ActivePeers, ConnectPeers, NewNode, PeerInfo, Wait};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
@@ -13,7 +13,8 @@ fn net_info_connect_multiple_peers() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -23,7 +24,8 @@ fn net_info_connect_multiple_peers() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -33,7 +35,8 @@ fn net_info_connect_multiple_peers() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db2".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -92,7 +95,8 @@ fn net_info_connect_peers_source_p2_p_disabled() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -140,7 +144,8 @@ fn net_info_connect_peers() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -157,7 +162,8 @@ fn net_info_connect_peers() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -235,7 +241,8 @@ fn net_info_peers() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()

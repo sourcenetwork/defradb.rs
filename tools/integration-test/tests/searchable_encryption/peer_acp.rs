@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDACPolicy, AddDoc, AddReplicator, NodeOpenP2PSE, PeerEventsStart, Request,
-    WaitForSESync, WaitForUpdate,
+    AddCollection, AddDACPolicy, AddDoc, AddReplicator, NewNode, Request, WaitForPeersEvents,
+    WaitForSESync, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,22 +16,28 @@ fn doc_encryption_peer_with_acp_replicator_should_not_have_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -177,8 +183,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }

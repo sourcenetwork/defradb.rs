@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::Filter;
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, NodeOpenP2PSE, PeerEventsStart, Request, Truncate,
-    WaitForMerge, WaitForSESync, WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, NewNode, Request, Truncate, WaitForPeersEvents,
+    WaitForSESync, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -17,22 +17,28 @@ fn truncate_removes_searchable_encryption_artifacts() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -64,15 +70,15 @@ fn truncate_removes_searchable_encryption_artifacts() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()

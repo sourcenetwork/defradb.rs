@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, AddLens, AddView, ConnectPeers, GetCollectionsFiltered, NodeOpenP2P,
-    PeerEventsStart, Request, SetActiveCollectionVersion, SyncCollectionVersions, WaitForUpdate,
+    AddCollection, AddDoc, AddLens, AddView, ConnectPeers, GetCollections, NewNode, Request,
+    SetActiveCollectionVersion, SyncCollectionVersions, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -17,7 +17,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -25,7 +26,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -61,8 +63,9 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version0", "/collections/0/VersionID")]),
@@ -107,8 +110,9 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("UserView".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version1", "/collections/0/VersionID")]),
@@ -144,7 +148,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -152,7 +157,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -172,8 +178,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -193,8 +199,8 @@ fn sync_col_version_with_view_can_be_activated_and_queried() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),
@@ -250,7 +256,8 @@ fn sync_col_version_with_view() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -258,7 +265,8 @@ fn sync_col_version_with_view() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -280,8 +288,9 @@ fn sync_col_version_with_view() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version0", "/collections/0/VersionID")]),
@@ -326,8 +335,9 @@ fn sync_col_version_with_view() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("UserView".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version1", "/collections/0/VersionID")]),
@@ -354,8 +364,9 @@ fn sync_col_version_with_view() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

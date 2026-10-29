@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, NewEncryptedIndex, NodeOpenP2PSE, PeerEventsStart, Request,
+    AddCollection, NewEncryptedIndex, NewNode, Request, WaitForPeersEvents,
 };
 use integration_test::m;
 use integration_test::scenario::Common;
@@ -15,7 +15,9 @@ fn encrypted_index_new_peer_after_add_request_should_generate_gql() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn encrypted_index_new_peer_after_add_request_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -31,7 +35,8 @@ fn encrypted_index_new_peer_after_add_request_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -39,7 +44,8 @@ fn encrypted_index_new_peer_after_add_request_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -129,7 +135,9 @@ fn encrypted_index_new_peer_schema_with_encrypted_index_should_generate_gql() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -137,7 +145,9 @@ fn encrypted_index_new_peer_schema_with_encrypted_index_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -145,7 +155,8 @@ fn encrypted_index_new_peer_schema_with_encrypted_index_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -153,7 +164,8 @@ fn encrypted_index_new_peer_schema_with_encrypted_index_should_generate_gql() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

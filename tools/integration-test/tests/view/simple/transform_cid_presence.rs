@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/view/simple/transform_cid_presence_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, AddView, GetCollectionsFiltered};
+use integration_test::actions::{AddCollection, AddView, GetCollections};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -39,8 +39,9 @@ fn add_view_blank_transform_cid_fails_and_creates_no_view() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("UserView".into()),
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }

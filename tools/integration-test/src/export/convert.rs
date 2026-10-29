@@ -6,6 +6,9 @@ use super::wire::{Check, WireStep};
 use crate::scenario::number::json_eq;
 use crate::scenario::Op;
 
+/// A test on the fields an action serializes to.
+pub type Test = fn(&Map<String, Value>) -> bool;
+
 /// One corpus op an action can stand for. An action with options is several
 /// corpus ops: `AddDoc { is_doc_encrypted: Some(true), .. }` is
 /// `document.createEncrypted`. A variant says which fields tell it apart, the
@@ -23,6 +26,8 @@ pub struct Variant {
     pub implied: &'static [(&'static str, &'static str)],
     /// Fields the corpus spells differently, as `(action's name, step's name)`.
     pub renames: &'static [(&'static str, &'static str)],
+    /// A last test on the fields, when no field decides it.
+    pub when: Option<Test>,
 }
 
 /// The variant for a corpus op named `op`, that matches whatever fields are set.
@@ -33,6 +38,7 @@ pub fn v(op: &'static str) -> Variant {
         any: &[],
         implied: &[],
         renames: &[],
+        when: None,
     }
 }
 
@@ -57,18 +63,52 @@ impl Variant {
         self
     }
 
+    pub fn when(mut self, test: Test) -> Self {
+        self.when = Some(test);
+        self
+    }
+
     fn matches(&self, fields: &Map<String, Value>) -> bool {
         let set = |path: &&str| {
+            // `name=json` also compares the value.
+            let (path, wanted) = match path.split_once('=') {
+                Some((path, json)) => (path, serde_json::from_str::<Value>(json).ok()),
+                None => (*path, None),
+            };
             let mut parts = path.split('.');
             let first = parts.next().unwrap_or_default();
             let mut current = fields.get(first);
             for part in parts {
                 current = current.and_then(|v| v.get(part));
             }
-            current.is_some_and(|v| !v.is_null())
+            match wanted {
+                Some(wanted) => current == Some(&wanted),
+                None => current.is_some_and(|v| !v.is_null()),
+            }
         };
-        self.all.iter().all(&set) && (self.any.is_empty() || self.any.iter().any(&set))
+        self.all.iter().all(&set)
+            && (self.any.is_empty() || self.any.iter().any(&set))
+            && self.when.is_none_or(|test| test(fields))
     }
+}
+
+/// Whether every child of a group is an op that needs no transaction: the
+/// corpus calls such a group `action.parallel` and any other `document.parallel`.
+pub fn all_safe(fields: &Map<String, Value>) -> bool {
+    const SAFE: &[&str] = &[
+        "document.createWithRetry",
+        "query.execute",
+        "collection.truncate",
+    ];
+    fields
+        .get("children")
+        .and_then(Value::as_array)
+        .is_some_and(|children| {
+            children.iter().all(|child| {
+                child["op"].as_str().is_some_and(|op| SAFE.contains(&op))
+                    && child["args"].get("transaction").is_none()
+            })
+        })
 }
 
 /// The name of transaction number `index` in a scenario.

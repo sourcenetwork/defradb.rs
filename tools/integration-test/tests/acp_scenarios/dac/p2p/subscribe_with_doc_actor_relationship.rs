@@ -3,8 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, AddDACActorRelationship, AddDACPolicy, AddDoc,
-    ConnectPeers, DacRemoteStart, DeleteDACActorRelationship, NodeOpenP2PIdentity, PeerEventsStart,
-    Request, WaitForMerge, WaitForUpdate,
+    ConnectPeers, DeleteDACActorRelationship, NewNode, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -18,7 +17,8 @@ fn acp_p2_p_subscribe_add_get_single_with_permissioned_collection_add_doc_actor_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -26,8 +26,10 @@ fn acp_p2_p_subscribe_add_get_single_with_permissioned_collection_add_doc_actor_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -35,8 +37,10 @@ fn acp_p2_p_subscribe_add_get_single_with_permissioned_collection_add_doc_actor_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -114,7 +118,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -147,7 +152,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -186,8 +192,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -210,8 +216,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -220,9 +226,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -281,8 +287,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),

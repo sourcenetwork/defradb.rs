@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PKMS,
-    PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +26,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -62,7 +66,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -70,7 +75,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -110,8 +116,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -134,8 +140,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -158,8 +164,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -182,8 +188,8 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_3")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head3", "/cid")]),
@@ -192,9 +198,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -203,9 +209,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_1"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -214,9 +220,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_2"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -225,9 +231,9 @@ fn doc_encryption_peer_if_doc_doc_has_encrypted_indexed_field_should_index_after
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_3"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_3")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -283,7 +289,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -291,7 +299,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -329,7 +339,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -337,7 +348,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -377,8 +389,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -401,8 +413,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -425,8 +437,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -449,8 +461,8 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_3")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head3", "/cid")]),
@@ -459,9 +471,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -470,9 +482,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_1"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -481,9 +493,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_2"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -492,9 +504,9 @@ fn doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_dec
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_3"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_3")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

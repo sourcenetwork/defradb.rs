@@ -77,7 +77,7 @@ fn index_create_with_explicit_txn_backfill_runs_on_commit() {
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),

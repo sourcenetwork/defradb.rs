@@ -2,9 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{IndexField, IndexSpec};
-use integration_test::actions::{
-    AddCollection, AddNACActorRelationship, NewIndex, NodeStopForRestart, Start,
-};
+use integration_test::actions::{AddCollection, AddNACActorRelationship, Close, NewIndex, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -15,7 +13,8 @@ fn nac_admin_relation_can_make_new_index() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

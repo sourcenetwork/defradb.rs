@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, ListP2PDocuments, NodeOpenP2P,
-    PeerEventsStart, WaitForUpdate,
+    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, ListP2PDocuments, NewNode,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,8 @@ fn p2_p_document_add_get_multiple() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +25,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -60,7 +62,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -68,7 +71,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -88,8 +92,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -109,8 +113,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),
@@ -131,8 +135,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -152,8 +156,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head3", "/cid")]),
@@ -174,8 +178,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head4", "/cid")]),
@@ -195,8 +199,8 @@ fn p2_p_document_add_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head5", "/cid")]),
@@ -245,7 +249,8 @@ fn p2_p_document_add_get_single() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -253,7 +258,8 @@ fn p2_p_document_add_get_single() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -289,7 +295,8 @@ fn p2_p_document_add_get_single() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -297,7 +304,8 @@ fn p2_p_document_add_get_single() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -317,8 +325,8 @@ fn p2_p_document_add_get_single() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -338,8 +346,8 @@ fn p2_p_document_add_get_single() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),

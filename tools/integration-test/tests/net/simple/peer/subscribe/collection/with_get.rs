@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/net/simple/peer/subscribe/collection/with_get_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{ConnectPeers, ListP2PCollections, NodeOpenP2P};
+use integration_test::actions::{ConnectPeers, ListP2PCollections, NewNode};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -12,7 +12,8 @@ fn p2_p_collection_get_all() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -20,7 +21,8 @@ fn p2_p_collection_get_all() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

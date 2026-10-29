@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddNACActorRelationship, DeleteNACActorRelationship, DisableNAC, GetNACStatus,
-    NodeStopForRestart, Start,
+    AddNACActorRelationship, Close, DeleteNACActorRelationship, DisableNAC, GetNACStatus, Start,
 };
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -15,7 +14,8 @@ fn nac_delete_relationship_for_all_identities_all_implicit_identities_access_rev
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -130,7 +130,8 @@ fn nac_delete_relationship_still_requires_identity_even_if_all_identities_given_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -195,7 +196,8 @@ fn nac_delete_relationship_when_nac_is_disabled_with_invalid_identities_error() 
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -275,7 +277,8 @@ fn nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -396,7 +399,8 @@ fn nac_delete_relationship_with_invalid_relation_name_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -432,7 +436,8 @@ fn nac_delete_relationship_with_valid_identity_relationship_deleted() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

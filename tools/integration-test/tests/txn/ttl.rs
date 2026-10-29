@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, GetCollectionsFiltered, NodeOpenHTTP, Request, TxnBegin, TxnCommit,
-    TxnDiscard, Wait,
+    AddCollection, AddDoc, GetCollections, NewNode, Request, TxnBegin, TxnCommit, TxnDiscard, Wait,
 };
 use integration_test::m;
 use integration_test::test_case::TestCase;
@@ -15,10 +14,10 @@ fn txn_ttl_given_committed_http_transaction_removes_cache_entry() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 500,
-                tick_millis: 50,
-                buckets: 20,
+            NewNode {
+                ttl_millis: Some(500),
+                tick_millis: Some(50),
+                buckets: Some(20),
                 ..Default::default()
             }
             .into(),
@@ -105,10 +104,10 @@ fn txn_ttl_given_discarded_http_transaction_removes_cache_entry() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 500,
-                tick_millis: 50,
-                buckets: 20,
+            NewNode {
+                ttl_millis: Some(500),
+                tick_millis: Some(50),
+                buckets: Some(20),
                 ..Default::default()
             }
             .into(),
@@ -195,10 +194,10 @@ fn txn_ttl_given_expired_http_transaction_on_get_collections_returns_non_graph_q
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 300,
-                tick_millis: 50,
-                buckets: 20,
+            NewNode {
+                ttl_millis: Some(300),
+                tick_millis: Some(50),
+                buckets: Some(20),
                 ..Default::default()
             }
             .into(),
@@ -216,8 +215,9 @@ fn txn_ttl_given_expired_http_transaction_on_get_collections_returns_non_graph_q
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -238,8 +238,9 @@ fn txn_ttl_given_expired_http_transaction_on_get_collections_returns_non_graph_q
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
+                filtered: true,
                 expected_error: Some("transaction not found".into()),
                 ..Default::default()
             }
@@ -256,10 +257,10 @@ fn txn_ttl_given_http_transaction_activity_extends_ttl() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 500,
-                tick_millis: 50,
-                buckets: 20,
+            NewNode {
+                ttl_millis: Some(500),
+                tick_millis: Some(50),
+                buckets: Some(20),
                 ..Default::default()
             }
             .into(),
@@ -365,10 +366,10 @@ fn txn_ttl_given_idle_http_transaction_discards_transaction() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 300,
-                tick_millis: 50,
-                buckets: 10,
+            NewNode {
+                ttl_millis: Some(300),
+                tick_millis: Some(50),
+                buckets: Some(10),
                 ..Default::default()
             }
             .into(),

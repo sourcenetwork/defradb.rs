@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, ConnectPeers, NodeOpenP2PPersistent, NodeStop,
-    PeerEventsStart, Request, Restart, WaitForMerge, WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, ConnectPeers, NewNode, Request, Restart,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,9 @@ fn p2_p_one_to_one_replicator_with_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PPersistent {
+            NewNode {
+                network: true,
+                database_dir: Some("".into()),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PPersistent {
+            NewNode {
+                network: true,
+                database_dir: Some("".into()),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -61,7 +65,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -69,7 +74,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -86,7 +92,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeStop {
+            Restart {
+                stop: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -94,7 +101,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeStop {
+            Restart {
+                stop: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -118,7 +126,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -126,7 +135,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -164,8 +174,8 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -174,9 +184,9 @@ fn p2_p_one_to_one_replicator_with_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

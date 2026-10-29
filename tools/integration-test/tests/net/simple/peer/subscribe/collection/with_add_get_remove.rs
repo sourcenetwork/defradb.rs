@@ -3,7 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, ConnectPeers, DeleteCollectionSubscription,
-    ListP2PCollections, NodeOpenP2P,
+    ListP2PCollections, NewNode,
 };
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn p2_p_collection_add_remove_get_multiple() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn p2_p_collection_add_remove_get_multiple() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -114,7 +116,8 @@ fn p2_p_collection_add_remove_get_single() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -122,7 +125,8 @@ fn p2_p_collection_add_remove_get_single() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

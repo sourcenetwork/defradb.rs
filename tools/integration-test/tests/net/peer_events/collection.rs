@@ -4,7 +4,7 @@
 use integration_test::actions::shared::{EventType, Topic};
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, ConnectPeers, DeleteCollectionSubscription,
-    GetCollections, NodeOpenP2P, PeerEventsStart, WaitForPeersEvents,
+    GetCollections, NewNode, WaitForPeersEvents,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -31,7 +33,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -39,7 +42,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -47,7 +51,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -55,7 +60,8 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -160,12 +166,12 @@ fn peer_events_multiple_nodes_subscribed_to_collection_should_receive_all_join_e
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: Text::reference("collection0"),
                     peers: vec!["db1".into(), "db2".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -186,7 +192,8 @@ fn peer_events_on_subscribe_to_collection_should_receive_join_event_on_collectio
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -194,7 +201,8 @@ fn peer_events_on_subscribe_to_collection_should_receive_join_event_on_collectio
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -202,7 +210,8 @@ fn peer_events_on_subscribe_to_collection_should_receive_join_event_on_collectio
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -210,7 +219,8 @@ fn peer_events_on_subscribe_to_collection_should_receive_join_event_on_collectio
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -283,12 +293,12 @@ fn peer_events_on_subscribe_to_collection_should_receive_join_event_on_collectio
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: Text::reference("collection0"),
                     peers: vec!["db1".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -309,7 +319,8 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -317,7 +328,8 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -325,7 +337,8 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -333,7 +346,8 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -415,7 +429,7 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![
+                topics: Some(vec![
                     Topic {
                         topic: Text::reference("collection0"),
                         peers: vec!["db1".into()],
@@ -424,9 +438,9 @@ fn peer_events_on_subscribe_to_multiple_collections_should_receive_join_events_o
                         topic: Text::reference("collection1"),
                         peers: vec!["db1".into()],
                     },
-                ],
-                event_type: EventType::Joined,
-                millis: 5000,
+                ]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -447,7 +461,8 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -455,7 +470,8 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -463,7 +479,8 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -471,7 +488,8 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -544,12 +562,12 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: Text::reference("collection0"),
                     peers: vec!["db1".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -567,12 +585,12 @@ fn peer_events_on_unsubscribe_from_collection_should_receive_left_event() {
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: Text::reference("collection0"),
                     peers: vec!["db1".into()],
-                }],
-                event_type: EventType::Left,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Left),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -593,7 +611,8 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -601,7 +620,8 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -609,7 +629,8 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -617,7 +638,8 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -699,7 +721,7 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![
+                topics: Some(vec![
                     Topic {
                         topic: Text::reference("collection0"),
                         peers: vec!["db1".into()],
@@ -708,9 +730,9 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
                         topic: Text::reference("collection1"),
                         peers: vec!["db1".into()],
                     },
-                ],
-                event_type: EventType::Joined,
-                millis: 5000,
+                ]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -728,7 +750,7 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![
+                topics: Some(vec![
                     Topic {
                         topic: Text::reference("collection0"),
                         peers: vec!["db1".into()],
@@ -737,9 +759,9 @@ fn peer_events_on_unsubscribe_from_multiple_collections_should_receive_left_even
                         topic: Text::reference("collection1"),
                         peers: vec!["db1".into()],
                     },
-                ],
-                event_type: EventType::Left,
-                millis: 5000,
+                ]),
+                event_type: Some(EventType::Left),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()

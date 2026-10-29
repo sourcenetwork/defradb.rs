@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, ConfigureMigration, NodeOpenP2P, PatchCollection,
-    PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, ConfigureMigration, NewNode, PatchCollection, Request,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -17,12 +17,14 @@ fn collection_migration_query_with_p2_p_replicated_doc_on_other_collection_branc
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -107,12 +109,14 @@ fn collection_migration_query_with_p2_p_replicated_doc_on_other_collection_branc
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -130,15 +134,15 @@ fn collection_migration_query_with_p2_p_replicated_doc_on_other_collection_branc
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { node: Some("db0".into()), capture: captures([("head", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc"),
-                cid: Text::reference("head"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
+                cid: Some(Text::reference("head")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()

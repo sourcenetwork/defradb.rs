@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDACPolicy, AddDoc, AddReplicator, DacRemoteStart, GetCollectionsFiltered,
-    NodeOpenP2PIdentity, PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    AddCollection, AddDACPolicy, AddDoc, AddReplicator, GetCollections, NewNode, Request,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,9 @@ fn acp_p2_p_one_to_one_replicator_with_permissioned_collection_local_acp() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PIdentity {
+            NewNode {
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +26,9 @@ fn acp_p2_p_one_to_one_replicator_with_permissioned_collection_local_acp() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -121,8 +125,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -131,7 +136,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -164,8 +170,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("collection1", "/collections/0/CollectionID")]),
@@ -174,7 +181,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -204,7 +212,8 @@ fn acp_p2_p_one_to_one_replicator_with_permissioned_collection_remote_dac() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -212,8 +221,10 @@ fn acp_p2_p_one_to_one_replicator_with_permissioned_collection_remote_dac() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -221,8 +232,10 @@ fn acp_p2_p_one_to_one_replicator_with_permissioned_collection_remote_dac() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                with_identity: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -287,7 +300,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -320,7 +334,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -350,8 +365,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -360,9 +375,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

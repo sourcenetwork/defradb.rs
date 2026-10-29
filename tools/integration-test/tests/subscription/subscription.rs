@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, DeleteDoc, Request, SubscriptionFinish, SubscriptionRequest, UpdateDoc,
+    AddCollection, AddDoc, DeleteDoc, Request, SubscriptionRequest, UpdateDoc,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -22,7 +22,7 @@ fn subscription_with_add_mutations() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         User {
                                             _docID
@@ -30,8 +30,8 @@ fn subscription_with_add_mutations() {
                                             age
                                         }
                                     }
-                "#.into(),
-                expected_count: 2,
+                "#.into()),
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -59,7 +59,7 @@ fn subscription_with_add_mutations() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -97,7 +97,8 @@ fn subscription_with_close_wont_block() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         User{
                                             name
@@ -105,8 +106,9 @@ fn subscription_with_close_wont_block() {
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: -1,
+                    .into(),
+                ),
+                expected_count: Some(-1),
                 ..Default::default()
             }
             .into(),
@@ -134,15 +136,17 @@ fn subscription_with_counter_crdt_should_succeed() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         User {
                                             counter
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 2,
+                    .into(),
+                ),
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -169,7 +173,7 @@ fn subscription_with_counter_crdt_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -204,7 +208,8 @@ fn subscription_with_delete_operation_should_succeed() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         User (showDeleted: true) { 
                                             name
@@ -212,8 +217,9 @@ fn subscription_with_delete_operation_should_succeed() {
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 3,
+                    .into(),
+                ),
+                expected_count: Some(3),
                 ..Default::default()
             }
             .into(),
@@ -250,7 +256,7 @@ fn subscription_with_delete_operation_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -295,13 +301,13 @@ fn subscription_with_doc_id_filter_should_only_get_updates_for_that_doc_id() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: Text::concat([Text::from(r#"subscription {
+                request: Some(Text::concat([Text::from(r#"subscription {
 					User(docID: ""#), Text::reference("DocID0_1"), Text::from(r#"") {
 						name
 						age
 					}
-				}"#)]),
-                expected_count: 1,
+				}"#)])),
+                expected_count: Some(1),
                 ..Default::default()
             }
             .into(),
@@ -323,7 +329,7 @@ fn subscription_with_doc_id_filter_should_only_get_updates_for_that_doc_id() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({ "events": [{ "data": { "User": [{ "age": 32, "name": "Addo" }] } }] }),
                 ..Default::default()
@@ -348,15 +354,15 @@ fn subscription_with_filter_and_add_mutations() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         User(filter: {age: {_lt: 30}}) {
                                             name
                                             age
                                         }
                                     }
-                "#.into(),
-                expected_count: 1,
+                "#.into()),
+                expected_count: Some(1),
                 ..Default::default()
             }
             .into(),
@@ -384,7 +390,7 @@ fn subscription_with_filter_and_add_mutations() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({ "events": [{ "data": { "User": [{ "age": 27, "name": "John" }] } }] }),
                 ..Default::default()
@@ -409,7 +415,7 @@ fn subscription_with_filter_and_one_add_mutation_outside_filter() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         User(filter: {age: {_gt: 30}}) {
                                             _docID
@@ -417,8 +423,8 @@ fn subscription_with_filter_and_one_add_mutation_outside_filter() {
                                             age
                                         }
                                     }
-                "#.into(),
-                expected_count: 0,
+                "#.into()),
+                expected_count: Some(0),
                 ..Default::default()
             }
             .into(),
@@ -434,7 +440,7 @@ fn subscription_with_filter_and_one_add_mutation_outside_filter() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({ "events": [] }),
                 ..Default::default()
@@ -459,15 +465,15 @@ fn subscription_with_filter_and_one_add_mutation() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         User(filter: {age: {_lt: 30}}) {
                                             name
                                             age
                                         }
                                     }
-                "#.into(),
-                expected_count: 1,
+                "#.into()),
+                expected_count: Some(1),
                 ..Default::default()
             }
             .into(),
@@ -483,7 +489,7 @@ fn subscription_with_filter_and_one_add_mutation() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({ "events": [{ "data": { "User": [{ "age": 27, "name": "John" }] } }] }),
                 ..Default::default()
@@ -532,7 +538,8 @@ fn subscription_with_update_all_mutations() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         User {
                                             name
@@ -541,8 +548,9 @@ fn subscription_with_update_all_mutations() {
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 2,
+                    .into(),
+                ),
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -559,7 +567,7 @@ fn subscription_with_update_all_mutations() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -607,7 +615,7 @@ fn subscription_with_update_mutations() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         User {
                                             name
@@ -615,8 +623,8 @@ fn subscription_with_update_mutations() {
                                             points
                                         }
                                     }
-                "#.into(),
-                expected_count: 1,
+                "#.into()),
+                expected_count: Some(1),
                 ..Default::default()
             }
             .into(),
@@ -632,7 +640,7 @@ fn subscription_with_update_mutations() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [

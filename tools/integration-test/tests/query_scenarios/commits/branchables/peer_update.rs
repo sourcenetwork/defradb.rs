@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollectionsFiltered,
-    NodeOpenP2P, PeerEventsStart, Request, UpdateDoc, WaitForMerge, WaitForUpdates,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollections, NewNode,
+    Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,12 +16,14 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -46,18 +48,21 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common { node: Some("db0".into()), capture: captures([("collection0", "/collections/0/CollectionID")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -69,8 +74,8 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), capture: captures([("collectionHead0", "/cids/1"), ("head0", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
@@ -82,8 +87,8 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db1".into()), capture: captures([("collectionHead1", "/cids/1"), ("head1", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
@@ -97,8 +102,8 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), capture: captures([("collectionHead2", "/cids/1"), ("head2", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
@@ -112,8 +117,8 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db1".into()), capture: captures([("collectionHead3", "/cids/1"), ("head3", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
@@ -145,23 +150,23 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db1".into()), capture: captures([("collectionHead4", "/cids/1"), ("head4", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head4"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head4")),
                 expected_data: json!({}),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("collection0"),
-                cid: Text::reference("collectionHead4"),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collectionHead4")),
                 expected_data: json!({}),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
@@ -176,23 +181,23 @@ fn query_commits_branchables_handles_concurrent_updates_across_peer_connection()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), capture: captures([("collectionHead5", "/cids/1"), ("head5", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head5"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head5")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("collection0"),
-                cid: Text::reference("collectionHead5"),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collectionHead5")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
