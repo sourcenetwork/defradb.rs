@@ -31,15 +31,10 @@ impl Op for Close {
         self.expected_error.as_deref()
     }
 
-    fn run(&self, _state: &State) -> Result<Value, Failure> {
+    fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
-        let mut probe = self.clone();
-        probe.common = Common::default();
-        probe.expected_data = Value::Null;
-        probe.expected_error = None;
-        if probe != Self::default() {
-            return Err(Failure::unsupported(Self::name()));
-        }
+        state.node(self.common.node())?;
+        state.stop_node(self.common.node(), self.keep_data);
         Ok(json!({}))
     }
 }

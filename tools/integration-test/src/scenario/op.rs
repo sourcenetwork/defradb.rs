@@ -73,4 +73,10 @@ pub trait Op:
     fn run(&self, _state: &State) -> Result<Value, Failure> {
         Err(Failure::unsupported(Self::name()))
     }
+
+    /// Runs an op that changes the state itself (starts or stops a node);
+    /// every other op only reads it.
+    fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
+        self.run(state)
+    }
 }

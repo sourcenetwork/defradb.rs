@@ -7,12 +7,12 @@ use axum::{
 use serde::Serialize;
 
 use super::{map_p2p_bad_request, map_p2p_internal};
+use crate::error::peer_refused;
 use crate::error::HttpError;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission};
-use crate::validation::validate_multiaddr;
+use crate::router::{peer, AppState, NodePermission};
 
 /// Response for P2P node info.
 ///
@@ -39,25 +39,11 @@ pub async fn get_info(
     identity: ExtractIdentity,
 ) -> Result<Json<P2pInfoResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pPeerInfo).await?;
-
-    let p2p = bound(state.require_p2p()?, &identity.context());
-
-    let peer_id = p2p.local_peer_id().await.map_err(map_p2p_internal)?;
-
-    let addresses = p2p.listen_addresses().await.map_err(map_p2p_internal)?;
-
-    let full_addrs: Vec<String> = addresses
-        .into_iter()
-        .map(|addr| {
-            if addr.starts_with('/') {
-                format!("{}/p2p/{}", addr, peer_id)
-            } else {
-                addr
-            }
-        })
-        .collect();
-
-    Ok(Json(full_addrs))
+    let Some(p2p) = &state.p2p else {
+        return Ok(Json(Vec::new()));
+    };
+    let p2p = bound(p2p, &identity.context());
+    Ok(Json(peer::peer_info(&*p2p).await.map_err(peer_refused)?))
 }
 
 /// Live sync resource diagnostics (#1099).
@@ -130,62 +116,32 @@ pub async fn active_peers(
     identity: ExtractIdentity,
 ) -> Result<Json<Vec<String>>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pPeerActive).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    let peers = p2p.connected_peers().await.map_err(map_p2p_internal)?;
-
-    Ok(Json(peers))
+    Ok(Json(peer::active_peers(&*p2p).await.map_err(peer_refused)?))
 }
 
-/// Connect to peers (Go-compatible format).
-///
-/// POST /api/v0/p2p/connect
-///
-/// Body: ["/ip4/.../p2p/...", ...]
-///
-/// Requires `P2pPeerConnect` permission when NAC is enabled.
+/// Go's `POST /p2p/connect`.
 pub async fn connect(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(addresses): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pPeerConnect).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    for addr in &addresses {
-        validate_multiaddr(addr)?;
-        p2p.connect_peer(addr).await.map_err(map_p2p_bad_request)?;
-    }
-
-    Ok(())
+    peer::connect(&*p2p, &addresses).await.map_err(peer_refused)
 }
 
-/// Disconnect from peers (Go-compatible format).
-///
-/// POST /api/v0/p2p/disconnect
-///
-/// Body: ["/ip4/.../p2p/...", ...]
-///
-/// Requires `P2pPeerDisconnect` permission when NAC is enabled.
+/// Go's `POST /p2p/disconnect`.
 pub async fn disconnect(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(addresses): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pPeerDisconnect).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    for addr in &addresses {
-        validate_multiaddr(addr)?;
-        p2p.disconnect_peer(addr)
-            .await
-            .map_err(map_p2p_bad_request)?;
-    }
-
-    Ok(())
+    peer::disconnect(&*p2p, &addresses)
+        .await
+        .map_err(peer_refused)
 }
 
 #[cfg(test)]

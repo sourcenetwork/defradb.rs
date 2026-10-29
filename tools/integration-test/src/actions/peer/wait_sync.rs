@@ -1,8 +1,9 @@
+use crate::actions::peer::support::{MERGE_EVENT, UPDATE_EVENT};
 use crate::scenario::Text;
-use crate::scenario::{Common, Op};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Waits for a node to receive documents from its peers: an update, several, the changed fields, or a block merge.
@@ -39,6 +40,36 @@ impl Op for WaitForSync {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        if self.updated_fields {
+            return Err(Failure::unsupported("WaitForSync argument updatedFields"));
+        }
+        let node = state.node(self.common.node())?;
+        let events = node.events().map_err(Failure::unsupported)?;
+        if let (Some(doc_id), Some(cid)) = (&self.doc_id, &self.cid) {
+            state
+                .block_on(events.merged(doc_id.as_str(), cid.as_str(), MERGE_EVENT))
+                .map_err(Failure::operation)?;
+            return Ok(json!({}));
+        }
+        let keys: Vec<&str> = match &self.doc_id {
+            Some(doc_id) => vec![doc_id.as_str()],
+            None => self
+                .doc_ids
+                .iter()
+                .flatten()
+                .map(|id| id.as_str())
+                .collect(),
+        };
+        let cids = state
+            .block_on(events.next_updates(&keys, UPDATE_EVENT))
+            .map_err(Failure::operation)?;
+        if self.doc_id.is_some() {
+            return Ok(json!({ "cid": cids.first() }));
+        }
+        Ok(json!({ "cids": cids }))
     }
 }
 

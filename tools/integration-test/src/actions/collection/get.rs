@@ -49,7 +49,7 @@ impl Op for GetCollections {
         let collections = state
             .block_on(
                 state
-                    .node()
+                    .node_on(self.common.node())?
                     .get_collections_as(&state.context(self.txn), &self.selector()),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
@@ -82,9 +82,9 @@ impl HttpRun for GetCollections {
             action.common.plain(Self::name())?;
             let (txn, selector) = (state.txn_id(action.txn), action.selector());
             let collections = state
-                .http(
-                    |client| async move { client.get_collections(txn.as_deref(), &selector).await },
-                )
+                .http_on(action.common.node(), |client| async move {
+                    client.get_collections(txn.as_deref(), &selector).await
+                })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             Ok(json!({ "collections": collections }))
         });

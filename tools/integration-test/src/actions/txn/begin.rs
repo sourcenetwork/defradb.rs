@@ -36,7 +36,11 @@ impl Op for TxnBegin {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         let id = state
-            .block_on(state.node().txn_begin(&state.context(None), self.read_only))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .txn_begin(&state.context(None), self.read_only),
+            )
             .map_err(|e| Failure::operation(e.to_string()))?;
         state.txns.push(id);
         Ok(json!({}))
@@ -57,7 +61,9 @@ impl HttpRun for TxnBegin {
             action.common.plain(Self::name())?;
             let read_only = action.read_only;
             let begun = state
-                .http(|client| async move { client.tx_begin(read_only).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.tx_begin(read_only).await
+                })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             state.txns.push(TxnId(begun.id));
             Ok(json!({}))
@@ -73,7 +79,9 @@ impl CliRun for TxnBegin {
                 true => &["tx", "new", "--read-only"],
                 false => &["tx", "new"],
             };
-            let printed = state.defra_client(args).map_err(Failure::operation)?;
+            let printed = state
+                .defra_client_on(action.common.node(), None, args)
+                .map_err(Failure::operation)?;
             let id = printed["id"].as_u64().ok_or_else(|| {
                 Failure::operation(format!("defra client tx new printed no ID: {printed}"))
             })?;

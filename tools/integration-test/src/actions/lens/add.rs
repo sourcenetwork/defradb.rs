@@ -39,7 +39,7 @@ impl Op for AddLens {
         state
             .block_on(
                 state
-                    .node()
+                    .node_on(self.common.node())?
                     .add_lens_as(&state.context(self.txn), &self.lens.to_wire()),
             )
             .map(|id| json!({ "lensID": id }))
@@ -61,7 +61,9 @@ impl HttpRun for AddLens {
             action.common.plain(Self::name())?;
             let (txn, lens) = (state.txn_id(action.txn), action.lens.to_wire());
             state
-                .http(|client| async move { client.add_lens(txn.as_deref(), &lens).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.add_lens(txn.as_deref(), &lens).await
+                })?
                 .map(|id| json!({ "lensID": id }))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -74,7 +76,7 @@ impl CliRun for AddLens {
             action.common.plain(Self::name())?;
             let lens = action.lens.to_wire().to_string();
             let printed = state
-                .defra_client_in(action.txn, &["lens", "add", &lens])
+                .defra_client_on(action.common.node(), action.txn, &["lens", "add", &lens])
                 .map_err(Failure::operation)?;
             Ok(json!({ "lensID": printed["lensId"] }))
         });

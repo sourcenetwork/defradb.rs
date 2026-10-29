@@ -1,4 +1,7 @@
 use crate::actions::shared::{IndexGate, KeyType, NodeClient};
+use std::sync::Arc;
+
+use crate::nodes::NodeSpec;
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
@@ -61,15 +64,30 @@ impl Op for NewNode {
         self.expected_error.as_deref()
     }
 
-    fn run(&self, _state: &State) -> Result<Value, Failure> {
+    fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         let mut probe = self.clone();
         probe.common = Common::default();
         probe.expected_data = Value::Null;
         probe.expected_error = None;
+        probe.network = false;
+        probe.database_dir = None;
         if probe != Self::default() {
-            return Err(Failure::unsupported(Self::name()));
+            let options = serde_json::to_string(&probe).unwrap_or_default();
+            return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
+        let dir = match self.database_dir {
+            Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
+                Failure::operation(format!("could not make the node's directory: {e}"))
+            })?)),
+            None => None,
+        };
+        let spec = NodeSpec {
+            network: self.network,
+            dir,
+            listen: Vec::new(),
+        };
+        state.start_node(self.common.node(), spec);
         Ok(json!({}))
     }
 }

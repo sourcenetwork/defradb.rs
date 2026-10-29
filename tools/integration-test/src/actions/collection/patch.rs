@@ -49,7 +49,7 @@ impl Op for PatchCollection {
         self.check_arguments()?;
         let migration = self.lens.as_ref().map(Lens::to_wire);
         state
-            .block_on(state.node().patch_collection_as(
+            .block_on(state.node_on(self.common.node())?.patch_collection_as(
                 &state.context(self.txn),
                 self.patch.as_str(),
                 migration.as_ref(),
@@ -95,11 +95,11 @@ impl HttpRun for PatchCollection {
             let patch = action.patch.as_str().to_owned();
             let migration = action.lens.as_ref().map(Lens::to_wire);
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client
                         .patch_collection(txn.as_deref(), &patch, migration.as_ref())
                         .await
-                })
+                })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -114,7 +114,7 @@ impl CliRun for PatchCollection {
             let mut args = vec!["collection", "patch", action.patch.as_str()];
             args.extend(migration.as_deref());
             state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

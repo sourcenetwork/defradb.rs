@@ -26,10 +26,15 @@ impl Action for IntrospectionRequest {
     fn execute(&self, state: &mut State) {
         assert!(self.txn.is_none(), "transactions are not supported yet");
         let response = state
-            .block_on(state.node().execute_request_as(
-                &state.context(self.txn),
-                QueryRequest::new(self.request.as_str()),
-            ))
+            .block_on(
+                state
+                    .node_on(crate::scenario::DEFAULT_NODE)
+                    .expect("default node")
+                    .execute_request_as(
+                        &state.context(self.txn),
+                        QueryRequest::new(self.request.as_str()),
+                    ),
+            )
             .expect("run request");
         self.check(graphql_outcome(
             response.data,
@@ -43,7 +48,10 @@ impl HttpRun for IntrospectionRequest {
         assert!(self.txn.is_none(), "transactions are not supported yet");
         let request = self.request.clone();
         let response = state
-            .http(|client| async move { client.graphql(&request, None, None).await })
+            .http_on(crate::scenario::DEFAULT_NODE, |client| async move {
+                client.graphql(&request, None, None).await
+            })
+            .expect("default node")
             .expect("run request");
         self.check(graphql_outcome(
             response.data,
@@ -55,7 +63,11 @@ impl HttpRun for IntrospectionRequest {
 impl CliRun for IntrospectionRequest {
     fn execute_cli(&self, state: &mut State) {
         assert!(self.txn.is_none(), "transactions are not supported yet");
-        let result = state.defra_client(&["query", &self.request]);
+        let result = state.defra_client_on(
+            crate::scenario::DEFAULT_NODE,
+            None,
+            &["query", &self.request],
+        );
         self.check(result.map(|printed| printed["data"].clone()));
     }
 }

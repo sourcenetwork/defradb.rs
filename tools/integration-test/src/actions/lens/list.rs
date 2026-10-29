@@ -40,7 +40,11 @@ impl Op for ListLenses {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         let lenses = state
-            .block_on(state.node().list_lenses_as(&state.context(self.txn)))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .list_lenses_as(&state.context(self.txn)),
+            )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(self.shape(lenses))
     }
@@ -89,7 +93,9 @@ impl HttpRun for ListLenses {
             action.common.plain(Self::name())?;
             let txn = state.txn_id(action.txn);
             let lenses = state
-                .http(|client| async move { client.list_lenses(txn.as_deref()).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.list_lenses(txn.as_deref()).await
+                })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             Ok(action.shape(lenses))
         });
@@ -101,7 +107,7 @@ impl CliRun for ListLenses {
         crate::scenario::execute_with(self, state, |action, state| {
             action.common.plain(Self::name())?;
             let printed = state
-                .defra_client_in(action.txn, &["lens", "list"])
+                .defra_client_on(action.common.node(), action.txn, &["lens", "list"])
                 .map_err(Failure::operation)?;
             let lenses = match printed {
                 Value::Object(lenses) => lenses,

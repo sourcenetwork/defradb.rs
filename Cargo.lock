@@ -6167,6 +6167,7 @@ version = "0.1.0"
 dependencies = [
  "acp",
  "alloy-sol-types",
+ "async-channel",
  "base64 0.23.1",
  "chrono",
  "ciborium",
@@ -6180,6 +6181,7 @@ dependencies = [
  "defra-node",
  "document",
  "edge",
+ "events",
  "futures",
  "hex",
  "identity",

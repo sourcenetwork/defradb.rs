@@ -1,7 +1,7 @@
-use crate::scenario::{Common, Op};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Restarts a node; with `stop` only the stopping half, the start comes as a later `Restart`.
@@ -29,6 +29,18 @@ impl Op for Restart {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        match self.stop {
+            true => {
+                state.node(self.common.node())?;
+                state.stop_node(self.common.node(), true);
+            }
+            false => state.restart_node(self.common.node())?,
+        }
+        Ok(json!({}))
     }
 }
 

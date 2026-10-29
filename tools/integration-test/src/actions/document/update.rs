@@ -40,7 +40,7 @@ impl Op for UpdateDoc {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         state
-            .block_on(state.node().update_doc(
+            .block_on(state.node_on(self.common.node())?.update_doc(
                 &state.context(self.txn),
                 &self.collection,
                 self.doc_id.as_str(),
@@ -68,11 +68,11 @@ impl HttpRun for UpdateDoc {
                 (action.collection.clone(), action.doc_id.as_str().to_owned());
             let patch = action.doc_map.clone();
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client
                         .update_doc(txn.as_deref(), &collection, &doc_id, &patch)
                         .await
-                })
+                })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -95,7 +95,7 @@ impl CliRun for UpdateDoc {
                 &patch,
             ];
             state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

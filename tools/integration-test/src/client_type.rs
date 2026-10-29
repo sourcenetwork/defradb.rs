@@ -1,14 +1,10 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 
-use defra_node::{HttpConfig, Node};
 use serde::{Deserialize, Serialize};
 use testo::prelude::*;
 
 use crate::actions::{Actions, Connect};
-use crate::go_node::GoNode;
-use crate::test_case::State;
 
 /// How a test reaches its database. The Go suite's `DEFRA_CLIENT_*` switches.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -24,7 +20,7 @@ pub enum ClientType {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum GoBinaryError {
+pub(crate) enum GoBinaryError {
     #[error("DEFRA_GO_BINARY={path} did not run `version`: {reason}")]
     Configured { path: String, reason: String },
     #[error(
@@ -41,40 +37,6 @@ pub(crate) fn network_edge() -> edge::Edge {
 
 impl ClientType {
     pub const ALL: [ClientType; 4] = [Self::InProcess, Self::RustHttp, Self::GoHttp, Self::Cli];
-
-    /// Starts a fresh database and points `state` at it. Only the in-process
-    /// client gets the node itself; the others keep it alive in `held` and
-    /// reach it by its URL, so an action without their body cannot quietly
-    /// run in-process.
-    pub fn connect(self, state: &mut State) {
-        match self {
-            Self::InProcess => state.node = Some(Arc::new(start_node(None))),
-            Self::RustHttp | Self::Cli => {
-                if self == Self::Cli {
-                    let binary = crate::rust_binary();
-                    assert!(
-                        binary.is_file(),
-                        "DEFRA_CLIENT=cli runs {}: build it with `cargo build -p cli`, or set \
-                         DEFRA_RUST_BINARY",
-                        binary.display()
-                    );
-                }
-                let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
-                let url = format!("http://{}", listener.local_addr().expect("local address"));
-                let config = HttpConfig::with_listener(listener)
-                    .expect("http config")
-                    .with_dev_mode(true);
-                state.held = vec![Arc::new(start_node(Some(config)))];
-                state.url = Some(url);
-            }
-            Self::GoHttp => {
-                let binary = go_binary().unwrap_or_else(|error| panic!("{error}"));
-                let node = GoNode::start(&binary).unwrap_or_else(|error| panic!("{error}"));
-                state.url = Some(node.api_url().to_owned());
-                state.held = vec![Arc::new(node)];
-            }
-        }
-    }
 
     fn name(self) -> &'static str {
         match self {
@@ -109,19 +71,9 @@ impl Multiplier<Actions> for ClientType {
     }
 }
 
-fn start_node(http: Option<HttpConfig>) -> Node {
-    let builder = match http {
-        Some(config) => Node::builder().with_http(config),
-        None => Node::builder(),
-    };
-    workers::block_on(builder.build())
-        .expect("run builder")
-        .expect("start node")
-}
-
 /// `DEFRA_GO_BINARY`, else `~/go/bin/defradb`, else `defradb` on the PATH:
 /// the first that runs `version`. The version line goes to the test log.
-fn go_binary() -> Result<PathBuf, GoBinaryError> {
+pub(crate) fn go_binary() -> Result<PathBuf, GoBinaryError> {
     if let Some(path) = std::env::var_os("DEFRA_GO_BINARY") {
         let path = PathBuf::from(path);
         return match version(&path) {

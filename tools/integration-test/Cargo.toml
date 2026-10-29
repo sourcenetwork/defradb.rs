@@ -141,7 +141,9 @@ futures = "0.3"
 paste = "1.0"
 ctor = "0.2"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http"] }
+defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
+events = { path = "../../crates/events" }
+async-channel = "2"
 cli = { path = "../../crates/cli" }
 query = { path = "../../crates/query" }
 schema = { path = "../../crates/schema" }

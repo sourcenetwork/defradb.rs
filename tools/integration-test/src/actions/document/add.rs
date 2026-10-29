@@ -55,7 +55,11 @@ impl Op for AddDoc {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
-        let (node, context, options) = (state.node(), state.context(self.txn), self.options());
+        let (node, context, options) = (
+            state.node_on(self.common.node())?,
+            state.context(self.txn),
+            self.options(),
+        );
         let failed = |e: defra_node::Error| Failure::operation(e.to_string());
         if let Some(docs) = &self.docs {
             let ids = state
@@ -133,11 +137,11 @@ impl HttpRun for AddDoc {
             let failed = |e: cli::error::Error| Failure::operation(e.to_string());
             if let Some(docs) = action.docs.clone() {
                 let ids = state
-                    .http(|client| async move {
+                    .http_on(action.common.node(), |client| async move {
                         client
                             .add_docs(txn.as_deref(), &collection, &docs, &options)
                             .await
-                    })
+                    })?
                     .map_err(failed)?;
                 return Ok(json!({ "docIDs": ids }));
             }
@@ -146,7 +150,7 @@ impl HttpRun for AddDoc {
                 true => {
                     let doc_id = action.doc_id.as_ref().map(|id| id.as_str().to_owned());
                     state
-                        .http(|client| async move {
+                        .http_on(action.common.node(), |client| async move {
                             client
                                 .save_doc(
                                     txn.as_deref(),
@@ -156,16 +160,16 @@ impl HttpRun for AddDoc {
                                     &options,
                                 )
                                 .await
-                        })
+                        })?
                         .map_err(failed)?
                 }
                 false => first(
                     state
-                        .http(|client| async move {
+                        .http_on(action.common.node(), |client| async move {
                             client
                                 .add_docs(txn.as_deref(), &collection, &[doc], &options)
                                 .await
-                        })
+                        })?
                         .map_err(failed)?,
                 )?,
             };
@@ -204,7 +208,7 @@ impl CliRun for AddDoc {
                 args.extend(["--encrypt-fields", &fields]);
             }
             let printed = state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map_err(Failure::operation)?;
             let ids: Vec<String> = serde_json::from_value(printed)
                 .map_err(|e| Failure::operation(format!("defra client printed no IDs: {e}")))?;

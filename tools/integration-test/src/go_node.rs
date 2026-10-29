@@ -4,7 +4,7 @@
 //! chosen for it and nothing can take that port before it binds.
 
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,14 @@ pub enum GoNodeError {
     NotReady { log: String },
 }
 
+/// How a Go node starts: with P2P listening on `p2p`, and its data in `dir`
+/// (else in memory).
+#[derive(Clone, Debug, Default)]
+pub struct GoOptions {
+    pub p2p: Option<String>,
+    pub dir: Option<PathBuf>,
+}
+
 /// A running Go node, killed when dropped.
 pub struct GoNode {
     _process: Process,
@@ -45,23 +53,30 @@ impl Drop for Process {
 }
 
 impl GoNode {
-    /// Start `binary` with an in-memory store and wait for its HTTP API.
-    pub fn start(binary: &Path) -> Result<Self, GoNodeError> {
+    /// Start `binary` as `options` say and wait for its HTTP API.
+    pub fn start(binary: &Path, options: &GoOptions) -> Result<Self, GoNodeError> {
         let root = tempfile::tempdir()?;
         let log_path = root.path().join("node.log");
         let log = File::create(&log_path)?;
+        let data = match &options.dir {
+            Some(dir) => dir.clone(),
+            None => root.path().join("data"),
+        };
+        let store = match options.dir {
+            Some(_) => "badger",
+            None => "memory",
+        };
+        let p2p = match &options.p2p {
+            Some(address) => vec!["--p2paddr".to_owned(), address.clone()],
+            None => vec!["--no-p2p".to_owned()],
+        };
         let mut command = Command::new(binary);
         command
             .arg("--rootdir")
-            .arg(root.path().join("data"))
+            .arg(data)
             .args(["--no-log-color", "start", "--url", "127.0.0.1:0"])
-            .args([
-                "--no-keyring",
-                "--store",
-                "memory",
-                "--no-p2p",
-                "--no-telemetry",
-            ])
+            .args(["--no-keyring", "--store", store, "--no-telemetry"])
+            .args(p2p)
             // Encryption and signing are off, as backbone's TestCluster
             // started Go nodes, unless the signed-docs multiplier turns
             // signing on.

@@ -9,6 +9,8 @@ use crate::state::NODES;
 use crate::try_ffi;
 use crate::types::FfiResult;
 
+use defra_http::router::peer;
+
 use super::{into_ffi_ok, into_ffi_result, FfiP2PError};
 
 /// Get local P2P peer info.
@@ -39,32 +41,7 @@ pub unsafe extern "C" fn p2p_peer_info(node_ptr: usize, identity_did: *const c_c
                 };
 
                 crate::helpers::block_on(rt, async {
-                    let addresses = p2p
-                        .system
-                        .ops_for(&context)
-                        .listen_addresses()
-                        .await
-                        .map_err(FfiP2PError::from)?;
-
-                    let full_addrs = match p2p.system.kind() {
-                        #[cfg(feature = "libp2p")]
-                        defra_node::TransportKind::Libp2p => {
-                            let peer_id = p2p
-                                .system
-                                .ops_for(&context)
-                                .local_peer_id()
-                                .await
-                                .map_err(FfiP2PError::from)?;
-                            addresses
-                                .into_iter()
-                                .map(|addr| format!("{}/p2p/{}", addr, peer_id))
-                                .collect::<Vec<_>>()
-                        }
-                        #[cfg(feature = "iroh")]
-                        defra_node::TransportKind::Iroh => addresses,
-                        _ => addresses,
-                    };
-
+                    let full_addrs = peer::peer_info(&*p2p.system.ops_for(&context)).await?;
                     serde_json::to_string(&full_addrs)
                         .map_err(|error| {
                             FfiP2PError::internal(format!(
@@ -221,12 +198,7 @@ pub unsafe extern "C" fn p2p_active_peers(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    let peers = p2p
-                        .system
-                        .ops_for(&context)
-                        .connected_peers()
-                        .await
-                        .map_err(FfiP2PError::from)?;
+                    let peers = peer::active_peers(&*p2p.system.ops_for(&context)).await?;
                     serde_json::to_string(&peers)
                         .map_err(|error| {
                             FfiP2PError::internal(format!(
@@ -277,9 +249,7 @@ pub unsafe extern "C" fn p2p_connect(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .connect_peer(&addr_str)
+                    peer::connect(&*p2p.system.ops_for(&context), &[addr_str])
                         .await
                         .map_err(FfiP2PError::from)
                 })
@@ -325,9 +295,7 @@ pub unsafe extern "C" fn p2p_disconnect(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .disconnect_peer(&addr_str)
+                    peer::disconnect(&*p2p.system.ops_for(&context), &[addr_str])
                         .await
                         .map_err(FfiP2PError::from)
                 })

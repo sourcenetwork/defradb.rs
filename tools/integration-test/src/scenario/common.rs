@@ -57,21 +57,15 @@ impl Common {
         self.node.as_deref().unwrap_or(DEFAULT_NODE)
     }
 
-    /// Fails with `unsupported` unless the action runs on the default node as
-    /// the ambient identity, which is all the in-process client offers.
+    /// Fails with `unsupported` unless the action runs as the ambient
+    /// identity, which is all the clients offer yet.
     pub fn plain(&self, op: &str) -> Result<(), Failure> {
         if self.identity_seed.is_some() {
             return Err(Failure::unsupported(format!("{op} argument identitySeed")));
         }
-        if self.identity_node.is_some() {
-            return Err(Failure::unsupported(format!("{op} argument identityNode")));
-        }
-        match self.node() == DEFAULT_NODE {
-            true => Ok(()),
-            false => Err(Failure::unsupported(format!(
-                "{op} on node {}",
-                self.node()
-            ))),
+        match self.identity_node.is_some() {
+            true => Err(Failure::unsupported(format!("{op} argument identityNode"))),
+            false => Ok(()),
         }
     }
 }

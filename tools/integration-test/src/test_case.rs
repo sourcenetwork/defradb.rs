@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -13,16 +12,14 @@ use testo::prelude::*;
 use crate::actions::Actions;
 use crate::client_type::ClientType;
 use crate::export;
-use crate::scenario::Bindings;
+use crate::nodes::{NodeSpec, TestNode};
+use crate::scenario::{Bindings, Failure};
 
-/// What every action sees: the node an in-process action acts on, or the URL
-/// the other clients reach it at; whatever must stay alive for that (a
-/// server, a child process); and what earlier actions captured.
+/// What every action sees: the test's nodes, reached through its client type.
 #[derive(Clone, Default)]
 pub struct State {
-    pub node: Option<Arc<Node>>,
-    pub url: Option<String>,
-    pub held: Vec<Arc<dyn Any + Send + Sync>>,
+    pub client_type: Option<ClientType>,
+    pub nodes: Nodes,
     pub captures: RapidHashMap<String, Value>,
     pub bindings: Bindings,
     /// The transactions the test began, in order; actions name one by index.
@@ -54,7 +51,110 @@ impl Txns {
     }
 }
 
+/// A node name's start options and, while it runs, the node.
+#[derive(Clone)]
+struct Slot {
+    spec: NodeSpec,
+    node: Option<Arc<TestNode>>,
+}
+
+/// The test's nodes by name. A plain owned map, so stopping a node drops
+/// the last handle to its store at once and a restart can reopen it.
+#[derive(Clone, Default)]
+pub struct Nodes(RapidHashMap<String, Slot>);
+
 impl State {
+    fn slot(&self, name: &str) -> Option<&Slot> {
+        self.nodes.0.get(name)
+    }
+
+    fn client_type(&self) -> ClientType {
+        self.client_type
+            .expect("no client type: the Connect action did not run")
+    }
+
+    /// The running node `name`.
+    pub fn node(&self, name: &str) -> Result<Arc<TestNode>, Failure> {
+        self.slot(name)
+            .and_then(|slot| slot.node.clone())
+            .ok_or_else(|| Failure::operation(format!("node {name} is not running")))
+    }
+
+    /// The running node `name` as the in-process client calls it.
+    pub fn node_on(&self, name: &str) -> Result<Arc<Node>, Failure> {
+        self.node(name)?.node.clone().ok_or_else(|| {
+            Failure::operation(format!(
+                "node {name} has no in-process node: this client reaches it by URL"
+            ))
+        })
+    }
+
+    /// The URL the HTTP and CLI clients reach the running node `name` at.
+    pub fn url_on(&self, name: &str) -> Result<String, Failure> {
+        self.node(name)?.url.clone().ok_or_else(|| {
+            Failure::operation(format!(
+                "node {name} has no URL: this client calls it in-process"
+            ))
+        })
+    }
+
+    /// Start node `name` as `spec` says, closing any node of that name first.
+    pub fn start_node(&mut self, name: &str, spec: NodeSpec) {
+        self.stop_node(name, false);
+        let node = Arc::new(TestNode::start(self.client_type(), spec.clone()));
+        let slot = Slot {
+            spec,
+            node: Some(node),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+    }
+
+    /// Stop node `name`; with `keep` its data and addresses stay for a restart.
+    pub fn stop_node(&mut self, name: &str, keep: bool) {
+        let Some(slot) = self.nodes.0.remove(name) else {
+            return;
+        };
+        let mut spec = slot.spec;
+        if let Some(node) = slot.node {
+            if keep && spec.network {
+                spec.listen = node
+                    .peer_info()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|address| address.split("/p2p/").next().unwrap_or(address).to_owned())
+                    .collect();
+            }
+            self.block_on(node.stop());
+        }
+        if keep {
+            self.nodes
+                .0
+                .insert(name.to_owned(), Slot { spec, node: None });
+        }
+    }
+
+    /// Restart node `name`: start it again when it is stopped; stop and start
+    /// it when it keeps its data; leave an in-memory node as it is, as Go's
+    /// harness does.
+    pub fn restart_node(&mut self, name: &str) -> Result<(), Failure> {
+        let (running, persistent) = self
+            .slot(name)
+            .map(|slot| (slot.node.is_some(), slot.spec.dir.is_some()))
+            .ok_or_else(|| Failure::operation(format!("no node {name} to restart")))?;
+        if running {
+            if !persistent {
+                return Ok(());
+            }
+            self.stop_node(name, true);
+        }
+        let spec = self
+            .slot(name)
+            .map(|slot| slot.spec.clone())
+            .unwrap_or_default();
+        self.start_node(name, spec);
+        Ok(())
+    }
+
     /// The context a request runs in: inside transaction number `txn` when
     /// the action names one.
     pub fn context(&self, txn: Option<usize>) -> RequestContext {
@@ -69,18 +169,6 @@ impl State {
     /// Transaction number `txn`'s ID as the HTTP API and the CLI write it.
     pub fn txn_id(&self, txn: Option<usize>) -> Option<String> {
         self.context(txn).txn().map(|id| id.to_string())
-    }
-
-    pub fn node(&self) -> &Node {
-        self.node.as_deref().expect(
-            "no in-process node: Connect did not run, or this client reaches the node by URL",
-        )
-    }
-
-    pub fn url(&self) -> &str {
-        self.url
-            .as_deref()
-            .expect("no URL: Connect did not run, or this client calls the node in-process")
     }
 
     pub fn block_on<F>(&self, future: F) -> F::Output
