@@ -33,8 +33,8 @@ fn set(list: &str) -> CpuSet {
 }
 
 #[test]
-fn edge_cores_are_a_third_of_the_usable_cores_at_least_one_per_node() {
-    assert_eq!(edge_cores(&machine(0, 1, 18, 2)), 6);
+fn edge_cores_are_a_quarter_of_the_usable_cores_at_least_one_per_node() {
+    assert_eq!(edge_cores(&machine(0, 1, 18, 2)), 4);
     assert_eq!(edge_cores(&machine(0, 1, 2, 1)), 1);
     assert_eq!(edge_cores(&machine(0, 1, 1, 1)), 1);
     assert_eq!(edge_cores(&machine(0, 2, 2, 1)), 2, "one per node");
@@ -42,7 +42,7 @@ fn edge_cores_are_a_third_of_the_usable_cores_at_least_one_per_node() {
         cpu_quota: Some(9),
         ..machine(0, 1, 18, 2)
     };
-    assert_eq!(edge_cores(&quota), 3);
+    assert_eq!(edge_cores(&quota), 2);
 }
 
 #[test]
@@ -52,16 +52,16 @@ fn a_reservation_holds_whole_cores_from_the_far_end_and_gives_them_back() {
     assert!(first.is_pinned());
     assert_eq!(
         first.cpus(),
-        &set("1006-1008,1015-1017"),
-        "the last 3 cores, both siblings"
+        &set("1007-1008,1016-1017"),
+        "the last 2 cores, both siblings"
     );
-    assert_eq!(first.threads(), 6, "one thread per CPU held");
+    assert_eq!(first.threads(), 4, "one thread per CPU held");
 
     let second = EdgeCores::reserve_on(&host);
     assert_eq!(
         second.cpus(),
-        &set("1004-1005,1013-1014"),
-        "a third of what is free"
+        &set("1006,1015"),
+        "a quarter of what is free"
     );
     assert!(second.cpus().intersection(first.cpus()).is_empty());
 
@@ -69,7 +69,7 @@ fn a_reservation_holds_whole_cores_from_the_far_end_and_gives_them_back() {
     let third = EdgeCores::reserve_on(&host);
     assert_eq!(
         third.cpus(),
-        &set("1006-1008,1015-1017"),
+        &set("1007-1008,1016-1017"),
         "the given-back cores again"
     );
 }
@@ -80,7 +80,7 @@ fn efficiency_cores_are_taken_first() {
     host.nodes[0].cores[1].kind = CoreKind::Efficiency;
     host.nodes[0].cores[2].kind = CoreKind::Efficiency;
     let cores = EdgeCores::reserve_on(&host);
-    assert_eq!(cores.cpus(), &set("2001-2002"));
+    assert_eq!(cores.cpus(), &set("2002"));
 }
 
 #[test]

@@ -316,7 +316,7 @@ that is correct but slower is not done.
 - One nuclei runtime, held by `edge`, serves all networking (HTTP, pg-compat, P2P, the Orbis, Vera and KMS clients,
   embeddings, telemetry export). It is passed in as a narrow handle (`edge::Edge`) at construction; nothing finds a
   runtime ambiently, and no other runtime is built.
-- The network runtime runs on cores of its own: sized from the machine, it holds a third of the cores alone in the
+- The network runtime runs on cores of its own: sized from the machine, it holds a quarter of the cores alone in the
   workers' CPU ledger (`workers::EdgeCores`), one nuclei shard pinned per CPU there, and a worker pool plans its
   workers on the rest and sets nothing aside for it. Network threads and database workers never share a core.
 - No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included.

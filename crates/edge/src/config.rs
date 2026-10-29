@@ -12,7 +12,7 @@ pub type ThreadStart = Arc<dyn Fn() + Send + Sync + 'static>;
 /// How the network runtime is built and how long it waits.
 #[derive(Clone)]
 pub struct EdgeConfig {
-    /// Threads that run network tasks. `None`: one per CPU of a third of
+    /// Threads that run network tasks. `None`: one per CPU of a quarter of
     /// the cores, held for them alone so no worker pool plans on them
     /// ([`workers::EdgeCores`]); a count: that many threads, unpinned.
     pub threads: Option<NonZeroUsize>,

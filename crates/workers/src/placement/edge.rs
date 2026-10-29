@@ -23,11 +23,11 @@ pub(crate) fn holding() -> bool {
 }
 
 /// The whole cores a network runtime sized from the machine runs on: a
-/// third of the cores the process may use, at least one per node.
+/// quarter of the cores the process may use, at least one per node.
 pub fn edge_cores(topology: &Topology) -> usize {
     let cores = topology.core_count();
     let usable = topology.cpu_quota.map_or(cores, |quota| cores.min(quota));
-    (usable / 3).max(topology.nodes.len()).max(1)
+    (usable / 4).max(topology.nodes.len()).max(1)
 }
 
 /// The CPUs a network runtime's threads run on, and its hold on them.
