@@ -8369,7 +8369,7 @@ dependencies = [
 [[package]]
 name = "nuclei"
 version = "0.5.1"
-source = "git+https://github.com/vertexclique/nuclei?rev=1c8cfefe80a363d62db08856480b68db6ca0e2cf#1c8cfefe80a363d62db08856480b68db6ca0e2cf"
+source = "git+https://github.com/vertexclique/nuclei?rev=5ad39f47c92b7fdf73f681826dcc1ffcfeb75298#5ad39f47c92b7fdf73f681826dcc1ffcfeb75298"
 dependencies = [
  "futures-core",
  "futures-io",
@@ -8384,7 +8384,7 @@ dependencies = [
 [[package]]
 name = "nuclei-macros"
 version = "0.5.0"
-source = "git+https://github.com/vertexclique/nuclei?rev=1c8cfefe80a363d62db08856480b68db6ca0e2cf#1c8cfefe80a363d62db08856480b68db6ca0e2cf"
+source = "git+https://github.com/vertexclique/nuclei?rev=5ad39f47c92b7fdf73f681826dcc1ffcfeb75298#5ad39f47c92b7fdf73f681826dcc1ffcfeb75298"
 
 [[package]]
 name = "num"
