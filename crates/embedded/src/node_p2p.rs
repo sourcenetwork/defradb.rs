@@ -193,8 +193,11 @@ where
         }
     }
 
-    let collection_store: Arc<dyn p2p::sync::P2PCollectionStorage> = Arc::new(
-        p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+    let collection_store = p2p::sync::pooled_collection_store(
+        Arc::new(
+            p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+        ),
+        database.pool(),
     );
     let head_provider: Arc<dyn DocumentHeadProvider> =
         Arc::new(db::merge::create_head_provider(database.clone()));
@@ -359,7 +362,8 @@ where
         replication.merge_handler_inner.clone(),
         database.clone(),
     ));
-    let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> = replication.broadcast_mutator.clone();
+    let se_repusher =
+        db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
     replication
         .merge_handler_inner
         .set_se_repusher(se_repusher.clone());
@@ -590,8 +594,8 @@ where
 
     let retry_transport = peer.transport.clone();
     let retry_doc_pusher: Arc<dyn TransportDocPusher> = Arc::clone(&peer.doc_pusher);
-    let retry_se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
-        peer.replication.broadcast_mutator.clone();
+    let retry_se_repusher =
+        db::merge::pooled_se_repusher(peer.replication.broadcast_mutator.clone(), database.pool());
     let retry_peers = Peerstore::new(store.clone())
         .with_max_txn_retries(max_txn_retries)
         .with_retry_schedule(retry_schedule)

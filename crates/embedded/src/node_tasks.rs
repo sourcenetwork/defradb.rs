@@ -143,7 +143,8 @@ where
                     if let Ok(pid) = peer_id.as_str().parse::<libp2p::PeerId>() {
                         // Stores artifacts AND sends the signed ack Go's push waits for.
                         let doc_ids = db::merge::se::serve::handle_artifacts_push(
-                            store.as_ref(),
+                            &store,
+                            retry_peers.pool(),
                             &handle,
                             pid,
                             &data,
@@ -155,13 +156,18 @@ where
                             ));
                         }
                     } else {
-                        handle_se_artifacts_received(
-                            store.clone(),
-                            event_bus.clone(),
-                            peer_id.to_string(),
-                            data,
+                        let doc_ids = db::merge::se::serve::handle_artifacts_received(
+                            &store,
+                            retry_peers.pool(),
+                            &peer_id.to_string(),
+                            &data,
                         )
                         .await;
+                        for doc_id in doc_ids {
+                            event_bus.publish(events::Message::se_artifact_received(
+                                events::SEArtifactReceivedData { doc_id },
+                            ));
+                        }
                     }
                     return;
                 }
@@ -172,7 +178,8 @@ where
  } => {
                     let transport = p2p::Libp2pTransport::new(handle.clone());
                     db::merge::se::serve::handle_query_request(
-                        store.as_ref(),
+                        &store,
+                        retry_peers.pool(),
                         &transport,
                         peer_id,
                         request, token,
@@ -243,48 +250,6 @@ where
 }
 
 #[cfg(feature = "libp2p")]
-async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
-    store: Arc<S>,
-    event_bus: Arc<dyn events::Bus>,
-    peer_id: String,
-    data: Vec<u8>,
-) {
-    let mut txn = match store.new_txn(false).await {
-        Ok(txn) => txn,
-        Err(error) => {
-            tracing::warn!(peer_id = %peer_id, error = %error, "failed to create SE artifact transaction");
-            return;
-        }
-    };
-
-    let result = match db::merge::se::receive_and_store(&mut txn, &data).await {
-        Ok(result) => result,
-        Err(error) => {
-            tracing::warn!(peer_id = %peer_id, error = %error, "failed to receive SE artifacts");
-            return;
-        }
-    };
-
-    if let Err(error) = txn.commit().await {
-        tracing::warn!(peer_id = %peer_id, error = %error, "failed to commit SE artifacts");
-        return;
-    }
-
-    tracing::debug!(
-        peer_id = %peer_id,
-        collection_id = %result.collection_id,
-        stored = result.stored,
-        rejected = result.rejected,
-        "stored incoming SE artifacts"
-    );
-
-    for doc_id in result.doc_ids {
-        event_bus.publish(events::Message::se_artifact_received(
-            events::SEArtifactReceivedData { doc_id },
-        ));
-    }
-}
-
 #[cfg(feature = "libp2p")]
 pub(crate) fn spawn_replication_loop<B, T, S>(
     coordinator: Arc<p2p::sync::SyncCoordinator<B, T>>,

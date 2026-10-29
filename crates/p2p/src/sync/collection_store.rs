@@ -194,6 +194,79 @@ impl<S: Store + 'static> P2PCollectionStorage for P2PCollectionStore<S> {
     }
 }
 
+/// `inner` as the coordinator holds it: its reads and changes on `pool` when
+/// the database has one, so a subscription asked for from the network never
+/// runs its storage transaction on a network thread; as it is otherwise.
+pub fn pooled_collection_store(
+    inner: Arc<dyn P2PCollectionStorage>,
+    pool: Option<&workers::Pool>,
+) -> Arc<dyn P2PCollectionStorage> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(pool) = pool {
+        return Arc::new(PooledCollectionStore {
+            inner,
+            pool: pool.clone(),
+        });
+    }
+    // A browser's one worker is the page's thread: a call runs where it is
+    // made.
+    #[cfg(target_arch = "wasm32")]
+    let _ = pool;
+    inner
+}
+
+/// `inner`'s calls, run on a pool's workers.
+#[cfg(not(target_arch = "wasm32"))]
+struct PooledCollectionStore {
+    inner: Arc<dyn P2PCollectionStorage>,
+    pool: workers::Pool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PooledCollectionStore {
+    /// Runs `call` on `inner` on the least-loaded worker.
+    async fn on_pool<T, F, Fut>(&self, call: F) -> Result<T>
+    where
+        F: FnOnce(Arc<dyn P2PCollectionStorage>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T>> + 'static,
+        T: Send + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        workers::run_on(Some(&self.pool), workers::Target::LeastLoaded, move || {
+            call(inner)
+        })
+        .await
+        .map_err(|error| Error::Storage(error.report("P2P collection subscription").to_string()))?
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl P2PCollectionStorage for PooledCollectionStore {
+    async fn add_collections(&self, collection_ids: &[String]) -> Result<usize> {
+        let ids = collection_ids.to_vec();
+        self.on_pool(move |inner| async move { inner.add_collections(&ids).await })
+            .await
+    }
+
+    async fn remove_collections(&self, collection_ids: &[String]) -> Result<()> {
+        let ids = collection_ids.to_vec();
+        self.on_pool(move |inner| async move { inner.remove_collections(&ids).await })
+            .await
+    }
+
+    async fn get_all_collections(&self) -> Result<Vec<String>> {
+        self.on_pool(|inner| async move { inner.get_all_collections().await })
+            .await
+    }
+
+    async fn is_subscribed(&self, collection_id: &str) -> Result<bool> {
+        let id = collection_id.to_owned();
+        self.on_pool(move |inner| async move { inner.is_subscribed(&id).await })
+            .await
+    }
+}
+
 fn parse_collection_id(key: &[u8]) -> Option<String> {
     let prefix = P2PCollectionKey::p2p_collection_prefix();
     key.strip_prefix(prefix.as_slice())

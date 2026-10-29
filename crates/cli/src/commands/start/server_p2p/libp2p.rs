@@ -65,8 +65,12 @@ impl Node {
                 .placed_on(database.pool()),
         );
         let merge_blockstore = sync_blockstore.clone();
-        let collection_store: Arc<dyn p2p::sync::P2PCollectionStorage> = Arc::new(
-            p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+        let collection_store = p2p::sync::pooled_collection_store(
+            Arc::new(
+                p2p::sync::P2PCollectionStore::new(store.clone())
+                    .with_max_txn_retries(max_txn_retries),
+            ),
+            database.pool(),
         );
         let head_provider: Arc<dyn p2p::sync::DocumentHeadProvider> =
             Arc::new(db::merge::create_head_provider(database.clone()));
@@ -303,7 +307,8 @@ impl Node {
                         let doc_ids = match peer_id.as_str().parse::<libp2p::PeerId>() {
                             Ok(pid) => {
                                 db::merge::se::serve::handle_artifacts_push(
-                                    se_store.as_ref(),
+                                    &se_store,
+                                    retry_peers.pool(),
                                     &se_handle,
                                     pid,
                                     &data,
@@ -312,7 +317,8 @@ impl Node {
                             }
                             Err(_) => {
                                 db::merge::se::serve::handle_artifacts_received(
-                                    se_store.as_ref(),
+                                    &se_store,
+                                    retry_peers.pool(),
                                     &peer_id.to_string(),
                                     &data,
                                 )
@@ -332,7 +338,8 @@ impl Node {
  token,
  } => {
                         db::merge::se::serve::handle_query_request(
-                            se_store.as_ref(),
+                            &se_store,
+                            retry_peers.pool(),
                             &se_transport_serve,
                             peer_id,
                             request, token,
@@ -431,8 +438,8 @@ impl Node {
                 .with_retry_schedule(retry_schedule.clone()),
             failure_rx,
         );
-        let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
-            replication.broadcast_mutator.clone();
+        let se_repusher =
+            db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
         replication
             .merge_handler_inner
             .set_se_repusher(se_repusher.clone());

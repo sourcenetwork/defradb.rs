@@ -60,7 +60,8 @@ where
                     let event = match event {
                         TransportEvent::SEArtifactsReceived { peer_id, data } => {
                             let doc_ids = db::merge::se::serve::handle_artifacts_received(
-                                store.as_ref(),
+                                &store,
+                                retry_peers.pool(),
                                 &peer_id.to_string(),
                                 &data,
                             )
@@ -79,7 +80,8 @@ where
  token,
  } => {
                             db::merge::se::serve::handle_query_request(
-                                store.as_ref(),
+                                &store,
+                                retry_peers.pool(),
                                 &transport,
                                 peer_id,
                                 request, token,

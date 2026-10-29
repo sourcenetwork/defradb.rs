@@ -107,9 +107,12 @@ impl<S: Store + 'static> IrohPeer<S> {
                 sync,
                 access_mode,
                 replicators,
-                Arc::new(
-                    p2p::sync::P2PCollectionStore::new(Arc::clone(&store))
-                        .with_max_txn_retries(database.options().max_txn_retries()),
+                p2p::sync::pooled_collection_store(
+                    Arc::new(
+                        p2p::sync::P2PCollectionStore::new(Arc::clone(&store))
+                            .with_max_txn_retries(database.options().max_txn_retries()),
+                    ),
+                    database.pool(),
                 ),
                 Arc::new(db::merge::create_head_provider(Arc::clone(&database))),
                 Arc::new(replication_filter::QueryReplicationFilterMatcher::new()),
@@ -311,8 +314,8 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .with_retry_schedule(retry_schedule.clone()),
             failure_rx,
         );
-        let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
-            replication.broadcast_mutator.clone();
+        let se_repusher =
+            db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
         #[cfg(not(target_arch = "wasm32"))]
         replication
             .merge_handler_inner
