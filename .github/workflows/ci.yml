@@ -28,6 +28,12 @@ env:
   # pull requests evicted main's and every new pull request compiled from
   # scratch. Only main saves, and one job saves each shared key.
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
+  # Every RunsOn job shares compiled crates through this bucket. A storage error
+  # falls back to a local compile instead of failing the build (#1429).
+  RUSTC_WRAPPER: sccache
+  SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
+  SCCACHE_REGION: us-east-2
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
@@ -79,6 +85,7 @@ jobs:
           components: clippy, rustfmt
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -127,6 +134,7 @@ jobs:
         with:
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: feature
@@ -141,6 +149,7 @@ jobs:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -185,6 +194,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -231,6 +241,7 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -252,6 +263,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
@@ -307,6 +319,7 @@ jobs:
           java-version: '21'
       - name: Check TLA ownership and convergence models
         run: proofs/tla/run-all.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lean-conformance
@@ -351,6 +364,7 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -396,6 +410,7 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -571,6 +586,7 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
