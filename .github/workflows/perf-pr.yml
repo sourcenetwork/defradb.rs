@@ -66,7 +66,6 @@ jobs:
       DEFRA_BASELINE_OPERATIONS: '256'
       DEFRA_BASELINE_LOAD_GUARD: ${{ github.workspace }}/loadguard.json
       DEFRA_BASELINE_PROFILE: release-fast
-      CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,10 +90,15 @@ jobs:
           just perf-matrix
       - uses: dtolnay/rust-toolchain@stable
       - run: head/.github/scripts/install-linux-ci-deps.sh
+      # Each side builds into its own target directory: cargo names a path
+      # crate's artifacts by its path inside the workspace, so in one shared
+      # directory a crate of one side is taken for the other's.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: perf-quick
-          workspaces: head
+          workspaces: |
+            head -> target
+            base -> target
 
       - name: Record how quiet the host is
         run: python3 head/tools/perf-site/loadguard.py --out loadguard.json
@@ -125,13 +129,13 @@ jobs:
             mkdir -p "$GITHUB_WORKSPACE/crit-$tag"
             ( cd "$side"
               for family in $QUICK_FAMILIES; do
-                rm -rf "$CARGO_TARGET_DIR/criterion"
+                rm -rf target/criterion
                 DEFRA_BENCH_OUT="$GITHUB_WORKSPACE/$tag.jsonl" \
                   cargo bench --profile "$PERF_PROFILE" -p benches --bench "$family" \
                   -- $DEFRA_BENCH_CRITERION_ARGS || true
-                if [ -d "$CARGO_TARGET_DIR/criterion" ]; then
+                if [ -d target/criterion ]; then
                   mkdir -p "$GITHUB_WORKSPACE/crit-$tag/$family"
-                  cp -R "$CARGO_TARGET_DIR/criterion/." "$GITHUB_WORKSPACE/crit-$tag/$family/"
+                  cp -R target/criterion/. "$GITHUB_WORKSPACE/crit-$tag/$family/"
                 fi
               done )
             touch "$GITHUB_WORKSPACE/$tag.jsonl"
