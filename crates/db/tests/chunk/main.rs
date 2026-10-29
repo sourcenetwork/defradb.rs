@@ -3,4 +3,5 @@
 mod common;
 
 mod schema;
+mod user_writes;
 mod window;
