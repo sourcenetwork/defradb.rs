@@ -615,6 +615,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral, Boundary],
     },
     Property {
+        // A write asks the KMS once per key scope: every field under document
+        // encryption shares the document key, and a field key is never it.
+        // Exercised by the testo scenarios
+        // encryption::field_commit::*_should_use_dedicated_enc_key_for_individual_fields.
+        family: "KMS key distribution",
+        name: "DocKeyScopes.same_scope_same_key / different_scope_different_key",
+        axis: Lean,
+        anchor: "crates/db/src/write/prepare.rs KMS key preparation (`generated` memo)",
+        model_ref: "DocKeyScopes (lake build)",
+        tiers: &[Behavioral],
+    },
+    Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and
         // key timing affect when a value can materialize, not which value wins.
         // The behavioral legs preserve encrypted fields selected for filtered

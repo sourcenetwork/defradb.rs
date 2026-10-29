@@ -10,6 +10,9 @@ lean_lib HttpRouterComposition where
 lean_lib EndpointBind where
 
 @[default_target]
+lean_lib DocKeyScopes where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]
