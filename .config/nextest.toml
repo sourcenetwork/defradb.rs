@@ -9,6 +9,9 @@ nodes = { max-threads = "num-cpus" }
 [scripts.setup.integration-binaries]
 command = { command-line = ".config/build-test-binaries.sh integration", relative-to = "workspace-root" }
 
+[scripts.setup.vera-binary]
+command = { command-line = ".config/build-test-binaries.sh vera", relative-to = "workspace-root" }
+
 [scripts.setup.conformance-binary]
 command = { command-line = ".config/build-test-binaries.sh conformance", relative-to = "workspace-root" }
 
@@ -23,6 +26,10 @@ retries = 1
 [[profile.default.scripts]]
 filter = "package(integration-test)"
 setup = "integration-binaries"
+
+[[profile.default.scripts]]
+filter = "package(integration-test) & (binary(vera) | binary(verars))"
+setup = "vera-binary"
 
 [[profile.default.scripts]]
 filter = "package(conformance) & kind(test) & !binary(lean_conformance)"

@@ -3,7 +3,7 @@
 # hands their paths to every test. A test that builds its own overwrites the one
 # shared `target/<profile>/defra` while other tests are running it.
 #
-# Usage: build-test-binaries.sh integration|conformance
+# Usage: build-test-binaries.sh integration|vera|conformance
 # A binary whose variable is already set (CI sets them) is not built.
 set -euo pipefail
 
@@ -25,12 +25,15 @@ case "${1:-}" in
         build DEFRA_RUST_BINARY defra
         build DEFRA_IROH_BINARY defra-iroh --features iroh
         ;;
+    vera)
+        build DEFRA_VERA_BINARY defra-vera --features vera
+        ;;
     # Conformance would otherwise launch `target/debug/defra`, which nextest never rebuilds.
     conformance)
         build DEFRA_CONFORMANCE_BINARY defra
         ;;
     *)
-        echo "usage: $0 integration|conformance" >&2
+        echo "usage: $0 integration|vera|conformance" >&2
         exit 2
         ;;
 esac
