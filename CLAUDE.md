@@ -81,7 +81,7 @@ crates/
 ├── lens/               # Schema migration via WASM transforms
 ├── orbis/              # Threshold BLS signing (Orbis ring client)
 ├── p2p/                # P2P networking (libp2p + optional Iroh)
-├── p2p-adapter/        # P2P adapters for HTTP-facing operations
+├── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
 ├── pg-compat/          # Postgres wire protocol compatibility
 ├── query/              # Query engine (GraphQL, BM25)
 ├── replication-filter/ # Query-filter-backed replication matcher

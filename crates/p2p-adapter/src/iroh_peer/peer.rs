@@ -26,7 +26,7 @@ pub struct ManageChannel {
     pub hooks: ManageHooksCell,
     pub correlator: p2p::ManageCorrelator,
     pub query_correlator: p2p::ManageQueryCorrelator,
-    pub requester: Arc<dyn defra_http::ManageRequester>,
+    pub requester: Arc<dyn crate::ManageRequester>,
 }
 
 /// A running iroh peer. Stop it with [`IrohPeerShutdown::shutdown`].

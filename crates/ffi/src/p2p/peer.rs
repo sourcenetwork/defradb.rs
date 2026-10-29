@@ -9,7 +9,7 @@ use crate::state::NODES;
 use crate::try_ffi;
 use crate::types::FfiResult;
 
-use defra_http::router::peer;
+use defra_p2p_adapter::peer;
 
 use super::{into_ffi_ok, into_ffi_result, FfiP2PError};
 

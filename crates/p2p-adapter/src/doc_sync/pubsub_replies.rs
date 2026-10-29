@@ -1,5 +1,5 @@
+use crate::P2PResult;
 use cid::Cid;
-use defra_http::P2PResult;
 use p2p::message::pubsub::DocSyncReply;
 use rapidhash::RapidHashSet;
 

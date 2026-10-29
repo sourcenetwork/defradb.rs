@@ -30,7 +30,7 @@ pub enum TestError {
     #[error(transparent)]
     SliceLength(#[from] std::array::TryFromSliceError),
     #[error(transparent)]
-    Peer(#[from] defra_http::P2PError),
+    Peer(#[from] defra_p2p_adapter::P2PError),
     #[error("{0}")]
     Remote(String),
     #[cfg(feature = "libp2p")]

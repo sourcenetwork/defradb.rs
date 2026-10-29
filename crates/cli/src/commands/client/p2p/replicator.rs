@@ -1,7 +1,7 @@
 //! P2P replicator command implementations
 
 use clap::{Args, Subcommand};
-use defra_http::router::{ExplicitReplayCapabilityInput, ReplicationFilter, ReplicationFilters};
+use defra_p2p_adapter::{ExplicitReplayCapabilityInput, ReplicationFilter, ReplicationFilters};
 
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::{raw_identity_from_key_bytes, validate_identifier, ClientContext};

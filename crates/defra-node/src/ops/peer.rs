@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use defra_core::RequestContext;
-use defra_http::router::peer::{self, Replicator};
+use defra_p2p_adapter::peer::{self, Replicator};
 
 use crate::{Error, Node, Result};
 
@@ -152,7 +152,7 @@ impl Node {
     }
 
     /// The P2P operations serving `context`, or Go's `ErrNoP2P`.
-    fn peer(&self, context: &RequestContext) -> Result<Arc<dyn defra_http::P2POperations>> {
+    fn peer(&self, context: &RequestContext) -> Result<Arc<dyn defra_p2p_adapter::P2POperations>> {
         self.p2p_system()
             .map(|system| system.ops_for(context))
             .ok_or(Error::Peer(peer::Error::NoP2P))

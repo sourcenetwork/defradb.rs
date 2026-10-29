@@ -72,7 +72,7 @@ hex.workspace = true
 crypto = { path = "../crypto" }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
-defra-http = { path = "../http" }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }
 storage = { path = "../storage" }

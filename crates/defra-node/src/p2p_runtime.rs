@@ -47,7 +47,7 @@ pub(crate) struct P2PSetup {
     pub manage_hooks: defra_p2p_adapter::manage::hooks::ManageHooksCell,
     /// The `P2POperations` controller (the `adapter`) bound into `manage_hooks`
     /// after the NAC manager exists. node.rs uses it as `hooks.ops`.
-    pub manage_controller: Arc<dyn defra_http::P2POperations>,
+    pub manage_controller: Arc<dyn defra_p2p_adapter::P2POperations>,
     /// Requester-side manage correlators (mutating + query). The event-loop
     /// clones deliver inbound replies; these clones are for the requester API
     /// (Task 6.3) and are bound into `manage_hooks` so requester and event loop

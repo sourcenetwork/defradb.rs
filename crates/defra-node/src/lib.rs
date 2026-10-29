@@ -717,13 +717,13 @@ impl Node {
 
     /// Access P2P operations (if P2P is enabled and configured).
     #[cfg(feature = "managed-p2p")]
-    pub fn p2p(&self) -> Option<&dyn defra_http::P2POperations> {
+    pub fn p2p(&self) -> Option<&dyn defra_p2p_adapter::P2POperations> {
         self.p2p.as_deref().map(|system| system.ops().as_ref())
     }
 
     /// Cloneable P2P operations handle for background tasks.
     #[cfg(feature = "managed-p2p")]
-    pub fn p2p_arc(&self) -> Option<Arc<dyn defra_http::P2POperations>> {
+    pub fn p2p_arc(&self) -> Option<Arc<dyn defra_p2p_adapter::P2POperations>> {
         self.p2p.as_ref().map(|system| Arc::clone(system.ops()))
     }
 
@@ -806,7 +806,8 @@ impl Node {
     #[cfg(feature = "managed-p2p")]
     pub async fn allow_p2p_peer(&self, peer_id: &str) -> Result<()> {
         let ops = self.p2p().ok_or(Error::P2pDisabled)?;
-        let peer_id = defra_http::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
+        let peer_id =
+            defra_p2p_adapter::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
         ops.allow_peer(&peer_id).await.map_err(Error::PeerAuthorize)
     }
 
@@ -835,7 +836,8 @@ impl Node {
     #[cfg(feature = "managed-p2p")]
     pub async fn deny_p2p_peer(&self, peer_id: &str) -> Result<()> {
         let ops = self.p2p().ok_or(Error::P2pDisabled)?;
-        let peer_id = defra_http::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
+        let peer_id =
+            defra_p2p_adapter::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
     }
 
