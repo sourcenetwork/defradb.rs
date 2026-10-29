@@ -296,7 +296,7 @@ Restart ==
                [] record = "InProgress" /\ defined -> "Run"         \* resumed from its record
                [] OTHER -> "Stopped"                                \* nothing to resume
   /\ record' = IF ~defined THEN "None" ELSE record                  \* restart clears records of gone indexes
-  /\ dropPc' = CASE dropPc \in {"Idle", "Done"} -> dropPc           \* untouched
+  /\ dropPc' = CASE dropPc \in {"Idle", "Done", "Abandoned"} -> dropPc \* untouched
                 [] dropPc = "Commit" -> "Abandoned"                 \* never committed
                 [] dropRec /\ ResumeMode = "Resume" -> "Removing"   \* resumed from its record
                 [] OTHER -> "Crashed"                               \* left unfinished
