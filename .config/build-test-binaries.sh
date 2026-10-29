@@ -2,6 +2,9 @@
 # Builds the defra binaries that node-starting tests launch, once per run, and
 # hands their paths to every test. A test that builds its own overwrites the one
 # shared `target/<profile>/defra` while other tests are running it.
+#
+# Usage: build-test-binaries.sh integration|conformance
+# A binary whose variable is already set (CI sets them) is not built.
 set -euo pipefail
 
 target="${CARGO_TARGET_DIR:-target}"
@@ -17,9 +20,17 @@ build() {
     echo "$var=$(cd "$out" && pwd)/$name" >> "$NEXTEST_ENV"
 }
 
-build DEFRA_RUST_BINARY defra
-build DEFRA_IROH_BINARY defra-iroh --features iroh
-# Conformance would otherwise launch `target/debug/defra`, which nextest never rebuilds.
-if [[ -z "${DEFRA_CONFORMANCE_BINARY:-}" ]]; then
-    echo "DEFRA_CONFORMANCE_BINARY=${DEFRA_RUST_BINARY:-$(cd "$out" && pwd)/defra}" >> "$NEXTEST_ENV"
-fi
+case "${1:-}" in
+    integration)
+        build DEFRA_RUST_BINARY defra
+        build DEFRA_IROH_BINARY defra-iroh --features iroh
+        ;;
+    # Conformance would otherwise launch `target/debug/defra`, which nextest never rebuilds.
+    conformance)
+        build DEFRA_CONFORMANCE_BINARY defra
+        ;;
+    *)
+        echo "usage: $0 integration|conformance" >&2
+        exit 2
+        ;;
+esac

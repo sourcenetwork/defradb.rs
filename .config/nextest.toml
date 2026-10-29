@@ -6,8 +6,11 @@ experimental = ["setup-scripts"]
 [test-groups]
 nodes = { max-threads = "num-cpus" }
 
-[scripts.setup.build-test-binaries]
-command = { command-line = ".config/build-test-binaries.sh", relative-to = "workspace-root" }
+[scripts.setup.integration-binaries]
+command = { command-line = ".config/build-test-binaries.sh integration", relative-to = "workspace-root" }
+
+[scripts.setup.conformance-binary]
+command = { command-line = ".config/build-test-binaries.sh conformance", relative-to = "workspace-root" }
 
 [profile.default]
 slow-timeout = { period = "60s" }
@@ -18,8 +21,12 @@ test-group = "nodes"
 retries = 1
 
 [[profile.default.scripts]]
-filter = "package(integration-test) | (package(conformance) & !binary(lean_conformance))"
-setup = "build-test-binaries"
+filter = "package(integration-test)"
+setup = "integration-binaries"
+
+[[profile.default.scripts]]
+filter = "package(conformance) & kind(test) & !binary(lean_conformance)"
+setup = "conformance-binary"
 
 [profile.ci]
 fail-fast = false
