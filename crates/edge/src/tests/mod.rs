@@ -53,6 +53,22 @@ impl Drop for DropFlag {
     }
 }
 
+/// Whether `flag` is set within a few seconds. A task woken after its
+/// runtime stopped is dropped by whichever thread holds its shard's inbox,
+/// which may be another thread, just after the wake returns.
+fn set_soon(flag: &AtomicBool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut backoff = Duration::from_millis(1);
+    while !flag.load(Ordering::SeqCst) {
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(backoff);
+        backoff = (backoff * 2).min(Duration::from_millis(50));
+    }
+    true
+}
+
 /// Work that stays stuck while the test holds the sender. A detached task
 /// nothing can wake, such as one awaiting `pending()`, is reclaimed by
 /// nuclei, so stuck work is a wait something could still end.

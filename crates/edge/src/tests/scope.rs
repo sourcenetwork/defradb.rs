@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::time::Duration;
 
-use super::{poll_once, runtime, runtime_with, stuck, DropFlag};
+use super::{poll_once, runtime, runtime_with, set_soon, stuck, DropFlag};
 use crate::{EdgeConfig, EdgeError};
 
 #[test]
@@ -40,7 +40,7 @@ fn a_scope_stops_and_drains_on_its_own() {
     // is dropped once woken.
     assert_eq!(runtime.shutdown().unwrap().remaining, 1);
     drop(_hold);
-    assert!(stopped.load(Ordering::SeqCst));
+    assert!(set_soon(&stopped), "the woken task is dropped");
 }
 
 #[test]

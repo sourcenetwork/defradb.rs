@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use super::{poll_once, runtime, runtime_with, single_threaded, stuck, DropFlag};
+use super::{poll_once, runtime, runtime_with, set_soon, single_threaded, stuck, DropFlag};
 use crate::{EdgeConfig, EdgeError};
 
 #[test]
@@ -36,7 +36,7 @@ fn shutdown_stops_accepting_drains_then_stops_the_rest() {
     assert!(finished.load(Ordering::SeqCst));
     assert!(!stopped.load(Ordering::SeqCst));
     drop(_hold);
-    assert!(stopped.load(Ordering::SeqCst));
+    assert!(set_soon(&stopped), "the woken task is dropped");
     assert!(edge.is_closed());
     assert_eq!(
         poll_once(edge.spawn(async { 1 })),
