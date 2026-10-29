@@ -15,7 +15,7 @@ use axum::Json;
 use serde::Serialize;
 
 use crate::error::{http_error_from_backend_message, HttpError};
-use crate::handlers::txn_header::txn_id_from_headers;
+use crate::handlers::txn_header::txn_context;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -70,12 +70,12 @@ pub async fn set_migration(
             .map_err(|e| HttpError::BadRequest(e.to_string()))?;
     }
 
-    let lens_id = if let Some(txn_id) = txn_id_from_headers(&headers)? {
-        let txn_ops = bound(state.require_txn_ops()?, &identity.context());
-        txn_ops
-            .set_migration_in_txn(txn_id, &body)
+    let lens_id = if let Some(context) = txn_context(&identity, &headers)? {
+        state
+            .executor
+            .set_migration_as(&context, &body)
             .await
-            .map_err(http_error_from_backend_message)?
+            .map_err(HttpError::from)?
     } else {
         let lens = bound(state.require_lens()?, &identity.context());
         lens.set_migration(&body)
@@ -181,7 +181,7 @@ mod tests {
 
     use crate::handlers::graphql::TX_HEADER_NAME;
     use crate::identity_extractor::ExtractIdentity;
-    use crate::mock::{MockQueryExecutor, MockTransactionOperations};
+    use crate::mock::MockQueryExecutor;
     use crate::router::AppStateBuilder;
 
     #[test]
@@ -200,10 +200,9 @@ mod tests {
             Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
         )
-        .with_txn_ops(Arc::new(MockTransactionOperations::new()))
         .build();
         let mut headers = HeaderMap::new();
-        headers.insert(TX_HEADER_NAME, HeaderValue::from_static("txn-123"));
+        headers.insert(TX_HEADER_NAME, HeaderValue::from_static("123"));
 
         let response = set_migration(
             State(state),
@@ -216,5 +215,43 @@ mod tests {
         .expect("set migration via transaction header should succeed");
 
         assert_eq!(response.0.lens_id, "mock-transform-id");
+    }
+}
+
+#[cfg(test)]
+mod finished_txn_tests {
+    use std::sync::Arc;
+
+    use axum::extract::State;
+    use axum::http::{HeaderMap, HeaderValue};
+    use query::executor::QueryExecutor;
+
+    use super::set_migration;
+    use crate::error::HttpError;
+    use crate::identity_extractor::ExtractIdentity;
+    use crate::mock::FailingMockExecutor;
+    use crate::router::AppStateBuilder;
+
+    #[test]
+    fn a_finished_transaction_answers_conflict() {
+        let executor = Arc::new(FailingMockExecutor::with_finished_txn()) as Arc<dyn QueryExecutor>;
+        let state = AppStateBuilder::new(executor, edge::testing::edge())
+            .with_dev_mode(true)
+            .build();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-defradb-tx", HeaderValue::from_static("1"));
+        let result = edge::testing::edge()
+            .block_on(set_migration(
+                State(state),
+                ExtractIdentity::anonymous(),
+                headers,
+                "{}".to_owned(),
+            ))
+            .unwrap();
+        assert!(
+            matches!(result, Err(HttpError::Conflict(_))),
+            "{:?}",
+            result.err()
+        );
     }
 }

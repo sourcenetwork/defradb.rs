@@ -12,7 +12,7 @@ use super::{
     AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
     CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
     EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
-    P2POperations, TransactionOperations, ViewOperations,
+    P2POperations, ViewOperations,
 };
 
 struct CollectionVersionsFromManagement(Arc<dyn CollectionManagementOperations>);
@@ -53,7 +53,6 @@ pub struct AppState {
     pub doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     pub view: Option<Arc<dyn ViewOperations>>,
     pub dump: Option<Arc<dyn DumpOperations>>,
-    pub txn_ops: Option<Arc<dyn TransactionOperations>>,
     pub event_bus: Option<Arc<dyn events::Bus>>,
     pub node_options: Option<Arc<Map<String, serde_json::Value>>>,
     pub node_identity_did: Option<String>,
@@ -109,10 +108,6 @@ impl std::fmt::Debug for AppState {
             )
             .field("view", &self.view.as_ref().map(|_| "<ViewOperations>"))
             .field("dump", &self.dump.as_ref().map(|_| "<DumpOperations>"))
-            .field(
-                "txn_ops",
-                &self.txn_ops.as_ref().map(|_| "<TransactionOperations>"),
-            )
             .field("event_bus", &self.event_bus.as_ref().map(|_| "<EventBus>"))
             .field(
                 "node_options",
@@ -256,17 +251,6 @@ impl AppState {
         })
     }
 
-    /// Get transaction operations or return ServiceUnavailable error.
-    pub fn require_txn_ops(
-        &self,
-    ) -> Result<&Arc<dyn TransactionOperations>, crate::error::HttpError> {
-        self.txn_ops.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "Transaction operations are not enabled.".into(),
-            )
-        })
-    }
-
     /// Get NAC operations or return ServiceUnavailable error.
     pub fn require_nac(&self) -> Result<&Arc<dyn NodeAcpOperations>, crate::error::HttpError> {
         self.nac.as_ref().ok_or_else(|| {
@@ -298,7 +282,6 @@ pub struct AppStateBuilder {
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
-    txn_ops: Option<Arc<dyn TransactionOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -331,7 +314,6 @@ impl AppStateBuilder {
             doc_acp: None,
             view: None,
             dump: None,
-            txn_ops: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -457,12 +439,6 @@ impl AppStateBuilder {
         self
     }
 
-    /// Set transaction operations.
-    pub fn with_txn_ops(mut self, txn_ops: Arc<dyn TransactionOperations>) -> Self {
-        self.txn_ops = Some(txn_ops);
-        self
-    }
-
     /// Set event bus for subscriptions.
     pub fn with_event_bus(mut self, bus: Arc<dyn events::Bus>) -> Self {
         self.event_bus = Some(bus);
@@ -521,7 +497,6 @@ impl AppStateBuilder {
             doc_acp: self.doc_acp,
             view: self.view,
             dump: self.dump,
-            txn_ops: self.txn_ops,
             event_bus: self.event_bus,
             node_options: self.node_options,
             node_identity_did: self.node_identity_did,

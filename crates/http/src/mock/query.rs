@@ -17,6 +17,7 @@ pub struct MockQueryExecutor {
 #[derive(Debug, Clone)]
 pub struct FailingMockExecutor {
     schema_error: Option<String>,
+    finished_txn: bool,
 }
 
 impl FailingMockExecutor {
@@ -24,6 +25,22 @@ impl FailingMockExecutor {
     pub fn with_schema_error(msg: impl Into<String>) -> Self {
         Self {
             schema_error: Some(msg.into()),
+            finished_txn: false,
+        }
+    }
+
+    /// Create a mock whose every transaction is already finalized.
+    pub fn with_finished_txn() -> Self {
+        Self {
+            schema_error: None,
+            finished_txn: true,
+        }
+    }
+
+    fn txn_error(&self) -> TransactionError {
+        match self.finished_txn {
+            true => TransactionError::AlreadyFinalized("mock transaction".to_owned()),
+            false => TransactionError::not_supported("mock executor does not support transactions"),
         }
     }
 }
@@ -31,6 +48,22 @@ impl FailingMockExecutor {
 #[async_trait]
 impl QueryExecutor for FailingMockExecutor {
     fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn add_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Err(self.txn_error())
+    }
+
+    async fn set_migration_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        Err(self.txn_error())
+    }
 
     async fn execute(&self, _request: QueryRequest) -> QueryResponse {
         QueryResponse::error("execution failed")
@@ -101,9 +134,41 @@ impl Default for MockQueryExecutor {
     }
 }
 
+fn mock_collection_version(name: &str) -> schema::CollectionVersion {
+    serde_json::from_value(json!({
+        "Name": name,
+        "VersionID": "mock-version-id",
+        "CollectionID": "mock-collection-id",
+    }))
+    .expect("mock collection version should deserialize")
+}
+
 #[async_trait]
 impl QueryExecutor for MockQueryExecutor {
     fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn add_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Ok(vec![mock_collection_version("MockCollection")])
+    }
+
+    async fn collections_as(
+        &self,
+        _context: &defra_core::RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Ok(vec![mock_collection_version("MockCollection")])
+    }
+
+    async fn set_migration_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        Ok("mock-transform-id".to_string())
+    }
 
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
         let query = request.query.to_lowercase();

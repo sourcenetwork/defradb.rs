@@ -21,7 +21,7 @@ use axum::{
     Router,
 };
 use defra_http::router::{AppStateBuilder, CollectionVersionOperations};
-use defra_http::{MockQueryExecutor, MockRestOperations, MockTransactionOperations};
+use defra_http::{MockQueryExecutor, MockRestOperations};
 use query::rest::RestOperations;
 use schema::CollectionVersion;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -87,7 +87,6 @@ fn router_with(versions: Arc<Versions>) -> Router {
     let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
         .with_rest(Arc::new(MockRestOperations::new()) as Arc<dyn RestOperations>)
         .with_collection_versions(versions)
-        .with_txn_ops(Arc::new(MockTransactionOperations::new()))
         .build();
     defra_http::create_router_with_state(state)
 }
@@ -303,8 +302,7 @@ async fn view_refresh_uses_the_same_json_selector_error() {
 async fn a_transaction_header_reads_transaction_visible_collections() {
     assert!(names("?name=MockCollection").await.is_empty());
 
-    let response =
-        get_response_with_txn(router(), "?name=MockCollection", Some("transaction-id")).await;
+    let response = get_response_with_txn(router(), "?name=MockCollection", Some("123")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");

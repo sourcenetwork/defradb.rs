@@ -1136,44 +1136,6 @@ pub trait BackupOperations: defra_core::thread_bounds::MaybeSendSync {
     async fn import(&self, data: &str) -> Result<ImportResult, String>;
 }
 
-/// Trait for transaction-scoped operations.
-///
-/// Provides access to operations that must execute within an existing transaction,
-/// such as setting migrations, adding schemas, or reading collection versions
-/// including uncommitted writes.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait TransactionOperations: defra_core::thread_bounds::MaybeSendSync {
-    bind_request!(TransactionOperations);
-
-    /// Set a migration within an existing transaction.
-    ///
-    /// Registers a lens migration configuration within the specified transaction.
-    /// The migration will only be visible after the transaction is committed.
-    /// Returns the transform ID.
-    async fn set_migration_in_txn(&self, txn_id: &str, config: &str) -> Result<String, String>;
-
-    /// Get all collection versions visible within a transaction.
-    ///
-    /// Reads from the transaction's systemstore, which includes both
-    /// committed data and any uncommitted writes made within this transaction.
-    async fn get_collections_in_txn(
-        &self,
-        txn_id: &str,
-    ) -> Result<Vec<schema::CollectionVersion>, String>;
-
-    /// Add a schema within an existing transaction.
-    ///
-    /// Parses the SDL and creates collections within the transaction.
-    /// The collections are only visible after the transaction is committed,
-    /// but can be used by queries within the same transaction.
-    async fn add_collection_in_txn(
-        &self,
-        txn_id: &str,
-        sdl: &str,
-    ) -> Result<Vec<schema::CollectionVersion>, String>;
-}
-
 /// Trait for view operations.
 ///
 /// Views are virtual collections backed by a GQL query. Materialized views

@@ -544,6 +544,41 @@ pub trait QueryExecutor: MaybeSendSync {
         context.mirror(self.discard_txn(handle)).await
     }
 
+    /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::collections_as`](crate::txn::TransactionRegistry::collections_as).
+    async fn collections_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "transaction-scoped collection reads are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported by this executor",
+        ))
+    }
+
     /// Remove an abandoned transaction without committing or spawning cleanup.
     ///
     /// Called by `TransactionGuard::drop`, including during runtime shutdown.
