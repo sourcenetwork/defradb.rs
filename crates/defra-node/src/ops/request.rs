@@ -21,7 +21,7 @@ impl Node {
         if context.txn().is_some() {
             return self
                 .runner()
-                .add_collection_as(&self.caller(context).with_txn(context.txn()), sdl)
+                .add_collection_as(&self.caller(context), sdl)
                 .await
                 .map_err(transaction_error);
         }
@@ -96,7 +96,7 @@ impl Node {
     pub(crate) fn caller(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),
-            None => self.node_context(),
+            None => self.node_context().with_txn(context.txn()),
         }
     }
 }
