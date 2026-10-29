@@ -156,20 +156,49 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
-    /// Every collection version the transaction `context` carries sees,
-    /// its own uncommitted writes included.
-    async fn collections_as(
+    /// The collection versions `selector` picks for the caller `context`
+    /// names, in the transaction it carries if it carries one (its own
+    /// uncommitted writes included), ordered by name then version ID.
+    async fn get_collections_as(
         &self,
         context: &RequestContext,
+        selector: &schema::CollectionSelector,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
-        let _ = context;
+        let _ = (context, selector);
         Err(TransactionError::not_supported(
-            "transaction-scoped collection reads are not supported in this configuration",
+            "collection reads are not supported in this configuration",
+        ))
+    }
+
+    /// Apply the Go collection patch `patch`, with `migration` as the
+    /// migration to the version it adds, for the caller `context` names.
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "collection patches are not supported in this configuration",
+        ))
+    }
+
+    /// Make collection version `version_id` its collection's active one, for
+    /// the caller `context` names, in the transaction it carries if any.
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "collection activation is not supported in this configuration",
         ))
     }
 
     /// Register the lens migration `config` (JSON) in the transaction
-    /// `context` carries; the transform ID.
+    /// `context` carries, if any; the transform ID.
     async fn set_migration_as(
         &self,
         context: &RequestContext,
@@ -181,7 +210,7 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
-    /// Register the standalone lens `config` in the transaction `context` carries; the transform ID.
+    /// Register the standalone lens `config` in the transaction `context` carries, if any; the transform ID.
     async fn add_lens_as(
         &self,
         context: &RequestContext,

@@ -207,13 +207,61 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
-    async fn collections_as(
+    async fn get_collections_as(
         &self,
         context: &RequestContext,
+        selector: &schema::CollectionSelector,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
-        let id = context_txn(context)?;
-        self.get_collections_in_txn_as(context, &id)
+        let Some(id) = context.txn() else {
+            return self
+                .db
+                .get_collections_as(context, selector)
+                .await
+                .map_err(operation_error);
+        };
+        self.db
+            .check_node_access_as(context, acp::nac::NodePermission::CollectionGet)
             .await
+            .map_err(operation_error)?;
+        let versions = self
+            .get_collections_in_txn_as(context, &id.to_string())
+            .await
+            .map_err(operation_error)?;
+        crate::collection::ops::select(versions, selector).map_err(operation_error)
+    }
+
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        if context.txn().is_some() {
+            return Err(TransactionError::not_supported(
+                "collection patches inside an explicit transaction are not supported yet",
+            ));
+        }
+        self.db
+            .patch_collections_as(context, patch, migration)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let Some(id) = context.txn() else {
+            return self
+                .db
+                .set_active_collection_version_as(context, version_id)
+                .await
+                .map_err(operation_error);
+        };
+        self.set_collection_active_in_txn_as(context, &id.to_string(), version_id, true)
+            .await
+            .map(|_| ())
             .map_err(operation_error)
     }
 
@@ -222,12 +270,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         context: &RequestContext,
         config: &str,
     ) -> std::result::Result<String, TransactionError> {
-        let id = context_txn(context)?;
         let config: lens::LensConfig = serde_json::from_str(config).map_err(|e| {
             TransactionError::operation(format!("failed to parse lens config: {e}"))
         })?;
-        self.set_migration_in_txn_as(context, &id, config)
-            .await
+        let transform = match context.txn() {
+            Some(id) => {
+                self.set_migration_in_txn_as(context, &id.to_string(), config)
+                    .await
+            }
+            None => self.db.set_migration_as(context, config).await,
+        };
+        transform
             .map(|transform| transform.to_string())
             .map_err(operation_error)
     }
@@ -237,9 +290,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         context: &RequestContext,
         config: lens::LensConfig,
     ) -> std::result::Result<String, TransactionError> {
-        let id = context_txn(context)?;
-        self.add_lens_in_txn_as(context, &id, config)
-            .await
+        let transform = match context.txn() {
+            Some(id) => {
+                self.add_lens_in_txn_as(context, &id.to_string(), config)
+                    .await
+            }
+            None => self.db.add_lens_as(context, config).await,
+        };
+        transform
             .map(|transform| transform.to_string())
             .map_err(operation_error)
     }
@@ -248,13 +306,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         context: &RequestContext,
     ) -> std::result::Result<String, TransactionError> {
-        let id = context_txn(context)?;
-        let lenses = self
-            .list_lenses_in_txn_as(context, &id)
-            .await
-            .map_err(operation_error)?;
-        serde_json::to_string(&lenses)
-            .map_err(|e| TransactionError::operation(format!("failed to serialize lenses: {e}")))
+        let lenses = match context.txn() {
+            Some(id) => self.list_lenses_in_txn_as(context, &id.to_string()).await,
+            None => self.db.list_lenses_as(context).await,
+        }
+        .map_err(operation_error)?;
+        // Go's `map[string]model.Lens`: each lens is its modules, in order.
+        let lenses: serde_json::Map<String, serde_json::Value> = lenses
+            .into_iter()
+            .map(|(id, modules)| (id, serde_json::json!({ "Lenses": modules })))
+            .collect();
+        Ok(serde_json::Value::Object(lenses).to_string())
     }
 
     async fn delete_collections_as(

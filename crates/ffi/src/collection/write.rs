@@ -147,21 +147,17 @@ pub unsafe extern "C" fn set_active_collection_version(
     identity_did: *const std::ffi::c_char,
     version_id: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionPatch,
-        version_id => version_str: "version_id";
-        {
-        database
-            .set_active_collection_version_as(&context, &version_str)
-            .await
-            .map_err(|e| format!("failed to set active collection version: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let version_id = try_ffi!(require_c_str(version_id, "version_id"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .set_active_collection_version_as(&context, &version_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
@@ -205,51 +201,39 @@ pub unsafe extern "C" fn set_collection_active_in_txn(
     }
 }
 
-/// Patch a collection's schema using JSON patch operations.
+/// Go's `PatchCollection` without a migration: apply the JSON patch
+/// `patch` to the collection its paths name.
 ///
-/// This applies the given JSON patch to the collection's schema,
-/// validates the result, and updates the collection.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `collection_name` - The name of the collection to patch
-/// * `patch` - A JSON patch string (RFC 6902 format)
+/// `collection_name` stays in the signature for the C ABI; the patch's own
+/// paths name the collection.
 ///
 /// # Returns
 ///
-/// - Status 0: Success (value contains the updated CollectionVersion as JSON)
+/// - Status 0: Success (value is "{}")
 /// - Status 1: Error (error field contains message)
 ///
 /// # Safety
 ///
-/// `collection_name` and `patch` must be valid null-terminated UTF-8 strings.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string, and
+/// `patch` a valid one.
 #[no_mangle]
 pub unsafe extern "C" fn patch_collection(
     node_ptr: usize,
     identity_did: *const std::ffi::c_char,
-    collection_name: *const std::ffi::c_char,
+    _collection_name: *const std::ffi::c_char,
     patch: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionPatch,
-        collection_name => name_str: "collection_name",
-        patch => patch_str: "patch";
-        {
-        let updated_schema = database
-            .patch_collection_as(&context, &name_str, &patch_str)
-            .await
-            .map_err(|e| format!("failed to patch collection: {}", e))?;
-
-        let json = serde_json::to_string(&updated_schema)
-            .map_err(|e| format!("failed to serialize updated schema: {}", e))?;
-
-        Ok(json)
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let patch = try_ffi!(require_c_str(patch, "patch"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .patch_collection_as(&context, &patch, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 

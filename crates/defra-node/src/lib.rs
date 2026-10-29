@@ -140,22 +140,6 @@ trait SchemaOps: Send + Sync {
         source_query: &str,
         target_sdl: &str,
     ) -> Result<()>;
-    async fn patch_collection(
-        &self,
-        context: &RequestContext,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion>;
-    async fn set_active_collection_version(
-        &self,
-        context: &RequestContext,
-        version_id: &str,
-    ) -> Result<()>;
-    async fn set_migration(
-        &self,
-        context: &RequestContext,
-        config: LensConfig,
-    ) -> Result<TransformId>;
     async fn materialize_collection(
         &self,
         context: &RequestContext,
@@ -499,53 +483,6 @@ impl Node {
         let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
         let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
         self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
-            .await
-    }
-
-    /// Apply a JSON Patch (RFC 6902) to an existing collection's schema.
-    ///
-    /// Returns the updated [`CollectionVersion`] (with a new `version_id`). The
-    /// prior version is deactivated and the patched version is activated, unless
-    /// the patch is a metadata-only or in-place change (see [`db::DB::patch_collection`]).
-    ///
-    /// `collection_name` may be a collection name, version ID, or variant; the
-    /// underlying implementation falls back to version-ID lookup if name lookup fails.
-    pub async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        let (name, patch) = (collection_name.to_owned(), patch.to_owned());
-        self.on_pool(move || async move { ops.patch_collection(&context, &name, &patch).await })
-            .await
-    }
-
-    /// Activate a specific collection version by its `version_id`.
-    ///
-    /// Deactivates sibling versions of the same collection and updates the
-    /// collection-name pointer to resolve to this version. If migrations are
-    /// registered, documents are reindexed through them.
-    pub async fn set_active_collection_version(&self, version_id: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        let version = version_id.to_owned();
-        self.on_pool(
-            move || async move { ops.set_active_collection_version(&context, &version).await },
-        )
-        .await
-    }
-
-    /// Register a Lens migration between two collection versions.
-    ///
-    /// Returns the content-addressed [`TransformId`] of the stored transform.
-    /// Placeholder versions are created if the source or destination are not
-    /// yet materialized, allowing migrations to be registered ahead of patches.
-    ///
-    /// Requires the `wasmtime-runtime` feature (on by default). Without it this
-    /// returns an explicit error instead of registering a no-op transform.
-    pub async fn set_migration(&self, config: LensConfig) -> Result<TransformId> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        self.on_pool(move || async move { ops.set_migration(&context, config).await })
             .await
     }
 

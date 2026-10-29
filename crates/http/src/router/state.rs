@@ -11,8 +11,8 @@ use serde_json::Map;
 use super::{
     AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
     CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
-    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
-    P2POperations, ViewOperations,
+    EncryptedIndexOperations, IndexOperations, ManageRequester, NodeAcpOperations, P2POperations,
+    ViewOperations,
 };
 
 struct CollectionVersionsFromManagement(Arc<dyn CollectionManagementOperations>);
@@ -46,7 +46,6 @@ pub struct AppState {
     pub backup: Option<Arc<dyn BackupOperations>>,
     pub block: Option<Arc<dyn BlockOperations>>,
     pub schema: Option<Arc<dyn CollectionOperations>>,
-    pub lens: Option<Arc<dyn LensOperations>>,
     pub nac: Option<Arc<dyn NodeAcpOperations>>,
     pub collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     pub collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
@@ -86,7 +85,6 @@ impl std::fmt::Debug for AppState {
                 "schema",
                 &self.schema.as_ref().map(|_| "<CollectionOperations>"),
             )
-            .field("lens", &self.lens.as_ref().map(|_| "<LensOperations>"))
             .field("nac", &self.nac.as_ref().map(|_| "<NodeAcpOperations>"))
             .field(
                 "collection_versions",
@@ -195,15 +193,6 @@ impl AppState {
         })
     }
 
-    /// Get lens operations or return ServiceUnavailable error.
-    pub fn require_lens(&self) -> Result<&Arc<dyn LensOperations>, crate::error::HttpError> {
-        self.lens.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "Lens operations are not enabled. Start the server with lens enabled to use this feature.".into()
-            )
-        })
-    }
-
     /// Get collection management operations or return ServiceUnavailable error.
     pub fn require_collection_mgmt(
         &self,
@@ -275,7 +264,6 @@ pub struct AppStateBuilder {
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
     schema: Option<Arc<dyn CollectionOperations>>,
-    lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
@@ -307,7 +295,6 @@ impl AppStateBuilder {
             backup: None,
             block: None,
             schema: None,
-            lens: None,
             nac: None,
             collection_versions: None,
             collection_mgmt: None,
@@ -383,12 +370,6 @@ impl AppStateBuilder {
     /// Set schema operations.
     pub fn with_schema(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
-        self
-    }
-
-    /// Set lens operations.
-    pub fn with_lens(mut self, lens: Arc<dyn LensOperations>) -> Self {
-        self.lens = Some(lens);
         self
     }
 
@@ -490,7 +471,6 @@ impl AppStateBuilder {
             backup: self.backup,
             block: self.block,
             schema: self.schema,
-            lens: self.lens,
             nac: self.nac,
             collection_versions: self.collection_versions,
             collection_mgmt: self.collection_mgmt,

@@ -55,29 +55,6 @@ impl<S: Store + 'static> CollectionManagementOperations for CollectionManagement
             .map_err(|error| error.to_string())
     }
 
-    async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<serde_json::Value, String> {
-        let version = self
-            .database
-            .patch_collection_with_migration_as(&self.context(), collection_name, patch, migration)
-            .await
-            .map_err(|e| format!("{}", e))?;
-
-        serde_json::to_value(&version)
-            .map_err(|e| format!("failed to serialize collection version: {}", e))
-    }
-
-    async fn set_active_version(&self, version_id: &str) -> Result<(), String> {
-        self.database
-            .set_active_collection_version_as(&self.context(), version_id)
-            .await
-            .map_err(|e| format!("{}", e))
-    }
-
     async fn truncate_collection(
         &self,
         name: &str,

@@ -556,14 +556,40 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
-    /// [`TransactionRegistry::collections_as`](crate::txn::TransactionRegistry::collections_as).
-    async fn collections_as(
+    /// [`TransactionRegistry::get_collections_as`](crate::txn::TransactionRegistry::get_collections_as).
+    async fn get_collections_as(
         &self,
         context: &RequestContext,
+        selector: &schema::CollectionSelector,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
-        let _ = context;
+        let _ = (context, selector);
         Err(TransactionError::not_supported(
-            "transaction-scoped collection reads are not supported by this executor",
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::patch_collection_as`](crate::txn::TransactionRegistry::patch_collection_as).
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
         ))
     }
 

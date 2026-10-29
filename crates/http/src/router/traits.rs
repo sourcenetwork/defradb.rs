@@ -941,24 +941,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
     /// List actions that have not completed successfully.
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String>;
 
-    /// Apply a JSON Patch (RFC 6902) to a collection schema.
-    ///
-    /// Creates a new schema version with the patched fields.
-    /// The `patch` should be a JSON array of patch operations.
-    /// The optional migration is registered atomically with the new version.
-    async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<serde_json::Value, String>;
-
-    /// Set the active collection version.
-    ///
-    /// Activates the specified version and deactivates other versions
-    /// of the same collection.
-    async fn set_active_version(&self, version_id: &str) -> Result<(), String>;
-
     /// Truncate a collection, optionally limiting removal to matching documents.
     async fn truncate_collection(
         &self,
@@ -1017,39 +999,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
     /// named collection is removed.
     async fn delete_collections(&self, names: Vec<String>, active_only: bool)
         -> Result<(), String>;
-}
-
-/// Trait for lens migration operations.
-///
-/// Enables setting up migrations between schema versions using WASM transforms.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait LensOperations: defra_core::thread_bounds::MaybeSendSync {
-    bind_request!(LensOperations);
-
-    /// Set a migration between schema versions.
-    ///
-    /// The config should be a JSON string containing:
-    /// - SourceSchemaVersionID: The source version CID
-    /// - DestinationSchemaVersionID: The destination version CID
-    /// - Lens: The lens configuration with path to WASM module
-    ///
-    /// Returns the transform ID assigned to this migration.
-    async fn set_migration(&self, config: &str) -> Result<String, String>;
-
-    /// Reload all lens modules from disk.
-    async fn reload(&self) -> Result<(), String>;
-
-    /// Add a lens configuration directly.
-    ///
-    /// The config should be a JSON string containing the full lens configuration.
-    /// Returns the transform ID assigned to this lens.
-    async fn add(&self, config: &str) -> Result<String, String>;
-
-    /// List all registered lens modules.
-    ///
-    /// Returns a JSON value representing all registered transforms.
-    async fn list(&self) -> Result<serde_json::Value, String>;
 }
 
 /// Trait for document-level ACP operations.

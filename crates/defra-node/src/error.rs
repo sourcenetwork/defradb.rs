@@ -60,6 +60,9 @@ pub enum Error {
     /// A schema policy does not match its policy definition.
     #[error("schema policy validation error: {0}")]
     PolicyValidation(String),
+    /// A lens or the lens listing is not the JSON Go writes; serde's message.
+    #[error("{0}")]
+    LensJson(#[source] serde_json::Error),
     /// A document write was refused.
     #[error(transparent)]
     Documents(#[from] query::documents::Error),

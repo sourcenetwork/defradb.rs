@@ -47,6 +47,7 @@ pub struct HttpConfig {
     pub(crate) extra_routes: Option<axum::Router>,
     pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
+    pub(crate) dev_mode: bool,
 }
 
 #[cfg(feature = "http")]
@@ -66,6 +67,7 @@ impl HttpConfig {
             extra_routes: None,
             router_transform: None,
             listener: None,
+            dev_mode: false,
         }
     }
 
@@ -115,6 +117,13 @@ impl HttpConfig {
     /// assembled, so application middleware can cover both and their fallback.
     pub fn with_router_transform(mut self, transform: defra_http::RouterTransform) -> Self {
         self.router_transform = Some(transform);
+        self
+    }
+
+    /// Let HTTP callers name lens modules by a path on the server's disk, as
+    /// the CLI's `--development` does.
+    pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
+        self.dev_mode = dev_mode;
         self
     }
 }

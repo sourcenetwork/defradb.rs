@@ -40,6 +40,15 @@ pub(crate) fn txn_context(
     Ok(Some(identity.context().with_txn(Some(id))))
 }
 
+/// The context the request `identity` acts in, in the transaction its
+/// header selects if it selects one.
+pub(crate) fn call_context(
+    identity: &crate::identity_extractor::ExtractIdentity,
+    headers: &HeaderMap,
+) -> Result<defra_core::RequestContext, HttpError> {
+    Ok(txn_context(identity, headers)?.unwrap_or_else(|| identity.context()))
+}
+
 /// Resolve REST operations serving the request `identity` acts in, in the
 /// transaction it selects.
 pub(crate) fn rest_for_request(

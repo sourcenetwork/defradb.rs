@@ -11,6 +11,8 @@ mod create;
 mod delete;
 mod lookup;
 mod resolve;
+mod select;
+pub(crate) use select::select;
 mod truncate_filtered;
 mod version;
 

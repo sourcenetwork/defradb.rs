@@ -1,8 +1,9 @@
 use crate::actions::shared::Lens;
-use crate::scenario::{Common, Op};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `lens.add` op.
@@ -32,6 +33,18 @@ impl Op for AddLens {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        state
+            .block_on(
+                state
+                    .node()
+                    .add_lens_as(&state.context(self.txn), &self.lens.to_wire()),
+            )
+            .map(|id| json!({ "lensID": id }))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
 }
 
 impl Action for AddLens {
@@ -39,5 +52,31 @@ impl Action for AddLens {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for AddLens {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let (txn, lens) = (state.txn_id(action.txn), action.lens.to_wire());
+            state
+                .http(|client| async move { client.add_lens(txn.as_deref(), &lens).await })
+                .map(|id| json!({ "lensID": id }))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for AddLens {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let lens = action.lens.to_wire().to_string();
+            let printed = state
+                .defra_client_in(action.txn, &["lens", "add", &lens])
+                .map_err(Failure::operation)?;
+            Ok(json!({ "lensID": printed["lensId"] }))
+        });
     }
 }

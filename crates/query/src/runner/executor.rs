@@ -283,11 +283,33 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.add_collection_as(context, sdl).await
     }
 
-    async fn collections_as(
+    async fn get_collections_as(
         &self,
         context: &RequestContext,
+        selector: &schema::CollectionSelector,
     ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
-        self.registry.collections_as(context).await
+        self.registry.get_collections_as(context, selector).await
+    }
+
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .patch_collection_as(context, patch, migration)
+            .await
+    }
+
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .set_active_collection_version_as(context, version_id)
+            .await
     }
 
     async fn set_migration_as(

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use defra_core::RequestContext;
 use identity::Did;
-use lens::{LensConfig, TransformId};
 use schema::CollectionVersion;
 
 use crate::acp_ops::PolicyLookup;
@@ -268,42 +267,6 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         }
 
         Ok(())
-    }
-
-    async fn patch_collection(
-        &self,
-        context: &RequestContext,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion> {
-        db::DB::patch_collection_as(&self.database, context, collection_name, patch)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn set_active_collection_version(
-        &self,
-        context: &RequestContext,
-        version_id: &str,
-    ) -> Result<()> {
-        self.database
-            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await
-            .map_err(Error::from)?;
-
-        db::DB::set_active_collection_version_as(&self.database, context, version_id)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn set_migration(
-        &self,
-        context: &RequestContext,
-        config: LensConfig,
-    ) -> Result<TransformId> {
-        db::DB::set_migration_as(&self.database, context, config)
-            .await
-            .map_err(Error::from)
     }
 
     async fn materialize_collection(

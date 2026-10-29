@@ -61,7 +61,9 @@ impl ClientType {
                 }
                 let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
                 let url = format!("http://{}", listener.local_addr().expect("local address"));
-                let config = HttpConfig::with_listener(listener).expect("http config");
+                let config = HttpConfig::with_listener(listener)
+                    .expect("http config")
+                    .with_dev_mode(true);
                 state.held = vec![Arc::new(start_node(Some(config)))];
                 state.url = Some(url);
             }

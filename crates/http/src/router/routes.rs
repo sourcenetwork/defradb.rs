@@ -216,8 +216,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     // Lens migration routes
     let lens_routes = Router::new()
         .route("/", post(handlers::lens::add_lens))
-        .route("/", get(handlers::lens::list_lenses))
-        .route("/reload", post(handlers::lens::reload));
+        .route("/", get(handlers::lens::list_lenses));
 
     // Batch signing routes
     let batch_routes = Router::new()

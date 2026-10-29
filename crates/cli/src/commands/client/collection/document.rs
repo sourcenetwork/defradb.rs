@@ -1,6 +1,7 @@
 //! Collection operation command implementations
 
 use super::{CollectionDeleteArgs, CollectionPatchArgs, SetActiveArgs, TruncateArgs};
+use crate::commands::client::document::write_client;
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::ClientContext;
 use crate::commands::client::{get_data_from_args, validate_identifier};
@@ -9,33 +10,25 @@ use crate::error::{Error, Result};
 impl CollectionPatchArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let patch = get_data_from_args(&self.patch, &self.patch_file)?;
-        let migration = if self.migration.is_some() || self.lens_file.is_some() {
-            Some(get_data_from_args(&self.migration, &self.lens_file)?)
-        } else {
-            None
+        let migration = match self.migration.is_some() || self.lens_file.is_some() {
+            true => Some(serde_json::from_str::<serde_json::Value>(
+                &get_data_from_args(&self.migration, &self.lens_file)?,
+            )?),
+            false => None,
         };
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
+        let (client, txn) = write_client(ctx)?;
         client
-            .collection_patch(&patch, migration.as_deref())
-            .await?;
-        Ok(())
+            .patch_collection(txn.as_deref(), &patch, migration.as_ref())
+            .await
     }
 }
 
 impl SetActiveArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
+        let (client, txn) = write_client(ctx)?;
         client
-            .collection_set_active(self.version_id.as_deref())
-            .await?;
-        Ok(())
+            .set_active_collection_version(txn.as_deref(), self.version_id.as_deref().unwrap_or(""))
+            .await
     }
 }
 

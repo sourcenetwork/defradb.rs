@@ -310,36 +310,6 @@ async fn delete_collections_by_query_rejects_invalid_active_only() {
 }
 
 #[tokio::test]
-async fn patch_collection_forwards_migration() {
-    let operations = Arc::new(MockCollectionManagementOperations::new());
-    let router = router_with_collection_mgmt_operations(operations.clone());
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method(Method::PATCH)
-                .uri("/api/v0/collections")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "Patch": [{
-                            "op": "add",
-                            "path": "/Users/Fields/-",
-                            "value": {"Name": "age", "Kind": "Int"}
-                        }],
-                        "Migration": {"Lenses": []}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(operations.last_migration().unwrap().lenses, Vec::new());
-}
-
-#[tokio::test]
 async fn patch_collection_rejects_migration_file_paths() {
     let operations = Arc::new(MockCollectionManagementOperations::new());
     let router = router_with_collection_mgmt_operations(operations.clone());
@@ -366,5 +336,4 @@ async fn patch_collection_rejects_migration_file_paths() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(operations.last_migration().is_none());
 }

@@ -48,8 +48,6 @@ mod introspection_cache_1855;
 mod join_order_1596;
 #[path = "query/json_missing_key.rs"]
 mod json_missing_key;
-#[path = "query/lens.rs"]
-mod lens;
 #[path = "query/lens_cross_runtime.rs"]
 mod lens_cross_runtime;
 #[path = "query/lens_persistence.rs"]
