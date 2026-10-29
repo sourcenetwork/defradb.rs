@@ -37,9 +37,9 @@ pub enum Error {
     /// caller. Go's text for all three.
     #[error("transaction not found")]
     TransactionNotFound,
-    /// The commit lost a write conflict; the message is the storage engine's.
-    #[error("{0}")]
-    TransactionConflict(String),
+    /// The commit lost a write conflict. Go's text.
+    #[error("transaction conflict. Please retry")]
+    TransactionConflict,
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),

@@ -29,9 +29,19 @@ where
 }
 
 impl State {
-    /// Runs `defra client <args>` against the node: what it printed as JSON,
-    /// or what it printed to stderr when it failed. The root directory holds
-    /// no config, so only the defaults and `--url` apply.
+    /// [`State::defra_client`] in transaction number `txn`, when the action
+    /// names one.
+    pub fn defra_client_in(&self, txn: Option<usize>, args: &[&str]) -> Result<Value, String> {
+        match self.txn_id(txn) {
+            Some(id) => self.defra_client(&[&["--tx", id.as_str()], args].concat()),
+            None => self.defra_client(args),
+        }
+    }
+
+    /// Runs `defra client <args>` against the node: what it printed as JSON
+    /// (null when it printed nothing), or what it printed to stderr when it
+    /// failed. The root directory holds no config, so only the defaults and
+    /// `--url` apply.
     pub fn defra_client(&self, args: &[&str]) -> Result<Value, String> {
         let binary = crate::rust_binary();
         let rootdir = std::env::temp_dir().join("defra-cli-client-no-config");
@@ -44,6 +54,7 @@ impl State {
             .output()
             .unwrap_or_else(|e| panic!("run {}: {e}", binary.display()));
         match output.status.success() {
+            true if output.stdout.trim_ascii().is_empty() => Ok(Value::Null),
             true => serde_json::from_slice(&output.stdout)
                 .map_err(|e| format!("defra client printed no JSON: {e}")),
             false => Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
