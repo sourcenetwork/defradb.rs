@@ -418,7 +418,7 @@ jobs:
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
         with:
-          # The pinned GO_COMPAT_COMMIT declares `go 1.26.7`, so an older
+          # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
       - name: Restore Go DefraDB

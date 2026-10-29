@@ -62,7 +62,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Text CRDT convergence",
     "JSON CRDT per-path merge",
     "Custom CRDT types",
-    "Document create pipeline",
+    "Document write pipeline",
     "Postgres wire connection loop",
     "HTTP client redirects and body deadline",
     "Connect fallback race",

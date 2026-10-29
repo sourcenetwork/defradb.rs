@@ -1510,21 +1510,22 @@ async fn poll_account_scan_count(node: &DefraClient, want: usize, timeout: Durat
     }
 }
 
-/// Every configured replicator on `node` reports `Status: 0`
-/// (`client.ReplicatorStatusActive` in Go - the type has no json tags, so the
-/// wire field is the Go field name and the value the raw uint8).
-fn replicators_all_active(node: &DefraClient) -> bool {
+/// Every configured replicator on `node` reports `Status: want`
+/// (`client.ReplicatorStatusActive` is 0 and `ReplicatorStatusInactive` is 1 in
+/// Go; the type has no json tags, so the wire field is the Go field name and
+/// the value the raw uint8).
+fn replicators_all_status(node: &DefraClient, want: i64) -> bool {
     node.p2p_replicator_list()
         .unwrap_or_default()
         .as_array()
-        .map(|reps| !reps.is_empty() && reps.iter().all(|r| r["Status"].as_i64() == Some(0)))
+        .map(|reps| !reps.is_empty() && reps.iter().all(|r| r["Status"].as_i64() == Some(want)))
         .unwrap_or(false)
 }
 
-async fn poll_replicators_all_active(node: &DefraClient, timeout: Duration) -> bool {
+async fn poll_replicators_all_status(node: &DefraClient, want: i64, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if replicators_all_active(node) {
+        if replicators_all_status(node, want) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -1709,9 +1710,9 @@ async fn parity_unique_twins_rust_rust() {
 /// (`pushHeadsForAllDocs`, async OnSuccessAsync) and live pushes (spawned
 /// goroutines) are concurrent and not ordered. The post-witness settle
 /// re-check below mitigates a still-in-flight twin before asserting divergence.
-/// The replicator-`Active` assertion at the end is the #5058 silent-ack
-/// signature: the sender drained its retry queue believing the rejected push
-/// succeeded.
+/// The replicator-`Inactive` assertion at the end is what Go reports since
+/// #5302 and #5307: the sender sees the peer's rejection instead of draining its
+/// retry queue as if the push had succeeded (the #5058 silent ack).
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
 #[nuclei::test]
 async fn parity_unique_twins_go_go() {
@@ -1767,13 +1768,15 @@ async fn parity_unique_twins_go_go() {
             );
         }
 
-        // #5058 silent-ack signature: despite the rejected twin push, each sender
-        // reports its replicator Active (retry record deleted as if successful).
+        // Go #5302 (peer rejections are reported without blocking replication) and
+        // #5307 (collection blocks are retried in the replicator) replaced the
+        // #5058 silent ack: the sender no longer reports its replicator Active after
+        // a rejected push, it reports it Inactive.
         for n in [0usize, 1] {
             assert!(
-                poll_replicators_all_active(&cluster.client(n), Duration::from_secs(15)).await,
-                "[{label}] node{n} replicator must report Active (the #5058 silent-ack \
-                 signature); got {:?}",
+                poll_replicators_all_status(&cluster.client(n), 1, Duration::from_secs(15)).await,
+                "[{label}] node{n} replicator must report Inactive after the rejected twin \
+                 push (Go #5302, #5307); got {:?}",
                 cluster.client(n).p2p_replicator_list()
             );
         }

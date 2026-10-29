@@ -3,7 +3,8 @@ use events::{Message, Update};
 use storage::corekv::OnCommit;
 
 use crate::block::builder::ComputedBlocks;
-use crate::write::create::{self as pipeline, CreateStores, Created};
+use crate::write::create::{self as pipeline, Created};
+use crate::write::WriteStores;
 
 struct AcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
@@ -323,7 +324,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 ))
             })?;
             let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
-            let stores = CreateStores {
+            let stores = WriteStores {
                 datastore: &datastore,
                 systemstore: &systemstore,
                 blockstore: &blockstore,
