@@ -67,6 +67,7 @@ impl PatchCollection {
             ("async", self.r#async),
             ("collection", self.collection.is_some()),
             ("document", self.doc_map.is_some()),
+            ("txn", self.txn.is_some()),
         ];
         match unsupported.iter().find(|(_, set)| *set) {
             Some((name, _)) => Err(Failure::unsupported(format!(

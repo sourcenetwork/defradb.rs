@@ -42,7 +42,13 @@ fn module_path(path: &str) -> String {
     else {
         return path.to_owned();
     };
-    let crate_name = format!("rust_wasm32_{}", name.replace('-', "_"));
+    let name = name.replace('-', "_");
+    let crate_name = format!("rust_wasm32_{name}");
+    // Go's std_dev crate names its artifact after the lens alone.
+    let artifact = match name.as_str() {
+        "std_dev" => name.clone(),
+        _ => crate_name.clone(),
+    };
     let repo = std::env::var_os("DEFRADB_GO_REPO")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -52,7 +58,7 @@ fn module_path(path: &str) -> String {
     repo.join("tests/lenses")
         .join(&crate_name)
         .join("target/wasm32-unknown-unknown/debug")
-        .join(format!("{crate_name}.wasm"))
+        .join(format!("{artifact}.wasm"))
         .to_string_lossy()
         .into_owned()
 }
