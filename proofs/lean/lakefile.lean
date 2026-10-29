@@ -119,3 +119,6 @@ lean_lib RetrySchedule where
 
 @[default_target]
 lean_lib TxnId where
+
+@[default_target]
+lean_lib LensListing where

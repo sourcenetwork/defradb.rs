@@ -14,6 +14,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Storage failure classification",
     "B3 filtered replication",
     "Explicit transactions in the request context",
+    "Schema-evolution operations in the core",
     "DAG convergence (partition / eviction / restart)",
     "CRDT merge laws",
     "Replicator lifecycle (no-loss / resume)",

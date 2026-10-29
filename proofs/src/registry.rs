@@ -792,6 +792,28 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Collection patch, set-active, set-migration, add/list lens and get
+        // collections each have one core function every edge calls: it
+        // checks NAC before any effect, runs in the transaction the context
+        // carries or else autocommits, and refuses a patch inside one.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits / INV_PatchInTxnChangesNothing",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/defra-node/src/ops/collection.rs; crates/http/src/handlers/{collections,lens}.rs",
+        model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Listing lenses returns every module of every lens, in order, as
+        // Go's `model.Lens`; it used to keep only the first.
+        family: "Schema-evolution operations in the core",
+        name: "LensListing.listed_keeps_modules / listed_length",
+        axis: Lean,
+        anchor: "crates/lens/src/wasm.rs WasmLensStore::list; crates/lens/src/store.rs list; crates/db/src/txn/registry/lifecycle.rs list_lenses_as",
+        model_ref: "LensListing (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
