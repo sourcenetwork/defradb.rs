@@ -1,25 +1,30 @@
 //! Document REST endpoint handlers.
 //!
-//! These handlers extract identity from the Authorization header and pass it
-//! to the REST operations layer for ACP (Access Control Policy) enforcement.
-//!
-//! All endpoints enforce NAC permissions when NAC is enabled.
+//! Reads go through the REST operations layer. Writes are
+//! [`query::documents`], the one implementation every edge calls, run on this
+//! server's request path: in the transaction the `x-defradb-tx` header names,
+//! else on the request's worker. NAC and ACP are checked in the core.
 //!
 //! Creation returns document IDs; update and delete return empty success bodies.
 
+use axum::extract::Query;
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use serde::{Deserialize, Serialize};
+use query::documents::{self, AddOptions, DocumentsResult, Filter};
+use query::executor::{QueryRequest, QueryResponse};
+use query::txn::TransactionHandle;
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use crate::error::HttpError;
-use crate::handlers::txn_header::rest_for_request;
+use crate::error::{http_error_from_backend_message, pool_failure, HttpError};
+use crate::handlers::txn_header::{rest_for_request, txn_id_from_headers};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
+use crate::query_context::{execute_in_txn_with_context, execute_with_context};
 use crate::router::{AppState, NodePermission};
 
 /// Get a single document by ID.
@@ -61,264 +66,190 @@ pub async fn get_document(
     }
 }
 
-/// Create document(s) in a collection.
+/// This server's request path for a document write: the request runs as
+/// `identity`, in the transaction `headers` names or on its own worker, as
+/// the GraphQL route runs it.
+struct Server {
+    state: AppState,
+    identity: ExtractIdentity,
+    txn: Option<TransactionHandle>,
+}
+
+impl Server {
+    fn new(
+        state: AppState,
+        identity: ExtractIdentity,
+        headers: &HeaderMap,
+    ) -> Result<Self, HttpError> {
+        let txn = txn_id_from_headers(headers)?
+            .map(|id| {
+                id.parse()
+                    .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))
+            })
+            .transpose()?;
+        Ok(Self {
+            state,
+            identity,
+            txn,
+        })
+    }
+
+    async fn run(self, mutation: String) -> QueryResponse {
+        let Self {
+            state,
+            identity,
+            txn,
+        } = self;
+        let request = QueryRequest::new(mutation).with_identity(identity.did().cloned());
+        if let Some(handle) = txn {
+            return execute_in_txn_with_context(&state, &identity, request, handle).await;
+        }
+        let target = query::pooled::request_target(&request);
+        let pool = state.pool.clone();
+        workers::run_on(pool.as_ref(), target, move || async move {
+            execute_with_context(&state, &identity, request).await
+        })
+        .await
+        .unwrap_or_else(|error| QueryResponse::error(pool_failure("documents", error).to_string()))
+    }
+}
+
+/// A document write's refusal, with Go's status for it and its text unchanged.
+fn refused(error: documents::Error) -> HttpError {
+    let message = error.to_string();
+    match error {
+        documents::Error::DocumentNotFound => HttpError::NotFound(message),
+        documents::Error::Conflict => HttpError::TransactionConflict,
+        documents::Error::Request(_) => http_error_from_backend_message(message),
+    }
+}
+
+fn json_body(body: &Bytes) -> Result<JsonValue, HttpError> {
+    serde_json::from_slice(body).map_err(|e| HttpError::BadRequest(e.to_string()))
+}
+
+/// Go's `encrypt` and `encryptFields` query parameters.
+#[derive(Debug, Default, Deserialize)]
+pub struct AddParams {
+    #[serde(default)]
+    encrypt: Option<String>,
+    #[serde(default, rename = "encryptFields")]
+    encrypt_fields: Option<String>,
+}
+
+impl AddParams {
+    fn options(&self) -> AddOptions {
+        AddOptions {
+            encrypt_doc: self.encrypt.as_deref() == Some("true"),
+            encrypted_fields: self
+                .encrypt_fields
+                .as_deref()
+                .filter(|fields| !fields.is_empty())
+                .map(|fields| fields.split(',').map(str::to_owned).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// Add one document, or an array of them, to a collection.
 ///
 /// POST /api/v0/collections/{name}
 ///
-/// Accepts either a single document object or an array of documents.
-/// Identity is extracted from the Authorization header and used for ACP:
-/// - If the collection has a policy and identity is provided, the document
-///   is registered with ACP and the identity becomes the owner.
-///
-/// Requires `DocumentUpdate` permission when NAC is enabled.
-///
-/// Returns the created document IDs in input order.
+/// Returns the added document IDs in input order.
 pub async fn add_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
     Path(collection): Path<String>,
-    Json(body): Json<JsonValue>,
+    Query(params): Query<AddParams>,
+    body: Bytes,
 ) -> Result<Json<Vec<String>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
-
-    let rest = rest_for_request(&state, &identity, &headers)?;
-
-    let result = if body.is_array() {
-        let docs: Vec<JsonValue> = body
-            .as_array()
-            .ok_or_else(|| HttpError::BadRequest("Expected array of documents".into()))?
-            .clone();
-        rest.add_many_documents(&collection, docs, identity.did())
-            .await
-    } else {
-        rest.add_document(&collection, body, identity.did())
-            .await
-            .map(|doc| vec![doc])
+    let docs = match json_body(&body)? {
+        JsonValue::Array(docs) => docs,
+        doc => vec![doc],
     };
-
-    match result {
-        Ok(docs) => {
-            tracing::info!(
-                collection = %collection,
-                count = docs.len(),
-                "Documents created"
-            );
-            let ids = docs
-                .iter()
-                .map(|doc| {
-                    doc.get("_docID")
-                        .and_then(JsonValue::as_str)
-                        .map(str::to_owned)
-                        .ok_or_else(|| HttpError::Internal("created document has no ID".into()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Json(ids))
-        }
-        Err(e) => {
-            tracing::warn!(collection = %collection, error = %e, "Failed to create document");
-            Err(e.into())
-        }
-    }
+    let server = Server::new(state, identity, &headers)?;
+    documents::add(|m| server.run(m), &collection, &docs, &params.options())
+        .await
+        .map(Json)
+        .map_err(refused)
 }
 
 /// Update a single document.
 ///
 /// PATCH /api/v0/collections/{name}/document/{docID}
 ///
-/// Identity is extracted from the Authorization header and used to check
-/// update permission on protected documents.
-///
-/// Requires `DocumentUpdate` permission when NAC is enabled.
-///
-/// Returns HTTP 200 with empty body to match Go DefraDB behavior.
+/// Returns HTTP 200 with an empty body, as Go does.
 pub async fn update_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
-    Json(patch): Json<JsonValue>,
+    body: Bytes,
 ) -> Result<StatusCode, HttpError> {
-    require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
-
-    let rest = rest_for_request(&state, &identity, &headers)?;
-
-    match rest
-        .update_document(&collection, &doc_id, patch, identity.did())
+    let patch = json_body(&body)?;
+    let server = Server::new(state, identity, &headers)?;
+    documents::update(|m| server.run(m), &collection, &doc_id, &patch)
         .await
-    {
-        Ok(_doc) => {
-            tracing::info!(
-                collection = %collection,
-                doc_id = %doc_id,
-                "Document updated"
-            );
-            // Return empty body to match Go DefraDB behavior
-            Ok(StatusCode::OK)
-        }
-        Err(e) => {
-            tracing::warn!(
-                collection = %collection,
-                doc_id = %doc_id,
-                error = %e,
-                "Failed to update document"
-            );
-            Err(e.into())
-        }
-    }
+        .map(|()| StatusCode::OK)
+        .map_err(refused)
 }
 
 /// Delete a single document.
 ///
 /// DELETE /api/v0/collections/{name}/document/{docID}
 ///
-/// Identity is extracted from the Authorization header and used to check
-/// delete permission on protected documents.
-///
-/// Requires `DocumentDelete` permission when NAC is enabled.
-///
-/// Returns HTTP 200 with empty body to match Go DefraDB behavior.
+/// Returns HTTP 200 with an empty body, as Go does.
 pub async fn delete_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
-    require_permission(&state, &identity, NodePermission::DocumentDelete).await?;
-
-    let rest = rest_for_request(&state, &identity, &headers)?;
-
-    match rest
-        .delete_document(&collection, &doc_id, identity.did())
+    let server = Server::new(state, identity, &headers)?;
+    documents::delete(|m| server.run(m), &collection, &doc_id)
         .await
-    {
-        Ok(deleted) => {
-            if deleted {
-                tracing::info!(
-                    collection = %collection,
-                    doc_id = %doc_id,
-                    "Document deleted"
-                );
-            }
-            // Return empty body to match Go DefraDB behavior
-            Ok(StatusCode::OK)
-        }
-        Err(e) => {
-            tracing::warn!(
-                collection = %collection,
-                doc_id = %doc_id,
-                error = %e,
-                "Failed to delete document"
-            );
-            Err(e.into())
-        }
-    }
+        .map(|()| StatusCode::OK)
+        .map_err(refused)
 }
 
-/// Go's `DeleteCollectionRequest` (`http/handler_collection.go:32`).
+/// Go's `DeleteCollectionRequest` and `UpdateCollectionRequest`: the filter
+/// is an object or its GraphQL source, and the updater is JSON text.
 #[derive(Debug, Deserialize)]
-pub struct DeleteDocumentsRequest {
-    pub filter: Option<JsonValue>,
+pub struct FilteredRequest {
+    #[serde(default)]
+    filter: JsonValue,
+    #[serde(default)]
+    updater: Option<JsonValue>,
 }
 
-/// Go's `client.DeleteResult` / `client.UpdateResult` (`client/collection.go`).
-///
-/// Go's fields carry no json tags, so they marshal capitalised. A client
-/// reading `Count` off a lowercase `count` sees nothing.
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct DocumentsResult {
-    #[serde(rename = "Count")]
-    pub count: usize,
-    #[serde(rename = "DocIDs")]
-    pub doc_ids: Vec<String>,
-}
+impl FilteredRequest {
+    fn filter(&self) -> Filter {
+        match &self.filter {
+            JsonValue::Null => Filter::Conditions(serde_json::Map::new()),
+            filter => filter.clone().into(),
+        }
+    }
 
-impl From<Vec<String>> for DocumentsResult {
-    fn from(doc_ids: Vec<String>) -> Self {
-        Self {
-            count: doc_ids.len(),
-            doc_ids,
+    /// Go types the updater as a string of JSON; an object is taken as is.
+    fn updater(&self) -> String {
+        match &self.updater {
+            Some(JsonValue::String(updater)) => updater.clone(),
+            Some(updater) => updater.to_string(),
+            None => String::new(),
         }
     }
 }
 
-/// Parse a filtered mutation's request body.
-fn request_body(body: &Bytes) -> Result<JsonValue, HttpError> {
-    serde_json::from_slice(body)
-        .map_err(|e| HttpError::BadRequest(format!("invalid request body: {e}")))
+fn filtered_request(body: &Bytes) -> Result<FilteredRequest, HttpError> {
+    serde_json::from_slice(body).map_err(|e| HttpError::BadRequest(e.to_string()))
 }
 
-/// Read the `filter` a filtered mutation must have.
-///
-/// Go types it as `any` and accepts three forms
-/// (`internal/db/document_update.go:163-183`): a `map`, GraphQL source as a
-/// `string`, and nothing else. Its own HTTP client marshals whatever the
-/// caller handed it (`http/client_document.go:299-321`), and the JS client
-/// always sends a string, so both forms arrive in practice.
-///
-/// A missing or null filter is refused, which is parity rather than caution:
-/// nil reaches Go's `default:` arm as `ErrUnsupportedFilterType`, a 400. An
-/// empty string is Go's `ErrEmptyFilter`, also a 400.
-///
-/// The string form is parsed into conditions rather than pasted into the
-/// mutation, so it is validated exactly like a filter that arrived as an
-/// object.
-fn required_filter(request: &JsonValue) -> Result<JsonValue, HttpError> {
-    match request.get("filter") {
-        Some(JsonValue::Object(conditions)) => Ok(JsonValue::Object(conditions.clone())),
-        Some(JsonValue::String(source)) => {
-            query::parse_filter_string(source).map_err(|e| HttpError::BadRequest(e.to_string()))
-        }
-        Some(JsonValue::Null) | None => Err(HttpError::BadRequest(
-            "'filter' is required; send a filter object to select the documents to act on".into(),
-        )),
-        Some(_) => Err(HttpError::BadRequest("unsupported filter type".into())),
-    }
-}
-
-/// Read the `updater` patch.
-///
-/// Go types this as a `string` holding JSON (`UpdateCollectionRequest`,
-/// `http/handler_collection.go:36-39`), so a string is parsed as JSON. An
-/// object is accepted as-is because a hand-written client is likelier to send
-/// one than to double-encode, and refusing it would buy nothing.
-fn required_updater(request: &JsonValue) -> Result<JsonValue, HttpError> {
-    let updater = match request.get("updater") {
-        Some(JsonValue::Null) | None => {
-            return Err(HttpError::BadRequest(
-                "'updater' is required; send the update to apply".into(),
-            ))
-        }
-        Some(updater) => updater,
-    };
-
-    let parsed = match updater {
-        JsonValue::String(encoded) => serde_json::from_str(encoded)
-            .map_err(|e| HttpError::BadRequest(format!("'updater' is not valid JSON: {e}")))?,
-        other => other.clone(),
-    };
-
-    if !parsed.is_object() {
-        return Err(HttpError::BadRequest(
-            "'updater' must be a JSON object of fields to update".into(),
-        ));
-    }
-    Ok(parsed)
-}
-
-/// Delete every document matching a filter.
+/// Delete every document matching a filter: Go's `DeleteDocumentsWithFilter`.
 ///
 /// DELETE /api/v0/collections/{name}
 ///
-/// This is Go's `DeleteDocumentsWithFilter` (`http/handler_collection.go:511`),
-/// which its own client calls by `DELETE`ing this path with `{"filter": ...}`
-/// (`http/client_document.go:299-321`). Rust used to drop the collection and
-/// every one of its versions here, and answer success, so a Go-compatible
-/// client asking to delete a few documents destroyed the collection instead.
-///
 /// Dropping a collection lives on `DELETE /api/v0/collections?name=...`.
-///
-/// Requires `DocumentDelete` permission when NAC is enabled.
 pub async fn delete_documents_with_filter(
     State(state): State<AppState>,
     identity: ExtractIdentity,
@@ -326,39 +257,18 @@ pub async fn delete_documents_with_filter(
     Path(collection): Path<String>,
     body: Bytes,
 ) -> Result<Json<DocumentsResult>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DocumentDelete).await?;
-
-    let filter = required_filter(&request_body(&body)?)?;
-
-    let rest = rest_for_request(&state, &identity, &headers)?;
-
-    match rest
-        .delete_documents_with_filter(&collection, &filter, identity.did())
+    let request = filtered_request(&body)?;
+    let server = Server::new(state, identity, &headers)?;
+    documents::delete_with_filter(|m| server.run(m), &collection, &request.filter())
         .await
-    {
-        Ok(doc_ids) => Ok(Json(doc_ids.into())),
-        Err(e) => {
-            tracing::warn!(
-                collection = %collection,
-                error = %e,
-                "Failed to delete documents with filter"
-            );
-            Err(e.into())
-        }
-    }
+        .map(Json)
+        .map_err(refused)
 }
 
-/// Apply an update to every document matching a filter.
+/// Apply an update to every document matching a filter: Go's
+/// `UpdateDocumentsWithFilter`.
 ///
 /// PATCH /api/v0/collections/{name}
-///
-/// This is Go's `UpdateDocumentsWithFilter` (`http/handler_collection.go:510`),
-/// which its own client reaches by `PATCH`ing this path with
-/// `{"filter": ..., "updater": "..."}` (`http/client_document.go:263-296`).
-/// Rust registered no `PATCH` here, so the request answered 405 and filtered
-/// update had no HTTP-level equivalent at all.
-///
-/// Requires `DocumentUpdate` permission when NAC is enabled.
 pub async fn update_documents_with_filter(
     State(state): State<AppState>,
     identity: ExtractIdentity,
@@ -366,26 +276,15 @@ pub async fn update_documents_with_filter(
     Path(collection): Path<String>,
     body: Bytes,
 ) -> Result<Json<DocumentsResult>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
-
-    let request = request_body(&body)?;
-    let filter = required_filter(&request)?;
-    let updater = required_updater(&request)?;
-
-    let rest = rest_for_request(&state, &identity, &headers)?;
-
-    match rest
-        .update_documents_with_filter(&collection, &filter, &updater, identity.did())
-        .await
-    {
-        Ok(doc_ids) => Ok(Json(doc_ids.into())),
-        Err(e) => {
-            tracing::warn!(
-                collection = %collection,
-                error = %e,
-                "Failed to update documents with filter"
-            );
-            Err(e.into())
-        }
-    }
+    let request = filtered_request(&body)?;
+    let server = Server::new(state, identity, &headers)?;
+    documents::update_with_filter(
+        |m| server.run(m),
+        &collection,
+        &request.filter(),
+        &request.updater(),
+    )
+    .await
+    .map(Json)
+    .map_err(refused)
 }

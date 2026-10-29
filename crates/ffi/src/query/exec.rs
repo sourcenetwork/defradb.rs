@@ -160,6 +160,30 @@ pub unsafe extern "C" fn exec_request_async(
     }));
 }
 
+/// The request path FFI's document writes run on: an exec call of
+/// `mutation` as `identity`, with the node's signing and `batch_session`.
+pub(crate) async fn run_mutation(
+    node_ptr: usize,
+    identity: Option<String>,
+    batch_session: Option<String>,
+    mutation: String,
+) -> query::QueryResponse {
+    let args = ExecArgs {
+        node_ptr,
+        txn: None,
+        identity,
+        query: mutation,
+        operation_name: None,
+        variables: None,
+        batch_session,
+        signing_override: -1,
+    };
+    match prepare(args).await {
+        Ok((runner, request, txn)) => run(&runner, request, txn).await,
+        Err(decided) => query::QueryResponse::error(decided.into_error().unwrap_or_default()),
+    }
+}
+
 /// Runs `request` in the transaction it names, or on its own.
 async fn run(
     runner: &std::sync::Arc<dyn query::QueryExecutor>,

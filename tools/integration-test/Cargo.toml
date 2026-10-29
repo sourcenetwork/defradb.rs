@@ -143,6 +143,7 @@ ctor = "0.2"
 chrono = { version = "0.4" }
 defra-node = { path = "../../crates/defra-node", features = ["http"] }
 cli = { path = "../../crates/cli" }
+query = { path = "../../crates/query" }
 defra-core = { path = "../../crates/defra-core" }
 serde.workspace = true
 tempfile = "3.17"

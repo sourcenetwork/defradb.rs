@@ -1,8 +1,9 @@
 use crate::actions::shared::Filter;
-use crate::scenario::{Common, Op};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `document.deleteWithFilter` op.
@@ -31,6 +32,18 @@ impl Op for DeleteWithFilter {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        state
+            .block_on(state.node().delete_with_filter(
+                &state.context(None),
+                &self.collection,
+                &self.filter.to_core(),
+            ))
+            .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
 }
 
 impl Action for DeleteWithFilter {
@@ -38,5 +51,42 @@ impl Action for DeleteWithFilter {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for DeleteWithFilter {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let (collection, filter) = (action.collection.clone(), action.filter.to_core());
+            state
+                .http(|client| async move {
+                    client.delete_with_filter(None, &collection, &filter).await
+                })
+                .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for DeleteWithFilter {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            let filter = action
+                .filter
+                .to_cli()
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            let args = [
+                "document",
+                "--collection-name",
+                &action.collection,
+                "delete",
+                "--filter",
+                &filter,
+            ];
+            let printed = state.defra_client(&args).map_err(Failure::operation)?;
+            Ok(json!({ "count": printed["Count"], "docIDs": printed["DocIDs"] }))
+        });
     }
 }
