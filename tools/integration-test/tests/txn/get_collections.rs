@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/txn/get_collections_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, GetCollectionsFiltered, TxnBegin, TxnDiscard};
+use integration_test::actions::{AddCollection, GetCollections, TxnBegin, TxnDiscard};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -27,8 +27,9 @@ fn txn_get_collections_inside_txn_with_add_schema_succeeds() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -81,8 +82,9 @@ fn txn_get_collections_inside_txn_without_add_schema_no_collections() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(1),
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }

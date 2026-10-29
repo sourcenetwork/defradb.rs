@@ -3,11 +3,10 @@
 
 use integration_test::actions::shared::ExpectedAction;
 use integration_test::actions::{
-    ActionAwaitList, ActionEventsStart, ActionListAfterEventAsync, AddCollection, AddDoc,
-    ListActions, PeerEventsStart, Truncate, WaitForUpdate,
+    AddCollection, AddDoc, ListActions, Truncate, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
-use integration_test::scenario::{captures, Common, Text};
+use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -58,11 +57,13 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            ActionEventsStart {
+            ListActions {
+                listen: true,
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -73,8 +74,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -85,8 +86,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 ..Default::default()
             }
             .into(),
@@ -97,8 +98,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc2")),
                 ..Default::default()
             }
             .into(),
@@ -109,8 +110,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc3")),
                 ..Default::default()
             }
             .into(),
@@ -121,8 +122,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc4"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc4")),
                 ..Default::default()
             }
             .into(),
@@ -133,8 +134,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc5"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc5")),
                 ..Default::default()
             }
             .into(),
@@ -145,8 +146,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc6"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc6")),
                 ..Default::default()
             }
             .into(),
@@ -157,8 +158,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc7"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc7")),
                 ..Default::default()
             }
             .into(),
@@ -169,8 +170,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc8"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc8")),
                 ..Default::default()
             }
             .into(),
@@ -181,8 +182,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc9"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc9")),
                 ..Default::default()
             }
             .into(),
@@ -193,8 +194,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc10"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc10")),
                 ..Default::default()
             }
             .into(),
@@ -205,8 +206,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc11"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc11")),
                 ..Default::default()
             }
             .into(),
@@ -217,8 +218,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc12"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc12")),
                 ..Default::default()
             }
             .into(),
@@ -229,8 +230,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc13"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc13")),
                 ..Default::default()
             }
             .into(),
@@ -241,8 +242,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc14"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc14")),
                 ..Default::default()
             }
             .into(),
@@ -253,8 +254,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc15"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc15")),
                 ..Default::default()
             }
             .into(),
@@ -265,8 +266,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc16"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc16")),
                 ..Default::default()
             }
             .into(),
@@ -277,8 +278,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc17"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc17")),
                 ..Default::default()
             }
             .into(),
@@ -289,8 +290,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc18"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc18")),
                 ..Default::default()
             }
             .into(),
@@ -301,8 +302,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc19"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc19")),
                 ..Default::default()
             }
             .into(),
@@ -313,8 +314,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc20"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc20")),
                 ..Default::default()
             }
             .into(),
@@ -325,8 +326,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc21"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc21")),
                 ..Default::default()
             }
             .into(),
@@ -337,8 +338,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc22"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc22")),
                 ..Default::default()
             }
             .into(),
@@ -349,8 +350,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc23"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc23")),
                 ..Default::default()
             }
             .into(),
@@ -361,8 +362,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc24"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc24")),
                 ..Default::default()
             }
             .into(),
@@ -373,8 +374,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc25"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc25")),
                 ..Default::default()
             }
             .into(),
@@ -385,8 +386,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc26"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc26")),
                 ..Default::default()
             }
             .into(),
@@ -397,8 +398,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc27"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc27")),
                 ..Default::default()
             }
             .into(),
@@ -409,8 +410,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc28"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc28")),
                 ..Default::default()
             }
             .into(),
@@ -421,8 +422,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc29"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc29")),
                 ..Default::default()
             }
             .into(),
@@ -433,8 +434,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc30"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc30")),
                 ..Default::default()
             }
             .into(),
@@ -445,8 +446,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc31"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc31")),
                 ..Default::default()
             }
             .into(),
@@ -457,8 +458,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc32"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc32")),
                 ..Default::default()
             }
             .into(),
@@ -469,8 +470,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc33"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc33")),
                 ..Default::default()
             }
             .into(),
@@ -481,8 +482,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc34"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc34")),
                 ..Default::default()
             }
             .into(),
@@ -493,8 +494,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc35"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc35")),
                 ..Default::default()
             }
             .into(),
@@ -505,8 +506,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc36"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc36")),
                 ..Default::default()
             }
             .into(),
@@ -517,8 +518,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc37"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc37")),
                 ..Default::default()
             }
             .into(),
@@ -529,8 +530,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc38"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc38")),
                 ..Default::default()
             }
             .into(),
@@ -541,8 +542,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc39"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc39")),
                 ..Default::default()
             }
             .into(),
@@ -553,8 +554,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc40"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc40")),
                 ..Default::default()
             }
             .into(),
@@ -565,8 +566,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc41"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc41")),
                 ..Default::default()
             }
             .into(),
@@ -577,8 +578,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc42"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc42")),
                 ..Default::default()
             }
             .into(),
@@ -589,8 +590,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc43"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc43")),
                 ..Default::default()
             }
             .into(),
@@ -601,8 +602,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc44"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc44")),
                 ..Default::default()
             }
             .into(),
@@ -613,8 +614,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc45"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc45")),
                 ..Default::default()
             }
             .into(),
@@ -625,8 +626,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc46"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc46")),
                 ..Default::default()
             }
             .into(),
@@ -637,8 +638,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc47"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc47")),
                 ..Default::default()
             }
             .into(),
@@ -649,8 +650,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc48"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc48")),
                 ..Default::default()
             }
             .into(),
@@ -661,8 +662,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc49"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc49")),
                 ..Default::default()
             }
             .into(),
@@ -673,8 +674,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc50"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc50")),
                 ..Default::default()
             }
             .into(),
@@ -685,8 +686,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc51"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc51")),
                 ..Default::default()
             }
             .into(),
@@ -697,8 +698,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc52"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc52")),
                 ..Default::default()
             }
             .into(),
@@ -709,8 +710,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc53"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc53")),
                 ..Default::default()
             }
             .into(),
@@ -721,8 +722,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc54"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc54")),
                 ..Default::default()
             }
             .into(),
@@ -733,8 +734,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc55"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc55")),
                 ..Default::default()
             }
             .into(),
@@ -745,8 +746,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc56"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc56")),
                 ..Default::default()
             }
             .into(),
@@ -757,8 +758,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc57"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc57")),
                 ..Default::default()
             }
             .into(),
@@ -769,8 +770,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc58"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc58")),
                 ..Default::default()
             }
             .into(),
@@ -781,8 +782,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc59"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc59")),
                 ..Default::default()
             }
             .into(),
@@ -793,8 +794,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc60"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc60")),
                 ..Default::default()
             }
             .into(),
@@ -805,8 +806,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc61"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc61")),
                 ..Default::default()
             }
             .into(),
@@ -817,8 +818,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc62"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc62")),
                 ..Default::default()
             }
             .into(),
@@ -829,8 +830,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc63"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc63")),
                 ..Default::default()
             }
             .into(),
@@ -841,8 +842,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc64"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc64")),
                 ..Default::default()
             }
             .into(),
@@ -853,8 +854,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc65"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc65")),
                 ..Default::default()
             }
             .into(),
@@ -865,8 +866,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc66"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc66")),
                 ..Default::default()
             }
             .into(),
@@ -877,8 +878,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc67"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc67")),
                 ..Default::default()
             }
             .into(),
@@ -889,8 +890,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc68"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc68")),
                 ..Default::default()
             }
             .into(),
@@ -901,8 +902,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc69"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc69")),
                 ..Default::default()
             }
             .into(),
@@ -913,8 +914,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc70"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc70")),
                 ..Default::default()
             }
             .into(),
@@ -925,8 +926,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc71"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc71")),
                 ..Default::default()
             }
             .into(),
@@ -937,8 +938,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc72"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc72")),
                 ..Default::default()
             }
             .into(),
@@ -949,8 +950,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc73"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc73")),
                 ..Default::default()
             }
             .into(),
@@ -961,8 +962,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc74"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc74")),
                 ..Default::default()
             }
             .into(),
@@ -973,8 +974,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc75"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc75")),
                 ..Default::default()
             }
             .into(),
@@ -985,8 +986,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc76"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc76")),
                 ..Default::default()
             }
             .into(),
@@ -997,8 +998,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc77"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc77")),
                 ..Default::default()
             }
             .into(),
@@ -1009,8 +1010,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc78"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc78")),
                 ..Default::default()
             }
             .into(),
@@ -1021,8 +1022,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc79"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc79")),
                 ..Default::default()
             }
             .into(),
@@ -1033,8 +1034,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc80"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc80")),
                 ..Default::default()
             }
             .into(),
@@ -1045,8 +1046,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc81"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc81")),
                 ..Default::default()
             }
             .into(),
@@ -1057,8 +1058,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc82"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc82")),
                 ..Default::default()
             }
             .into(),
@@ -1069,8 +1070,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc83"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc83")),
                 ..Default::default()
             }
             .into(),
@@ -1081,8 +1082,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc84"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc84")),
                 ..Default::default()
             }
             .into(),
@@ -1093,8 +1094,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc85"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc85")),
                 ..Default::default()
             }
             .into(),
@@ -1105,8 +1106,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc86"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc86")),
                 ..Default::default()
             }
             .into(),
@@ -1117,8 +1118,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc87"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc87")),
                 ..Default::default()
             }
             .into(),
@@ -1129,8 +1130,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc88"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc88")),
                 ..Default::default()
             }
             .into(),
@@ -1141,8 +1142,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc89"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc89")),
                 ..Default::default()
             }
             .into(),
@@ -1153,8 +1154,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc90"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc90")),
                 ..Default::default()
             }
             .into(),
@@ -1165,8 +1166,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc91"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc91")),
                 ..Default::default()
             }
             .into(),
@@ -1177,8 +1178,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc92"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc92")),
                 ..Default::default()
             }
             .into(),
@@ -1189,8 +1190,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc93"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc93")),
                 ..Default::default()
             }
             .into(),
@@ -1201,8 +1202,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc94"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc94")),
                 ..Default::default()
             }
             .into(),
@@ -1213,8 +1214,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc95"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc95")),
                 ..Default::default()
             }
             .into(),
@@ -1225,8 +1226,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc96"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc96")),
                 ..Default::default()
             }
             .into(),
@@ -1237,8 +1238,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc97"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc97")),
                 ..Default::default()
             }
             .into(),
@@ -1249,8 +1250,8 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc98"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc98")),
                 ..Default::default()
             }
             .into(),
@@ -1261,17 +1262,17 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc99"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc99")),
                 ..Default::default()
             }
             .into(),
-            ActionListAfterEventAsync {
-                expected_action: ExpectedAction {
+            ListActions {
+                after_action: Some(ExpectedAction {
                     collection_id: "bafyreiciz2hrrmt7ritk5gf5fyruw46v2tfhq5dc7qto4wgpzluben2smu".into(),
                     action: 1,
                     status: 1,
-                },
+                }),
                 ..Default::default()
             }
             .into(),
@@ -1280,7 +1281,7 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                 ..Default::default()
             }
             .into(),
-            ActionAwaitList {
+            ListActions {
                 expected_data: json!({
                     "actions": [
                         m::object(json!({
@@ -1291,6 +1292,7 @@ fn truncate_collection_list_action_lists_uncompleted_truncates() {
                         })),
                     ],
                 }),
+                common: Common { eventually: Some(Eventually::default()), ..Default::default() },
                 ..Default::default()
             }
             .into(),

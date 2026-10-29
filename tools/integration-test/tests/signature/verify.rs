@@ -1,9 +1,10 @@
 //! Generated from the conformance scenarios of tests/integration/signature/verify_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDoc, DeleteDoc, NodeOpenSigningEd25519, NodeOpenSigningSecp256k1,
-    PeerEventsStart, SignatureVerifySeed, UpdateDoc, VerifyBlockSignature, WaitForUpdate,
+    AddCollection, AddDoc, DeleteDoc, NewNode, UpdateDoc, VerifyBlockSignature, WaitForPeersEvents,
+    WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +16,9 @@ fn signature_verify_with_different_key_type_should_verify() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningEd25519 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Ed25519),
                 ..Default::default()
             }
             .into(),
@@ -30,7 +33,8 @@ fn signature_verify_with_different_key_type_should_verify() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -45,8 +49,8 @@ fn signature_verify_with_different_key_type_should_verify() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()
@@ -55,7 +59,7 @@ fn signature_verify_with_different_key_type_should_verify() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head0"),
                 ..Default::default()
             }
@@ -72,7 +76,9 @@ fn signature_verify_with_valid_data_should_verify() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -87,7 +93,8 @@ fn signature_verify_with_valid_data_should_verify() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -102,8 +109,8 @@ fn signature_verify_with_valid_data_should_verify() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()
@@ -112,7 +119,7 @@ fn signature_verify_with_valid_data_should_verify() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head0"),
                 ..Default::default()
             }
@@ -128,8 +135,8 @@ fn signature_verify_with_valid_data_should_verify() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head1", "/cid")]),
                     ..Default::default()
@@ -138,7 +145,7 @@ fn signature_verify_with_valid_data_should_verify() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head1"),
                 ..Default::default()
             }
@@ -153,8 +160,8 @@ fn signature_verify_with_valid_data_should_verify() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head2", "/cid")]),
                     ..Default::default()
@@ -163,7 +170,7 @@ fn signature_verify_with_valid_data_should_verify() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head2"),
                 ..Default::default()
             }
@@ -180,7 +187,9 @@ fn signature_verify_with_wrong_cid_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -195,7 +204,8 @@ fn signature_verify_with_wrong_cid_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -210,8 +220,8 @@ fn signature_verify_with_wrong_cid_should_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()
@@ -220,7 +230,7 @@ fn signature_verify_with_wrong_cid_should_error() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: "bafyreichuvsbsr3oo4xeqfi55mrh4us77z2bg2foemuzhn5idomya6epl4".into(),
                 expected_error: Some("could not find".into()),
                 ..Default::default()
@@ -238,7 +248,9 @@ fn signature_verify_with_wrong_identity_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -253,7 +265,8 @@ fn signature_verify_with_wrong_identity_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -268,8 +281,8 @@ fn signature_verify_with_wrong_identity_should_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()
@@ -277,8 +290,8 @@ fn signature_verify_with_wrong_identity_should_error() {
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
-                signer_seed: 1,
+            VerifyBlockSignature {
+                signer_seed: Some(1),
                 cid: Text::reference("head0"),
                 expected_error: Some("signature was created by a different key".into()),
                 ..Default::default()

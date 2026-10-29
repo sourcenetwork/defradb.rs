@@ -3,7 +3,7 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, AddLens, AddView, NodeOpenPersistent, Request, Restart,
+    AddCollection, AddDoc, AddLens, AddView, NewNode, Request, Restart,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn view_simple_with_transform_and_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),

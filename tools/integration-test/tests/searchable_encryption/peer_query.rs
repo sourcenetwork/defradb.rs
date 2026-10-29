@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, NodeOpenP2PSE, PeerEventsStart, Request, WaitForSESync,
-    WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, NewNode, Request, WaitForPeersEvents, WaitForSESync,
+    WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,9 @@ fn doc_encryption_if_there_is_index_but_on_another_field_encrypted_query_should_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +26,9 @@ fn doc_encryption_if_there_is_index_but_on_another_field_encrypted_query_should_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -32,7 +36,8 @@ fn doc_encryption_if_there_is_index_but_on_another_field_encrypted_query_should_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -40,7 +45,8 @@ fn doc_encryption_if_there_is_index_but_on_another_field_encrypted_query_should_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -92,8 +98,8 @@ fn doc_encryption_if_there_is_index_but_on_another_field_encrypted_query_should_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -132,7 +138,9 @@ fn doc_encryption_if_there_is_no_index_encrypted_query_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -140,7 +148,9 @@ fn doc_encryption_if_there_is_no_index_encrypted_query_should_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -148,7 +158,8 @@ fn doc_encryption_if_there_is_no_index_encrypted_query_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -156,7 +167,8 @@ fn doc_encryption_if_there_is_no_index_encrypted_query_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -208,8 +220,8 @@ fn doc_encryption_if_there_is_no_index_encrypted_query_should_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -250,22 +262,28 @@ fn doc_encryption_peer_with_multiple_docs_should_filter_correctly() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -309,8 +327,8 @@ fn doc_encryption_peer_with_multiple_docs_should_filter_correctly() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -324,8 +342,8 @@ fn doc_encryption_peer_with_multiple_docs_should_filter_correctly() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common { node: Some("db0".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -339,8 +357,8 @@ fn doc_encryption_peer_with_multiple_docs_should_filter_correctly() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc2")),
                 common: Common { node: Some("db0".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -405,22 +423,28 @@ fn doc_encryption_peer_with_multiple_encrypted_fields_query_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -466,8 +490,8 @@ fn doc_encryption_peer_with_multiple_encrypted_fields_query_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -530,22 +554,28 @@ fn doc_encryption_peer_with_query_on_multiple_fields_should_return_intersection(
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -591,8 +621,8 @@ fn doc_encryption_peer_with_query_on_multiple_fields_should_return_intersection(
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -606,8 +636,8 @@ fn doc_encryption_peer_with_query_on_multiple_fields_should_return_intersection(
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common { node: Some("db0".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -621,8 +651,8 @@ fn doc_encryption_peer_with_query_on_multiple_fields_should_return_intersection(
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc2")),
                 common: Common { node: Some("db0".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -672,22 +702,28 @@ fn doc_encryption_peer_with_simple_request_should_fetch_successfully() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSE {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -731,8 +767,8 @@ fn doc_encryption_peer_with_simple_request_should_fetch_successfully() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }

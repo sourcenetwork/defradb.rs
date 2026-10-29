@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PKMS,
-    PeerEventsStart, SubscriptionFinish, SubscriptionRequest, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, SubscriptionRequest,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,9 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -63,7 +67,8 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -71,7 +76,8 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -99,15 +105,17 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
             .into(),
             SubscriptionRequest {
                 subscription: "sub0".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         Users {
                                             age
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 1,
+                    .into(),
+                ),
+                expected_count: Some(1),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -129,8 +137,8 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -139,7 +147,7 @@ fn doc_encryption_peer_with_subscription_should_deliver_decrypted_doc() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "sub0".into(),
                 expected_data: json!({ "events": [{ "data": { "Users": [{ "age": 21 }] } }] }),
                 common: Common {

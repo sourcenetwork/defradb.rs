@@ -1,9 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/disable_nac_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{
-    DisableNAC, GetNACStatus, NodeOpenPersistent, NodeStopForRestart, Start,
-};
+use integration_test::actions::{Close, DisableNAC, GetNACStatus, NewNode, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -14,7 +12,8 @@ fn nac_disable_no_identity_when_configured_and_already_disabled_before_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -91,11 +90,13 @@ fn nac_disable_successfully_then_restart_with_no_args_remains_disabled() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -116,7 +117,8 @@ fn nac_disable_successfully_then_restart_with_no_args_remains_disabled() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -151,11 +153,13 @@ fn nac_disable_successfully_then_restart_with_start_args_remains_disabled() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -176,7 +180,8 @@ fn nac_disable_successfully_then_restart_with_start_args_remains_disabled() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -215,7 +220,8 @@ fn nac_disable_with_identity_on_node_that_has_nac_configured_and_enabled_success
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -278,7 +284,8 @@ fn nac_disable_with_identity_when_configured_and_already_disabled_before_error()
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -325,7 +332,8 @@ fn nac_disable_with_wrong_identity_on_node_that_has_configured_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -370,7 +378,8 @@ fn nac_disable_without_identity_on_node_that_has_configured_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

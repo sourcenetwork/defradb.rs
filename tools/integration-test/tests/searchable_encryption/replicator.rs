@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, NodeOpenP2PSEPersistent, NodeStop, PeerEventsStart,
-    Request, Restart, WaitForSESync, WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, NewNode, Request, Restart, WaitForPeersEvents,
+    WaitForSESync, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,22 +16,30 @@ fn se_replicator_if_doc_added_while_replicator_is_offline_should_retry() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSEPersistent {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
+                database_dir: Some("".into()),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSEPersistent {
+            NewNode {
+                network: true,
+                enable_searchable_encryption: true,
+                database_dir: Some("".into()),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -64,7 +72,8 @@ fn se_replicator_if_doc_added_while_replicator_is_offline_should_retry() {
                 ..Default::default()
             }
             .into(),
-            NodeStop {
+            Restart {
+                stop: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -78,8 +87,8 @@ fn se_replicator_if_doc_added_while_replicator_is_offline_should_retry() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -93,8 +102,8 @@ fn se_replicator_if_doc_added_while_replicator_is_offline_should_retry() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -104,7 +113,8 @@ fn se_replicator_if_doc_added_while_replicator_is_offline_should_retry() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }

@@ -8,7 +8,7 @@ mod scenario;
 pub mod unit_ops;
 mod wire;
 
-pub use convert::{from_wire, to_wire, txn_name, v, Variant};
+pub use convert::{all_safe, from_wire, to_wire, txn_name, v, Variant};
 pub use registry::{check_typed, corpus_names, describe, Described};
 pub use scenario::{check, scenario, write};
 pub use wire::{Check, WireStep};

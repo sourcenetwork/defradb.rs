@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, ConnectPeers, GetCollectionsFiltered, NodeOpenP2P, PatchCollection,
-    SyncCollectionVersions,
+    AddCollection, ConnectPeers, GetCollections, NewNode, PatchCollection, SyncCollectionVersions,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
@@ -16,12 +15,14 @@ fn sync_col_version_with_patch_version_of_known_collection() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -46,8 +47,9 @@ fn sync_col_version_with_patch_version_of_known_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common { node: Some("db0".into()), capture: captures([("version0", "/collections/0/VersionID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -74,8 +76,9 @@ fn sync_col_version_with_patch_version_of_known_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -163,12 +166,14 @@ fn sync_col_version_with_patch_version_of_unknown_collection() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -183,8 +188,9 @@ fn sync_col_version_with_patch_version_of_unknown_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common { node: Some("db0".into()), capture: captures([("version0", "/collections/0/VersionID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -211,8 +217,9 @@ fn sync_col_version_with_patch_version_of_unknown_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

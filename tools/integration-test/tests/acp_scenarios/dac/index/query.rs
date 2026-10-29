@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDACPolicy, AddDoc, PeerEventsStart, Request, WaitForUpdate,
+    AddCollection, AddDACPolicy, AddDoc, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -67,7 +67,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -82,8 +83,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -99,8 +100,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 ..Default::default()
             }
             .into(),
@@ -185,7 +186,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -200,8 +202,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -217,8 +219,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 ..Default::default()
             }
             .into(),
@@ -303,7 +305,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -318,8 +321,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -335,8 +338,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 ..Default::default()
             }
             .into(),

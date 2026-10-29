@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, NodeStopForRestart, PeerEventsStart, Request, Start, UpdateDoc,
-    WaitForUpdate,
+    AddCollection, AddDoc, Close, Request, Start, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +14,8 @@ fn nac_gates_update_document_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -43,7 +43,8 @@ fn nac_gates_update_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -59,8 +60,8 @@ fn nac_gates_update_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -76,8 +77,8 @@ fn nac_gates_update_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -103,7 +104,8 @@ fn nac_gates_update_document_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -131,7 +133,8 @@ fn nac_gates_update_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -147,8 +150,8 @@ fn nac_gates_update_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -188,7 +191,8 @@ fn nac_gates_update_document_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -216,7 +220,8 @@ fn nac_gates_update_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -232,8 +237,8 @@ fn nac_gates_update_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),

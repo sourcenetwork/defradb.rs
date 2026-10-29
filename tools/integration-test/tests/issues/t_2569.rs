@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, NodeOpenHTTP, PeerEventsStart, Request, UpdateDoc, WaitForUpdate,
+    AddCollection, AddDoc, NewNode, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -14,10 +14,10 @@ fn p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 60000,
-                tick_millis: 1000,
-                buckets: 60,
+            NewNode {
+                ttl_millis: Some(60000),
+                tick_millis: Some(1000),
+                buckets: Some(60),
                 ..Default::default()
             }
             .into(),
@@ -32,7 +32,8 @@ fn p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -47,8 +48,8 @@ fn p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -64,8 +65,8 @@ fn p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -95,10 +96,10 @@ fn p2_p_update_with_pn_counter_float_overflow_prevents_collection_get() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 60000,
-                tick_millis: 1000,
-                buckets: 60,
+            NewNode {
+                ttl_millis: Some(60000),
+                tick_millis: Some(1000),
+                buckets: Some(60),
                 ..Default::default()
             }
             .into(),
@@ -113,7 +114,8 @@ fn p2_p_update_with_pn_counter_float_overflow_prevents_collection_get() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -128,8 +130,8 @@ fn p2_p_update_with_pn_counter_float_overflow_prevents_collection_get() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -145,8 +147,8 @@ fn p2_p_update_with_pn_counter_float_overflow_prevents_collection_get() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -174,10 +176,10 @@ fn p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 60000,
-                tick_millis: 1000,
-                buckets: 60,
+            NewNode {
+                ttl_millis: Some(60000),
+                tick_millis: Some(1000),
+                buckets: Some(60),
                 ..Default::default()
             }
             .into(),
@@ -192,7 +194,8 @@ fn p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -207,8 +210,8 @@ fn p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -224,8 +227,8 @@ fn p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),

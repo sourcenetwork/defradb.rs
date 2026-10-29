@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PSigning,
-    PeerEventsStart, Request, UpdateDoc, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request, UpdateDoc,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -17,16 +17,20 @@ fn doc_signature_with_peers_an_different_key_types_should_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSigning {
-                key_type: KeyType::Secp256k1,
-                node_identity_seed: 0,
+            NewNode {
+                key_type: Some(KeyType::Secp256k1),
+                node_identity_seed: Some(0),
+                network: true,
+                enable_signing: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSigning {
-                key_type: KeyType::Ed25519,
-                node_identity_seed: 1,
+            NewNode {
+                key_type: Some(KeyType::Ed25519),
+                node_identity_seed: Some(1),
+                network: true,
+                enable_signing: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -53,12 +57,14 @@ fn doc_signature_with_peers_an_different_key_types_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -88,8 +94,8 @@ fn doc_signature_with_peers_an_different_key_types_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -101,23 +107,23 @@ fn doc_signature_with_peers_an_different_key_types_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common { node: Some("db1".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_1"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
@@ -230,16 +236,20 @@ fn doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSigning {
-                key_type: KeyType::Secp256k1,
-                node_identity_seed: 0,
+            NewNode {
+                key_type: Some(KeyType::Secp256k1),
+                node_identity_seed: Some(0),
+                network: true,
+                enable_signing: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSigning {
-                key_type: KeyType::Ed25519,
-                node_identity_seed: 1,
+            NewNode {
+                key_type: Some(KeyType::Ed25519),
+                node_identity_seed: Some(1),
+                network: true,
+                enable_signing: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -268,12 +278,14 @@ fn doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -303,15 +315,15 @@ fn doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
@@ -326,15 +338,15 @@ fn doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db1".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
@@ -349,15 +361,15 @@ fn doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
@@ -480,9 +492,11 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSigning {
-                key_type: KeyType::Ed25519,
-                node_identity_seed: 0,
+            NewNode {
+                key_type: Some(KeyType::Ed25519),
+                node_identity_seed: Some(0),
+                network: true,
+                enable_signing: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -490,9 +504,11 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSigning {
-                key_type: KeyType::Ed25519,
-                node_identity_seed: 1,
+            NewNode {
+                key_type: Some(KeyType::Ed25519),
+                node_identity_seed: Some(1),
+                network: true,
+                enable_signing: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -530,7 +546,8 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -538,7 +555,8 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -576,8 +594,8 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -586,9 +604,9 @@ fn doc_signature_with_peers_and_ed25519_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -628,9 +646,11 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PSigning {
-                key_type: KeyType::Secp256k1,
-                node_identity_seed: 0,
+            NewNode {
+                key_type: Some(KeyType::Secp256k1),
+                node_identity_seed: Some(0),
+                network: true,
+                enable_signing: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -638,9 +658,11 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PSigning {
-                key_type: KeyType::Secp256k1,
-                node_identity_seed: 1,
+            NewNode {
+                key_type: Some(KeyType::Secp256k1),
+                node_identity_seed: Some(1),
+                network: true,
+                enable_signing: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -678,7 +700,8 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -686,7 +709,8 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -724,8 +748,8 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -734,9 +758,9 @@ fn doc_signature_with_peers_and_secp256k1_key_type_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

@@ -3,8 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, AddDACActorRelationship, AddDACPolicy, AddDoc, Close,
-    ConnectPeers, DacRemoteStart, NodeOpenP2PKMS, NodeStopForRestart, PeerEventsStart, Request,
-    Wait, WaitForMerge, WaitForUpdate,
+    ConnectPeers, NewNode, Request, Wait, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -18,7 +17,8 @@ fn doc_encryption_acp_if_client_node_has_doc_permission_but_server_node_is_not_a
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -26,8 +26,10 @@ fn doc_encryption_acp_if_client_node_has_doc_permission_but_server_node_is_not_a
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -35,8 +37,10 @@ fn doc_encryption_acp_if_client_node_has_doc_permission_but_server_node_is_not_a
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -44,8 +48,10 @@ fn doc_encryption_acp_if_client_node_has_doc_permission_but_server_node_is_not_a
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(2),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -126,7 +132,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -159,7 +166,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -192,7 +200,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -251,8 +260,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -261,7 +270,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -339,7 +349,8 @@ fn doc_encryption_acp_if_node_has_access_to_some_docs_should_fetch_only_them() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -347,8 +358,10 @@ fn doc_encryption_acp_if_node_has_access_to_some_docs_should_fetch_only_them() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -356,8 +369,10 @@ fn doc_encryption_acp_if_node_has_access_to_some_docs_should_fetch_only_them() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -438,7 +453,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -471,7 +487,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -512,8 +529,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -536,8 +553,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -561,8 +578,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -585,8 +602,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc2")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head3", "/cid")]),
@@ -610,8 +627,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc3")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head4", "/cid")]),
@@ -634,8 +651,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc3")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head5", "/cid")]),
@@ -659,8 +676,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc4"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc4")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head6", "/cid")]),
@@ -683,8 +700,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc5"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc5")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head7", "/cid")]),
@@ -693,9 +710,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -704,9 +721,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc2"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc2")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -715,9 +732,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc3"),
-                cid: Text::reference("head5"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc3")),
+                cid: Some(Text::reference("head5")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -726,9 +743,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc5"),
-                cid: Text::reference("head7"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc5")),
+                cid: Some(Text::reference("head7")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -775,7 +792,8 @@ fn doc_encryption_acp_if_user_and_node_have_access_should_fetch() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -783,8 +801,10 @@ fn doc_encryption_acp_if_user_and_node_have_access_should_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -792,8 +812,10 @@ fn doc_encryption_acp_if_user_and_node_have_access_should_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -874,7 +896,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -907,7 +930,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -948,8 +972,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -972,8 +996,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -996,8 +1020,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -1006,9 +1030,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1048,7 +1072,8 @@ fn doc_encryption_acp_if_user_has_access_but_not_node_should_not_fetch() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -1056,8 +1081,10 @@ fn doc_encryption_acp_if_user_has_access_but_not_node_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1065,8 +1092,10 @@ fn doc_encryption_acp_if_user_has_access_but_not_node_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1147,7 +1176,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1180,7 +1210,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1221,8 +1252,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -1245,8 +1276,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),

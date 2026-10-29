@@ -1,9 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/relation_admin/connect_p2p_peer_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{
-    AddNACActorRelationship, ConnectPeers, NodeOpenP2P, NodeStopForRestart, Start,
-};
+use integration_test::actions::{AddNACActorRelationship, Close, ConnectPeers, NewNode, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -14,7 +12,8 @@ fn nac_admin_relation_can_connect_p2_p_peer() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -22,7 +21,8 @@ fn nac_admin_relation_can_connect_p2_p_peer() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -30,7 +30,8 @@ fn nac_admin_relation_can_connect_p2_p_peer() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -38,7 +39,8 @@ fn nac_admin_relation_can_connect_p2_p_peer() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

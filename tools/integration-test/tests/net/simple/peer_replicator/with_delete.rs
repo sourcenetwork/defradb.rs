@@ -3,7 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddDoc, AddDocumentSubscription, AddReplicator, ConnectPeers, DeleteDoc,
-    NodeOpenP2P, PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    NewNode, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,17 +15,20 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db2".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -63,17 +66,20 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db2".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -85,8 +91,8 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -98,8 +104,8 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db1".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -111,8 +117,8 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db2".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -142,23 +148,23 @@ fn p2_p_peer_replicator_with_delete_show_deleted() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head3", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common { node: Some("db2".into()), ..Default::default() },
                 ..Default::default()

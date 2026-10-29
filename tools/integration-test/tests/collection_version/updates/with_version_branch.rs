@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, GetCollectionsFiltered, PatchCollection, Request, SetActiveCollectionVersion,
+    AddCollection, GetCollections, PatchCollection, Request, SetActiveCollectionVersion,
 };
 use integration_test::m;
 use integration_test::test_case::TestCase;
@@ -33,8 +33,9 @@ fn collection_version_updates_with_branching_collection_and_get_collection_at_ve
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 version_id: Some("bafyreiciz2hrrmt7ritk5gf5fyruw46v2tfhq5dc7qto4wgpzluben2smu".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -121,8 +122,9 @@ fn collection_version_updates_with_branching_collection_and_set_active_collectio
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 version_id: Some("bafyreibuscrpd27xb2zelovaid6souccvac5rkl4xrvjowe3jpfhormr6e".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -180,8 +182,9 @@ fn collection_version_updates_with_branching_collection_and_set_active_collectio
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -303,8 +306,9 @@ fn collection_version_updates_with_branching_collection_and_set_active_collectio
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -396,8 +400,9 @@ fn collection_version_updates_with_branching_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 version_id: Some("bafyreigvzkfdc4y2ppvvpmmdw3t7kv4nd5dgfh5jfytef3kbzem6po55zu".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -459,8 +464,9 @@ fn collection_version_updates_with_branching_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 version_id: Some("bafyreifwalt5gom7ldime4phszmbxymn5jrtkx33ujw7ovvjmdzpat5yzm".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -509,8 +515,9 @@ fn collection_version_updates_with_branching_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -613,8 +620,9 @@ fn collection_version_updates_with_patch_on_branched_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 version_id: Some("bafyreibuscrpd27xb2zelovaid6souccvac5rkl4xrvjowe3jpfhormr6e".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -672,8 +680,9 @@ fn collection_version_updates_with_patch_on_branched_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

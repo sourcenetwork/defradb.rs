@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, ConnectPeers, GetCollectionsFiltered, NodeOpenP2P, PatchCollection,
-    PeerEventsStart, Request, SyncBranchableCollection, UpdateDoc, WaitForUpdates,
+    AddCollection, AddDoc, ConnectPeers, GetCollections, NewNode, PatchCollection, Request,
+    SyncBranchableCollection, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,8 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +25,8 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -60,8 +62,9 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -70,7 +73,8 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -78,7 +82,8 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -98,8 +103,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -119,8 +127,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -154,8 +165,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_2"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_2"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -176,8 +190,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -197,8 +214,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_3"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_3"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -218,8 +238,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_4"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_4"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -253,8 +276,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_5"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_5"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -275,8 +301,11 @@ fn branchable_collection_sync_with_branched_versions_and_docs_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

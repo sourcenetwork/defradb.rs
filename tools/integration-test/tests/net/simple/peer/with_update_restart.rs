@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, NodeOpenP2PPersistent, NodeStop,
-    PeerEventsStart, Request, Restart, UpdateDoc, WaitForMerge, WaitForUpdate,
+    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, NewNode, Request, Restart,
+    UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,9 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PPersistent {
+            NewNode {
+                network: true,
+                database_dir: Some("".into()),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PPersistent {
+            NewNode {
+                network: true,
+                database_dir: Some("".into()),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -61,7 +65,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -69,7 +74,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -89,8 +95,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -110,8 +116,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),
@@ -138,7 +144,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeStop {
+            Restart {
+                stop: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -146,7 +153,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            NodeStop {
+            Restart {
+                stop: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -170,7 +178,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -178,7 +187,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -217,8 +227,8 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -227,9 +237,9 @@ fn p2_p_with_single_document_single_update_from_child_and_restart() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, GetCollectionsFiltered, PatchCollection, ScenarioExpectPending,
-    TxnBegin, TxnDiscard,
+    AddCollection, AddDoc, GetCollections, Parallel, PatchCollection, TxnBegin, TxnDiscard,
 };
 use integration_test::m;
 use integration_test::test_case::TestCase;
@@ -127,8 +126,9 @@ fn col_version_update_remove_collection_get_collections_should_not_return_collec
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -233,8 +233,8 @@ fn col_version_update_remove_collection_deadlock_if_deleting_version_with_new_fi
 ) {
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: vec![ScenarioExpectPending {
-            children: vec![
+        actions: vec![Parallel {
+            children: Some(vec![
                 json!({ "op": "node.open", "args": { "node": "db" } }),
                 json!({
                     "op": "schema.add",
@@ -285,7 +285,8 @@ fn col_version_update_remove_collection_deadlock_if_deleting_version_with_new_fi
 				"#,
                     },
                 }),
-            ],
+            ]),
+            expect_pending: true,
             expected_data: json!(m::object(json!({ "pending": true }))),
             ..Default::default()
         }
@@ -301,8 +302,8 @@ fn col_version_update_remove_collection_deadlock_if_deleting_version_with_new_fi
 fn col_version_update_remove_collection_deadlocks_if_other_txn_writing() {
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: vec![ScenarioExpectPending {
-            children: vec![
+        actions: vec![Parallel {
+            children: Some(vec![
                 json!({ "op": "node.open", "args": { "node": "db" } }),
                 json!({
                     "op": "schema.add",
@@ -342,7 +343,8 @@ fn col_version_update_remove_collection_deadlocks_if_other_txn_writing() {
 				"#,
                     },
                 }),
-            ],
+            ]),
+            expect_pending: true,
             expected_data: json!(m::object(json!({ "pending": true }))),
             ..Default::default()
         }

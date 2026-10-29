@@ -40,6 +40,8 @@ const SHARED: &[(&str, &str)] = &[
     ("lens", "Lens"),
     ("eventType", "EventType"),
     ("keyType", "KeyType"),
+    ("clientType", "NodeClient"),
+    ("indexGate", "IndexGate"),
 ];
 
 /// Flags that are plain booleans, left out of the arguments when false.
@@ -222,7 +224,9 @@ fn field(key: &str, v: &Value, required: bool, used: &mut Used, indent: usize) -
 /// The Rust field for a corpus argument, where it differs from the name.
 fn rust_field(ty: &str, key: &str) -> String {
     match (ty, key) {
-        ("Request", "query") => "request".to_owned(),
+        ("Request" | "SubscriptionRequest", "query") => "request".to_owned(),
+        (_, "releaseVersion") => "version".to_owned(),
+        ("ListActions", "expectedAction") => "after_action".to_owned(),
         (_, "transaction") => "txn".to_owned(),
         (_, "encryptDoc") => "is_doc_encrypted".to_owned(),
         (_, "document") => "doc_map".to_owned(),
@@ -251,7 +255,7 @@ fn strings(items: &[String]) -> String {
 }
 
 /// The `Common` options of a step, if it has any.
-fn common_text(step: &WireStep, used: &mut Used) -> Option<String> {
+fn common_text(step: &WireStep, used: &mut Used, implied_eventually: bool) -> Option<String> {
     let mut parts = Vec::new();
     for (key, v) in step.args.as_object().into_iter().flatten() {
         match key.as_str() {
@@ -299,6 +303,10 @@ fn common_text(step: &WireStep, used: &mut Used) -> Option<String> {
             strings(&check.unordered_documents)
         ));
     }
+    if implied_eventually && check.eventually.is_none() {
+        used.eventually = true;
+        parts.push("eventually: Some(Eventually::default())".to_owned());
+    }
     if let Some(eventually) = &check.eventually {
         used.eventually = true;
         let mut inner = Vec::new();
@@ -320,6 +328,24 @@ fn common_text(step: &WireStep, used: &mut Used) -> Option<String> {
     used.common = true;
     parts.push("..Default::default()".to_owned());
     Some(format!("common: Common {{ {} }}", parts.join(", ")))
+}
+
+/// One `name: value` of an action's struct literal, for a corpus argument.
+fn arg_field(
+    ty: &str,
+    key: &str,
+    v: &Value,
+    plain: bool,
+    used: &mut Used,
+    indent: usize,
+) -> String {
+    let text = field(key, v, plain, used, indent);
+    let name = snake(key);
+    let renamed = rust_field(ty, key);
+    match name == renamed {
+        true => text,
+        false => format!("{renamed}{}", &text[name.len()..]),
+    }
 }
 
 fn step_text(step: &WireStep, used: &mut Used, depth: usize) -> String {
@@ -348,19 +374,17 @@ fn step_text(step: &WireStep, used: &mut Used, depth: usize) -> String {
             }
             _ => {
                 let plain = required.contains(key.as_str()) || PLAIN_FLAGS.contains(&key.as_str());
-                let text = field(key, v, plain, used, base + 4);
-                let name = snake(key);
-                let renamed = rust_field(ty, key);
-                fields.push(match name == renamed {
-                    true => text,
-                    false => format!("{renamed}{}", &text[name.len()..]),
-                });
+                fields.push(arg_field(ty, key, v, plain, used, base + 4));
             }
         }
     }
+    let mut implied_eventually = false;
     for (key, v) in &described.implied {
-        let name = rust_field(ty, key);
-        fields.push(format!("{name}: {}", value(key, v, used, base + 4)));
+        if key == "eventually" {
+            implied_eventually = true;
+            continue;
+        }
+        fields.push(arg_field(ty, key, v, v.is_boolean(), used, base + 4));
     }
     let check = &step.check;
     let graphql = ty == "Request" && !step.envelope;
@@ -392,7 +416,7 @@ fn step_text(step: &WireStep, used: &mut Used, depth: usize) -> String {
             literal::string(message)
         ));
     }
-    if let Some(common) = common_text(step, used) {
+    if let Some(common) = common_text(step, used, implied_eventually) {
         fields.push(common);
     }
     fields.push("..Default::default()".to_owned());
@@ -444,7 +468,9 @@ pub fn test_fn(loaded: &Loaded, name: &str, leaf: Option<&str>, used: &mut Used)
                 entry.push_str(&step_text(step, used, 3));
                 entry.push_str(",\n");
             }
-            entry.push_str("                ],\n            }\n            .into(),\n");
+            entry.push_str(
+                "                ],\n                ..Default::default()\n            }\n            .into(),\n",
+            );
         } else {
             entry.push_str(&step_text(&steps[index], used, 0));
             entry.push_str(",\n");

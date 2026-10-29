@@ -2,9 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddNACActorRelationship, ConnectPeers, GetCollectionsFiltered,
-    NodeOpenP2P, NodeStopForRestart, PeerEventsStart, Start, SyncBranchableCollection,
-    WaitForUpdates,
+    AddCollection, AddDoc, AddNACActorRelationship, Close, ConnectPeers, GetCollections, NewNode,
+    Start, SyncBranchableCollection, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -16,22 +15,26 @@ fn nac_admin_relation_can_sync_p2_p_branchable_collection() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -66,7 +69,8 @@ fn nac_admin_relation_can_sync_p2_p_branchable_collection() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -81,13 +85,15 @@ fn nac_admin_relation_can_sync_p2_p_branchable_collection() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common { node: Some("db0".into()), identity_seed: Some(2), capture: captures([("collection0", "/collections/0/CollectionID")]), ..Default::default() },
                 ..Default::default()
             }
@@ -99,8 +105,8 @@ fn nac_admin_relation_can_sync_p2_p_branchable_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cids/0")]), ..Default::default() },
                 ..Default::default()
             }

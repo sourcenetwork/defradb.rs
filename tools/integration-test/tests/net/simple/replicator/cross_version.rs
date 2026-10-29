@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddReplicator, NodeOpenP2PIdentity, NodeOpenP2PRelease, PeerEventsStart,
-    Request, WaitForUpdate,
+    AddCollection, AddDoc, AddReplicator, NewNode, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Eventually, Text};
@@ -16,15 +15,18 @@ fn p2_p_cross_version_head_to_v1_doc_syncs() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                with_identity: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PRelease {
-                release_version: "v1.0.0".into(),
-                node_identity_seed: 1,
+            NewNode {
+                version: Some("v1.0.0".into()),
+                node_identity_seed: Some(1),
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -49,7 +51,8 @@ fn p2_p_cross_version_head_to_v1_doc_syncs() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -67,8 +70,8 @@ fn p2_p_cross_version_head_to_v1_doc_syncs() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -102,15 +105,18 @@ fn p2_p_cross_version_v1_to_head_doc_syncs() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                with_identity: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PRelease {
-                release_version: "v1.0.0".into(),
-                node_identity_seed: 1,
+            NewNode {
+                version: Some("v1.0.0".into()),
+                node_identity_seed: Some(1),
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }

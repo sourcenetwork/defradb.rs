@@ -1,9 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/add_nac_relationship_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{
-    AddNACActorRelationship, DisableNAC, GetNACStatus, NodeStopForRestart, Start,
-};
+use integration_test::actions::{AddNACActorRelationship, Close, DisableNAC, GetNACStatus, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -14,7 +12,8 @@ fn nac_add_relationship_for_all_identities_all_identities_can_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -65,7 +64,8 @@ fn nac_add_relationship_still_requires_identity_even_if_all_identities_given_acc
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -119,7 +119,8 @@ fn nac_add_relationship_when_nac_is_disabled_with_invalid_identities_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -199,7 +200,8 @@ fn nac_add_relationship_when_nac_is_enabled_with_invalid_identities_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -320,7 +322,8 @@ fn nac_add_relationship_with_invalid_relation_name_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -356,7 +359,8 @@ fn nac_add_relationship_with_valid_identity_relationship_added() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

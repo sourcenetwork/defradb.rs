@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, PeerEventsStart, Request, SubscriptionFinish, SubscriptionRequest,
-    WaitForUpdate,
+    AddCollection, AddDoc, Request, SubscriptionRequest, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -21,21 +20,24 @@ fn commit_subscription_with_add_mutations_return_commits() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         _commits {
                                             cid
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 2,
+                    .into(),
+                ),
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -52,8 +54,8 @@ fn commit_subscription_with_add_mutations_return_commits() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("DocID0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("DocID0_0")),
                 common: Common {
                     capture: captures([("CID0_0_0", "/cid")]),
                     ..Default::default()
@@ -74,8 +76,8 @@ fn commit_subscription_with_add_mutations_return_commits() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("DocID0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("DocID0_1")),
                 common: Common {
                     capture: captures([("CID0_1_0", "/cid")]),
                     ..Default::default()
@@ -83,7 +85,7 @@ fn commit_subscription_with_add_mutations_return_commits() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -113,7 +115,7 @@ fn commit_subscription_with_commit_links_add_mutations_valid_links() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: r#"
+                request: Some(r#"
                     subscription {
                                         _commits {
                                             cid
@@ -126,8 +128,8 @@ fn commit_subscription_with_commit_links_add_mutations_valid_links() {
                                             }
                                         }
                                     }
-                "#.into(),
-                expected_count: 2,
+                "#.into()),
+                expected_count: Some(2),
                 ..Default::default()
             }
             .into(),
@@ -187,7 +189,7 @@ fn commit_subscription_with_commit_links_add_mutations_valid_links() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [
@@ -261,7 +263,7 @@ fn commit_subscription_with_doc_filter_and_multiple_mutations_filtered_doc() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                query: Text::concat([
+                request: Some(Text::concat([
                     Text::from(
                         r#"subscription {
 					_commits(docID: ""#,
@@ -274,8 +276,8 @@ fn commit_subscription_with_doc_filter_and_multiple_mutations_filtered_doc() {
 					}
 				}"#,
                     ),
-                ]),
-                expected_count: 1,
+                ])),
+                expected_count: Some(1),
                 ..Default::default()
             }
             .into(),
@@ -328,7 +330,7 @@ fn commit_subscription_with_doc_filter_and_multiple_mutations_filtered_doc() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream".into(),
                 expected_data: json!({
                     "events": [

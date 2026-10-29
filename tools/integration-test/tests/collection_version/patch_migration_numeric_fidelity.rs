@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{Lens, LensModule};
-use integration_test::actions::{AddLens, LensCount};
+use integration_test::actions::{AddLens, ListLenses};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -33,8 +33,8 @@ fn collection_version_patch_large_integer_lens_arguments_are_not_deduplicated() 
                 ..Default::default()
             }
             .into(),
-            LensCount {
-                expected_data: json!(m::object(json!({ "count": 2 }))),
+            ListLenses {
+                expected_count: json!(m::object(json!({ "count": 2 }))),
                 ..Default::default()
             }
             .into(),

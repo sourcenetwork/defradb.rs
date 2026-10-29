@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddNACActorRelationship, NodeStopForRestart, PeerEventsStart, Start,
-    UpdateDoc, WaitForUpdate,
+    AddCollection, AddDoc, AddNACActorRelationship, Close, Start, UpdateDoc, WaitForPeersEvents,
+    WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn nac_admin_relation_can_update_document() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -43,7 +44,8 @@ fn nac_admin_relation_can_update_document() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -59,8 +61,8 @@ fn nac_admin_relation_can_update_document() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -102,8 +104,8 @@ fn nac_admin_relation_can_update_document() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),

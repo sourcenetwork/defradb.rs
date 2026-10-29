@@ -3,8 +3,8 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, ConfigureMigration, GetCollections, NodeOpenPersistent, PatchCollection,
-    Request, Restart,
+    AddCollection, AddDoc, ConfigureMigration, GetCollections, NewNode, PatchCollection, Request,
+    Restart,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -173,7 +173,8 @@ fn collection_migration_query_intermediate_stamp_survives_restart_should_remigra
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),

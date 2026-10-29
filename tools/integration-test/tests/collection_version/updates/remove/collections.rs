@@ -2,8 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, DeleteDoc, GetCollections, GetCollectionsFiltered, PatchCollection,
-    PatchCollectionWhileAddingDoc, Request,
+    AddCollection, AddDoc, DeleteDoc, GetCollections, PatchCollection, Request,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -187,8 +186,9 @@ fn col_version_update_add_field_remove_multiple_new_collection_middle_and_last()
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -275,8 +275,9 @@ fn col_version_update_add_field_remove_new_collection_and_activate_original() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -381,8 +382,9 @@ fn col_version_update_add_field_remove_new_collection_different_patches() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -513,8 +515,9 @@ fn col_version_update_add_field_remove_original_collection_same_patch() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }
@@ -560,8 +563,9 @@ fn col_version_update_copy_collection_add_field_remove_original_collection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -1041,7 +1045,8 @@ fn col_version_update_remove_collections_by_id() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }
@@ -1139,7 +1144,8 @@ fn col_version_update_remove_collections_by_name() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }
@@ -1224,7 +1230,7 @@ fn col_version_update_remove_collections_concurrent_write() {
                 ..Default::default()
             }
             .into(),
-            PatchCollectionWhileAddingDoc {
+            PatchCollection {
                 patch: r#"
 						[
 							{
@@ -1234,8 +1240,8 @@ fn col_version_update_remove_collections_concurrent_write() {
 						]
 					"#
                 .into(),
-                collection: "Users".into(),
-                doc_map: json!({ "name": "John" }),
+                collection: Some("Users".into()),
+                doc_map: Some(json!({ "name": "John" })),
                 ..Default::default()
             }
             .into(),

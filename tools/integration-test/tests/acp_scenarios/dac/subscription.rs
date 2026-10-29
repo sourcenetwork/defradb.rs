@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDACActorRelationship, AddDACPolicy, AddDoc, PeerEventsStart,
-    SubscriptionFinish, SubscriptionRequest, UpdateDoc, WaitForUpdate,
+    AddCollection, AddDACActorRelationship, AddDACPolicy, AddDoc, SubscriptionRequest, UpdateDoc,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -70,7 +70,8 @@ resources:
             .into(),
             SubscriptionRequest {
                 subscription: "sub0".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         Users {
                                             name
@@ -78,8 +79,9 @@ resources:
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 0,
+                    .into(),
+                ),
+                expected_count: Some(0),
                 ..Default::default()
             }
             .into(),
@@ -95,7 +97,7 @@ resources:
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "sub0".into(),
                 expected_data: json!({ "events": [] }),
                 ..Default::default()
@@ -167,7 +169,8 @@ resources:
             .into(),
             SubscriptionRequest {
                 subscription: "sub0".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         Users {
                                             name
@@ -175,8 +178,9 @@ resources:
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 1,
+                    .into(),
+                ),
+                expected_count: Some(1),
                 common: Common {
                     identity_seed: Some(1),
                     ..Default::default()
@@ -196,7 +200,7 @@ resources:
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "sub0".into(),
                 expected_data: json!({
                     "events": [{ "data": { "Users": [{ "age": 28, "name": "Shahzad" }] } }],
@@ -268,7 +272,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -284,8 +289,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
@@ -302,14 +307,15 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
             SubscriptionRequest {
                 subscription: "sub0".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         Users {
                                             name
@@ -317,8 +323,9 @@ resources:
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 1,
+                    .into(),
+                ),
+                expected_count: Some(1),
                 common: Common {
                     identity_seed: Some(2),
                     ..Default::default()
@@ -338,12 +345,12 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "sub0".into(),
                 expected_data: json!({
                     "events": [{ "data": { "Users": [{ "age": 29, "name": "Shahzad" }] } }],

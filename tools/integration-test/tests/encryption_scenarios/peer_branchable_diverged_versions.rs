@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, ConnectPeers, GetCollectionsFiltered, NodeOpenP2PKMS, PatchCollection,
-    PeerEventsStart, SyncBranchableCollection, WaitForUpdates,
+    AddCollection, AddDoc, ConnectPeers, GetCollections, NewNode, PatchCollection,
+    SyncBranchableCollection, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,9 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -59,8 +63,9 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection", "/collections/0/CollectionID")]),
@@ -69,7 +74,8 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -77,7 +83,8 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -127,8 +134,8 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0"), Text::reference("collection")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0"), Text::reference("collection")]),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -151,8 +158,8 @@ fn doc_encryption_branchable_sync_diverged_versions_fails_kms_auth() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc1"), Text::reference("collection")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc1"), Text::reference("collection")]),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

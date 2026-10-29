@@ -1,9 +1,9 @@
 //! Generated from the conformance scenarios of tests/integration/collection/truncate/add_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDoc, NodeOpenSigningSecp256k1, PeerEventsStart, Request, Truncate,
-    WaitForUpdate,
+    AddCollection, AddDoc, NewNode, Request, Truncate, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -426,7 +426,9 @@ fn truncate_collection_add_removes_signed_document() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -440,7 +442,8 @@ fn truncate_collection_add_removes_signed_document() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -455,8 +458,8 @@ fn truncate_collection_add_removes_signed_document() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()

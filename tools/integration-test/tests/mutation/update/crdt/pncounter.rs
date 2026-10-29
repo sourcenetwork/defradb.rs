@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, PeerEventsStart, Request, UpdateDoc, WaitForUpdate,
+    AddCollection, AddDoc, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -24,7 +24,8 @@ fn pn_counter_update_float_kind_with_decrement_overflow_negative_inf() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -35,8 +36,8 @@ fn pn_counter_update_float_kind_with_decrement_overflow_negative_inf() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -49,8 +50,8 @@ fn pn_counter_update_float_kind_with_decrement_overflow_negative_inf() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -90,7 +91,8 @@ fn pn_counter_update_float_kind_with_positive_increment_overflow_positive_inf() 
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -101,8 +103,8 @@ fn pn_counter_update_float_kind_with_positive_increment_overflow_positive_inf() 
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),
@@ -115,8 +117,8 @@ fn pn_counter_update_float_kind_with_positive_increment_overflow_positive_inf() 
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 ..Default::default()
             }
             .into(),

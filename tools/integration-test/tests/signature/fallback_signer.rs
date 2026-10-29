@@ -1,9 +1,10 @@
 //! Generated from the conformance scenarios of tests/integration/signature/fallback_signer_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::NodeClient;
 use integration_test::actions::{
-    AddCollection, AddDoc, NodeOpenHTTPSigning, PeerEventsStart, UpdateDoc, VerifyBlockSignature,
-    WaitForUpdate,
+    AddCollection, AddDoc, NewNode, UpdateDoc, VerifyBlockSignature, WaitForPeersEvents,
+    WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +16,9 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTPSigning {
+            NewNode {
+                client_type: Some(NodeClient::Http),
+                enable_signing: true,
                 ..Default::default()
             }
             .into(),
@@ -30,7 +33,8 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -46,8 +50,8 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head0", "/cid")]),
                     ..Default::default()
@@ -56,7 +60,7 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head0"),
                 ..Default::default()
             }
@@ -73,8 +77,8 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common {
                     capture: captures([("head1", "/cid")]),
                     ..Default::default()
@@ -83,7 +87,7 @@ fn signature_if_identity_has_no_private_key_should_use_node_identity() {
             }
             .into(),
             VerifyBlockSignature {
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("head1"),
                 ..Default::default()
             }

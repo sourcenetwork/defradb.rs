@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, PeerEventsStart, Request, UpdateDoc, WaitForUpdate,
+    AddCollection, AddDoc, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -66,7 +66,8 @@ fn mutation_update_user_defined_vector_embedding_does_not_trigger_generation_sho
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -88,8 +89,8 @@ fn mutation_update_user_defined_vector_embedding_does_not_trigger_generation_sho
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -102,8 +103,8 @@ fn mutation_update_user_defined_vector_embedding_does_not_trigger_generation_sho
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -131,7 +132,8 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -153,8 +155,8 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -167,8 +169,8 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -179,8 +181,8 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 ..Default::default()
             }
             .into(),
@@ -193,8 +195,8 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 ..Default::default()
             }
             .into(),
