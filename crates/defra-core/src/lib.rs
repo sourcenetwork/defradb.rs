@@ -34,6 +34,7 @@ pub mod signing;
 pub mod store_backend;
 pub mod text_op;
 pub mod thread_bounds;
+pub mod txn_id;
 pub mod types;
 pub mod vector;
 #[cfg(any(test, all(target_arch = "wasm32", feature = "ambient")))]
@@ -59,6 +60,7 @@ pub use request_context::RequestContext;
 pub use signing::SigningKeyType;
 pub use store_backend::{parse_store_backend, StoreBackend};
 pub use text_op::{TextEdits, TextOp};
+pub use txn_id::TxnId;
 
 /// Version information for DefraDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
