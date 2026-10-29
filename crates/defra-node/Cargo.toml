@@ -15,7 +15,7 @@ default = ["native", "vera", "wasmtime-runtime"]
 http = ["dep:defra-http", "dep:axum"]
 # The managed P2P system (transport kind, push options, KMS) without a transport:
 # what FFI needs on a node with no network. Every transport feature implies it.
-managed-p2p = ["dep:defra-http", "dep:defra-p2p-adapter", "dep:kms", "dep:blockstore"]
+managed-p2p = ["dep:defra-p2p-adapter", "dep:kms", "dep:blockstore"]
 # Iroh/QUIC. Implies native. Does not enable libp2p.
 p2p = [
     "native",
@@ -102,7 +102,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# Optional — HTTP server and the P2P operations trait
+# Optional — HTTP server
 defra-http = { path = "../http", optional = true }
 
 # Optional — P2P replication (IROH transport)
