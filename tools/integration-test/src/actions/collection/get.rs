@@ -4,12 +4,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `node.openP2PIdentity` op.
+/// Lists the collection versions a node holds, optionally filtered.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeOpenP2PIdentity {
+pub struct GetCollections {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_identity_seed: Option<u64>,
+    pub collection_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub get_inactive: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "versionID")]
+    pub version_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "collectionID")]
+    pub collection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filtered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -18,7 +30,7 @@ pub struct NodeOpenP2PIdentity {
     pub common: Common,
 }
 
-impl Op for NodeOpenP2PIdentity {
+impl Op for GetCollections {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -32,7 +44,7 @@ impl Op for NodeOpenP2PIdentity {
     }
 }
 
-impl Action for NodeOpenP2PIdentity {
+impl Action for GetCollections {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

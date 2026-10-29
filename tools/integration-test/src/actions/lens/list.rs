@@ -4,10 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `node.openIndexGated` op.
+/// Lists the lenses a node holds: their metadata, or how many.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeOpenIndexGated {
+pub struct ListLenses {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub expected_count: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -16,7 +20,7 @@ pub struct NodeOpenIndexGated {
     pub common: Common,
 }
 
-impl Op for NodeOpenIndexGated {
+impl Op for ListLenses {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -30,7 +34,7 @@ impl Op for NodeOpenIndexGated {
     }
 }
 
-impl Action for NodeOpenIndexGated {
+impl Action for ListLenses {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

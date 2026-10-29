@@ -1,13 +1,19 @@
+use crate::actions::shared::ExpectedAction;
 use crate::scenario::{Common, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `collection.list` op.
+/// Lists the queued collection actions, or starts listening for their events, or waits for the list to fill.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetCollections {
+pub struct ListActions {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub listen: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "expectedAction")]
+    pub after_action: Option<ExpectedAction>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -16,7 +22,7 @@ pub struct GetCollections {
     pub common: Common,
 }
 
-impl Op for GetCollections {
+impl Op for ListActions {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -30,7 +36,7 @@ impl Op for GetCollections {
     }
 }
 
-impl Action for GetCollections {
+impl Action for ListActions {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

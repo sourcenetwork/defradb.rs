@@ -1,17 +1,22 @@
-use crate::scenario::{Common, Op, Text};
+use crate::actions::shared::{EventType, Topic};
+use crate::scenario::{Common, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `peer.awaitMerge` op.
+/// Waits for peers to join or leave topics, or starts listening for the peer events.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WaitForMerge {
-    #[serde(rename = "blockCID")]
-    pub cid: Text,
-    #[serde(rename = "docID")]
-    pub doc_id: Text,
+pub struct WaitForPeersEvents {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<EventType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topics: Option<Vec<Topic>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20,7 +25,7 @@ pub struct WaitForMerge {
     pub common: Common,
 }
 
-impl Op for WaitForMerge {
+impl Op for WaitForPeersEvents {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -34,7 +39,7 @@ impl Op for WaitForMerge {
     }
 }
 
-impl Action for WaitForMerge {
+impl Action for WaitForPeersEvents {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

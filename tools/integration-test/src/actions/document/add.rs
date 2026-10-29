@@ -1,10 +1,11 @@
+use crate::scenario::Text;
 use crate::scenario::{Common, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// Adds a document to a collection: one document (`doc_map`) or several (`docs`), encrypted or not.
+/// Adds a document to a collection, or saves it over the one it has: one document (`doc_map`) or several (`docs`), encrypted or not.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddDoc {
@@ -20,6 +21,13 @@ pub struct AddDoc {
     pub is_doc_encrypted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_fields: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "docID")]
+    pub doc_id: Option<Text>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_signing: Option<bool>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upsert: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]

@@ -6,15 +6,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// Patches the collection definitions, optionally with a lens that migrates the data.
+/// Patches the collection definitions, optionally with a lens that migrates the data, and optionally while a document is being added.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchCollection {
     pub patch: Text,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<Lens>,
-    #[serde(default, rename = "async", skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(rename = "async")]
     pub r#async: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "document")]
+    pub doc_map: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]

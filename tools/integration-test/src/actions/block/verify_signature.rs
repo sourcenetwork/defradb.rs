@@ -1,16 +1,22 @@
-use crate::scenario::{Common, Op, Text};
+use crate::scenario::Text;
+use crate::scenario::{Common, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `subscription.start` op.
+/// Verifies a block's signature against the node that signed it, or the identity seed that did.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SubscriptionRequest {
-    pub expected_count: i64,
-    pub query: Text,
-    pub subscription: String,
+pub struct VerifyBlockSignature {
+    #[serde(rename = "blockCID")]
+    pub cid: Text,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19,7 +25,7 @@ pub struct SubscriptionRequest {
     pub common: Common,
 }
 
-impl Op for SubscriptionRequest {
+impl Op for VerifyBlockSignature {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -33,7 +39,7 @@ impl Op for SubscriptionRequest {
     }
 }
 
-impl Action for SubscriptionRequest {
+impl Action for VerifyBlockSignature {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

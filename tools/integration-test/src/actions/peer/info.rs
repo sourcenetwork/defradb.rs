@@ -4,10 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `peer.info` op.
+/// Reads a node's peer information: its address, or the validated information, or only its peer ID.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerInfo {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub validated: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub id_only: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
