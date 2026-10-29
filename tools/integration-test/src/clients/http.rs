@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use testo::prelude::*;
 
 use crate::client_type::network_edge;
+use crate::scenario::Failure;
 use crate::test_case::State;
 
 /// An action's body for the HTTP clients.
@@ -30,17 +31,18 @@ where
 }
 
 impl State {
-    /// Makes the request `call` builds with a client of the node's HTTP API.
-    /// It runs on the network edge, and the test waits for it on a worker,
-    /// which has no tokio context.
-    pub fn http<F, Fut, T>(&self, call: F) -> T
+    /// Makes the request `call` builds with a client of node `name`'s HTTP
+    /// API. It runs on the network edge, and the test waits for it on a
+    /// worker, which has no tokio context.
+    pub fn http_on<F, Fut, T>(&self, name: &str, call: F) -> Result<T, Failure>
     where
         F: FnOnce(HttpClient) -> Fut,
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let client = HttpClient::new(self.url()).expect("http client");
-        self.block_on(network_edge().spawn(call(client)))
-            .expect("run on the network edge")
+        let client = HttpClient::new(&self.url_on(name)?).expect("http client");
+        Ok(self
+            .block_on(network_edge().spawn(call(client)))
+            .expect("run on the network edge"))
     }
 }

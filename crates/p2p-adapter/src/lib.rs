@@ -80,7 +80,7 @@ pub use transport_version_syncer::{DbTransportVersionSyncer, TransportVersionSyn
 pub use version_syncer::DbVersionSyncer;
 
 pub use defra_http::router::{
-    ExplicitReplayCapabilityInput, P2PError, P2POperations, P2PResult, P2pDocumentInfo,
+    peer, ExplicitReplayCapabilityInput, P2PError, P2POperations, P2PResult, P2pDocumentInfo,
     P2pDocumentRequest, ReplicationFilter, ReplicationFilters, ReplicatorInfo, TransportPeerId,
 };
 

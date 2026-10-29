@@ -3226,7 +3226,7 @@ async fn rust_forget_replicator_prevents_retry_redial_after_restart() {
             replicators
                 .as_array()
                 .and_then(|entries| entries.first())
-                .and_then(|entry| entry["status"].as_u64())
+                .and_then(|entry| entry["Status"].as_u64())
                 == Some(1)
         },
         P2P_TIMEOUT,

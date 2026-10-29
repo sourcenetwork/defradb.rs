@@ -25,6 +25,7 @@ mod encrypted_index;
 mod graphql;
 mod index;
 mod p2p;
+mod peer;
 mod transaction;
 mod types;
 mod view;
@@ -33,8 +34,7 @@ pub use acp::{AcpAddPolicyRequest, AcpAddPolicyResponse, AcpPolicy, NacRelations
 pub use encrypted_index::EncryptedIndexInfo;
 pub use index::{IndexFieldInfo, IndexInfo};
 pub use p2p::{
-    mint_manage_token, ManageQueryResultResponse, P2pCollectionRequest, P2pConnectRequest,
-    P2pDocumentRequest, P2pInfo, P2pReplicatorInfo, P2pReplicatorRequest,
+    mint_manage_token, ManageQueryResultResponse, P2pReplicatorInfo, P2pReplicatorRequest,
 };
 pub use types::{ErrorResponse, GraphQLError, GraphQLRequest, GraphQLResponse, TxBeginResponse};
 pub use view::{AddViewRequest, ViewRefreshSelectors};
@@ -432,11 +432,6 @@ impl HttpClient {
     endpoint!(action_list, GET "/api/v0/actions" => Vec<defra_core::ActionExecution>);
 
     // P2P
-    endpoint!(p2p_info,            GET  "/api/v0/p2p/info"           => Vec<String>);
-    endpoint!(p2p_replicator_list, GET  "/api/v0/p2p/replicators"     => Vec<P2pReplicatorInfo>);
-    endpoint!(p2p_collection_list, GET  "/api/v0/p2p/collections"    => Vec<String>);
-    endpoint!(p2p_active_peers,    GET  "/api/v0/p2p/active-peers"   => JsonValue);
-    endpoint!(p2p_document_list,   GET  "/api/v0/p2p/documents"      => JsonValue);
     endpoint!(collection_versions, GET  "/api/v0/collections?get_inactive=true" => Vec<schema::CollectionVersion>);
     // ACP / NAC
     endpoint!(acp_list_policies,   GET  "/api/v0/acp/policy"         => Vec<AcpPolicy>);

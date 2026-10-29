@@ -30,18 +30,6 @@ struct ManageQueryRequestBody<'a> {
     op: RemoteManageQueryOp,
 }
 
-/// P2P node info
-#[derive(Debug, Deserialize, Serialize)]
-pub struct P2pInfo {
-    /// Peer ID
-    #[serde(rename = "id", alias = "ID", alias = "peerId", alias = "PeerID")]
-    pub id: String,
-
-    /// Listen addresses
-    #[serde(rename = "addresses", alias = "Addresses", default)]
-    pub addresses: Vec<String>,
-}
-
 /// P2P replicator info
 #[derive(Debug, Deserialize, Serialize)]
 pub struct P2pReplicatorInfo {
@@ -104,27 +92,6 @@ pub struct P2pReplicatorRequest {
     pub filters: ReplicationFilters,
 }
 
-/// P2P collection request
-#[derive(Debug, Serialize)]
-pub struct P2pCollectionRequest {
-    pub collections: Vec<String>,
-}
-
-/// P2P connect request
-#[derive(Debug, Serialize)]
-pub struct P2pConnectRequest {
-    pub addresses: Vec<String>,
-}
-
-/// P2P document request
-#[derive(Debug, Serialize)]
-pub struct P2pDocumentRequest {
-    #[serde(rename = "docIDs", skip_serializing_if = "Vec::is_empty")]
-    pub doc_ids: Vec<String>,
-    #[serde(rename = "schemaIDs", skip_serializing_if = "Vec::is_empty")]
-    pub schema_ids: Vec<String>,
-}
-
 impl HttpClient {
     pub async fn p2p_replicator_add(
         &self,
@@ -142,58 +109,6 @@ impl HttpClient {
             filters,
         })?;
         self.request_void("POST", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_replicator_delete(
-        &self,
-        collections: &[String],
-        address: Option<&str>,
-    ) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/replicators", self.base_url);
-        let body = serde_json::to_string(&serde_json::json!({
-            "ID": address,
-            "Collections": collections,
-        }))?;
-        self.request_void("DELETE", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_replicator_forget(&self, peer_id: &str) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/replicators", self.base_url);
-        let body = serde_json::to_string(&serde_json::json!({
-            "ID": peer_id,
-            "Forget": true,
-        }))?;
-        self.request_void("DELETE", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_collection_add(&self, collections: &[String]) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/collections", self.base_url);
-        let body = serde_json::to_string(&collections)?;
-        self.request_void("POST", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_collection_remove(&self, collections: &[String]) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/collections", self.base_url);
-        let body = serde_json::to_string(&collections)?;
-        self.request_void("DELETE", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_connect(&self, addresses: &[String]) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/connect", self.base_url);
-        let body = serde_json::to_string(&addresses)?;
-        self.request_void("POST", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_document_add(&self, doc_ids: &[String]) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/documents", self.base_url);
-        let body = serde_json::to_string(&doc_ids)?;
-        self.request_void("POST", &url, Some(&body)).await
-    }
-
-    pub async fn p2p_document_remove(&self, doc_ids: &[String]) -> Result<()> {
-        let url = format!("{}/api/v0/p2p/documents", self.base_url);
-        let body = serde_json::to_string(&doc_ids)?;
-        self.request_void("DELETE", &url, Some(&body)).await
     }
 
     pub async fn p2p_document_sync(&self, collection_name: &str, doc_ids: &[String]) -> Result<()> {

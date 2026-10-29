@@ -63,6 +63,10 @@ pub enum Error {
     /// A lens or the lens listing is not the JSON Go writes; serde's message.
     #[error("{0}")]
     LensJson(#[source] serde_json::Error),
+    /// A peer operation was refused.
+    #[cfg(feature = "managed-p2p")]
+    #[error(transparent)]
+    Peer(#[from] defra_http::router::peer::Error),
     /// A document write was refused.
     #[error(transparent)]
     Documents(#[from] query::documents::Error),

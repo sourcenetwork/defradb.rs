@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use defra_p2p_adapter::{P2PError, P2POperations, ReplicationFilters};
+use defra_p2p_adapter::{peer, P2PError, P2POperations};
 use wasm_bindgen::prelude::*;
 
 use crate::bindings::{config_from_js, from_js, to_js};
@@ -55,17 +55,17 @@ impl DefraClient {
     /// Dial a peer by ticket or `<endpoint-id>@<relay-url>`.
     #[wasm_bindgen(js_name = connectPeer)]
     pub async fn connect_peer(&self, address: &str) -> std::result::Result<(), JsValue> {
-        Ok(self
-            .p2p_ops()?
-            .connect_peer(address)
+        Ok(peer::connect(&**self.p2p_ops()?, &[address.to_owned()])
             .await
-            .map_err(p2p_error)?)
+            .map_err(core_error)?)
     }
 
     /// Endpoint ids currently holding a live connection.
     #[wasm_bindgen(js_name = connectedPeers)]
     pub async fn connected_peers(&self) -> std::result::Result<JsValue, JsValue> {
-        let peers = self.p2p_ops()?.connected_peers().await.map_err(p2p_error)?;
+        let peers = peer::active_peers(&**self.p2p_ops()?)
+            .await
+            .map_err(core_error)?;
         Ok(to_js(&peers)?)
     }
 
@@ -77,17 +77,15 @@ impl DefraClient {
         collections: JsValue,
     ) -> std::result::Result<(), JsValue> {
         let collections = collection_names(collections)?;
-        Ok(self
-            .p2p_ops()?
-            .add_replicator(
-                collections,
-                Some(address),
-                ReplicationFilters::new(),
-                Vec::new(),
-                None,
-            )
-            .await
-            .map_err(p2p_error)?)
+        let addresses = [address.to_owned()];
+        Ok(peer::add_replicator(
+            &**self.p2p_ops()?,
+            &addresses,
+            &collections,
+            peer::ReplicatorExtras::default(),
+        )
+        .await
+        .map_err(core_error)?)
     }
 
     /// Stop pushing these collections to the peer at `address`.
@@ -98,11 +96,11 @@ impl DefraClient {
         collections: JsValue,
     ) -> std::result::Result<(), JsValue> {
         let collections = collection_names(collections)?;
-        Ok(self
-            .p2p_ops()?
-            .remove_replicator(collections, Some(address))
-            .await
-            .map_err(p2p_error)?)
+        Ok(
+            peer::delete_replicator(&**self.p2p_ops()?, address, &collections)
+                .await
+                .map_err(core_error)?,
+        )
     }
 
     /// Every replicator this peer pushes to.
@@ -119,11 +117,9 @@ impl DefraClient {
         collections: JsValue,
     ) -> std::result::Result<(), JsValue> {
         let collections = collection_names(collections)?;
-        Ok(self
-            .p2p_ops()?
-            .add_collections(collections)
+        Ok(peer::add_p2p_collections(&**self.p2p_ops()?, &collections)
             .await
-            .map_err(p2p_error)?)
+            .map_err(core_error)?)
     }
 
     /// Stop following these collections.
@@ -133,11 +129,11 @@ impl DefraClient {
         collections: JsValue,
     ) -> std::result::Result<(), JsValue> {
         let collections = collection_names(collections)?;
-        Ok(self
-            .p2p_ops()?
-            .remove_collections(collections)
-            .await
-            .map_err(p2p_error)?)
+        Ok(
+            peer::delete_p2p_collections(&**self.p2p_ops()?, &collections)
+                .await
+                .map_err(core_error)?,
+        )
     }
 }
 
@@ -191,6 +187,10 @@ fn collection_names(collections: JsValue) -> Result<Vec<String>> {
 }
 
 fn p2p_error(error: P2PError) -> WasmError {
+    WasmError::P2P(error.to_string())
+}
+
+fn core_error(error: peer::Error) -> WasmError {
     WasmError::P2P(error.to_string())
 }
 

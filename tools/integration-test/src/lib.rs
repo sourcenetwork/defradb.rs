@@ -7,6 +7,7 @@ mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod nodes;
 mod purge;
 pub mod scenario;
 pub mod test_case;

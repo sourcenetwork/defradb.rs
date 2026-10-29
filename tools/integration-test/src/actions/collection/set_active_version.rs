@@ -37,10 +37,14 @@ impl Op for SetActiveCollectionVersion {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         state
-            .block_on(state.node().set_active_collection_version_as(
-                &state.context(self.txn),
-                self.version_id.as_str(),
-            ))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .set_active_collection_version_as(
+                        &state.context(self.txn),
+                        self.version_id.as_str(),
+                    ),
+            )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -63,11 +67,11 @@ impl HttpRun for SetActiveCollectionVersion {
                 action.version_id.as_str().to_owned(),
             );
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client
                         .set_active_collection_version(txn.as_deref(), &version_id)
                         .await
-                })
+                })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -80,7 +84,7 @@ impl CliRun for SetActiveCollectionVersion {
             action.common.plain(Self::name())?;
             let args = ["collection", "set-active", action.version_id.as_str()];
             state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

@@ -36,7 +36,7 @@ impl Op for DeleteWithFilter {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         state
-            .block_on(state.node().delete_with_filter(
+            .block_on(state.node_on(self.common.node())?.delete_with_filter(
                 &state.context(None),
                 &self.collection,
                 &self.filter.to_core(),
@@ -60,9 +60,9 @@ impl HttpRun for DeleteWithFilter {
             action.common.plain(Self::name())?;
             let (collection, filter) = (action.collection.clone(), action.filter.to_core());
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client.delete_with_filter(None, &collection, &filter).await
-                })
+                })?
                 .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -85,7 +85,9 @@ impl CliRun for DeleteWithFilter {
                 "--filter",
                 &filter,
             ];
-            let printed = state.defra_client(&args).map_err(Failure::operation)?;
+            let printed = state
+                .defra_client_on(action.common.node(), None, &args)
+                .map_err(Failure::operation)?;
             Ok(json!({ "count": printed["Count"], "docIDs": printed["DocIDs"] }))
         });
     }

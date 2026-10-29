@@ -36,7 +36,11 @@ impl Op for TxnDiscard {
         self.common.plain(Self::name())?;
         let id = self.id(state)?;
         state
-            .block_on(state.node().txn_discard(&state.context(None), id))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .txn_discard(&state.context(None), id),
+            )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -66,7 +70,9 @@ impl HttpRun for TxnDiscard {
             action.common.plain(Self::name())?;
             let id = action.id(state)?.to_string();
             state
-                .http(|client| async move { client.tx_discard(&id).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.tx_discard(&id).await
+                })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -79,7 +85,7 @@ impl CliRun for TxnDiscard {
             action.common.plain(Self::name())?;
             let id = action.id(state)?.to_string();
             state
-                .defra_client(&["tx", "discard", &id])
+                .defra_client_on(action.common.node(), None, &["tx", "discard", &id])
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

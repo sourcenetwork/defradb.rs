@@ -132,10 +132,11 @@ fn match_envelope(
     }
 }
 
-fn run<A, R>(original: &A, state: &mut State, call: &R) -> Result<(), String>
+fn run<A, R, M>(original: &A, state: &mut State, call: &R, call_mut: &M) -> Result<(), String>
 where
     A: Op,
     R: Fn(&A, &State) -> Result<Value, Failure>,
+    M: Fn(&A, &mut State) -> Result<Value, Failure>,
 {
     let args = serde_json::to_value(original).map_err(|e| e.to_string())?;
     let args = resolve(&args, &state.captures).map_err(|e| e.to_string())?;
@@ -145,7 +146,7 @@ where
     let outcome = match (&common.eventually, &expected) {
         (Some(timing), Some(expected)) => poll_until(state, &action, expected, timing, call),
         _ if common.retry => with_retry(|| call(&action, state)),
-        _ => call(&action, state),
+        _ => call_mut(&action, state),
     };
     if let Err(failure) = &outcome {
         if failure.kind == FailureKind::Unsupported {
@@ -200,12 +201,12 @@ fn describe(outcome: &Result<Value, Failure>) -> String {
     }
 }
 
-/// Runs an action in-process: [`execute_with`] its own [`Op::run`].
+/// Runs an action in-process, with its own [`Op::run`] and [`Op::run_mut`].
 pub fn execute<A>(action: &A, state: &mut State)
 where
     A: Op,
 {
-    execute_with(action, state, A::run);
+    report(action, run(action, state, &A::run, &A::run_mut));
 }
 
 /// Runs an action with `call`, one client's body for it: resolves the
@@ -216,7 +217,15 @@ where
     A: Op,
     R: Fn(&A, &State) -> Result<Value, Failure>,
 {
-    if let Err(message) = run(action, state, &call) {
+    let call_mut = |action: &A, state: &mut State| call(action, state);
+    report(action, run(action, state, &call, &call_mut));
+}
+
+fn report<A>(action: &A, outcome: Result<(), String>)
+where
+    A: Op,
+{
+    if let Err(message) = outcome {
         let args = serde_json::to_string(action).unwrap_or_default();
         let args: String = args.chars().take(300).collect();
         panic!("{message}\n  action: {} {args}", A::name());

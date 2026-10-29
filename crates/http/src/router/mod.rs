@@ -1,5 +1,6 @@
 //! Router configuration and route definitions.
 
+pub mod peer;
 #[cfg(feature = "server")]
 mod routes;
 #[cfg(feature = "server")]

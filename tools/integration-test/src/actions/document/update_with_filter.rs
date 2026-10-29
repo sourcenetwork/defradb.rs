@@ -39,7 +39,7 @@ impl Op for UpdateWithFilter {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         state
-            .block_on(state.node().update_with_filter(
+            .block_on(state.node_on(self.common.node())?.update_with_filter(
                 &state.context(self.txn),
                 &self.collection,
                 &self.filter.to_core(),
@@ -66,11 +66,11 @@ impl HttpRun for UpdateWithFilter {
             let (collection, filter) = (action.collection.clone(), action.filter.to_core());
             let updater = action.updater.clone();
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client
                         .update_with_filter(txn.as_deref(), &collection, &filter, &updater)
                         .await
-                })
+                })?
                 .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -96,7 +96,7 @@ impl CliRun for UpdateWithFilter {
                 &action.updater,
             ];
             let printed = state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map_err(Failure::operation)?;
             Ok(json!({ "count": printed["Count"], "docIDs": printed["DocIDs"] }))
         });

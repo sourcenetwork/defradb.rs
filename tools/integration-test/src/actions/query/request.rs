@@ -58,7 +58,7 @@ impl Op for Request {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
         state
-            .block_on(state.node().execute_request_as(
+            .block_on(state.node_on(self.common.node())?.execute_request_as(
                 &state.context(self.txn),
                 QueryRequest::new(self.request.as_str()),
             ))
@@ -121,7 +121,9 @@ impl HttpRun for Request {
             let request = action.request.as_str().to_owned();
             let txn = state.txn_id(action.txn);
             state
-                .http(|client| async move { client.graphql(&request, None, txn).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.graphql(&request, None, txn).await
+                })?
                 .map(|response| {
                     envelope(
                         response.data,
@@ -138,7 +140,11 @@ impl CliRun for Request {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             state
-                .defra_client_in(action.txn, &["query", action.request.as_str()])
+                .defra_client_on(
+                    action.common.node(),
+                    action.txn,
+                    &["query", action.request.as_str()],
+                )
                 .map_err(Failure::operation)
         });
     }

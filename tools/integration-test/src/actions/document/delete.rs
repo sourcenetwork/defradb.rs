@@ -38,7 +38,7 @@ impl Op for DeleteDoc {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
         state
-            .block_on(state.node().delete_doc(
+            .block_on(state.node_on(self.common.node())?.delete_doc(
                 &state.context(self.txn),
                 &self.collection,
                 self.doc_id.as_str(),
@@ -64,11 +64,11 @@ impl HttpRun for DeleteDoc {
             let (collection, doc_id) =
                 (action.collection.clone(), action.doc_id.as_str().to_owned());
             state
-                .http(|client| async move {
+                .http_on(action.common.node(), |client| async move {
                     client
                         .delete_doc(txn.as_deref(), &collection, &doc_id)
                         .await
-                })
+                })?
                 .map(|()| json!({ "deleted": true }))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -88,7 +88,7 @@ impl CliRun for DeleteDoc {
                 action.doc_id.as_str(),
             ];
             state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map(|_| json!({ "deleted": true }))
                 .map_err(Failure::operation)
         });

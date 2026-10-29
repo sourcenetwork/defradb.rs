@@ -99,11 +99,9 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     /// Get P2P operations or return ServiceUnavailable error.
     pub fn require_p2p(&self) -> Result<&Arc<dyn P2POperations>, crate::error::HttpError> {
-        self.p2p.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "P2P networking is not enabled. Start the server with P2P enabled to use this feature.".into()
-            )
-        })
+        self.p2p
+            .as_ref()
+            .ok_or_else(|| crate::error::peer_refused(crate::router::peer::Error::NoP2P))
     }
 
     /// Get the management requester or return ServiceUnavailable error.

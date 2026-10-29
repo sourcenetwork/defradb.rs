@@ -43,7 +43,7 @@ impl Op for AddCollection {
         state
             .block_on(
                 state
-                    .node()
+                    .node_on(self.common.node())?
                     .add_collection_as(&state.context(self.txn), self.sdl.as_str()),
             )
             .map(|_| json!({}))
@@ -80,7 +80,9 @@ impl HttpRun for AddCollection {
             let sdl = action.sdl.as_str().to_owned();
             let txn = state.txn_id(action.txn);
             state
-                .http(|client| async move { client.schema_add(&sdl, txn.as_deref()).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.schema_add(&sdl, txn.as_deref()).await
+                })?
                 .map(|_| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -92,7 +94,11 @@ impl CliRun for AddCollection {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             state
-                .defra_client_in(action.txn, &["collection", "add", action.sdl.as_str()])
+                .defra_client_on(
+                    action.common.node(),
+                    action.txn,
+                    &["collection", "add", action.sdl.as_str()],
+                )
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

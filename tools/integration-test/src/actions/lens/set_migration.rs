@@ -43,7 +43,7 @@ impl Op for ConfigureMigration {
         state
             .block_on(
                 state
-                    .node()
+                    .node_on(self.common.node())?
                     .set_migration_as(&state.context(self.txn), &self.config()),
             )
             .map(|id| json!({ "lensID": id }))
@@ -75,7 +75,9 @@ impl HttpRun for ConfigureMigration {
             action.common.plain(Self::name())?;
             let (txn, config) = (state.txn_id(action.txn), action.config());
             state
-                .http(|client| async move { client.set_migration(txn.as_deref(), &config).await })
+                .http_on(action.common.node(), |client| async move {
+                    client.set_migration(txn.as_deref(), &config).await
+                })?
                 .map(|id| json!({ "lensID": id }))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -95,7 +97,7 @@ impl CliRun for ConfigureMigration {
                 &lens,
             ];
             let printed = state
-                .defra_client_in(action.txn, &args)
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map_err(Failure::operation)?;
             Ok(json!({ "lensID": printed["lensId"] }))
         });

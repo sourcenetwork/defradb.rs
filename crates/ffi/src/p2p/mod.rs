@@ -127,6 +127,16 @@ impl From<defra_http::router::P2PError> for FfiP2PError {
     }
 }
 
+impl From<defra_http::router::peer::Error> for FfiP2PError {
+    fn from(error: defra_http::router::peer::Error) -> Self {
+        match error {
+            defra_http::router::peer::Error::NotAuthorized(message) => Self::unauthorized(message),
+            defra_http::router::peer::Error::NoP2P => Self::no_p2p_system(),
+            other => Self::invalid_input(other.to_string()),
+        }
+    }
+}
+
 impl From<String> for FfiP2PError {
     fn from(message: String) -> Self {
         Self::internal(message)
