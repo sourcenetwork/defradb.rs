@@ -253,7 +253,9 @@ where
                             .await
                     } else {
                         if txn_ctx.is_readonly() {
-                            return Err(QueryError::execution("read only transaction"));
+                            return Err(QueryError::execution(
+                                "No sets or deletes are allowed in a read-only transaction",
+                            ));
                         }
                         let mutator = txn_ctx.doc_mutator().ok_or_else(|| {
                             QueryError::execution(

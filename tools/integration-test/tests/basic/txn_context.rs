@@ -160,7 +160,9 @@ fn read_only_txn_rejects_the_first_write() {
         Request {
             request: CREATE.into(),
             txn: Some(0),
-            expected_error: Some("read only transaction".into()),
+            expected_error: Some(
+                "No sets or deletes are allowed in a read-only transaction".into(),
+            ),
             ..Default::default()
         }
         .into(),
