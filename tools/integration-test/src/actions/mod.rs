@@ -104,7 +104,14 @@ macro_rules! client_actions {
 }
 
 client_actions! {
-    clients: [AddCollection, IntrospectionRequest, Request],
+    clients: [
+        AddCollection,
+        IntrospectionRequest,
+        Request,
+        TxnBegin,
+        TxnCommit,
+        TxnDiscard,
+    ],
     shared: [
         Connect,
         Parallel,
@@ -163,9 +170,6 @@ client_actions! {
         SyncCollectionVersions,
         SyncDocs,
         Truncate,
-        TxnBegin,
-        TxnCommit,
-        TxnDiscard,
         UpdateDoc,
         UpdateWithFilter,
         VerifyBlockSignature,
