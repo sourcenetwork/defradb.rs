@@ -34,38 +34,49 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
     }
 
     let client = reqwest::Client::new();
-    let create = tokio::spawn({
-        let client = client.clone();
-        let url = format!("{api}/api/v0/collections/User/indexes");
-        async move {
-            client
-                .post(url)
-                .json(&json!({"Name": "by_age", "Fields": [{"Name": "age"}]}))
+    let drop_url = format!("{api}/api/v0/collections/User/indexes/by_age");
+    // A fast runner can finish the backfill before the drop lands, so race
+    // again rather than fail on timing.
+    let mut raced = false;
+    for _ in 0..5 {
+        let create = tokio::spawn({
+            let client = client.clone();
+            let url = format!("{api}/api/v0/collections/User/indexes");
+            async move {
+                client
+                    .post(url)
+                    .json(&json!({"Name": "by_age", "Fields": [{"Name": "age"}]}))
+                    .send()
+                    .await
+                    .expect("create index request")
+                    .error_for_status()
+                    .expect("create index status")
+            }
+        });
+        // Drop as soon as the index exists: a drop that waited to see the
+        // backfill running could miss it entirely on a single worker.
+        loop {
+            let finished = create.is_finished();
+            let dropped = client
+                .delete(&drop_url)
                 .send()
                 .await
-                .expect("create index request")
-                .error_for_status()
-                .expect("create index status")
+                .expect("drop index request");
+            if dropped.status().is_success() {
+                raced = !finished;
+                break;
+            }
+            tokio::task::yield_now().await;
         }
-    });
-    // Drop as soon as the index exists: a drop that waited to see the
-    // backfill running could miss it entirely on a single worker.
-    loop {
-        assert!(
-            !create.is_finished(),
-            "the backfill finished before the drop could race it"
-        );
-        let dropped = client
-            .delete(format!("{api}/api/v0/collections/User/indexes/by_age"))
-            .send()
-            .await
-            .expect("drop index request");
-        if dropped.status().is_success() {
+        create.await.expect("create index task");
+        if raced {
             break;
         }
-        tokio::task::yield_now().await;
     }
-    create.await.expect("create index task");
+    assert!(
+        raced,
+        "the backfill finished before every drop could race it"
+    );
 
     assert_eq!(actions(api).await, json!([]));
     let indexes = node.index_list(Some("User")).expect("index_list User");
