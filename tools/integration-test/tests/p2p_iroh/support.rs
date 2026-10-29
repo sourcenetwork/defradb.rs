@@ -7,6 +7,11 @@ static VERA_IROH_BINARY: OnceCell<PathBuf> = OnceCell::new();
 
 #[ctor::ctor]
 fn prepare_iroh_binary() {
+    // Listing tests runs this constructor too, before nextest's setup script
+    // has exported the binaries, so a list must not build one.
+    if std::env::args().any(|arg| arg == "--list") {
+        return;
+    }
     if std::env::var_os("DEFRA_IROH_BINARY")
         .zip(std::env::var_os("DEFRA_RUST_BINARY"))
         .is_some_and(|(iroh, rust)| PathBuf::from(iroh).is_file() && PathBuf::from(rust).is_file())
