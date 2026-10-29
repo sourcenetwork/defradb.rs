@@ -366,6 +366,8 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - name: Dump node stacks when a client command hangs
+        run: nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - name: Upload harness node logs
@@ -414,6 +416,8 @@ jobs:
         run: |
           chmod +x target/ci/defra target/ci/defra-iroh
           target/ci/defra version --format json
+      - name: Dump node stacks when a client command hangs
+        run: nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
@@ -586,6 +590,8 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - name: Dump node stacks when a client command hangs
+        run: nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
