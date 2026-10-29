@@ -55,10 +55,11 @@ fn module_path(path: &str) -> String {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
                 .join("go/src/github.com/sourcenetwork/defradb")
         });
-    repo.join("tests/lenses")
+    // A `file://` URL, as Go's lens host requires and Rust accepts.
+    let file = repo
+        .join("tests/lenses")
         .join(&crate_name)
         .join("target/wasm32-unknown-unknown/debug")
-        .join(format!("{artifact}.wasm"))
-        .to_string_lossy()
-        .into_owned()
+        .join(format!("{artifact}.wasm"));
+    format!("file://{}", file.display())
 }

@@ -555,7 +555,7 @@
       "crates/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
     ],
     "evidence": "p2p_iroh/sync/version.rs:381-384 expects lens_add to return a lensId (then used for a view); crates/defra-node/tests/issue_859_schema_migration.rs:239-241 asserts the transform id is non-empty",
-    "note": "Unverified: ListLenses returning an added lens (query/lens.rs and lens_persistence.rs only assert the list is empty on a fresh node), distinct IDs for different lenses, the same CID for identical lenses, and 2^53 vs 2^53+1 arguments staying distinct. Searched lens_add/lens_list/add_lens callers and 'identical|same cid|9007199254740993'."
+    "note": "Unverified: ListLenses returning an added lens (query/lens_persistence.rs only lists lenses after a restart), distinct IDs for different lenses, the same CID for identical lenses, and 2^53 vs 2^53+1 arguments staying distinct. Searched lens_add/lens_list/add_lens callers and 'identical|same cid|9007199254740993'."
   },
   {
     "id": "go.collection_version.migrations.patch_transform",
