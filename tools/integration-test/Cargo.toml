@@ -145,6 +145,7 @@ defra-node = { path = "../../crates/defra-node", features = ["http"] }
 cli = { path = "../../crates/cli" }
 defra-core = { path = "../../crates/defra-core" }
 serde.workspace = true
+tempfile = "3.17"
 thiserror.workspace = true
 workers = { path = "../../crates/workers" }
 edge = { path = "../../crates/edge" }
@@ -172,7 +173,6 @@ vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a61
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
-tempfile = "3.17"
 libc = "0.2"
 identity = { path = "../../crates/identity" }
 crypto = { path = "../../crates/crypto" }

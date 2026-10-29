@@ -6,6 +6,7 @@ pub mod clients;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;
+mod go_node;
 mod purge;
 pub mod scenario;
 pub mod test_case;
