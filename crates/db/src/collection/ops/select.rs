@@ -11,7 +11,7 @@ where
     S: Store + 'static,
 {
     /// The committed collection versions `selector` picks for `context`'s
-    /// caller, in Go's order (see [`select`]).
+    /// caller, in Go's order (see [`CollectionSelector::select`]).
     pub async fn get_collections_as(
         &self,
         context: &defra_core::RequestContext,
@@ -29,37 +29,13 @@ where
     }
 }
 
-/// The versions of `versions` that `selector` picks, in the order Go's
-/// storage keys give them: active versions by name; with inactive ones, by
-/// version ID, except that a collection ID lists its root version first
-/// (`internal/db/description/collection.go`, `getCollectionVersionIDs`). Go propagates not-found only from its direct version lookup
-/// (`internal/db/collection.go:210-215`): `version_id=nope` alone is an
-/// error, while `name=Users&version_id=nope` is an empty answer.
+/// [`CollectionSelector::select`], a lone version lookup's miss as Go's
+/// not-found error.
 pub(crate) fn select(
     versions: Vec<CollectionVersion>,
     selector: &CollectionSelector,
 ) -> Result<Vec<CollectionVersion>> {
-    if let Some(version_id) = selector
-        .version_id
-        .as_ref()
-        .filter(|_| selector.resolves_by_version_lookup())
-    {
-        if !versions.iter().any(|v| &v.version_id == version_id) {
-            return Err(Error::CollectionVersionNotFound(version_id.clone()));
-        }
-    }
-    let mut selected: Vec<_> = versions
-        .into_iter()
-        .filter(|version| selector.selects(version))
-        .collect();
-    match (selector.get_inactive, &selector.collection_id) {
-        (false, _) => {
-            selected.sort_by(|a, b| (&a.name, &a.version_id).cmp(&(&b.name, &b.version_id)))
-        }
-        (true, Some(root)) => selected.sort_by(|a, b| {
-            (&a.version_id != root, &a.version_id).cmp(&(&b.version_id != root, &b.version_id))
-        }),
-        (true, None) => selected.sort_by(|a, b| a.version_id.cmp(&b.version_id)),
-    }
-    Ok(selected)
+    selector.select(versions).ok_or_else(|| {
+        Error::CollectionVersionNotFound(selector.version_id.clone().unwrap_or_default())
+    })
 }

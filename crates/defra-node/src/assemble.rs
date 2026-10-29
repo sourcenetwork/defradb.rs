@@ -456,9 +456,6 @@ where
         document_acp.clone(),
         policy_lookup.clone(),
     ));
-    #[cfg(feature = "http")]
-    let collection_version_ops: Arc<dyn defra_http::router::CollectionVersionOperations> =
-        Arc::new(db_impls::DbCollectionVersionOps::new(Arc::clone(&database)));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
         document_acp.clone(),
@@ -505,8 +502,6 @@ where
         runner,
         event_bus,
         schema_ops,
-        #[cfg(feature = "http")]
-        collection_version_ops,
         block_ops,
         acp_ops,
         document_acp,

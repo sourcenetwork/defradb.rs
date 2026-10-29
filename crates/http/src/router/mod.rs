@@ -14,12 +14,12 @@ pub(crate) use routes::{create_router_with_state_and_body_limits, BodyLimits};
 pub use state::{AppState, AppStateBuilder};
 pub use traits::{
     AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations,
-    CollectionManagementOperations, CollectionOperations, CollectionVersionOperations,
-    DocumentAcpOperations, DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations,
-    ExplicitReplayCapabilityInput, ImportResult, IndexFieldInfo, IndexInfo, IndexOperations,
-    ManageRequester, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, P2PError,
-    P2POperations, P2PResult, P2pDocumentInfo, P2pDocumentRequest, PolicyInfo, RemoteManageDocRef,
-    RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult, ReplicationFilter,
-    ReplicationFilters, ReplicatorInfo, SyncBranchableRequest, SyncDocumentsRequest,
-    SyncVersionsRequest, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    CollectionManagementOperations, CollectionOperations, DocumentAcpOperations, DumpOperations,
+    EncryptedIndexInfo, EncryptedIndexOperations, ExplicitReplayCapabilityInput, ImportResult,
+    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
+    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, P2pDocumentInfo,
+    P2pDocumentRequest, PolicyInfo, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp,
+    RemoteManageQueryResult, ReplicationFilter, ReplicationFilters, ReplicatorInfo,
+    SyncBranchableRequest, SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId,
+    ViewOperations, MANAGE_UNAUTHORIZED,
 };
