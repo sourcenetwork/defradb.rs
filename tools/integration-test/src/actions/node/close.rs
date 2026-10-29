@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
-/// The `node.close` op.
+/// Stops a node; with `keep_data` its data stays for a later `Start`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Close {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_data: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,6 +33,13 @@ impl Op for Close {
 
     fn run(&self, _state: &State) -> Result<Value, Failure> {
         self.common.plain(Self::name())?;
+        let mut probe = self.clone();
+        probe.common = Common::default();
+        probe.expected_data = Value::Null;
+        probe.expected_error = None;
+        if probe != Self::default() {
+            return Err(Failure::unsupported(Self::name()));
+        }
         Ok(json!({}))
     }
 }

@@ -1,14 +1,20 @@
+use crate::scenario::Text;
 use crate::scenario::{Common, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `scenario.expectPending` op.
+/// Starts a GraphQL subscription, or finishes one and checks the events it received.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ScenarioExpectPending {
-    pub children: Vec<Value>,
+pub struct SubscriptionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query")]
+    pub request: Option<Text>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_count: Option<i64>,
+    pub subscription: String,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -17,7 +23,7 @@ pub struct ScenarioExpectPending {
     pub common: Common,
 }
 
-impl Op for ScenarioExpectPending {
+impl Op for SubscriptionRequest {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -31,7 +37,7 @@ impl Op for ScenarioExpectPending {
     }
 }
 
-impl Action for ScenarioExpectPending {
+impl Action for SubscriptionRequest {
     type TState = State;
 
     fn execute(&self, state: &mut State) {

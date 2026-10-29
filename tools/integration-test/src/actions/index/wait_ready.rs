@@ -4,10 +4,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use testo::prelude::*;
 
-/// The `dac.remote.start` op.
+/// Waits for an index to be built, or for the build gate to block or open.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DacRemoteStart {
+pub struct WaitForIndexReady {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub release_gate: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -16,7 +24,7 @@ pub struct DacRemoteStart {
     pub common: Common,
 }
 
-impl Op for DacRemoteStart {
+impl Op for WaitForIndexReady {
     fn common(&self) -> &Common {
         &self.common
     }
@@ -30,7 +38,7 @@ impl Op for DacRemoteStart {
     }
 }
 
-impl Action for DacRemoteStart {
+impl Action for WaitForIndexReady {
     type TState = State;
 
     fn execute(&self, state: &mut State) {
