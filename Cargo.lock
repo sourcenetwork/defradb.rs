@@ -8368,9 +8368,9 @@ dependencies = [
 
 [[package]]
 name = "nuclei"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a20d653c18ef6c97faff7dd053ba7885fc6a9ef6bb0fc9af642d9bc83cb1fa88"
+checksum = "b6855f01a03c903222465b87d11203d368f273948c62bdefbd56450e4bd0ed25"
 dependencies = [
  "futures-core",
  "futures-io",
