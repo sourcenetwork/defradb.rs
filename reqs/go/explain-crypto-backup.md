@@ -43,7 +43,7 @@ Explained mutations return the mutation node with its arguments and a scan node 
 - **Go-Tests:** ["explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingFilter", "explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingFilterToMatchEverything", "explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingId", "explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingIds", "explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingNoIds", "explain/default/delete_test.go::TestDefaultExplainMutationRequestWithDeleteUsingFilterAndIds"]
 - **Go-Bug-Suspect:** "'delete_Author(docID: [])' is explained with 'docID: []' and a scan over the whole collection prefix '/3', so an empty docID list appears to mean 'all documents' rather than 'none'."
 
-`delete_Author` under `@explain` returns a `deleteNode` whose `filter` and `docID` attributes echo the arguments (a single docID is shown as a one-element list; `filter: {}` and `docID: []` are shown as given) over a `scanNode` for the collection; the scan carries the filter and is limited to the requested docIDs.
+`delete_Author` under `@explain` returns a `deleteNode` whose `filter` and `docID` attributes echo the arguments (a single docID is shown as a one-element list) over a `scanNode` for the collection; the scan carries the filter and is limited to the requested docIDs. Two empty arguments differ: `filter: {}` is shown as `filter: null` on both nodes, and `docID: []` is shown as `docID: []` with a scan over the whole collection prefix.
 
 # `go.explain.default.mutation.update`: Update plan nodes
 
@@ -567,7 +567,7 @@ Signature data returned by `_commits` for created, updated and deleted docs.
 - **Go-Tests:** ["signature/commit_test.go::TestSignature_WithCommitQuery_ShouldIncludeSignatureData", "signature/commit_test.go::TestSignature_WithCommitQuery_ShouldBeHexEncoded", "signature/commit_test.go::TestSignature_WithEd25519KeyType_ShouldIncludeSignatureData", "signature/branchable_test.go::TestSignature_WithBranchableCollection_ShouldSignCollectionBlocks"]
 - **Scope:** "branchable test: client types go, cli, http, js (not the C client)"
 
-Every field block and the `_C` composite block of a new doc carry a signature whose `type` matches the node key (`ECDSA256K` for secp256k1, Ed25519 for ed25519), whose `identity` is the node's compressed public key as a hex string (e.g. `02ae92ce...`) and whose `value` verifies over the block; on a `@branchable` collection the collection block (`fieldName: nil`) is signed too.
+Every field block and the `_C` composite block of a new doc carry a signature whose `type` matches the node key (`ES256K` for secp256k1, `EdDSA` for ed25519), whose `identity` is the node's compressed public key as a hex string (e.g. `02ae92ce...`) and whose `value` verifies over the block; on a `@branchable` collection the collection block (`fieldName: nil`) is signed too.
 
 # `go.signature.commits.update_delete`: Signatures on updates and deletes
 

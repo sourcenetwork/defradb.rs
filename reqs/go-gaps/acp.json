@@ -79,7 +79,7 @@
       "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_owner_bad_delete_accept"
     ],
     "evidence": "link_collection.rs:545,572,599 assert the collection is accepted when update/read/delete expr names a non-owner relation (`ownerBad`), the same policies the Go tests use",
-    "note": "Owner keeping full access is not asserted (the Go tests do not assert it either; the leaf text overstates them)."
+    "note": "Owner access after the link is not asserted; the Go tests do not assert it either."
   },
   {
     "id": "go.acp.dac.link.bad-arguments",

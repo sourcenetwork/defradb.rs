@@ -68,12 +68,12 @@ A collection declares `@policy(id: ..., resource: ...)` in its SDL; the link is 
 
 Adding a collection with `@policy(id, resource)` succeeds and the type appears in introspection when the resource has the required `read`, `update` and `delete` permissions, including with extra permissions, managed relations, several resources (one or both used), a policy added twice by different actors, and one resource shared by two collections.
 
-# `go.acp.dac.link.owner-implicit`: Owner named in a DRI permission expression is accepted and owner access holds
+# `go.acp.dac.link.owner-implicit`: A DRI permission expression that leaves out `owner` is accepted
 
 - **Parents:** ["go.acp.dac.link"]
 - **Go-Tests:** ["acp/dac/link_collection/accept_permission_with_omitted_owner_authority_test.go::TestACP_LinkCollection_MaliciousOwnerSpecifiedOnUpdatePermissionExprOnDRI_ACPEnforcesAccess", "acp/dac/link_collection/accept_permission_with_omitted_owner_authority_test.go::TestACP_LinkCollection_MaliciousOwnerSpecifiedOnReadPermissionExprOnDRI_ACPEnforcesOwnerAccess", "acp/dac/link_collection/accept_permission_with_omitted_owner_authority_test.go::TestACP_LinkCollection_MaliciousOwnerSpecifiedOnDeletePermissionExprOnDRI_ACPEnforcesOwnerAccess"]
 
-A collection is accepted when its resource's `read`, `update` or `delete` permission expression explicitly includes `owner`; the owner keeps full access regardless of the expression.
+A collection is accepted when its resource's `read`, `update` or `delete` permission expression leaves out `owner` and names only another relation (the Go tests use one called `ownerBad`). The Go tests check only that the collection is created, not what the owner can do afterwards.
 
 # `go.acp.dac.link.bad-arguments`: Collections with missing or mistyped @policy arguments are rejected
 
