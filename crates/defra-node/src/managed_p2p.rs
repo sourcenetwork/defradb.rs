@@ -30,21 +30,21 @@ pub enum TransportKind {
 /// P2P runtime managed by a node.
 pub struct ManagedP2PSystem {
     kind: TransportKind,
-    ops: Arc<dyn defra_http::P2POperations>,
+    ops: Arc<dyn defra_p2p_adapter::P2POperations>,
     replicator_push_options: ReplicatorPushOptionsState,
     on_replicator_push_options: Option<ReplicatorPushOptionsCallback>,
     retry_replicators: regolith::sync::OnceCell<RetryReplicatorsCallback>,
     /// Outbound management requester (Task 7a): relays management requests to
     /// P2P-only peers on behalf of an HTTP caller. Set once during P2P setup
     /// (after the system is built), consumed when wiring `AppState`.
-    manage_requester: regolith::sync::OnceCell<Arc<dyn defra_http::ManageRequester>>,
+    manage_requester: regolith::sync::OnceCell<Arc<dyn defra_p2p_adapter::ManageRequester>>,
     shutdown: ShutdownHandle,
 }
 
 impl ManagedP2PSystem {
     pub fn new(
         kind: TransportKind,
-        ops: Arc<dyn defra_http::P2POperations>,
+        ops: Arc<dyn defra_p2p_adapter::P2POperations>,
         shutdown: ShutdownHandle,
     ) -> Self {
         Self::with_replicator_push_options(
@@ -57,7 +57,7 @@ impl ManagedP2PSystem {
 
     pub fn with_replicator_push_options(
         kind: TransportKind,
-        ops: Arc<dyn defra_http::P2POperations>,
+        ops: Arc<dyn defra_p2p_adapter::P2POperations>,
         shutdown: ShutdownHandle,
         replicator_push_options: ReplicatorPushOptionsState,
     ) -> Self {
@@ -72,7 +72,7 @@ impl ManagedP2PSystem {
 
     pub fn with_replicator_push_options_callback(
         kind: TransportKind,
-        ops: Arc<dyn defra_http::P2POperations>,
+        ops: Arc<dyn defra_p2p_adapter::P2POperations>,
         shutdown: ShutdownHandle,
         replicator_push_options: ReplicatorPushOptionsState,
         on_replicator_push_options: Option<ReplicatorPushOptionsCallback>,
@@ -89,12 +89,12 @@ impl ManagedP2PSystem {
     }
 
     /// Install the outbound management requester. Set once during P2P setup.
-    pub fn set_manage_requester(&self, requester: Arc<dyn defra_http::ManageRequester>) {
+    pub fn set_manage_requester(&self, requester: Arc<dyn defra_p2p_adapter::ManageRequester>) {
         let _ = self.manage_requester.set(requester);
     }
 
     /// Get the outbound management requester, if installed.
-    pub fn manage_requester(&self) -> Option<&Arc<dyn defra_http::ManageRequester>> {
+    pub fn manage_requester(&self) -> Option<&Arc<dyn defra_p2p_adapter::ManageRequester>> {
         self.manage_requester.get()
     }
 
@@ -119,7 +119,7 @@ impl ManagedP2PSystem {
         self.kind
     }
 
-    pub fn ops(&self) -> &Arc<dyn defra_http::P2POperations> {
+    pub fn ops(&self) -> &Arc<dyn defra_p2p_adapter::P2POperations> {
         &self.ops
     }
 
@@ -128,7 +128,7 @@ impl ManagedP2PSystem {
     pub fn ops_for(
         &self,
         context: &defra_core::RequestContext,
-    ) -> Arc<dyn defra_http::P2POperations> {
+    ) -> Arc<dyn defra_p2p_adapter::P2POperations> {
         self.ops
             .bind_request(context)
             .unwrap_or_else(|| Arc::clone(&self.ops))

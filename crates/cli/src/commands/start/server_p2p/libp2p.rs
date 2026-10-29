@@ -501,11 +501,11 @@ impl Node {
 
         info!("P2P sync coordinator initialized");
 
-        let manage_controller: Arc<dyn defra_http::router::P2POperations> = Arc::new(adapter);
+        let manage_controller: Arc<dyn defra_p2p_adapter::P2POperations> = Arc::new(adapter);
 
         // Outbound management requester over the same libp2p transport, sharing
         // the requester-side manage correlators (Task 7a).
-        let manage_requester: Arc<dyn defra_http::router::ManageRequester> =
+        let manage_requester: Arc<dyn defra_p2p_adapter::ManageRequester> =
             Arc::new(defra_p2p_adapter::manage::client::ManageClient::new(
                 p2p::Libp2pTransport::new(handle.clone()),
                 manage_correlator.clone(),

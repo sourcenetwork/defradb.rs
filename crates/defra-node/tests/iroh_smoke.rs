@@ -109,7 +109,7 @@ fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
             let listener_addr = wait_for_connectable_iroh_addr(&listener_p2p).await?;
 
             // Authorize the other node, by its own endpoint id, before it dials.
-            let admitted = defra_http::TransportPeerId::new(dialer_peer.clone())?;
+            let admitted = defra_p2p_adapter::TransportPeerId::new(dialer_peer.clone())?;
             listener_p2p.ops().allow_peer(&admitted).await?;
 
             dialer_p2p.ops().connect_peer(&listener_addr).await?;

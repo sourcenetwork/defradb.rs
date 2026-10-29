@@ -66,7 +66,7 @@ pub enum Error {
     /// A peer operation was refused.
     #[cfg(feature = "managed-p2p")]
     #[error(transparent)]
-    Peer(#[from] defra_http::router::peer::Error),
+    Peer(#[from] defra_p2p_adapter::peer::Error),
     /// A document write was refused.
     #[error(transparent)]
     Documents(#[from] query::documents::Error),
@@ -190,15 +190,15 @@ pub enum Error {
     /// A peer ID did not parse.
     #[cfg(feature = "managed-p2p")]
     #[error("invalid peer ID: {0}")]
-    InvalidPeerId(#[source] defra_http::P2PError),
+    InvalidPeerId(#[source] defra_p2p_adapter::P2PError),
     /// Authorizing a peer failed.
     #[cfg(feature = "managed-p2p")]
     #[error("failed to authorize peer: {0}")]
-    PeerAuthorize(#[source] defra_http::P2PError),
+    PeerAuthorize(#[source] defra_p2p_adapter::P2PError),
     /// Revoking a peer failed.
     #[cfg(feature = "managed-p2p")]
     #[error("failed to revoke peer: {0}")]
-    PeerRevoke(#[source] defra_http::P2PError),
+    PeerRevoke(#[source] defra_p2p_adapter::P2PError),
     /// The Iroh peer did not start.
     #[cfg(feature = "p2p")]
     #[error("iroh peer failed to start: {0}")]

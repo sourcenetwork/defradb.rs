@@ -1,6 +1,6 @@
 //! P2P HTTP client methods
 
-use defra_http::router::{
+use defra_p2p_adapter::{
     ExplicitReplayCapabilityInput, RemoteManageOp, RemoteManageQueryOp, ReplicationFilters,
 };
 use serde::{Deserialize, Serialize};

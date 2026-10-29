@@ -397,7 +397,7 @@ async fn install_filtered_one_way_replicator(
     sender: &Node,
     receiver: &Node,
     collections: &[&str],
-    filters: defra_http::router::ReplicationFilters,
+    filters: defra_p2p_adapter::ReplicationFilters,
 ) {
     let sender_addr = wait_for_listen_addr(sender).await;
     let receiver_addr = wait_for_listen_addr(receiver).await;
@@ -492,16 +492,16 @@ async fn wait_for_agent_doc_dids(node: &Node, expected_dids: &[&str]) {
     }
 }
 
-fn agent_did_in_filter(dids: &[&str]) -> defra_http::router::ReplicationFilters {
+fn agent_did_in_filter(dids: &[&str]) -> defra_p2p_adapter::ReplicationFilters {
     let conds = serde_json::json!({"agent_did": {"_in": dids}});
     let conditions = conds
         .as_object()
         .expect("conditions must be an object")
         .clone();
-    let mut filters = defra_http::router::ReplicationFilters::new();
+    let mut filters = defra_p2p_adapter::ReplicationFilters::new();
     filters.insert(
         "AgentDoc".to_string(),
-        defra_http::router::ReplicationFilter::predicate(conditions),
+        defra_p2p_adapter::ReplicationFilter::predicate(conditions),
     );
     filters
 }
@@ -1365,7 +1365,7 @@ fn p2p_document_subscriptions_survive_restart_and_delete() {
 
                 node.p2p()
                     .expect("p2p")
-                    .add_documents(vec![defra_http::router::P2pDocumentRequest {
+                    .add_documents(vec![defra_p2p_adapter::P2pDocumentRequest {
                         collection: String::new(),
                         doc_id: doc_id.clone(),
                     }])
@@ -1400,7 +1400,7 @@ fn p2p_document_subscriptions_survive_restart_and_delete() {
 
                 node.p2p()
                     .expect("p2p")
-                    .remove_documents(vec![defra_http::router::P2pDocumentRequest {
+                    .remove_documents(vec![defra_p2p_adapter::P2pDocumentRequest {
                         collection: String::new(),
                         doc_id: doc_id.clone(),
                     }])

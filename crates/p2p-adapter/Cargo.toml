@@ -19,7 +19,6 @@ acp = { path = "../acp" }
 blockstore = { path = "../blockstore" }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
-defra-http = { path = "../http", default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }
 identity = { path = "../identity" }
@@ -52,6 +51,7 @@ serde_ipld_dagcbor.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+thiserror.workspace = true
 tracing.workspace = true
 web-time.workspace = true
 zeroize = "1"

@@ -129,10 +129,8 @@ pub use router::{
 };
 pub use router::{
     AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
-    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
-    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
-    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    ReplicatorInfo, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations,
+    NodePermission, PolicyInfo, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};

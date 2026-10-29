@@ -128,6 +128,7 @@ edge = { path = "../edge", features = ["testing"] }
 axum.workspace = true
 # The mock embedding server binds its listener through the HTTP crate.
 defra-http = { path = "../http" }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 futures.workspace = true
 kovan.workspace = true
 crypto = { path = "../crypto" }

@@ -101,7 +101,7 @@ impl AppState {
     pub fn require_p2p(&self) -> Result<&Arc<dyn P2POperations>, crate::error::HttpError> {
         self.p2p
             .as_ref()
-            .ok_or_else(|| crate::error::peer_refused(crate::router::peer::Error::NoP2P))
+            .ok_or_else(|| crate::error::peer_refused(defra_p2p_adapter::peer::Error::NoP2P))
     }
 
     /// Get the management requester or return ServiceUnavailable error.

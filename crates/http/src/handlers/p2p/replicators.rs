@@ -3,7 +3,7 @@
 use axum::{extract::State, Json};
 use serde::Deserialize;
 
-use crate::router::peer::Replicator;
+use defra_p2p_adapter::peer::Replicator;
 
 use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;

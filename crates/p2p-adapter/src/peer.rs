@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{
+use crate::{
     ExplicitReplayCapabilityInput, P2PError, P2POperations, P2pDocumentRequest, ReplicationFilters,
 };
 

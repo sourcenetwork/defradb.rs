@@ -8,7 +8,7 @@ use crate::nac_check::check_nac_for_node;
 use crate::state::NODES;
 use crate::try_ffi;
 use crate::types::FfiResult;
-use defra_http::router::peer;
+use defra_p2p_adapter::peer;
 
 use super::{into_ffi_ok, into_ffi_result, parse_doc_ids_json, FfiP2PError};
 

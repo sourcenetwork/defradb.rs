@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clock::sleep;
-use defra_http::router::P2pDocumentRequest;
 use defra_node::NodeBuilder;
+use defra_p2p_adapter::P2pDocumentRequest;
 use iroh_peers::{connect, create, iroh_config, listen_addr, Node};
 use outcome::Result;
 

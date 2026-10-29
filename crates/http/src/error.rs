@@ -279,7 +279,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
 }
 
 /// A peer operation's refusal, with Go's status for it and its text unchanged.
-pub(crate) fn peer_refused(error: crate::router::peer::Error) -> HttpError {
+pub(crate) fn peer_refused(error: defra_p2p_adapter::peer::Error) -> HttpError {
     http_error_from_backend_message(error.to_string())
 }
 
