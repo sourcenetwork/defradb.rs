@@ -257,10 +257,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
-        name: "First inbound and replacement serve reverse RPC; legacy reuse preserves modern preference",
+        name: "Reverse RPC reuses inbound and legacy paths; stale eviction cannot hide replacements from disconnect",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
-        model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg",
+        model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
         tiers: &[Contract],
     },
     Property {

@@ -38,7 +38,7 @@ structure Connection where
 
 -- Each protocol retains a path; a modern path always wins selection.
 structure Paths where
-  -- The modern mux is preferred while it remains open.
+  -- The modern mux is preferred whenever present; usable checks openness.
   modern : Option Nat
   -- A legacy-only peer can still reuse its authenticated connection.
   legacy : Option Nat

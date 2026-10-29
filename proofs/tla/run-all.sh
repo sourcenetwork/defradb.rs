@@ -105,6 +105,8 @@ RUNS=(
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
   "MC_LegacyRpcCache_Green.cfg LegacyRpcCache.tla GREEN"
+  "MC_RpcCacheEviction_Green.cfg RpcCacheEviction.tla GREEN"
+  "MC_RpcCacheEviction_Red_Reinsert.cfg RpcCacheEviction.tla RED"
   "MC_LegacyRpcCache_Red_NoCache.cfg LegacyRpcCache.tla RED"
   "MC_LegacyRpcCache_Red_Preference.cfg LegacyRpcCache.tla RED"
   "MC_SharedRpcConnection_Red_NoAdoption.cfg SharedRpcConnection.tla RED"

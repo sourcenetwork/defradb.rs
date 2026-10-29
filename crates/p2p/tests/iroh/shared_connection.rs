@@ -8,6 +8,50 @@ use super::super::solicited::Solicited;
 use super::super::task_registry::TaskRegistry;
 
 #[test]
+fn disconnect_closes_replacement_despite_stale_cleanup() {
+    edge::testing::edge()
+        .block_on(async {
+            for alpn in [protocols::ALPN_MUX, protocols::ALPN_MUX_V1] {
+                let endpoint = tests::localhost_endpoint(vec![]).await;
+                let peer = tests::localhost_endpoint(vec![alpn.to_vec()]).await;
+                let (old, accepted_old) =
+                    tokio::join!(endpoint.connect(peer.addr(), alpn), async {
+                        peer.accept().await.unwrap().await.unwrap()
+                    },);
+                let old = old.unwrap();
+                let (replacement, accepted_replacement) =
+                    tokio::join!(endpoint.connect(peer.addr(), alpn), async {
+                        peer.accept().await.unwrap().await.unwrap()
+                    },);
+                let replacement = replacement.unwrap();
+                let cache = new_connection_cache(GossipHandle::new());
+                remember_connection(&cache, &replacement);
+                old.close(0u32.into(), b"old path closed");
+                let start = regolith::sync::Barrier::new(2);
+                std::thread::scope(|scope| {
+                    let cleanup = scope.spawn(|| {
+                        futures::executor::block_on(start.wait());
+                        evict_connection(&cache, peer.id(), &old);
+                    });
+                    futures::executor::block_on(start.wait());
+                    close_cached_connections(&cache, &peer.id());
+                    cleanup.join().unwrap();
+                });
+                assert!(replacement.close_reason().is_some());
+                assert!(
+                    cached_connection(&cache, &PeerId::new(peer.id().to_string()))
+                        .unwrap()
+                        .is_none()
+                );
+                drop((accepted_old, accepted_replacement));
+                endpoint.close().await;
+                peer.close().await;
+            }
+        })
+        .unwrap();
+}
+
+#[test]
 fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
     edge::testing::edge()
         .block_on(async {

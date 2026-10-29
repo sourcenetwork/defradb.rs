@@ -253,8 +253,7 @@ pub(super) fn remember_connection(
     connections.insert(connection.remote_id(), connection.clone());
 }
 
-/// Drop the cached entry for `endpoint_id` only while it is still `connection`;
-/// an entry a concurrent dial replaced it with is put back.
+/// Remove only this handle, leaving replacements visible to concurrent disconnects.
 pub(super) fn evict_connection(
     cache: &ConnectionCache,
     endpoint_id: iroh::EndpointId,
@@ -265,11 +264,9 @@ pub(super) fn evict_connection(
     } else {
         &cache.connections
     };
-    if let Some(cached) = connections.remove(&endpoint_id) {
-        if cached.stable_id() != connection.stable_id() {
-            connections.insert_if_absent(endpoint_id, cached);
-        }
-    }
+    connections.remove_if(&endpoint_id, |cached| {
+        cached.stable_id() == connection.stable_id()
+    });
 }
 
 /// Drop a peer's shared connection, but only once QUIC has actually closed it:
