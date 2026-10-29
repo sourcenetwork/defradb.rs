@@ -13,7 +13,7 @@ pub fn vera_cli_binary() -> PathBuf {
     // build is a cargo no-op, so the racy init costs a second snapshot copy at worst.
     BINARY
         .get_or_init_racy(|| {
-            std::env::var_os("DEFRA_RUST_BINARY")
+            std::env::var_os("DEFRA_VERA_BINARY")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
                     build_cli_variant(&crate::workspace_root(), &["vera"], "defra-vera")
