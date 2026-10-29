@@ -195,7 +195,7 @@ impl MockEmbeddingServer {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = edge::testing::edge().spawn_service(async move {
-            defra_http::server::serve_router(listener, app)
+            defra_http::server::serve_router(listener, app, edge::testing::edge())
                 .await
                 .unwrap();
         });
@@ -1765,7 +1765,7 @@ impl RealEmbeddingServer {
     }
 
     async fn wait_until_ready(&self) -> crate::Result<()> {
-        let client = net::http::Client::new();
+        let client = net::http::Client::new(edge::testing::edge());
         let health_url = self.base_url.trim_end_matches("/v1").to_string() + "/health";
 
         for _ in 0..120 {
@@ -1816,7 +1816,7 @@ async fn request_real_embedding(
     model: &str,
     input: &str,
 ) -> crate::Result<Vec<f64>> {
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .post(format!("{}/embeddings", base_url.trim_end_matches('/')))
         .json(&serde_json::json!({
             "model": model,

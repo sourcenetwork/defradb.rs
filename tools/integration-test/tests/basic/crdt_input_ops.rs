@@ -120,7 +120,7 @@ async fn http_update_takes_ops_in_its_patch() {
         let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
         let (client, doc_id) = note(&cluster).await;
 
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .patch(format!(
                 "{}/api/v0/collections/Note/document/{doc_id}",
                 cluster.api_url(0)
@@ -133,7 +133,7 @@ async fn http_update_takes_ops_in_its_patch() {
         let body = response.text().await.unwrap_or_default();
         assert!(status.is_success(), "update failed: {status} {body}");
 
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .patch(format!("{}/api/v0/collections/Note", cluster.api_url(0)))
             .json(&json!({
                 "filter": r#"{title: {_eq: "a"}}"#,

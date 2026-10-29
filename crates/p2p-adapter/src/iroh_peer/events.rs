@@ -12,9 +12,10 @@ use crate::manage::hooks::ManageHooksCell;
 type Events =
     p2p::sync::DispatchReceiver<TransportEvent<<IrohTransport as P2PTransport>::ResponseToken>>;
 
-/// Dispatch every transport event. Peer lifecycle is published to the event
-/// bus and re-arms retries; searchable-encryption and management traffic is
-/// served here; everything else goes to the coordinator.
+/// Dispatch every transport event, as a service on `edge`. Peer lifecycle is
+/// published to the event bus and re-arms retries; searchable-encryption and
+/// management traffic is served here; everything else goes to the
+/// coordinator.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_event_handler<S, B>(
     events: Events,
@@ -25,12 +26,13 @@ pub(super) fn spawn_event_handler<S, B>(
     transport: IrohTransport,
     manage_hooks: ManageHooksCell,
     #[cfg(not(target_arch = "wasm32"))] se_correlator: p2p::SeQueryCorrelator,
-) -> p2p::rt::Task<()>
+    edge: &edge::Edge,
+) -> edge::Service
 where
     S: Store + 'static,
     B: blockstore::Blockstore + 'static,
 {
-    p2p::rt::spawn(async move {
+    edge.spawn_service(async move {
         let dispatcher = Arc::clone(&coordinator);
         dispatcher
             .run_event_dispatcher(events, move |event, admission| {

@@ -86,20 +86,30 @@ struct VerifyAccessResponse {
 }
 
 impl VeraClient {
+    /// A client whose connections run on `edge`.
     pub(crate) fn new(
         lcd_address: String,
         grpc_address: String,
         comet_rpc_address: String,
         request_timeout: std::time::Duration,
+        edge: &edge::Edge,
     ) -> Result<Self, ClientError> {
-        let http = http_client::Client::builder()
+        #[cfg(not(target_arch = "wasm32"))]
+        let http = http_client::Client::builder(edge.clone());
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = edge;
+            http_client::Client::builder()
+        };
+        let http = http
             .timeout(request_timeout)
             .build()
             .map_err(ClientError::Http)?;
         #[cfg(not(target_arch = "wasm32"))]
-        let grpc_channel = net::grpc::Endpoint::from_shared(normalize_base_url(&grpc_address))
-            .and_then(net::grpc::Endpoint::connect_lazy)
-            .map_err(|error| ClientError::QueryFailed(error.to_string()))?;
+        let grpc_channel =
+            net::grpc::Endpoint::from_shared(normalize_base_url(&grpc_address), edge.clone())
+                .and_then(net::grpc::Endpoint::connect_lazy)
+                .map_err(|error| ClientError::QueryFailed(error.to_string()))?;
         #[cfg(target_arch = "wasm32")]
         let _ = grpc_address;
         Ok(Self {
@@ -439,17 +449,24 @@ mod tests {
                 .local_addr()
                 .expect("stalled gRPC server should have an address")
         );
-        nuclei::spawn(async move {
+        // Held, not detached: nuclei drops a detached task that no waker can
+        // reach, which would close the stalled connection at once.
+        let _server = nuclei::spawn(async move {
             let _connection = listener
                 .accept()
                 .await
                 .expect("stalled gRPC server should accept");
             std::future::pending::<()>().await;
-        })
-        .detach();
+        });
         let timeout = Duration::from_millis(50);
-        let client = VeraClient::new(address.clone(), address.clone(), address, timeout)
-            .expect("client should build");
+        let client = VeraClient::new(
+            address.clone(),
+            address.clone(),
+            address,
+            timeout,
+            &edge::testing::edge(),
+        )
+        .expect("client should build");
 
         let started = Instant::now();
         let result = client

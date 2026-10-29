@@ -17,7 +17,9 @@ pub(crate) struct OtlpHttp {
 impl OtlpHttp {
     pub(crate) fn new(edge: Edge, timeout: Duration) -> Result<Self, net::http::Error> {
         Ok(Self {
-            client: net::http::Client::builder().timeout(timeout).build()?,
+            client: net::http::Client::builder(edge.clone())
+                .timeout(timeout)
+                .build()?,
             edge,
         })
     }

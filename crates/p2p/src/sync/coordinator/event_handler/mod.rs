@@ -964,10 +964,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1008,10 +1012,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1054,10 +1062,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1122,10 +1134,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1160,10 +1176,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, _field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -1273,10 +1293,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, Arc::clone(&blockstore), SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            Arc::clone(&blockstore),
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         // No pending DAGs registered yet: the clock has nothing due.
         assert_eq!(
@@ -1367,10 +1391,14 @@ mod tests {
     async fn receiver_clock_rejects_zero_interval_before_and_after_shutdown() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, _events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, _events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let error = coordinator
             .run_pending_dag_retry_clock(Duration::ZERO)
             .await
@@ -1397,10 +1425,14 @@ mod tests {
     async fn receiver_clock_wakes_for_new_work_without_waiting_for_retry_tick() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, mut events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let coordinator = Arc::new(coordinator);
         let runner = Arc::clone(&coordinator);
         let clock = crate::rt::spawn(async move {
@@ -1447,9 +1479,14 @@ mod tests {
             max_concurrent_dag_fetches: 1,
             ..SyncConfig::default()
         };
-        let (coordinator, mut events) = SyncCoordinator::new(transport, blockstore, config)
-            .await
-            .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            config,
+        )
+        .await
+        .expect("coordinator");
 
         for (doc_id, field_name) in [("doc-1", "name"), ("doc-2", "age")] {
             let (field_cid, _field_block) = create_lww_block(field_name);

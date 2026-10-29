@@ -269,7 +269,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::FilteredTruncateBranchableCollection
         | DbError::UnsafePolicyTransition(_)
         | DbError::JsonPatch(_) => HttpError::UnprocessableEntity(message),
-        DbError::DatabaseClosed => HttpError::ServiceUnavailable(message),
+        DbError::DatabaseClosed | DbError::NetworkNotSet => HttpError::ServiceUnavailable(message),
         DbError::Query(source) => http_error_from_query_error(source),
         DbError::Other(message) | DbError::Acp(message) | DbError::Lens(message) => {
             http_error_from_backend_message(message.clone())

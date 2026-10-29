@@ -4,6 +4,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+use edge::Edge;
 use net::tls::{ServerConfig, TlsAcceptor};
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 
@@ -11,12 +12,17 @@ use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 pub struct TlsConfig(Arc<ServerConfig>);
 
 impl TlsConfig {
-    /// Load PEM files before starting the server. Invalid or mismatched keys
-    /// are rejected rather than falling back to plaintext.
-    pub async fn from_pem_file(cert: impl AsRef<Path>, key: impl AsRef<Path>) -> io::Result<Self> {
+    /// Load PEM files before starting the server, reading them on a blocking
+    /// thread of `edge`. Invalid or mismatched keys are rejected rather than
+    /// falling back to plaintext.
+    pub async fn from_pem_file(
+        cert: impl AsRef<Path>,
+        key: impl AsRef<Path>,
+        edge: &Edge,
+    ) -> io::Result<Self> {
         let cert = cert.as_ref().to_path_buf();
         let key = key.as_ref().to_path_buf();
-        nuclei::spawn_blocking(move || {
+        edge.spawn_blocking(move || {
             let certificates = CertificateDer::pem_file_iter(&cert)
                 .and_then(Iterator::collect::<std::result::Result<Vec<_>, _>>)
                 .map_err(|e| io::Error::other(format!("certificate {}: {e}", cert.display())))?;
@@ -31,9 +37,8 @@ impl TlsConfig {
             config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             Ok(Self(Arc::new(config)))
         })
-        .join()
         .await
-        .map_err(|error| io::Error::other(error.to_string()))?
+        .map_err(io::Error::other)?
     }
 
     pub(crate) fn acceptor(self) -> TlsAcceptor {

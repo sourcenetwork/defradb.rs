@@ -64,7 +64,7 @@ pub async fn post_manage(
 ) -> StatusCode {
     let body = json!({ "Target": target, "AuthToken": auth_token, "Op": op });
     let token = bearer_token(api_url, caller_key);
-    net::http::Client::new()
+    net::http::Client::new(edge::testing::edge())
         .post(format!("{api_url}/api/v0/p2p/manage"))
         .bearer_auth(token)
         .json(&body)
@@ -87,7 +87,7 @@ pub async fn post_manage_query(
 ) -> (StatusCode, Value) {
     let body = json!({ "Target": target, "AuthToken": auth_token, "Op": op });
     let token = bearer_token(api_url, caller_key);
-    let resp = net::http::Client::new()
+    let resp = net::http::Client::new(edge::testing::edge())
         .post(format!("{api_url}/api/v0/p2p/manage/query"))
         .bearer_auth(token)
         .json(&body)

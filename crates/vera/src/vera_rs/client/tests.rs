@@ -33,7 +33,7 @@ async fn server(response: String) -> (VeraRsClient, nuclei::Task<Value>) {
         serde_json::from_slice(&body).unwrap()
     });
     (
-        VeraRsClient::new(url, Duration::from_secs(2)).unwrap(),
+        VeraRsClient::new(url, Duration::from_secs(2), &edge::testing::edge()).unwrap(),
         task,
     )
 }
@@ -112,6 +112,7 @@ async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
     let client = VeraRsClient::new(
         format!("http://{}", listener.get_ref().local_addr().unwrap()),
         Duration::from_millis(100),
+        &edge::testing::edge(),
     )
     .unwrap();
     let (result, connection) = nuclei::join!(

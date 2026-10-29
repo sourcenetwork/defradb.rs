@@ -140,7 +140,7 @@ fn extract_peer_id(addr: &str) -> Result<String> {
 }
 
 fn client(ctx: &ClientContext, bearer: Option<String>) -> Result<HttpClient> {
-    Ok(HttpClient::new(&ctx.url)?
+    Ok(HttpClient::new(&ctx.url, &ctx.edge)?
         .with_auth_token(bearer)
         .with_verbose(ctx.verbose))
 }
@@ -542,6 +542,7 @@ mod tests {
             tx_id: None,
             development: false,
             verbose: false,
+            edge: edge::testing::edge(),
         }
     }
 

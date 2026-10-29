@@ -6,7 +6,7 @@ use super::{shutdown_tracked_tasks, spawn_task, SpawnedTasks};
 use crate::tracked_task::TrackedAbort;
 
 fn registry() -> SpawnedTasks {
-    Arc::new(super::TaskRegistry::default())
+    Arc::new(super::TaskRegistry::new(edge::testing::edge()))
 }
 
 fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static) {

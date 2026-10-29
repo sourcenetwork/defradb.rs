@@ -16,7 +16,12 @@ const SCHEMA: &str = "type User { name: String  age: Int }";
 const HEALTHY_DOCS: usize = 2;
 
 async fn pending_dags(hub_api: &str) -> u64 {
-    let Ok(response) = net::http::get(format!("{hub_api}/api/v0/p2p/sync/status")).await else {
+    let Ok(response) = net::http::get(
+        format!("{hub_api}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    else {
         return 0;
     };
     response

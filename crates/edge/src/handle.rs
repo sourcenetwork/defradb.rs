@@ -64,15 +64,26 @@ impl Edge {
         F: Future + MaybeSend + 'static,
         F::Output: MaybeSend + 'static,
     {
+        self.try_spawn(future).unwrap_or_else(|_| Task::refused())
+    }
+
+    /// [`spawn`](Self::spawn), or `future` back, unstarted, when the
+    /// runtime or scope no longer accepts work, for a caller that must run
+    /// it all the same.
+    pub fn try_spawn<F>(&self, future: F) -> Result<Task<F::Output>, F>
+    where
+        F: Future + MaybeSend + 'static,
+        F::Output: MaybeSend + 'static,
+    {
         let Some(permit) = self.admit() else {
-            return Task::refused();
+            return Err(future);
         };
         let shared = Arc::clone(&self.shared);
         let join = self.shared.rt.spawn(async move {
             let _permit = permit;
             contain(&shared.stats, AssertUnwindSafe(future).catch_unwind().await)
         });
-        Task::running(&self.shared, join)
+        Ok(Task::running(&self.shared, join))
     }
 
     /// Runs `work`, which blocks, on a thread set aside for blocking work.

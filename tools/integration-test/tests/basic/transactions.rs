@@ -10,7 +10,7 @@ async fn txn_schema_add_and_mutate(cluster: TestCluster) {
     let tx_id = client.tx_create().expect("tx_create failed");
 
     // 2. Add a schema within the transaction via HTTP
-    let http_client = net::http::Client::new();
+    let http_client = net::http::Client::new(edge::testing::edge());
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", tx_id.to_string())
@@ -86,7 +86,7 @@ async fn txn_schema_add_via_header_is_scoped(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
 
-    let http_client = net::http::Client::new();
+    let http_client = net::http::Client::new(edge::testing::edge());
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", &tx_id)
@@ -137,7 +137,7 @@ async fn txn_collection_listing_via_header_is_scoped(cluster: TestCluster) {
     let client = cluster.client(0);
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
-    let http_client = net::http::Client::new();
+    let http_client = net::http::Client::new(edge::testing::edge());
 
     let response = http_client
         .post(format!("{}/api/v0/collections", api_url))
@@ -187,7 +187,7 @@ for_each_runtime!(
 
 async fn concurrent_txn_endpoint_is_not_exposed(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .post(format!("{}/api/v0/tx/concurrent", api_url))
         .send()
         .await
@@ -217,7 +217,7 @@ async fn update_with_filter_sees_txn_scoped_state(cluster: TestCluster) {
     let api_url = cluster.api_url(0);
     let tx_id = client.tx_create().expect("tx_create failed");
 
-    let http_client = net::http::Client::new();
+    let http_client = net::http::Client::new(edge::testing::edge());
     let resp = http_client
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", tx_id.to_string())

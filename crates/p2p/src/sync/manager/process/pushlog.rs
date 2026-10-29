@@ -16,6 +16,7 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use web_time::Instant;
 
 use cid::Cid;
+use futures::SinkExt;
 
 use blockstore::{verify_block_cid, Blockstore};
 
@@ -61,6 +62,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     async fn emit_sync_error(&self, cid: &Cid, error: &Error) -> Result<()> {
         if self
             .event_tx
+            .clone()
             .send(SyncEvent::SyncError {
                 cid: *cid,
                 error: error.to_string(),
@@ -361,6 +363,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 // Block parsing failed - emit error event and propagate error
                 if self
                     .event_tx
+                    .clone()
                     .send(SyncEvent::SyncError {
                         cid: *cid,
                         error: e.to_string(),
@@ -1386,7 +1389,7 @@ pub(super) mod tests {
         assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
         assert!(matches!(
             events.try_recv(),
-            Err(crate::rt::mpsc::error::TryRecvError::Empty)
+            Err(futures::channel::mpsc::TryRecvError::Empty)
         ));
     }
 

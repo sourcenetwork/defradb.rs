@@ -13,6 +13,9 @@ bench = false
 
 [dependencies]
 
+# The network runtime the clients' connections and the providers' tasks run on.
+edge = { path = "../edge" }
+
 # Cosmos SDK transaction building and signing
 cosmrs = "0.22"
 
@@ -76,8 +79,6 @@ acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev 
 # HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei
 # sockets; the browser's fetch on wasm32 (below).
 net = { path = "../net" }
-# The Cosmos event stream runs on the network runtime it is given.
-edge = { path = "../edge" }
 futures.workspace = true
 prost.workspace = true
 tonic.workspace = true

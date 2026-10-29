@@ -27,10 +27,6 @@ impl Timer {
         }
     }
 
-    pub(crate) fn reset(&mut self, from: Instant, limit: Duration) {
-        self.sleep.as_mut().reset(deadline_at(from, limit));
-    }
-
     /// Ready once `limit` passed, as the deadline error it counts, or once
     /// the runtime is stopping, as [`EdgeError::Closed`].
     pub(crate) fn poll_limit(&mut self, cx: &mut Context<'_>, limit: Duration) -> Poll<EdgeError> {

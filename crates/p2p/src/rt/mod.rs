@@ -1,17 +1,18 @@
 //! The runtime names this crate's code uses, one set per target: nuclei
-//! natively, the browser's event loop (n0-future, and the single-threaded
-//! [`local`] channel, semaphore and select primitives) on wasm32. Code written
-//! against this module builds and behaves the same on both.
+//! natively, the browser's event loop (n0-future) on wasm32. Code written
+//! against this module builds and behaves the same on both. Channels come
+//! from `futures::channel` and every other primitive from `regolith::sync`.
 //!
 //! A nuclei task is cancelled when its handle drops, so a task that must
 //! outlive its handle is [`Task::detach`]ed; the browser's tasks run on either
 //! way.
 
-pub mod local;
-
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    pub use nuclei::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
+    // Only for the code that builds natively alone (the libp2p host, the
+    // two-stream protocol, the KMS pubsub-RPC layer); code both targets build
+    // takes its channels from `futures::channel`.
+    pub use nuclei::sync::{mpsc, oneshot, Semaphore};
     pub use nuclei::task::{yield_now, AbortHandle, JoinError, JoinSet, Task};
     pub use nuclei::{select, spawn};
     pub use regolith::sync::Notify;
@@ -44,8 +45,6 @@ mod native {
 mod wasm {
     use std::future::Future;
 
-    pub use super::local::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
-    pub use crate::local_select as select;
     pub use n0_future::task::{AbortHandle, JoinError, JoinSet};
     pub use regolith::sync::Notify;
 

@@ -275,7 +275,8 @@ where
     }
 }
 
-impl<E> DispatchSource<E> for crate::rt::mpsc::Receiver<E>
+#[cfg(not(target_arch = "wasm32"))]
+impl<E> DispatchSource<E> for nuclei::sync::mpsc::Receiver<E>
 where
     E: MaybeSend,
 {

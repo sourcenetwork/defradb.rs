@@ -6,9 +6,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::rt::{mpsc, oneshot};
 use async_trait::async_trait;
 use cid::Cid;
+use futures::channel::{mpsc, oneshot};
+use futures::{FutureExt, SinkExt};
 use iroh::SecretKey;
 
 use crate::error::{Error, Result};
@@ -24,7 +25,7 @@ use crate::topics::DefraTopic;
 use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
 use crate::QueryId;
 
-use super::command::IrohCommand;
+use super::command::{CommandSender, EndpointStopped, IrohCommand};
 use super::endpoint_config::AdmissionAuthority;
 use super::peer_map::endpoint_id_to_peer_id;
 use super::records::{ServiceProfile, ServiceRecord};
@@ -36,6 +37,9 @@ use super::records::{ServiceProfile, ServiceRecord};
 /// gossip subscriptions, etc.).
 #[derive(Clone)]
 pub struct IrohTransport {
+    // Dropped before `command_tx`: the endpoint, woken by the last sender
+    // going, must already see that no transport is left.
+    stopped: EndpointStopped,
     command_tx: mpsc::Sender<IrohCommand>,
     local_peer_id: PeerId,
     local_public_key_bytes: Vec<u8>,
@@ -71,12 +75,14 @@ impl IrohTransport {
     }
 
     /// Create a new `IrohTransport` with the given command channel and identity.
-    pub fn new(command_tx: mpsc::Sender<IrohCommand>, secret_key: SecretKey) -> Self {
+    pub fn new(command_tx: CommandSender, secret_key: SecretKey) -> Self {
+        let (command_tx, stopped) = command_tx;
         let node_id = secret_key.public();
         let local_peer_id = PeerId::new(node_id.to_string());
         let local_public_key_bytes = node_id.as_bytes().to_vec();
 
         Self {
+            stopped,
             command_tx,
             local_peer_id,
             local_public_key_bytes,
@@ -121,6 +127,7 @@ impl IrohTransport {
     ) -> Result<T> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
+            .clone()
             .send(make_cmd(tx))
             .await
             .map_err(|_| Error::ChannelSend)?;
@@ -371,10 +378,9 @@ impl P2PTransport for IrohTransport {
                 crate::rt::time::sleep(Duration::from_millis(50)).await;
             }
         };
-        crate::rt::select! {
-            biased;
-            _ = self.command_tx.closed() => Err(Error::ChannelSend),
-            result = crate::rt::time::timeout(timeout, wait_for_peer) => {
+        futures::select_biased! {
+            _ = self.stopped.clone() => Err(Error::ChannelSend),
+            result = crate::rt::time::timeout(timeout, wait_for_peer).fuse() => {
                 result.unwrap_or_else(|_| Err(Error::ConnectionTimeout(peer_id.to_string())))
             }
         }
@@ -729,6 +735,7 @@ impl P2PTransport for IrohTransport {
         let send_started = web_time::Instant::now();
         let (tx, rx) = oneshot::channel();
         self.command_tx
+            .clone()
             .send(IrohCommand::Shutdown { reply: tx })
             .await
             .map_err(|_| Error::ChannelSend)?;
@@ -803,13 +810,15 @@ mod tests {
         let expected_did = server_identity.did().unwrap();
 
         let (requester_tx, _requester_events, _requester_replicators, requester_task) =
-            spawn_endpoint(test_config(requester_key.clone()))
+            spawn_endpoint(test_config(requester_key.clone()), edge::testing::edge())
                 .await
                 .unwrap();
         let mut server_config = test_config(server_key.clone());
         server_config.node_identity = Some(server_identity);
         let (server_tx, _server_events, _server_replicators, server_task) =
-            spawn_endpoint(server_config).await.unwrap();
+            spawn_endpoint(server_config, edge::testing::edge())
+                .await
+                .unwrap();
         let requester = IrohTransport::new(requester_tx, requester_key);
         let server = IrohTransport::new(server_tx, server_key);
 
@@ -833,8 +842,8 @@ mod tests {
 
         requester.shutdown().await.unwrap();
         server.shutdown().await.unwrap();
-        requester_task.join().await.unwrap();
-        server_task.join().await.unwrap();
+        requester_task.await.unwrap();
+        server_task.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -842,11 +851,11 @@ mod tests {
         let requester_key = SecretKey::generate();
         let server_key = SecretKey::generate();
         let (requester_tx, _requester_events, _requester_replicators, requester_task) =
-            spawn_endpoint(test_config(requester_key.clone()))
+            spawn_endpoint(test_config(requester_key.clone()), edge::testing::edge())
                 .await
                 .unwrap();
         let (server_tx, _server_events, _server_replicators, server_task) =
-            spawn_endpoint(test_config(server_key.clone()))
+            spawn_endpoint(test_config(server_key.clone()), edge::testing::edge())
                 .await
                 .unwrap();
         let requester = IrohTransport::new(requester_tx, requester_key);
@@ -874,8 +883,8 @@ mod tests {
 
         requester.shutdown().await.unwrap();
         server.shutdown().await.unwrap();
-        requester_task.join().await.unwrap();
-        server_task.join().await.unwrap();
+        requester_task.await.unwrap();
+        server_task.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -883,9 +892,13 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, mut events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -965,34 +978,22 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
-    }
-
-    async fn poll_until_disconnected(transport: &IrohTransport, peer_id: &PeerId) {
-        let deadline = web_time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let peers = transport.connected_peers().await.unwrap_or_default();
-            if !peers.iter().any(|p| p.as_str() == peer_id.as_str()) {
-                return;
-            }
-            assert!(
-                web_time::Instant::now() < deadline,
-                "timed out waiting for disconnection from {}",
-                peer_id
-            );
-            crate::rt::time::sleep(Duration::from_millis(50)).await;
-        }
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
     async fn disconnect_drops_connected_peer() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
-        let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+        let (command_tx0, mut events0, _replicators0, task0) =
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, _events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -1017,12 +1018,24 @@ mod tests {
             .disconnect(transport1.local_peer_id())
             .await
             .unwrap();
-        poll_until_disconnected(&transport0, transport1.local_peer_id()).await;
+        // The peer's last connection closing is the event. A redial after
+        // it (the record exchange a connect starts may dial again) is a new
+        // connection, so the peer's absence is not waited for.
+        loop {
+            let event = timeout(Duration::from_secs(5), events0.recv())
+                .await
+                .expect("timed out waiting for the disconnection")
+                .expect("iroh event channel closed");
+            if matches!(&event, TransportEvent::PeerDisconnected(peer) if peer == transport1.local_peer_id())
+            {
+                break;
+            }
+        }
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -1030,7 +1043,9 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let never_connected = PeerId::new(key1.public().to_string());
 
@@ -1040,7 +1055,7 @@ mod tests {
             .expect("disconnecting a never-connected peer must be Ok");
 
         transport0.shutdown().await.unwrap();
-        task0.join().await.unwrap();
+        task0.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -1061,11 +1076,17 @@ mod tests {
             config
         };
         let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(only(&key0)).await.unwrap();
+            spawn_endpoint(only(&key0), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, _events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx2, mut events2, _replicators2, task2) =
-            spawn_endpoint(only(&key2)).await.unwrap();
+            spawn_endpoint(only(&key2), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
         let transport2 = IrohTransport::new(command_tx2, key2);
@@ -1191,9 +1212,9 @@ mod tests {
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
         transport2.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
-        task2.join().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -1203,9 +1224,13 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, mut events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -1286,8 +1311,8 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 
     /// A record one node signs reaches a connected peer's book over the
@@ -1297,9 +1322,13 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
         transport1
@@ -1361,8 +1390,10 @@ mod tests {
             ]
         );
 
-        task0.abort();
-        task1.abort();
+        transport0.shutdown().await.unwrap();
+        transport1.shutdown().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 
     /// Regression for #976: `subscribe_raw` must JOIN the gossip mesh for a raw
@@ -1377,9 +1408,13 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, mut events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -1460,8 +1495,8 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 
     #[nuclei::test(threads = 0)]
@@ -1469,9 +1504,13 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+            spawn_endpoint(test_config(key1.clone()), edge::testing::edge())
+                .await
+                .unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -1521,7 +1560,7 @@ mod tests {
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();
-        task0.join().await.unwrap();
-        task1.join().await.unwrap();
+        task0.await.unwrap();
+        task1.await.unwrap();
     }
 }

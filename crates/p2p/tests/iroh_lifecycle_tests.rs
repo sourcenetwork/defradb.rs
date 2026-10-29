@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use multihash_codetable::{Code, MultihashDigest};
 use nuclei::time::timeout;
-use nuclei::Task;
 use p2p::iroh::{
     spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig, IrohTransport,
 };
@@ -20,20 +19,23 @@ fn config() -> IrohEndpointConfig {
     }
 }
 
-async fn assert_endpoint_stopped(mut task: Task<()>) {
+async fn assert_endpoint_stopped(mut task: edge::Task<()>) {
     let result = timeout(Duration::from_secs(5), &mut task).await;
     if result.is_err() {
         task.abort();
-        let _ = task.join().await;
+        let _ = task.await;
     }
-    result.expect("endpoint kept running after its last command sender was dropped");
+    result
+        .expect("endpoint kept running after its last command sender was dropped")
+        .unwrap();
 }
 
 #[nuclei::test(threads = 0)]
 async fn endpoint_stops_when_last_transport_clone_is_dropped() {
     let config = config();
     let key = config.secret_key.clone();
-    let (commands, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+    let (commands, _events, _replicators, task) =
+        spawn_endpoint(config, edge::testing::edge()).await.unwrap();
     let transport = IrohTransport::new(commands, key);
     let last_transport = transport.clone();
     drop(transport);
@@ -46,7 +48,9 @@ async fn endpoint_stops_when_last_transport_clone_is_dropped() {
 
 #[nuclei::test(threads = 0)]
 async fn endpoint_stops_when_command_sender_is_dropped_before_startup() {
-    let (commands, _events, _replicators, task) = spawn_endpoint(config()).await.unwrap();
+    let (commands, _events, _replicators, task) = spawn_endpoint(config(), edge::testing::edge())
+        .await
+        .unwrap();
     drop(commands);
 
     assert_endpoint_stopped(task).await;
@@ -56,7 +60,8 @@ async fn endpoint_stops_when_command_sender_is_dropped_before_startup() {
 async fn shutdown_joins_subscriptions_and_syncs_with_a_full_event_queue() {
     let config = config();
     let key = config.secret_key.clone();
-    let (commands, events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+    let (commands, events, _replicators, task) =
+        spawn_endpoint(config, edge::testing::edge()).await.unwrap();
     let transport = IrohTransport::new(commands, key);
     transport.subscribe(p2p::DefraTopic::DocSync).await.unwrap();
     transport

@@ -4,14 +4,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::response::IntoResponse;
 use axum::Router;
 use edge::Edge;
 use nuclei::net::TcpListener;
 use tower::limit::ConcurrencyLimitLayer;
-use tower::{Layer, ServiceBuilder};
+use tower::Layer;
 use tower_http::cors::CorsLayer;
 use tower_http::normalize_path::NormalizePathLayer;
 use tower_http::trace::TraceLayer;
@@ -126,9 +126,13 @@ pub struct Server {
 }
 
 /// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
-/// listener. Call it on the network runtime.
-pub async fn serve_router(listener: std::net::TcpListener, router: Router) -> std::io::Result<()> {
-    net::server::serve(TcpListener::new(listener)?, None, router).await
+/// listener, its connections on `edge`.
+pub async fn serve_router(
+    listener: std::net::TcpListener,
+    router: Router,
+    edge: Edge,
+) -> std::io::Result<()> {
+    net::server::serve(TcpListener::new(listener)?, None, router, edge).await
 }
 
 impl Server {
@@ -550,23 +554,15 @@ impl Server {
         }
 
         // Apply request timeout (0 = no timeout)
-        // HandleErrorLayer must wrap TimeoutLayer via ServiceBuilder so the
-        // timeout error is converted to an HTTP status before reaching Router
-        // (which requires Error: Into<Infallible>).
         if self.config.request_timeout > 0 {
-            router = router.layer(
-                ServiceBuilder::new()
-                    .layer(HandleErrorLayer::new(|err: axum::BoxError| async move {
-                        if err.is::<net::timeout::Elapsed>() {
-                            StatusCode::REQUEST_TIMEOUT
-                        } else {
-                            StatusCode::SERVICE_UNAVAILABLE
-                        }
-                    }))
-                    .layer(net::timeout::TimeoutLayer::new(Duration::from_secs(
-                        self.config.request_timeout,
-                    ))),
-            );
+            let limit = Duration::from_secs(self.config.request_timeout);
+            router = router.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                    nuclei::time::timeout(limit, next.run(request))
+                        .await
+                        .unwrap_or_else(|_| StatusCode::REQUEST_TIMEOUT.into_response())
+                },
+            ));
         }
 
         router = router.layer(TraceLayer::new_for_http()).layer(cors);
@@ -675,7 +671,7 @@ impl Server {
         tracing::info!("Providing HTTP API at {scheme}://{address}");
 
         let tls = self.tls.map(|tls| tls.acceptor());
-        let result = net::server::serve(listener, tls, router).await;
+        let result = net::server::serve(listener, tls, router, self.edge).await;
         result.map_err(|e| {
             tracing::error!(error = %e, "HTTP server encountered fatal error");
             crate::error::HttpError::Internal(format!("server error: {}", e))

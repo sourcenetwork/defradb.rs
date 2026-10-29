@@ -15,6 +15,7 @@ axum = { workspace = true }
 defra-version = { path = "../../crates/defra-version" }
 clap = { version = "4.5", features = ["derive"] }
 nuclei.workspace = true
+edge = { path = "../../crates/edge" }
 net = { path = "../../crates/net" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -65,7 +65,7 @@ impl OrbisClient {
         let public_key = crypto::BlsPublicKey::from_bytes(&public_key_bytes).map_err(error)?;
         let signer_did = public_key.did().map_err(error)?;
         let public_key_hex = hex::encode(public_key.raw());
-        let endpoint = net::grpc::Endpoint::from_shared(endpoint)
+        let endpoint = net::grpc::Endpoint::from_shared(endpoint, edge.clone())
             .map_err(error)?
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(60));

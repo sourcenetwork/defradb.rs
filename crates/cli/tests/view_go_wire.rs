@@ -34,7 +34,8 @@ fn parse(extra: &[&str]) -> ViewRefreshArgs {
 /// router test also asserts against, so client and server cannot drift.
 #[test]
 fn the_client_builds_gos_wire_urls() {
-    let client = HttpClient::new("http://localhost:9181").expect("a valid base URL");
+    let client =
+        HttpClient::new("http://localhost:9181", &edge::testing::edge()).expect("a valid base URL");
 
     assert_eq!(
         client.acp_policy_url(),
@@ -51,7 +52,8 @@ fn the_client_builds_gos_wire_urls() {
 /// Rust does not normalize paths the way Go's `StripSlashes` does.
 #[test]
 fn a_trailing_slash_on_the_base_url_does_not_double_up() {
-    let client = HttpClient::new("http://localhost:9181/").expect("a valid base URL");
+    let client = HttpClient::new("http://localhost:9181/", &edge::testing::edge())
+        .expect("a valid base URL");
     assert_eq!(client.view_add_url(), "http://localhost:9181/api/v0/view");
 }
 

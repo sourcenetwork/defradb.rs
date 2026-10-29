@@ -74,7 +74,9 @@ async fn cancelled_fetch(handle: &P2PHostHandle, cid: cid::Cid) {
 #[nuclei::test(threads = 4)]
 async fn a_cancelled_bitswap_fetch_leaves_no_tasks_behind() {
     let cid = make_data_block();
-    let (host, handle, _events, _) = P2PHost::new(MockBitswapStore::new()).await.unwrap();
+    let (host, handle, _events, _) = P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+        .await
+        .unwrap();
     nuclei::spawn(host.run()).detach();
 
     BITSWAP_FETCH_BLOCK_MS.store(BLOCK.as_millis() as u64, Ordering::Relaxed);

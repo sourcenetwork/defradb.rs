@@ -67,12 +67,12 @@ pub type FailureRecorder = n0_future::task::JoinHandle<()>;
 /// channel closes or it is aborted.
 pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
     peerstore: storage::stores::Peerstore<S>,
-    mut failures: p2p::rt::mpsc::Receiver<p2p::sync::PushFailure>,
+    mut failures: p2p::sync::PushFailureReceiver,
 ) -> FailureRecorder {
     #[cfg(not(target_arch = "wasm32"))]
     let pool = peerstore.pool().cloned();
     let record = async move {
-        while let Some(failure) = failures.recv().await {
+        while let Ok(failure) = failures.recv().await {
             record_failure(&peerstore, failure).await;
         }
     };
@@ -748,12 +748,7 @@ where
     };
     // A stopping edge ends its sleeps early: the sweeps stop with it.
     let closing = edge.closing();
-    edge.spawn(async move {
-        p2p::rt::select! {
-            () = sweeps => {}
-            () = closing => {}
-        }
-    })
+    edge.spawn(futures_lite::future::or(sweeps, closing))
 }
 
 #[cfg(test)]
@@ -771,6 +766,7 @@ mod hint_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::SinkExt;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1241,11 +1237,13 @@ mod tests {
                 seed_retry_peer(&peerstore, &format!("peer-{index}"), "addr").await;
             }
             let key = load_or_generate_secret_key(None).await.expect("key");
-            let (command_tx, command_rx) = p2p::rt::mpsc::channel(4);
+            let (command_tx, command_rx) = futures::channel::mpsc::channel(4);
+            let (running, stopped) = futures::channel::oneshot::channel::<()>();
             // A dropped receiver is what a stopped endpoint task looks like
             // from the transport: every command fails.
-            drop(command_rx);
-            let transport = IrohTransport::new(command_tx, key);
+            drop((command_rx, running));
+            let transport =
+                IrohTransport::new((command_tx, futures::FutureExt::shared(stopped)), key);
 
             let mut probes = RapidHashMap::new();
             run_reconnect_pass(&peerstore, &transport, &mut probes).await;
@@ -1267,16 +1265,19 @@ mod tests {
             seed_retry_peer(&peerstore, &remote_id, &format!("{remote_id}@127.0.0.1:1")).await;
             let before = next_retry_unix(&peerstore, &remote_id).await;
 
-            let (command_tx, _events, _replicators, _task) = spawn_endpoint(IrohEndpointConfig {
-                secret_key: key.clone(),
-                node_identity: None,
-                relay_mode: IrohRelayModeConfig::Disabled,
-                discovery: IrohDiscoveryConfig::Disabled,
-                bind_port: None,
-                bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                max_concurrent_multipath_paths: None,
-                allowlist: Default::default(),
-            })
+            let (command_tx, _events, _replicators, _task) = spawn_endpoint(
+                IrohEndpointConfig {
+                    secret_key: key.clone(),
+                    node_identity: None,
+                    relay_mode: IrohRelayModeConfig::Disabled,
+                    discovery: IrohDiscoveryConfig::Disabled,
+                    bind_port: None,
+                    bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                    max_concurrent_multipath_paths: None,
+                    allowlist: Default::default(),
+                },
+                edge::testing::edge(),
+            )
             .await
             .expect("endpoint");
             let transport = IrohTransport::new(command_tx, key);
@@ -1361,43 +1362,43 @@ mod tests {
     }
 
     async fn check_live_admission(
-        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
+        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
         let mut check = failure(false);
         check.admission_only = true;
         check.marker_generation = Some(marker_generation);
         check.durable_tx = Some(durable_tx);
-        tx.send(check).await.unwrap();
+        tx.clone().send(check).await.unwrap();
         durable_rx.await.unwrap()
     }
 
     async fn record_terminal_failure(
-        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
         retry_after: Option<Duration>,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
+        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.marker_generation = Some(marker_generation);
         failed.retry_after = retry_after;
         failed.durable_tx = Some(durable_tx);
-        tx.send(failed).await.unwrap();
+        tx.clone().send(failed).await.unwrap();
         durable_rx.await.unwrap()
     }
 
     async fn record_initial_failure(
-        tx: &p2p::rt::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
         initial_registration: bool,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = p2p::rt::oneshot::channel();
+        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.initial_registration = initial_registration;
         failed.durable_tx = Some(durable_tx);
-        tx.send(failed).await.unwrap();
+        tx.clone().send(failed).await.unwrap();
         durable_rx.await.unwrap()
     }
 
@@ -1415,24 +1416,24 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = p2p::rt::mpsc::channel(2);
+        let (tx, rx) = futures::channel::mpsc::channel(2);
         let task = spawn_failure_recorder(storage::stores::Peerstore::new(Arc::clone(&store)), rx);
 
-        let (registered_tx, registered_rx) = p2p::rt::oneshot::channel();
+        let (registered_tx, registered_rx) = futures::channel::oneshot::channel();
         let mut announced = failure(false);
         announced.durable_tx = Some(registered_tx);
-        tx.send(announced).await.unwrap();
+        tx.clone().send(announced).await.unwrap();
         let generation = registered_rx.await.unwrap().unwrap();
         assert_eq!(
             peerstore.get_retry_documents("peer-a").await.unwrap().len(),
             1
         );
 
-        let (cleared_tx, cleared_rx) = p2p::rt::oneshot::channel();
+        let (cleared_tx, cleared_rx) = futures::channel::oneshot::channel();
         let mut acknowledged = failure(true);
         acknowledged.marker_generation = Some(generation);
         acknowledged.durable_tx = Some(cleared_tx);
-        tx.send(acknowledged).await.unwrap();
+        tx.clone().send(acknowledged).await.unwrap();
         assert_eq!(cleared_rx.await.unwrap(), Some(generation));
         assert!(peerstore
             .get_retry_documents("peer-a")
@@ -1463,14 +1464,14 @@ mod tests {
             .await
             .unwrap();
         for _ in 0..2 {
-            let (tx, rx) = p2p::rt::mpsc::channel(2);
+            let (tx, rx) = futures::channel::mpsc::channel(2);
             let recorder =
                 spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
-            let (response, allowed) = p2p::rt::oneshot::channel();
+            let (response, allowed) = futures::channel::oneshot::channel();
             let mut check = failure(false);
             check.admission_only = true;
             check.durable_tx = Some(response);
-            tx.send(check).await.unwrap();
+            tx.clone().send(check).await.unwrap();
             assert!(allowed.await.unwrap().is_none());
             drop(tx);
             recorder.await.unwrap();
@@ -1497,7 +1498,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = p2p::rt::mpsc::channel(8);
+        let (tx, rx) = futures::channel::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A normal first push is admitted only while its exact marker is live.
@@ -1556,7 +1557,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = p2p::rt::mpsc::channel(8);
+        let (tx, rx) = futures::channel::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A failure for the admitted generation refreshes the retry obligation
@@ -1615,7 +1616,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = p2p::rt::mpsc::channel(4);
+        let (tx, rx) = futures::channel::mpsc::channel(4);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A terminal worker failure with a missing source token is dropped;

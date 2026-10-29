@@ -206,13 +206,15 @@ async fn filtered_excludes_nonmatching(cluster: TestCluster) {
     // `P2pReplicatorInfo` now also carries the `Filters` field, so the CLI
     // `replicator list` path is asserted separately in
     // `rust_filtered_replication_cli_list_renders_filter`.
-    let listed: serde_json::Value =
-        net::http::get(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
-            .await
-            .expect("GET replicators")
-            .json()
-            .await
-            .expect("parse replicators json");
+    let listed: serde_json::Value = net::http::get(
+        format!("{}/api/v0/p2p/replicators", cluster.api_url(0)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("GET replicators")
+    .json()
+    .await
+    .expect("parse replicators json");
     let listed_str = serde_json::to_string(&listed).unwrap();
     assert!(
         listed_str.contains("Filters") && listed_str.contains("agent_did"),
@@ -1046,7 +1048,7 @@ async fn rust_filtered_replication_float_filter_matches_numerically() {
             .expect("subscribe 0");
 
         // Typed Float filter value (2.0) - must go via HTTP; the CLI wraps as a string.
-        let resp = net::http::Client::new()
+        let resp = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
             .json(&serde_json::json!({
                 "Collections": ["ScoreDoc"],
@@ -1424,7 +1426,7 @@ async fn rust_filtered_replicator_rejects_empty_field_over_http() {
         wait_for_log_ready(&cluster, 1).await;
         cluster.client(0).schema_add(AGENT_SCHEMA).expect("schema");
 
-        let resp = net::http::Client::new()
+        let resp = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
             .json(&serde_json::json!({
                 "Collections": ["AgentDoc"],
@@ -1469,7 +1471,7 @@ async fn rust_filtered_replication_legacy_format_back_compat() {
             .p2p_collection_add(&["AgentDoc"])
             .expect("subscribe 0");
 
-        let resp = net::http::Client::new()
+        let resp = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
             .json(&serde_json::json!({
                 "Collections": ["AgentDoc"],
@@ -2593,7 +2595,7 @@ async fn rust_filtered_replication_http_conditions_roundtrip() {
         cluster.client(0).schema_add(AGENT_SCHEMA).expect("schema");
 
         let conditions = serde_json::json!({"agent_did": {"_in": [ALICE, CAROL]}});
-        let resp = net::http::Client::new()
+        let resp = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
             .json(&serde_json::json!({
                 "Collections": ["AgentDoc"],
@@ -2609,13 +2611,15 @@ async fn rust_filtered_replication_http_conditions_roundtrip() {
             resp.status()
         );
 
-        let listed: serde_json::Value =
-            net::http::get(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
-                .await
-                .expect("GET replicators")
-                .json()
-                .await
-                .expect("parse replicators json");
+        let listed: serde_json::Value = net::http::get(
+            format!("{}/api/v0/p2p/replicators", cluster.api_url(0)),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("GET replicators")
+        .json()
+        .await
+        .expect("parse replicators json");
 
         let entry = listed
             .as_array()
@@ -3348,7 +3352,7 @@ async fn rust_forget_replicator_prevents_retry_redial_after_restart() {
         )
         .await;
 
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .delete(format!("{}/api/v0/p2p/replicators", cluster.api_url(0)))
             .json(&serde_json::json!({"ID": &peer_id, "Forget": true}))
             .send()
@@ -3588,12 +3592,15 @@ fn run_replicator_add_plain(
 }
 
 async fn list_replicators_http(cluster: &TestCluster, node: usize) -> serde_json::Value {
-    net::http::get(format!("{}/api/v0/p2p/replicators", cluster.api_url(node)))
-        .await
-        .expect("GET replicators")
-        .json()
-        .await
-        .expect("parse replicators json")
+    net::http::get(
+        format!("{}/api/v0/p2p/replicators", cluster.api_url(node)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("GET replicators")
+    .json()
+    .await
+    .expect("parse replicators json")
 }
 
 /// #1038 two-store divergence: a PARTIAL `replicator delete -c <one>` on a

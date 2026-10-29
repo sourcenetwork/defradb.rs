@@ -105,7 +105,7 @@ async fn http_rejects_a_negative_pcounter_increment() {
         .expect("add_Tally");
         let id = doc_id(&node);
 
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .patch(format!(
                 "{}/api/v0/collections/Tally/document/{id}",
                 cluster.api_url(0)
@@ -171,7 +171,7 @@ async fn http_document_updates_replace_lww_and_add_to_counters() {
         let cluster = single_node().await;
         let node = cluster.client(0);
         let api = format!("{}/api/v0/collections/Tally", cluster.api_url(0));
-        let http = net::http::Client::new();
+        let http = net::http::Client::new(edge::testing::edge());
 
         let created = http
             .post(&api)

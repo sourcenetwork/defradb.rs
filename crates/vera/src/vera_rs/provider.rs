@@ -43,7 +43,8 @@ pub struct VeraRsProvider {
     signing_key: SigningKey,
     sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
-    _light_client_observer: nuclei::Task<()>,
+    _light_client_observer: edge::Service,
+    edge: edge::Edge,
 }
 
 fn derive_ws_url(rpc_url: &str) -> String {
@@ -53,6 +54,8 @@ fn derive_ws_url(rpc_url: &str) -> String {
 }
 
 impl VeraRsProvider {
+    /// A provider whose connections, light client observer and worker calls
+    /// run on `edge`.
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
@@ -60,6 +63,7 @@ impl VeraRsProvider {
         worker: NativeWorker,
         tuning: &AcpTuning,
         event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         let encoded = hex::decode(
             trusted_consensus_key
@@ -85,7 +89,7 @@ impl VeraRsProvider {
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = VeraRsClient::new(rpc_url, tuning.request_timeout)
+        let client = VeraRsClient::new(rpc_url, tuning.request_timeout, edge)
             .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
         let signing_key = SigningKey::from_slice(private_key)
             .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
@@ -93,7 +97,7 @@ impl VeraRsProvider {
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
-        let _light_client_observer = nuclei::spawn(edge::compat(run_light_client_observer(
+        let _light_client_observer = edge.spawn_service(edge::compat(run_light_client_observer(
             light_client.clone(),
             light_client_observability.clone(),
             event_bus,
@@ -111,6 +115,7 @@ impl VeraRsProvider {
             sync_timeout: tuning.receipt_timeout,
             light_client_observability,
             _light_client_observer,
+            edge: edge.clone(),
         };
         provider.recover_pending().await?;
         Ok(provider)
@@ -600,6 +605,7 @@ mod tests {
                 worker,
                 &AcpTuning::default(),
                 None,
+                &edge::testing::edge(),
             )
             .await
             .err()

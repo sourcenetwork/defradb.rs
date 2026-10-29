@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use cid::Cid;
+use edge::Edge;
 use kovan_channel::unbounded;
 use libp2p::PeerId;
 use nuclei::sync::oneshot;
@@ -72,6 +73,7 @@ pub(crate) struct Engine<S: Store> {
     store: S,
     network: Network,
     reports: unbounded::Sender<Report>,
+    edge: Edge,
 }
 
 impl<S: Store> Engine<S> {
@@ -80,6 +82,7 @@ impl<S: Store> Engine<S> {
         store: S,
         network: Network,
         reports: unbounded::Sender<Report>,
+        edge: Edge,
     ) -> Self {
         Engine {
             queue: PeerTaskQueue::new(
@@ -99,6 +102,7 @@ impl<S: Store> Engine<S> {
             store,
             network,
             reports,
+            edge,
         }
     }
 
@@ -374,7 +378,7 @@ impl<S: Store> Engine<S> {
             }
 
             self.in_flight += 1;
-            nuclei::spawn(envelope::run(
+            drop(self.edge.spawn(envelope::run(
                 self.store.clone(),
                 self.network.clone(),
                 self.reports.clone(),
@@ -382,8 +386,7 @@ impl<S: Store> Engine<S> {
                 message,
                 block_wants,
                 tasks,
-            ))
-            .detach();
+            )));
         }
     }
 }

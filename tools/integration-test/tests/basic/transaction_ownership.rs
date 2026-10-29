@@ -23,7 +23,7 @@ fn client(api: &str, identity: Option<&RawIdentity>, lifetime: u64) -> Client {
                 .unwrap(),
         );
     }
-    Client::builder()
+    Client::builder(edge::testing::edge())
         .default_headers(headers)
         .timeout(Duration::from_secs(10))
         .build()

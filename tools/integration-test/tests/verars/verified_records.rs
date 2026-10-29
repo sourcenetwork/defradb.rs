@@ -34,6 +34,7 @@ async fn archived_owner_record_does_not_authorize_access() {
                 worker,
                 &AcpTuning::default(),
                 None,
+                &edge::testing::edge(),
             )
             .await
             .expect("provider"),
@@ -157,6 +158,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
                 worker,
                 &AcpTuning::default(),
                 None,
+                &edge::testing::edge(),
             )
             .await
             .unwrap(),

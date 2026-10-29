@@ -102,6 +102,7 @@ async fn controlled_host_with_synthetic_classifier(
         None,
         Arc::new(SyntheticBlockClassifier),
         Arc::new(p2p::bitswap::LateBoundServeAcp::new()),
+        edge::testing::edge(),
     )
     .await
     .unwrap()
@@ -145,7 +146,7 @@ async fn controlled_mode_denies_unregistered_bitswap_peer() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
@@ -204,7 +205,7 @@ async fn controlled_mode_serves_registered_replicator() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
@@ -256,7 +257,7 @@ async fn controlled_mode_denies_replicator_for_other_collection() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
@@ -335,7 +336,7 @@ async fn bitswap_unauthorized_against_go_defradb() {
 
     let store = MockBitswapStore::new();
     let (host, handle, mut events, _replicators) =
-        P2PHost::with_config(store, P2PHostConfig::default())
+        P2PHost::with_config(store, P2PHostConfig::default(), edge::testing::edge())
             .await
             .unwrap();
     nuclei::spawn(host.run()).detach();
@@ -389,13 +390,21 @@ async fn open_mode_serves_all_peers() {
     // Producer in Open mode should serve the block regardless of registry
     // state. Matches the pre-#830 default / AccessMode::Open contract.
     let (producer, producer_handle, _producer_events, _producer_replicators) =
-        P2PHost::with_config(producer_store, P2PHostConfig::default())
-            .await
-            .unwrap();
+        P2PHost::with_config(
+            producer_store,
+            P2PHostConfig::default(),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, P2PHostConfig::default())
-            .await
-            .unwrap();
+        P2PHost::with_config(
+            consumer_store,
+            P2PHostConfig::default(),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
 
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();

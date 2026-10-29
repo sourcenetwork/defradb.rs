@@ -221,10 +221,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
     ///
     /// A new `DefraBehaviour` instance or an error if initialization fails.
     ///
-    /// # Note
-    ///
-    /// This must be called within a nuclei runtime context as Bitswap spawns
-    /// background tasks for operations.
+    /// Bitswap's background tasks run on `edge`.
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         local_peer_id: PeerId,
@@ -238,6 +235,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         enable_pubsub: bool,
         config: &super::P2PHostConfig,
         resource_manager_system_memory_budget_bytes: usize,
+        edge: edge::Edge,
     ) -> Result<Self, crate::error::Error> {
         // Configure identify behaviour
         let identify_config =
@@ -299,7 +297,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         if let Some(server_cfg) = bitswap_config.server.as_mut() {
             server_cfg.peer_block_request_filter = Some(Box::new(filter));
         }
-        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config);
+        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config, edge);
 
         // Configure stream behaviour for Go two-stream compatibility
         let stream = stream::Behaviour::new();
@@ -381,7 +379,12 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
 
         // Configure Bitswap for block exchange
         let bitswap_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config);
+        let bitswap = Bitswap::new(
+            local_peer_id,
+            bitswap_store,
+            bitswap_config,
+            edge::testing::edge(),
+        );
 
         // Configure stream behaviour for Go two-stream compatibility
         let stream = stream::Behaviour::new();
@@ -534,6 +537,7 @@ mod tests {
             true,
             &config,
             usize::MAX,
+            edge::testing::edge(),
         )
         .await;
         assert!(behaviour.is_ok());
@@ -600,6 +604,7 @@ mod tests {
             false,
             &config,
             usize::MAX,
+            edge::testing::edge(),
         )
         .await;
         assert!(behaviour.is_ok());

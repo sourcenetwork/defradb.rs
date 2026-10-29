@@ -5,6 +5,7 @@ use crate::sync::pending_store::{
     PendingDagStorage, PendingDagStore, PersistedPendingDag, PersistedView,
 };
 use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+use futures::SinkExt;
 
 type TestCoordinator = SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport>;
 
@@ -15,6 +16,7 @@ async fn restart(
     let (coordinator, events) = SyncCoordinator::with_access_control(
         NoopTransport::new(),
         blockstore,
+        crate::network::test_network(),
         crate::sync::SyncConfig {
             max_concurrent_dag_fetches: 1,
             ..Default::default()

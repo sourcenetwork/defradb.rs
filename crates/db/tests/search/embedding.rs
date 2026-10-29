@@ -96,15 +96,6 @@ fn resolve_embedding_config_requires_model() {
 }
 
 #[test]
-fn parse_embedding_vector_errors_on_non_numeric_value() {
-    let values = vec![serde_json::json!(1.0), serde_json::json!("bad")];
-
-    let err = parse_embedding_vector(&values).unwrap_err();
-
-    assert_eq!(err, "embedding value at index 1 is not numeric");
-}
-
-#[test]
 fn set_embedding_skips_when_effective_config_is_missing() {
     workers::block_on(async {
         let embeddings = vec![embedding_with_provider("unknown", "", "")];

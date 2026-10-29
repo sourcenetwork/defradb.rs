@@ -18,6 +18,7 @@ use crate::{P2PError, P2PErrorExt as _};
 pub(crate) async fn sync_documents<D>(
     dispatch: Arc<D>,
     event_bus: &dyn events::Bus,
+    network: &p2p::network::Network,
     doc_ids: Vec<String>,
     overall_timeout: std::time::Duration,
     parallelism: usize,
@@ -71,8 +72,15 @@ where
         // success. Go reports its equivalent (a failed topic publish) the same
         // way.
         let remaining = overall_timeout.saturating_sub(start.elapsed());
-        let outcome =
-            send_requests(&dispatch, &connected_peers, request, parallelism, remaining).await;
+        let outcome = send_requests(
+            &dispatch,
+            network,
+            &connected_peers,
+            request,
+            parallelism,
+            remaining,
+        )
+        .await;
         if !outcome.any_sent {
             event_bus.unsubscribe(sub.id());
             return Err(P2PError::transport(
@@ -138,6 +146,7 @@ struct DispatchOutcome {
 /// and a relative timeout would hand each wave a fresh budget.
 async fn send_requests<D>(
     dispatch: &Arc<D>,
+    network: &p2p::network::Network,
     peers: &[D::Peer],
     request: p2p::message::DocSyncRequest,
     parallelism: usize,
@@ -148,7 +157,7 @@ where
     D::Peer: Clone + std::fmt::Display + 'static,
 {
     let mut peer_iter = peers.iter().cloned();
-    let mut tasks = p2p::rt::JoinSet::new();
+    let mut tasks = edge::TaskSet::new(network.edge().clone());
     let now = p2p::rt::time::Instant::now();
     let deadline = now
         .checked_add(remaining)
@@ -179,7 +188,7 @@ where
             break;
         }
 
-        match p2p::rt::join_next(&mut tasks).await {
+        match tasks.join_next().await {
             Some(Ok((peer, Ok(Ok(()))))) => {
                 outcome.any_sent = true;
                 tracing::debug!(peer_id = %peer, "sent DocSync request");
@@ -223,6 +232,7 @@ mod tests {
         let result = super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(50),
             2,
@@ -255,6 +265,7 @@ mod tests {
         let result = super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(200),
             2,
@@ -284,6 +295,7 @@ mod tests {
         let _ = super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(600),
             1,
@@ -308,6 +320,7 @@ mod tests {
         let error = super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(200),
             2,
@@ -332,6 +345,7 @@ mod tests {
         super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(200),
             2,
@@ -352,6 +366,7 @@ mod tests {
         let error = super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::ZERO,
             1,
@@ -376,6 +391,7 @@ mod tests {
         super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             Vec::new(),
             Duration::ZERO,
             1,
@@ -396,6 +412,7 @@ mod tests {
         super::sync_documents(
             Arc::clone(&dispatch),
             bus.as_ref(),
+            &p2p::network::Network::on(edge::testing::edge()),
             vec!["bae-does-not-matter".to_string()],
             Duration::from_millis(200),
             1,

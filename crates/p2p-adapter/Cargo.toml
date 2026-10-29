@@ -59,6 +59,7 @@ zeroize = "1"
 edge = { path = "../edge", features = ["testing"] }
 crypto = { path = "../crypto" }
 data-encoding = "2"
+futures.workspace = true
 iroh.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

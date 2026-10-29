@@ -527,7 +527,7 @@ fn providers(
     now: Instant,
     ask: Vec<EndpointId>,
 ) -> Vec<EndpointId> {
-    let (reply, mut answer) = nuclei::sync::oneshot::channel();
+    let (reply, mut answer) = futures::channel::oneshot::channel();
     records.on_input(
         Input::Providers {
             id: "users".into(),
@@ -539,6 +539,8 @@ fn providers(
     );
     answer
         .try_recv()
+        .ok()
+        .flatten()
         .expect("answered at once")
         .expect("lookup succeeds")
 }
@@ -702,7 +704,7 @@ fn replicator_offers_list_only_nodes_that_offer_and_hold_the_collection() {
     );
 
     let lookup = |records: &mut Records<FakeNet>, id: Option<&str>| {
-        let (reply, mut answer) = nuclei::sync::oneshot::channel();
+        let (reply, mut answer) = futures::channel::oneshot::channel();
         records.on_input(
             Input::Replicators {
                 id: id.map(str::to_owned),
@@ -711,7 +713,12 @@ fn replicator_offers_list_only_nodes_that_offer_and_hold_the_collection() {
             now,
             UNIX,
         );
-        let mut nodes = answer.try_recv().expect("answered").expect("succeeds");
+        let mut nodes = answer
+            .try_recv()
+            .ok()
+            .flatten()
+            .expect("answered")
+            .expect("succeeds");
         nodes.sort();
         nodes
     };

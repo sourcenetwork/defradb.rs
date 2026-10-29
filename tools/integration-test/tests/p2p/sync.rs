@@ -322,7 +322,7 @@ async fn sync_without_peers_test(cluster: TestCluster) {
         "expected a no-peers error, got: {error}"
     );
 
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .post(format!("{}/api/v0/p2p/documents/sync", cluster.api_url(0)))
         .json(&serde_json::json!({
             "collectionName": "Users",
@@ -343,7 +343,7 @@ async fn sync_without_peers_test(cluster: TestCluster) {
     // a 400 rather than a silent reading as seconds, and a well-formed one is
     // carried through to the transport instead of being ignored.
     for (timeout, expected) in [("5", 400), ("1s", 500)] {
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/p2p/documents/sync", cluster.api_url(0)))
             .json(&serde_json::json!({
                 "collectionName": "Users",

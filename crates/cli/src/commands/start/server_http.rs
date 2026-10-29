@@ -252,6 +252,7 @@ impl Node {
         query_setup: &QueryRunnerSetup,
         acp_setup: &DocumentAcpSetup,
         zanzibar_store: Arc<dyn acp::ZanzibarStore>,
+        edge: &edge::Edge,
     ) -> Result<Option<pg_compat::PgServer>> {
         if config.api.pg_address.is_empty() {
             return Ok(None);
@@ -291,6 +292,7 @@ impl Node {
             query_setup.runner.clone(),
             query_setup.collection_provider.clone(),
             Some(pg_schema_manager),
+            edge.clone(),
         )))
     }
 }

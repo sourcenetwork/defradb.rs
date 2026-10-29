@@ -67,8 +67,10 @@ async fn publish_when_ready(
 async fn assert_hosts_connect_over(listen_addr: &str) {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -157,7 +159,7 @@ fn explicit_replay_capability(
 #[nuclei::test]
 async fn test_host_creation() {
     let store = MockBitswapStore::new();
-    let result = P2PHost::new(store).await;
+    let result = P2PHost::new(store, edge::testing::edge()).await;
     assert!(result.is_ok());
 
     let (host, handle, _events, _replicators) = result.unwrap();
@@ -171,7 +173,8 @@ async fn test_host_creation() {
 #[nuclei::test]
 async fn connection_poll_stops_when_host_is_closed() {
     let store = MockBitswapStore::new();
-    let (host, handle, _events, _replicators) = P2PHost::new(store).await.unwrap();
+    let (host, handle, _events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
     let host_task = nuclei::spawn(host.run());
     handle.shutdown().await.unwrap();
     host_task.join().await.unwrap();
@@ -201,8 +204,10 @@ async fn test_host_connects_over_websocket() {
 async fn test_two_stream_non_replicator_is_not_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -251,6 +256,7 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
         store0,
         p2p::P2PHostConfig::default(),
         Some(node_identity0),
+        edge::testing::edge(),
     )
     .await
     .unwrap();
@@ -259,6 +265,7 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
         store1,
         p2p::P2PHostConfig::default(),
         Some(node_identity1.clone()),
+        edge::testing::edge(),
     )
     .await
     .unwrap();
@@ -296,8 +303,10 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
 async fn test_se_query_protocol_roundtrip() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, mut events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, mut events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -381,9 +390,12 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
     let store2 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
-    let (host2, handle2, _events2, _replicators2) = P2PHost::new(store2).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
+    let (host2, handle2, _events2, _replicators2) =
+        P2PHost::new(store2, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -476,8 +488,10 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
 async fn test_two_stream_registered_replicator_without_capability_is_not_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -524,8 +538,10 @@ async fn test_two_stream_registered_replicator_without_capability_is_not_marked_
 async fn test_two_stream_registered_replicator_with_capability_is_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -575,8 +591,10 @@ async fn test_two_stream_registered_replicator_with_capability_is_marked_explici
 async fn test_cached_capability_is_not_attached_to_public_push() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -629,8 +647,10 @@ async fn test_cached_capability_is_not_attached_to_public_push() {
 async fn test_two_stream_capability_for_other_collection_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -674,8 +694,10 @@ async fn test_two_stream_capability_for_other_collection_is_rejected() {
 async fn test_two_stream_expired_capability_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -732,8 +754,10 @@ async fn test_two_stream_expired_capability_is_rejected() {
 async fn test_two_stream_invalid_authorizer_signature_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -795,9 +819,12 @@ async fn test_two_stream_capability_is_edge_scoped() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
     let store2 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
-    let (host2, handle2, mut events2, _replicators2) = P2PHost::new(store2).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
+    let (host2, handle2, mut events2, _replicators2) =
+        P2PHost::new(store2, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -843,7 +870,8 @@ async fn test_two_stream_capability_is_edge_scoped() {
 #[nuclei::test]
 async fn test_replicator_management() {
     let store = MockBitswapStore::new();
-    let (host, handle, _events, replicators) = P2PHost::new(store).await.unwrap();
+    let (host, handle, _events, replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
 
     // Spawn the host
     nuclei::spawn(host.run()).detach();
@@ -895,8 +923,10 @@ async fn test_replicator_management() {
 async fn regression_834_gossipsub_message_id_distinguishes_senders() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -967,9 +997,13 @@ async fn wait_until_disconnected(handle: &p2p::P2PHostHandle, peer_id: PeerId) {
 #[nuclei::test]
 async fn test_disconnect_drops_connected_peer() {
     let (host0, handle0, _events0, _replicators0) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     let (host1, handle1, _events1, _replicators1) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -995,11 +1029,15 @@ async fn test_disconnect_drops_connected_peer() {
 #[nuclei::test]
 async fn test_disconnect_absent_peer_is_ok() {
     let (host0, handle0, _events0, _replicators0) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     nuclei::spawn(host0.run()).detach();
 
     let (_host1, handle1, _events1, _replicators1) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     let never_connected = handle1.local_peer_id_cached();
 
     handle0

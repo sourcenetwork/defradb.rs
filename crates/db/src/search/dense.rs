@@ -19,7 +19,8 @@ use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as JsonValue};
 
-use crate::search::{embedding::normalized_embedding_url, EmbeddingClientConfig};
+use crate::search::EmbeddingClientConfig;
+use inputs::embeddings::normalized_embedding_url;
 
 const DEFAULT_LIMIT: usize = 10;
 const DEFAULT_CANDIDATE_LIMIT: usize = 0;

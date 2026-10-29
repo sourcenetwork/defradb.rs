@@ -45,7 +45,7 @@ async fn node() -> TestCluster {
 }
 
 async fn subscribe(cluster: &TestCluster, query: &str) -> net::http::Response {
-    net::http::Client::new()
+    net::http::Client::new(edge::testing::edge())
         .post(format!("{}/api/v0/graphql", cluster.api_url(0)))
         .header("Accept", "text/event-stream")
         .json(&serde_json::json!({ "query": query }))

@@ -131,7 +131,7 @@ impl AcpPolicyAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let policy = get_data_from_args(&self.policy, &self.file)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -167,7 +167,7 @@ impl AcpDocumentRelationshipAddArgs {
             .as_deref()
             .ok_or_else(|| crate::error::Error::MissingInput("--actor is required".to_string()))?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -196,7 +196,7 @@ impl AcpDocumentRelationshipDeleteArgs {
             .as_deref()
             .ok_or_else(|| crate::error::Error::MissingInput("--actor is required".to_string()))?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

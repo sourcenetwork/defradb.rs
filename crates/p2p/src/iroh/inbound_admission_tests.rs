@@ -117,7 +117,7 @@ async fn stop_code_after(
         .and_then(|opened| opened.expect("opener task"));
 
     transport.shutdown().await.unwrap();
-    endpoint_task.join().await.unwrap();
+    endpoint_task.await.unwrap();
     code
 }
 
@@ -419,7 +419,7 @@ async fn an_oversized_manage_reply_on_its_request_stream_is_stopped() {
             .and_then(|replied| replied.expect("replier task"));
 
         transport.shutdown().await.unwrap();
-        endpoint_task.join().await.unwrap();
+        endpoint_task.await.unwrap();
         assert_eq!(code, Some(3));
     })
     .await

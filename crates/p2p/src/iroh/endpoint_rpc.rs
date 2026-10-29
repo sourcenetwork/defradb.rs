@@ -3,7 +3,8 @@
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
-use crate::rt::oneshot;
+use futures::channel::oneshot;
+use futures::FutureExt;
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
 use tracing::{debug, warn};
@@ -531,10 +532,9 @@ pub(super) async fn handle_two_stream_request(
     // heads do not wait behind dead requests occupying every per-peer sender
     // slot.
     let wait_for_reply_or_disconnect = async {
-        crate::rt::select! {
-            biased;
-            reply = wait_for_reply => reply,
-            reason = connection.closed() => Err(crate::error::Error::Transport(
+        futures::select_biased! {
+            reply = wait_for_reply.fuse() => reply,
+            reason = connection.closed().fuse() => Err(crate::error::Error::Transport(
                 format!("PushLog connection closed before acknowledgement: {reason}")
             )),
         }
@@ -1076,6 +1076,7 @@ async fn try_fetch_from_provider(
 
 #[derive(Clone)]
 pub(super) struct BlockSyncResources {
+    edge: edge::Edge,
     endpoint: Endpoint,
     peer_map: Arc<SharedPeerMap>,
     connection_cache: ConnectionCache,
@@ -1086,6 +1087,7 @@ pub(super) struct BlockSyncResources {
 
 impl BlockSyncResources {
     pub(super) fn new(
+        edge: edge::Edge,
         endpoint: Endpoint,
         peer_map: Arc<SharedPeerMap>,
         connection_cache: ConnectionCache,
@@ -1094,6 +1096,7 @@ impl BlockSyncResources {
         fetch_stats: Arc<FetchStats>,
     ) -> Self {
         Self {
+            edge,
             endpoint,
             peer_map,
             connection_cache,
@@ -1117,7 +1120,7 @@ pub(super) async fn handle_block_sync(
     providers: Vec<PeerId>,
     missing: Vec<cid::Cid>,
 ) {
-    use crate::rt::JoinSet;
+    use edge::TaskSet;
 
     if !missing.is_empty() {
         debug!(
@@ -1128,8 +1131,6 @@ pub(super) async fn handle_block_sync(
         );
     }
 
-    let mut tasks: JoinSet<CarFetchAttempt> = JoinSet::new();
-
     let request = if missing.is_empty() {
         CarFetchRequest::full_dag(root)
     } else {
@@ -1137,6 +1138,7 @@ pub(super) async fn handle_block_sync(
     };
 
     let BlockSyncResources {
+        edge,
         endpoint,
         peer_map,
         connection_cache,
@@ -1144,6 +1146,8 @@ pub(super) async fn handle_block_sync(
         admission,
         fetch_stats,
     } = resources;
+
+    let mut tasks: TaskSet<CarFetchAttempt> = TaskSet::new(edge);
 
     for provider in &providers {
         let endpoint = endpoint.clone();
@@ -1183,7 +1187,7 @@ pub(super) async fn handle_block_sync(
         "selective"
     };
 
-    while let Some(task) = crate::rt::join_next(&mut tasks).await {
+    while let Some(task) = tasks.join_next().await {
         match task {
             Ok(attempt) if attempt.outcome.is_success() => {
                 any_success = true;
@@ -1569,7 +1573,7 @@ mod tests {
             let cache = new_connection_cache(GossipHandle::new());
             let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
             let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
-            let (accepted_tx, mut accepted_rx) = crate::rt::mpsc::unbounded_channel();
+            let (accepted_tx, mut accepted_rx) = futures::channel::mpsc::unbounded();
 
             let accept_task = crate::rt::spawn(edge::compat({
                 let endpoint = accept_ep.clone();
@@ -1578,7 +1582,7 @@ mod tests {
                     while let Some(incoming) = endpoint.accept().await {
                         if let Ok(connection) = incoming.await {
                             held.push(connection);
-                            let _ = accepted_tx.send(());
+                            let _ = accepted_tx.unbounded_send(());
                         }
                     }
                 }

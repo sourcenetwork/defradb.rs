@@ -109,12 +109,16 @@ struct Pair {
 }
 
 async fn connected_pair(cid: cid::Cid, bytes: Vec<u8>) -> Pair {
-    let (producer, producer_handle, _producer_events, _) =
-        P2PHost::new(MockBitswapStore::new().with_block(cid, bytes))
+    let (producer, producer_handle, _producer_events, _) = P2PHost::new(
+        MockBitswapStore::new().with_block(cid, bytes),
+        edge::testing::edge(),
+    )
+    .await
+    .unwrap();
+    let (consumer, consumer_handle, consumer_events, _) =
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
             .await
             .unwrap();
-    let (consumer, consumer_handle, consumer_events, _) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
     nuclei::spawn(producer.run()).detach();

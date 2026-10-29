@@ -9,6 +9,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
 use cid::Cid;
+use edge::Edge;
 use libp2p::PeerId;
 use nuclei::sync::mpsc;
 use nuclei::time::{sleep_until, timeout, Instant, Sleep};
@@ -30,6 +31,7 @@ struct SendDone {
 #[derive(Debug)]
 pub(crate) struct Driver {
     network: Network,
+    edge: Edge,
     results: mpsc::UnboundedReceiver<SendDone>,
     results_tx: mpsc::UnboundedSender<SendDone>,
     keep_alive: mpsc::UnboundedSender<KeepAlive>,
@@ -39,13 +41,15 @@ pub(crate) struct Driver {
 }
 
 impl Driver {
-    /// Spawns the keep-alive task on the current nuclei runtime.
-    pub(crate) fn new(network: Network) -> Self {
+    /// Spawns the keep-alive task on `edge`, where the sends run too.
+    pub(crate) fn new(network: Network, edge: Edge) -> Self {
         let (results_tx, results) = mpsc::unbounded_channel();
         let (keep_alive, ops) = mpsc::unbounded_channel();
-        nuclei::spawn(run_keep_alive(network.clone(), ops)).detach();
+        edge.spawn_service(run_keep_alive(network.clone(), ops))
+            .detach();
         Driver {
             network,
+            edge,
             results,
             results_tx,
             keep_alive,
@@ -78,7 +82,7 @@ impl Driver {
         for outgoing in client.take_ready(protocol) {
             let network = self.network.clone();
             let results = self.results_tx.clone();
-            nuclei::spawn(async move {
+            drop(self.edge.spawn(async move {
                 let peer = outgoing.peer;
                 let ok = match network.send_message(peer, outgoing.message).await {
                     Ok(()) => true,
@@ -95,8 +99,7 @@ impl Driver {
                 if results.send(done).is_err() {
                     debug!(%peer, "client send result dropped, behaviour is gone");
                 }
-            })
-            .detach();
+            }));
         }
         for change in client.take_keep_alive() {
             if self.keep_alive.send(change).is_err() {

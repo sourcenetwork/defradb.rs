@@ -30,7 +30,7 @@ async fn txn_schema_add_is_scoped_under_warm_cache(cluster: TestCluster) {
     }
 
     let tx_id = client.tx_create().expect("tx_create failed");
-    let resp = net::http::Client::new()
+    let resp = net::http::Client::new(edge::testing::edge())
         .post(format!("{}/api/v0/collections", api_url))
         .header("x-defradb-tx", &tx_id)
         .body("type CacheWidget { name: String }")

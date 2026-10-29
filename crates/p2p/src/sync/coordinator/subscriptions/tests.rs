@@ -479,6 +479,7 @@ async fn new_test_coordinator_with_store(
     let (coordinator, _events) = SyncCoordinator::with_collection_store(
         transport,
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         collection_store,

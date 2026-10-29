@@ -347,7 +347,8 @@ mod tests {
     #[nuclei::test]
     async fn peer_disconnect_only_on_last_connection_close() {
         let store = MockBitswapStore::new();
-        let (mut host, _handle, mut events, _registry) = P2PHost::new(store).await.unwrap();
+        let (mut host, _handle, mut events, _registry) =
+            P2PHost::new(store, edge::testing::edge()).await.unwrap();
         let peer = PeerId::random();
 
         // One of two connections closes; one remains (num_established == 1).

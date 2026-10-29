@@ -147,7 +147,7 @@ async fn test_process_pushlog_already_merged() {
     assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
 }
 
@@ -396,7 +396,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
 
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
     let pending = manager
         .pending_dag_snapshot(&composite_cid)
@@ -436,7 +436,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
     assert!(
         matches!(
             events.try_recv(),
-            Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+            Err(futures::channel::mpsc::TryRecvError::Empty)
         ),
         "a legacy field PushLog must not be emitted as a standalone document head"
     );
@@ -491,7 +491,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     // sole DagNeedsFetch dispatcher.
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
 
     // Three retry rounds while the field block is still missing.
@@ -530,7 +530,7 @@ async fn test_diagnostics_counters_track_pending_dag_lifecycle() {
     ));
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
 
     let snap = diag.snapshot();
@@ -568,7 +568,7 @@ async fn test_pending_dag_attempts_increment_per_retry() {
 
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
     assert_eq!(manager.pending_dag_attempts(&composite_cid), 0);
@@ -634,7 +634,7 @@ async fn test_process_pushlog_pending_capacity_returns_typed_error() {
         .unwrap();
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
 
@@ -689,7 +689,7 @@ async fn test_max_pending_dags_zero_is_normalized_to_one() {
         .expect("a single pending registration must be admitted even with cap 0");
     assert!(matches!(
         events.try_recv(),
-        Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+        Err(futures::channel::mpsc::TryRecvError::Empty)
     ));
     assert_eq!(manager.pending_dag_count(), 1);
 }
@@ -709,7 +709,7 @@ mod pending_persistence {
         store: Arc<RegolithStore>,
     ) -> (
         SyncManager<DefraBlockstore<RegolithStore>>,
-        nuclei::sync::mpsc::Receiver<SyncEvent>,
+        futures::channel::mpsc::Receiver<SyncEvent>,
         Arc<PendingDagStore<RegolithStore>>,
     ) {
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -1069,7 +1069,7 @@ mod pending_persistence {
 
         assert!(matches!(
             events.try_recv(),
-            Err(nuclei::sync::mpsc::error::TryRecvError::Empty)
+            Err(futures::channel::mpsc::TryRecvError::Empty)
         ));
 
         // The missing field arrives: the DAG resolves (DagReady emitted) but

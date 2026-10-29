@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use crate::rt::oneshot;
+use futures::channel::oneshot;
 use kovan_map::HopscotchMap;
 use kovan_queue::array_queue::ArrayQueue;
 use tracing::debug;
@@ -80,10 +80,10 @@ pub struct PendingSeQuery {
 impl PendingSeQuery {
     /// Await the reply for this query. Returns `Err` if the slot was cancelled
     /// (sender dropped) before a reply arrived.
-    pub async fn recv(
-        &mut self,
-    ) -> std::result::Result<QuerySEArtifactsReply, oneshot::error::RecvError> {
-        (&mut self.receiver).await
+    pub async fn recv(&mut self) -> crate::Result<QuerySEArtifactsReply> {
+        (&mut self.receiver)
+            .await
+            .map_err(|_| crate::Error::ChannelReceive)
     }
 }
 

@@ -162,12 +162,15 @@ impl Drop for StalledPeers {
 }
 
 async fn sync_status(api_url: &str) -> serde_json::Value {
-    net::http::get(format!("{api_url}/api/v0/p2p/sync/status"))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
+    net::http::get(
+        format!("{api_url}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json")
 }
 
 fn hub_log(cluster: &TestCluster) -> PathBuf {

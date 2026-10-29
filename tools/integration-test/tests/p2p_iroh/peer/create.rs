@@ -320,13 +320,15 @@ async fn create_propagates_to_last_node_in_chain() {
         )
         .await;
 
-        let status: serde_json::Value =
-            net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(2)))
-                .await
-                .expect("node2 sync status request")
-                .json()
-                .await
-                .expect("node2 sync status json");
+        let status: serde_json::Value = net::http::get(
+            format!("{}/api/v0/p2p/sync/status", cluster.api_url(2)),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("node2 sync status request")
+        .json()
+        .await
+        .expect("node2 sync status json");
         assert_eq!(status["pending_dags"].as_u64(), Some(0));
         assert_eq!(status["persisted_pending_dags"].as_u64(), Some(0));
         assert_eq!(status["pending_dag_fetch_exhausted"].as_u64(), Some(0));
@@ -401,10 +403,10 @@ async fn head_hint_fanout_above_car_worker_bound_quiesces() {
         .await;
 
         for receiver in 1..NODE_COUNT {
-            let status: serde_json::Value = net::http::get(format!(
-                "{}/api/v0/p2p/sync/status",
-                cluster.api_url(receiver)
-            ))
+            let status: serde_json::Value = net::http::get(
+                format!("{}/api/v0/p2p/sync/status", cluster.api_url(receiver)),
+                edge::testing::edge(),
+            )
             .await
             .unwrap_or_else(|_| panic!("node{receiver} sync status request"))
             .json()
@@ -492,7 +494,7 @@ async fn create_with_collection_and_subscription() {
         let sub_events_clone = sub_events.clone();
 
         let sub_handle = nuclei::spawn(async move {
-            let client = net::http::Client::new();
+            let client = net::http::Client::new(edge::testing::edge());
             let resp = client
                 .post(&sub_url)
                 .header("Accept", "text/event-stream")

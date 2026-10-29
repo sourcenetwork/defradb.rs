@@ -253,7 +253,7 @@ async fn wait_for_rollup(
 
 async fn run_view_gc(api_url: &str, name: &str) {
     let body = serde_json::json!({ "Names": [name] });
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .post(format!("{api_url}/api/v0/views/gc"))
         .json(&body)
         .send()

@@ -3,7 +3,6 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use crate::rt::time::timeout;
-use crate::rt::Task;
 use bytes::Bytes;
 use crypto::generate_ed25519;
 use identity::{Identity, RawIdentity};
@@ -20,7 +19,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 struct TestNode {
     transport: IrohTransport,
     events: DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
-    task: Task<()>,
+    task: edge::Task<()>,
 }
 
 impl TestNode {
@@ -36,7 +35,8 @@ impl TestNode {
             max_concurrent_multipath_paths: None,
             allowlist: Default::default(),
         };
-        let (command_tx, events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+        let (command_tx, events, _replicators, task) =
+            spawn_endpoint(config, edge::testing::edge()).await.unwrap();
         Self {
             transport: IrohTransport::new(command_tx, secret_key),
             events,
@@ -46,7 +46,7 @@ impl TestNode {
 
     async fn shutdown(self) {
         self.transport.shutdown().await.unwrap();
-        self.task.join().await.unwrap();
+        self.task.await.unwrap();
     }
 }
 

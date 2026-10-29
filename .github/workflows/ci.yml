@@ -91,6 +91,12 @@ jobs:
           -p storage -p datastore -p blockstore -p crdt -p defra-core -p query -p db
           -p acp -p zanzibar -p lens -p kms -p events
           -- -A clippy::all -D clippy::disallowed_methods
+      - name: Network edge confinement
+        env:
+          CLIPPY_CONF_DIR: .github/clippy/edge
+        run: >-
+          cargo clippy --lib --no-deps --workspace --exclude edge
+          -- -A clippy::all -D clippy::disallowed_methods
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})

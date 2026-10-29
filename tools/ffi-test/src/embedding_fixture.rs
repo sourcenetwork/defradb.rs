@@ -73,7 +73,9 @@ impl EmbeddingFixture {
     fn serve(listener: TcpListener) -> Task<()> {
         let app = Router::new().route("/api/embeddings", post(embeddings));
         nuclei::spawn(async move {
-            let _ = net::server::serve(listener, None, app).await;
+            if let Ok(edge) = edge::on_demand() {
+                let _ = net::server::serve(listener, None, app, edge.clone()).await;
+            }
         })
     }
 }

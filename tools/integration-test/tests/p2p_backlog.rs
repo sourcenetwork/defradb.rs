@@ -24,12 +24,15 @@ fn signal(pid: u32, signal: &str) {
 }
 
 async fn sync_status(api_url: &str) -> serde_json::Value {
-    net::http::get(format!("{api_url}/api/v0/p2p/sync/status"))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
+    net::http::get(
+        format!("{api_url}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json")
 }
 
 /// One pusher replicates a write burst far beyond every cap to one healthy

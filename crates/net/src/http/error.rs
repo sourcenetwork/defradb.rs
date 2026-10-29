@@ -100,18 +100,6 @@ impl Error {
         matches!(self, Self::Builder(_))
     }
 
-    pub fn is_body(&self) -> bool {
-        matches!(self, Self::Body { .. })
-    }
-
-    pub fn is_decode(&self) -> bool {
-        matches!(self, Self::Decode { .. })
-    }
-
-    pub fn is_redirect(&self) -> bool {
-        matches!(self, Self::TooManyRedirects { .. })
-    }
-
     /// The status the server answered, when that is the failure.
     pub fn status(&self) -> Option<StatusCode> {
         match self {

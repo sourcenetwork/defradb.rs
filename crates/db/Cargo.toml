@@ -80,7 +80,8 @@ blockstore = { path = "../blockstore" }
 crypto = { path = "../crypto" }
 defra-core = { path = "../defra-core" }
 kms = { path = "../kms" }
-# Remote signatures and embeddings: single-flight, waves, deadlines, retries.
+# Remote signatures and embeddings: single-flight, waves, deadlines, retries,
+# and the embedding requests themselves.
 inputs = { path = "../inputs" }
 # The network runtime those round trips run on.
 edge = { path = "../edge" }
@@ -91,16 +92,14 @@ events = { path = "../events", default-features = false }
 lens = { path = "../lens", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Embedding requests on nuclei sockets; the browser's fetch on wasm32.
-net = { path = "../net" }
-nuclei.workspace = true
 p2p = { path = "../p2p", default-features = false }
 
 # A browser peer replicates over the relay-only iroh transport; libp2p has no
 # browser build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# A transaction's actor on the page's executor when the page is not driving
+# the pool.
 n0-future.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
 p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

@@ -25,7 +25,7 @@ pub mod tls {
     pub use crate::tls::{Certificate, TlsError, Version};
 }
 
-/// Sends a GET to `url` with a client of default settings.
-pub async fn get(url: impl IntoUrl) -> Result<Response, Error> {
-    Client::new().get(url).send().await
+/// Sends a GET to `url` with a client of default settings on `edge`.
+pub async fn get(url: impl IntoUrl, edge: edge::Edge) -> Result<Response, Error> {
+    Client::new(edge).get(url).send().await
 }

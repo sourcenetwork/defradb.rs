@@ -58,7 +58,7 @@ async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
         )
         .expect("schema add");
 
-        let http = net::http::Client::new();
+        let http = net::http::Client::new(edge::testing::edge());
         let mut doc_ids = Vec::with_capacity(WRITERS);
         for writer in 0..WRITERS {
             let data = gql(

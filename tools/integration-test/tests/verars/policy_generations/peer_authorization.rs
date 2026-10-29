@@ -103,7 +103,7 @@ async fn native_ungranted_peer_is_filtered_until_explicitly_trusted_replay() {
             .p2p_document_sync("Note", &[public_id])
             .expect("request public control document");
         wait_for_public_control(&receiver, public_id).await;
-        let http = net::http::Client::builder()
+        let http = net::http::Client::builder(edge::testing::edge())
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();

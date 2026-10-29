@@ -17,7 +17,7 @@ pub async fn purge_node(cluster: &TestCluster, index: usize) {
         .purge()
         .unwrap_or_else(|error| panic!("purge node {index}: {error}"));
 
-    let http = net::http::Client::new();
+    let http = net::http::Client::new(edge::testing::edge());
     let url = cluster.api_url(index);
     if client.kind() == NodeKind::Go {
         wait_until_down(&http, url).await;

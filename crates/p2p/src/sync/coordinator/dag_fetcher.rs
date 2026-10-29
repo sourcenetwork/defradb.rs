@@ -10,10 +10,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::rt::mpsc;
 use crate::rt::time::Instant;
 use blockstore::Blockstore;
 use cid::Cid;
+use futures::channel::mpsc;
+use futures::{FutureExt, SinkExt};
 use tracing::{debug, error, info, warn};
 
 use super::dag_context::DagFetchContext;
@@ -623,6 +624,7 @@ async fn emit_dag_ready(
     let mut context = context.clone();
     context.fill_missing_from_block(root_data);
     if event_tx
+        .clone()
         .send(context.into_dag_ready(root_cid))
         .await
         .is_err()
@@ -703,7 +705,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
                 context.cancel_rooted_car_tracking(*root_cid);
                 return ProviderWindowOutcome::Stalled;
             }
-            crate::rt::select! {
+            futures::select! {
                 result = &mut *receiver => {
                     *answered = result.is_ok();
                     if matches!(result, Ok(FetchCompletion::Deferred)) {
@@ -715,8 +717,8 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
                     }
                     break;
                 },
-                _ = crate::rt::time::sleep_until(deadline) => break,
-                _ = crate::rt::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep_until(deadline).fuse() => break,
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
             if crate::rt::time::Instant::now() >= deadline {
                 break;
@@ -819,8 +821,8 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
             break;
         }
         if let Some(receiver) = completion.as_mut() {
-            crate::rt::select! {
-                result = receiver => {
+            futures::select! {
+                result = &mut *receiver => {
                     let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
                     completion = None;
                     transport_complete = true;
@@ -837,7 +839,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = crate::rt::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
         } else {
             crate::rt::time::sleep(Duration::from_millis(100)).await;
@@ -1031,8 +1033,8 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
             break;
         }
         if let Some(receiver) = completion.as_mut() {
-            crate::rt::select! {
-                result = receiver => {
+            futures::select! {
+                result = &mut *receiver => {
                     let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
                     completion = None;
                     match fetch_completion {
@@ -1051,7 +1053,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = crate::rt::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
         } else {
             crate::rt::time::sleep(Duration::from_millis(100)).await;

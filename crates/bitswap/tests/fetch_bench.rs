@@ -64,8 +64,9 @@ fn build<S: Store>(store: S) -> (PeerId, Swarm<Bitswap<S>>) {
     let peer_id = keypair.public().to_peer_id();
     let swarm = net::libp2p::swarm(
         &keypair,
-        Bitswap::new(peer_id, store, Config::default()),
+        Bitswap::new(peer_id, store, Config::default(), edge::testing::edge()),
         Duration::from_secs(120),
+        edge::testing::edge(),
     )
     .unwrap();
     (peer_id, swarm)

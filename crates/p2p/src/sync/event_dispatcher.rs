@@ -10,8 +10,10 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::rt::Semaphore;
-use crate::rt::{JoinError, JoinSet};
+use edge::{EdgeError, TaskSet};
+use futures::future::Fuse;
+use futures::FutureExt;
+use regolith::sync::Semaphore;
 
 use super::dispatch_queue::{DispatchSource, Queued};
 use crate::transport::TransportEvent;
@@ -213,6 +215,7 @@ impl Drop for DispatchActivity {
 /// Drain transport events without ever waiting for a request-worker slot.
 pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     mut events: Source,
+    edge: edge::Edge,
     diagnostics: Arc<DispatchDiagnostics>,
     handler: Handler,
 ) where
@@ -228,15 +231,18 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     let recovery_slots = Arc::new(Semaphore::new(MAX_ACTIVE_RECOVERY));
     let rejection_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REJECTIONS));
     let completion_slots = Arc::new(Semaphore::new(MAX_ACTIVE_COMPLETIONS));
-    let mut tasks = JoinSet::new();
+    let mut tasks = TaskSet::new(edge);
 
     loop {
-        crate::rt::select! {
-            biased;
-                    result = crate::rt::join_next(&mut tasks), if !tasks.is_empty() => {
+        futures::select_biased! {
+            result = if tasks.is_empty() {
+                Fuse::terminated()
+            } else {
+                tasks.join_next().fuse()
+            } => {
                 report_join_result(result.expect("dispatcher task set was non-empty"));
             }
-            queued = events.next(completion_slots.available_permits() > 0) => {
+            queued = events.next(completion_slots.available_permits() > 0).fuse() => {
                 let Some(Queued { event, lease }) = queued else {
                     break;
                 };
@@ -246,10 +252,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                     // is free. A single-queue source can hand one over while
                     // the set is full; then wait for an owner to finish before
                     // retaining more work outside the transport queue.
-                    let permit = Arc::clone(&completion_slots)
-                        .acquire_owned()
-                        .await
-                        .expect("completion semaphore is never closed");
+                    let permit = completion_slots.acquire_owned(1).await;
                     let completion_handler = handler.clone();
                     let activity = diagnostics.enter(DispatchActivityKind::Completion);
                     tasks.spawn(async move {
@@ -273,7 +276,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                         ),
                         DispatchClass::Inline | DispatchClass::Completion => unreachable!(),
                     };
-                    if let Ok(permit) = Arc::clone(slots).try_acquire_owned() {
+                    if let Some(permit) = slots.acquire_owned(1).now_or_never() {
                         let task_handler = handler.clone();
                         let activity = diagnostics.enter(activity_kind);
                         tasks.spawn(async move {
@@ -294,7 +297,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                         // sole event drain. A stalled write keeps its bounded slot;
                         // subsequent excess tokens are dropped, closing the stream
                         // as an actionable transport failure for durable retry.
-                        if let Ok(permit) = Arc::clone(&rejection_slots).try_acquire_owned() {
+                        if let Some(permit) = rejection_slots.acquire_owned(1).now_or_never() {
                             let rejection_handler = handler.clone();
                             let activity = diagnostics.enter(DispatchActivityKind::Rejection);
                             tasks.spawn(async move {
@@ -318,16 +321,18 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     }
 
     tasks.abort_all();
-    while let Some(result) = crate::rt::join_next(&mut tasks).await {
+    while let Some(result) = tasks.join_next().await {
         report_join_result(result);
     }
 }
 
-fn report_join_result(result: Result<(), JoinError>) {
-    if let Err(error) = result {
-        if !error.is_cancelled() {
-            tracing::error!(%error, "transport request task panicked");
+fn report_join_result(result: Result<(), EdgeError>) {
+    match result {
+        Ok(()) | Err(EdgeError::Cancelled) => {}
+        Err(EdgeError::Closed) => {
+            tracing::debug!("transport request task refused: the network is shutting down");
         }
+        Err(error) => tracing::error!(%error, "transport request task failed"),
     }
 }
 
@@ -336,7 +341,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::rt::{mpsc, Semaphore};
+    use nuclei::sync::{mpsc, Semaphore};
     use regolith::sync::SegQueue;
 
     use super::*;
@@ -392,6 +397,7 @@ mod tests {
             let release = Arc::clone(&release);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::new(DispatchDiagnostics::default()),
                 move |event, admission| {
                     let observed = Arc::clone(&observed);
@@ -467,6 +473,7 @@ mod tests {
             let recovery_observed = Arc::clone(&recovery_observed);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::clone(&diagnostics),
                 move |event, admission| {
                     let requests_started = Arc::clone(&requests_started);
@@ -527,6 +534,7 @@ mod tests {
             let rejected = Arc::clone(&rejected);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::clone(&diagnostics),
                 move |event, admission| {
                     let started = Arc::clone(&started);
@@ -591,6 +599,7 @@ mod tests {
             let completion = Arc::clone(&completion);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::clone(&diagnostics),
                 move |event, admission| {
                     let started = Arc::clone(&started);
@@ -674,6 +683,7 @@ mod tests {
             let request_observed = Arc::clone(&request_observed);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::clone(&diagnostics),
                 move |event, admission| {
                     let completion_started = Arc::clone(&completion_started);
@@ -725,6 +735,7 @@ mod tests {
             let request_observed = Arc::clone(&request_observed);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::new(DispatchDiagnostics::default()),
                 move |event, _admission| {
                     let completions_started = Arc::clone(&completions_started);
@@ -783,6 +794,7 @@ mod tests {
             let released_during_handler = Arc::clone(&released_during_handler);
             crate::rt::spawn(run_event_dispatcher(
                 rx,
+                edge::testing::edge(),
                 Arc::new(DispatchDiagnostics::default()),
                 move |_event: TestEvent, _admission| {
                     let released = Arc::clone(&released);

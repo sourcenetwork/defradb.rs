@@ -41,13 +41,15 @@ struct SyncStatusSnapshot {
 }
 
 async fn fetch_sync_status(cluster: &TestCluster, node: usize) -> SyncStatusSnapshot {
-    let status: serde_json::Value =
-        net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)))
-            .await
-            .expect("sync status request")
-            .json()
-            .await
-            .expect("sync status json");
+    let status: serde_json::Value = net::http::get(
+        format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json");
 
     SyncStatusSnapshot {
         pending_dags: status["pending_dags"]

@@ -108,11 +108,11 @@ impl TransportDocPusher for ReplayPusher {
 async fn every_successful_install_emits_a_correlated_completion() {
     p2p::rt::time::timeout(Duration::from_secs(15), async {
         let (host, handle, _events, _) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
+            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)), edge::testing::edge())
                 .await
                 .unwrap();
         let (remote, remote_handle, _remote_events, _) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
+            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)), edge::testing::edge())
                 .await
                 .unwrap();
         let local_task = p2p::rt::spawn(host.run());

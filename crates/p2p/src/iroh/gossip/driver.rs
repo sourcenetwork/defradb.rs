@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::rt::time::GossipInstant as Instant;
 use bytes::Bytes;
+use futures::FutureExt;
 use iroh::endpoint::{Connection, RecvStream};
 use iroh::EndpointId;
 use iroh_gossip::proto::util::TimerMap;
@@ -175,12 +176,12 @@ where
                 crate::rt::yield_now().await;
             }
             let wake_at = self.next_deadline();
-            let input = crate::rt::select! {
-                input = inbox.next() => match input {
+            let input = futures::select! {
+                input = inbox.next().fuse() => match input {
                     Some(input) => Some(input),
                     None => break,
                 },
-                () = sleep_until(wake_at) => None,
+                () = sleep_until(wake_at).fuse() => None,
             };
             let outcome = match input {
                 Some(input) => self.on_input(input).await,

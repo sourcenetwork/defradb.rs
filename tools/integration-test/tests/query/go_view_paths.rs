@@ -8,7 +8,7 @@
 use integration_test::{for_each_runtime, TestCluster};
 
 async fn post(api_url: &str, path: &str, body: Option<serde_json::Value>) -> (u16, String) {
-    let request = net::http::Client::new().post(format!("{api_url}{path}"));
+    let request = net::http::Client::new(edge::testing::edge()).post(format!("{api_url}{path}"));
     let request = match body {
         Some(body) => request.json(&body),
         None => request,

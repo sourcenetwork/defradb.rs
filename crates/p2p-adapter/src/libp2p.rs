@@ -47,6 +47,7 @@ pub struct P2PAdapter<B: Blockstore + 'static> {
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
+    network: p2p::network::Network,
 }
 
 async fn wait_for_branchable_merges(
@@ -129,6 +130,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
         version_syncer: Option<Arc<dyn VersionSyncer>>,
         nac_checker: Arc<dyn db::NodeAccessChecker>,
     ) -> Self {
+        let network = coordinator.network();
         Self {
             handle,
             sync_coordinator: Some(coordinator),
@@ -139,6 +141,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
+            network,
         }
     }
 
@@ -251,6 +254,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 .nac_checker
                 .as_ref()
                 .map(|checker| db::bound_node_access_checker(Arc::clone(checker), context.clone())),
+            network: self.network.clone(),
         }))
     }
 
@@ -516,6 +520,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 Arc::clone(pusher),
                 plan,
                 self.event_bus.clone(),
+                self.network.clone(),
             ))
         } else {
             None
@@ -564,7 +569,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                p2p::rt::spawn(async move {
+                self.network.spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
@@ -580,7 +585,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     replay
                         .complete(result.err().map(|error| error.to_string()))
                         .await;
-                }).detach();
+                });
             } else {
                 replay.complete(None).await;
             }
@@ -869,6 +874,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             return crate::doc_sync::sync::sync_documents(
                 Arc::new(self.handle.clone()),
                 event_bus.as_ref(),
+                &self.network,
                 doc_ids,
                 timeout.unwrap_or(crate::doc_sync::DEFAULT_DOC_SYNC_TIMEOUT),
                 1,
@@ -1021,14 +1027,14 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             let request_clone = request.clone();
             let handle = self.handle.clone();
             let peer_id = *peer_id;
-            p2p::rt::spawn(async move {
+            self.network.spawn(async move {
                 if let Err(error) = handle
                     .send_branchable_sync_request(peer_id, request_clone)
                     .await
                 {
                     tracing::warn!(peer_id = %peer_id, error = %error, "failed to send BranchableSyncRequest");
                 }
-            }).detach();
+            });
         }
 
         wait_for_branchable_merges(
@@ -1284,15 +1290,18 @@ mod tests {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         }
     }
 
     #[nuclei::test]
     async fn identity_lookup_checks_nac_before_parsing_or_network_io() {
-        let (_host, handle, _events, _replicators) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
-                .await
-                .unwrap();
+        let (_host, handle, _events, _replicators) = p2p::host::P2PHost::new(
+            BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
         let invalid_but_wrapped = TransportPeerId::new("not-a-libp2p-peer-id").unwrap();
 
         let mut denied = identity_test_adapter(handle.clone());
@@ -1323,6 +1332,7 @@ mod tests {
                 BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
                 p2p::host::P2PHostConfig::default(),
                 None,
+                edge::testing::edge(),
             )
             .await
             .unwrap();
@@ -1332,6 +1342,7 @@ mod tests {
                 BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
                 p2p::host::P2PHostConfig::default(),
                 Some(first_responder_identity),
+                edge::testing::edge(),
             )
             .await
             .unwrap();
@@ -1362,6 +1373,7 @@ mod tests {
                 BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
                 p2p::host::P2PHostConfig::default(),
                 Some(second_responder_identity),
+                edge::testing::edge(),
             )
             .await
             .unwrap();
@@ -1379,14 +1391,18 @@ mod tests {
         task_a.join().await.unwrap();
         replacement_task.join().await.unwrap();
 
-        let (host_c, handle_c, _events_c, _replicators_c) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
-                .await
-                .unwrap();
-        let (host_d, handle_d, _events_d, _replicators_d) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
-                .await
-                .unwrap();
+        let (host_c, handle_c, _events_c, _replicators_c) = p2p::host::P2PHost::new(
+            BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+        let (host_d, handle_d, _events_d, _replicators_d) = p2p::host::P2PHost::new(
+            BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
         let task_c = p2p::rt::spawn(host_c.run());
         let task_d = p2p::rt::spawn(host_d.run());
         connect_hosts(&handle_c, &handle_d).await;
@@ -1406,14 +1422,18 @@ mod tests {
     /// `!any_sent` branch instead.
     #[nuclei::test]
     async fn doc_sync_with_unresponsive_peer_returns_ok() {
-        let (host_a, handle_a, _events_a, _replicators_a) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
-                .await
-                .expect("host a");
-        let (host_b, handle_b, _events_b, _replicators_b) =
-            p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
-                .await
-                .expect("host b");
+        let (host_a, handle_a, _events_a, _replicators_a) = p2p::host::P2PHost::new(
+            BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("host a");
+        let (host_b, handle_b, _events_b, _replicators_b) = p2p::host::P2PHost::new(
+            BitswapStoreAdapter::new(Arc::new(NoopBlockstore)),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("host b");
 
         p2p::rt::spawn(host_a.run()).detach();
         p2p::rt::spawn(host_b.run()).detach();
@@ -1428,6 +1448,7 @@ mod tests {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         };
 
         connect_hosts(&handle_a, &handle_b).await;

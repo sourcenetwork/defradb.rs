@@ -1,7 +1,7 @@
 //! libp2p on nuclei: a TCP transport on nuclei sockets ([`TcpTransport`]),
 //! the same transport authenticated with Noise and multiplexed with Yamux,
-//! an executor that runs a swarm's connection tasks on nuclei, and a swarm
-//! of all three.
+//! an executor that runs a swarm's connection tasks on the network edge,
+//! and a swarm of all three.
 
 mod interfaces;
 mod tcp;
@@ -10,6 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use edge::Edge;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::timeout::TransportTimeout;
 use libp2p::core::transport::{Boxed, Transport as _};
@@ -24,13 +25,21 @@ pub use tcp::Transport as TcpTransport;
 /// dial fails.
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A swarm's connection tasks, run on the nuclei runtime the swarm is polled
-/// on.
-pub struct Executor;
+/// A swarm's connection tasks, run on the network edge it was given until
+/// the swarm closes them or the edge stops accepting.
+pub struct Executor {
+    edge: Edge,
+}
+
+impl Executor {
+    pub fn new(edge: Edge) -> Self {
+        Self { edge }
+    }
+}
 
 impl libp2p::swarm::Executor for Executor {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        nuclei::spawn(future).detach();
+        self.edge.spawn_service(future).detach();
     }
 }
 
@@ -47,9 +56,14 @@ pub fn authenticated_tcp(
         .boxed())
 }
 
-/// A swarm of `behaviour` on [`authenticated_tcp`] and the nuclei
-/// [`Executor`], closing a connection idle for `idle`.
-pub fn swarm<B>(keypair: &Keypair, behaviour: B, idle: Duration) -> Result<Swarm<B>, noise::Error>
+/// A swarm of `behaviour` on [`authenticated_tcp`] whose connections run on
+/// `edge`, closing a connection idle for `idle`.
+pub fn swarm<B>(
+    keypair: &Keypair,
+    behaviour: B,
+    idle: Duration,
+    edge: Edge,
+) -> Result<Swarm<B>, noise::Error>
 where
     B: NetworkBehaviour,
 {
@@ -58,6 +72,7 @@ where
         transport,
         behaviour,
         keypair.public().to_peer_id(),
-        libp2p::swarm::Config::with_executor(Executor).with_idle_connection_timeout(idle),
+        libp2p::swarm::Config::with_executor(Executor::new(edge))
+            .with_idle_connection_timeout(idle),
     ))
 }

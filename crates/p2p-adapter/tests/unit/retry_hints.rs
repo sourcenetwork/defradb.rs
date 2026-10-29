@@ -16,6 +16,7 @@ enum PushPath {
 
 async fn assert_hint_prevents_resend(path: PushPath) {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
+    db.set_network(edge::testing::edge());
     db.create_collection(
         schema::CollectionVersion::new(
             "Users",
@@ -57,6 +58,7 @@ async fn assert_hint_prevents_resend(path: PushPath) {
     let (coordinator, _events) = p2p::sync::SyncCoordinator::new(
         transport.clone(),
         blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
         p2p::sync::SyncConfig::default(),
     )
     .await

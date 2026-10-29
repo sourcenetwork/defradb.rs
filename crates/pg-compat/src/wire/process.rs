@@ -1,13 +1,14 @@
 //! A connection's life: SSL and GSS requests refused (the server speaks
-//! plain TCP), the startup within its time limit, then each frontend
-//! message handed to pgwire's handlers, with pgwire's state machine and
-//! error recovery.
+//! plain TCP) and the startup, all within one time limit, then each
+//! frontend message handed to pgwire's handlers, with pgwire's state
+//! machine and error recovery, until either side closes the connection.
 
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::SinkExt;
+use nuclei::time::{timeout_at, Instant};
 use pgwire::api::auth::StartupHandler;
 use pgwire::api::cancel::CancelHandler;
 use pgwire::api::copy::CopyHandler;
@@ -19,7 +20,7 @@ use pgwire::messages::{PgWireBackendMessage, PgWireFrontendMessage, SslNegotiati
 
 use super::connection::Connection;
 
-/// How long a client may take to finish its startup.
+/// How long a client may take from connecting to the end of its startup.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The first byte of a TLS ClientHello: a client that starts TLS directly,
@@ -38,13 +39,18 @@ where
     H: PgWireServerHandlers,
 {
     socket.get_ref().set_nodelay(true)?;
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut first = [0u8; 1];
-    if socket.peek(&mut first).await? == 1 && first[0] == TLS_HANDSHAKE {
+    let Ok(peeked) = timeout_at(deadline, socket.peek(&mut first)).await else {
+        return Ok(());
+    };
+    if peeked? == 1 && first[0] == TLS_HANDSHAKE {
         return Ok(());
     }
     run(
         socket,
         peer,
+        deadline,
         handlers.startup_handler(),
         handlers.simple_query_handler(),
         handlers.extended_query_handler(),
@@ -59,6 +65,7 @@ where
 async fn run<A, Q, EQ, C, CR, E>(
     socket: nuclei::net::TcpStream,
     peer: std::net::SocketAddr,
+    deadline: Instant,
     startup: Arc<A>,
     simple: Arc<Q>,
     extended: Arc<EQ>,
@@ -76,12 +83,14 @@ where
     E: ErrorHandler,
 {
     let mut connection = Connection::<EQ::Statement>::new(socket, peer);
-    if !refuse_ssl(&mut connection).await? {
+    let Ok(negotiated) = timeout_at(deadline, refuse_ssl(&mut connection)).await else {
+        return Ok(());
+    };
+    if !negotiated? {
         return Ok(());
     }
     connection.set_state(PgWireConnectionState::AwaitingStartup);
 
-    let mut startup_timeout = std::pin::pin!(nuclei::time::sleep(STARTUP_TIMEOUT));
     loop {
         let starting = matches!(
             connection.state(),
@@ -89,10 +98,7 @@ where
                 | PgWireConnectionState::AuthenticationInProgress
         );
         let message = if starting {
-            nuclei::select! {
-                _ = &mut startup_timeout => None,
-                message = connection.next() => message,
-            }
+            timeout_at(deadline, connection.next()).await.ok().flatten()
         } else {
             connection.next().await
         };
@@ -116,6 +122,9 @@ where
         if let Err(mut error) = handled {
             errors.on_error(&connection, &mut error);
             report(&mut connection, error, extended_query).await?;
+        }
+        if connection.is_closed() {
+            return Ok(());
         }
     }
 }
@@ -189,13 +198,10 @@ where
             PgWireFrontendMessage::CopyData(data) => copy.on_copy_data(connection, data).await?,
             PgWireFrontendMessage::CopyDone(done) => {
                 let result = copy.on_copy_done(connection, done).await;
-                if !extended_query {
-                    // A copy begun by a simple query leaves the copy state
-                    // before an error is reported, so the connection goes
-                    // on; on success it is ready for the next query. In the
-                    // extended protocol the Sync that follows answers.
-                    connection.set_state(PgWireConnectionState::ReadyForQuery);
-                }
+                // The copy ends here, before an error is reported. A copy
+                // begun by a simple query is answered now; in the extended
+                // protocol the Sync that follows reaches on_sync and answers.
+                connection.set_state(PgWireConnectionState::ReadyForQuery);
                 result?;
                 if !extended_query {
                     send_ready_for_query(connection, TransactionStatus::Idle).await?;

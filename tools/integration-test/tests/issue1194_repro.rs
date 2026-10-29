@@ -58,7 +58,7 @@ async fn issue1194_concurrent_distinct_doc_updates() {
         node.schema_add("type AgentResponse { status: String  content: String }")
             .expect("schema add");
 
-        let http = net::http::Client::new();
+        let http = net::http::Client::new(edge::testing::edge());
         let mut doc_ids = Vec::new();
         for i in 0..8 {
             let data = gql(

@@ -11,17 +11,17 @@ use std::time::Instant;
 #[test]
 fn replay_push_gate_caps_concurrent_sends() {
     workers::block_on(async {
-        let gate = Arc::new(
-            ReplayPushGate::new(ReplayPushConfig {
+        let gate = Arc::new(ReplayPushGate::new(
+            ReplayPushConfig {
                 max_concurrent_document_tasks: 8,
                 max_concurrent_outbound_pushes: 2,
                 per_peer_rate_limit_burst: 100,
                 per_peer_rate_limit_rate: 100.0,
                 send_timeout: Duration::from_secs(1),
                 ..Default::default()
-            })
-            .on(p2p::network::Network::on(edge::testing::edge())),
-        );
+            },
+            p2p::network::Network::on(edge::testing::edge()),
+        ));
         let current = Arc::new(AtomicUsize::new(0));
         let max_seen = Arc::new(AtomicUsize::new(0));
         let peer = PeerId::new("peer-1".to_string());
@@ -67,15 +67,17 @@ fn replay_push_gate_caps_concurrent_sends() {
 #[test]
 fn replay_push_gate_paces_after_peer_burst() {
     workers::block_on(async {
-        let gate = ReplayPushGate::new(ReplayPushConfig {
-            max_concurrent_document_tasks: 1,
-            max_concurrent_outbound_pushes: 1,
-            per_peer_rate_limit_burst: 1,
-            per_peer_rate_limit_rate: 10.0,
-            send_timeout: Duration::from_secs(1),
-            ..Default::default()
-        })
-        .on(p2p::network::Network::on(edge::testing::edge()));
+        let gate = ReplayPushGate::new(
+            ReplayPushConfig {
+                max_concurrent_document_tasks: 1,
+                max_concurrent_outbound_pushes: 1,
+                per_peer_rate_limit_burst: 1,
+                per_peer_rate_limit_rate: 10.0,
+                send_timeout: Duration::from_secs(1),
+                ..Default::default()
+            },
+            p2p::network::Network::on(edge::testing::edge()),
+        );
         let peer = PeerId::new("peer-1".to_string());
 
         let start = Instant::now();
@@ -103,8 +105,10 @@ fn record_max(max_seen: &AtomicUsize, value: usize) {
 #[test]
 fn replay_hint_defers_following_sends_without_polling_transport() {
     workers::block_on(async {
-        let gate = ReplayPushGate::new(ReplayPushConfig::default())
-            .on(p2p::network::Network::on(edge::testing::edge()));
+        let gate = ReplayPushGate::new(
+            ReplayPushConfig::default(),
+            p2p::network::Network::on(edge::testing::edge()),
+        );
         let peer = PeerId::new("limited".into());
         let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
         reply.retry_after_ms = Some(45_000);
@@ -141,10 +145,10 @@ fn replay_hint_is_durable_while_another_send_is_still_pending() {
                 .await
                 .unwrap();
         }
-        let gate = Arc::new(
-            ReplayPushGate::new(ReplayPushConfig::default())
-                .on(p2p::network::Network::on(edge::testing::edge())),
-        );
+        let gate = Arc::new(ReplayPushGate::new(
+            ReplayPushConfig::default(),
+            p2p::network::Network::on(edge::testing::edge()),
+        ));
         let (started, ready) = regolith::sync::bounded(1);
         let (release, wait) = regolith::sync::bounded(1);
         let slow_gate = gate.clone();
@@ -207,13 +211,13 @@ fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
             .observe_push_head(peer.as_str(), "doc", "collection")
             .await
             .unwrap();
-        let gate = Arc::new(
-            ReplayPushGate::new(ReplayPushConfig {
+        let gate = Arc::new(ReplayPushGate::new(
+            ReplayPushConfig {
                 max_concurrent_outbound_pushes: 1,
                 ..Default::default()
-            })
-            .on(p2p::network::Network::on(edge::testing::edge())),
-        );
+            },
+            p2p::network::Network::on(edge::testing::edge()),
+        ));
         let (started, ready) = regolith::sync::bounded(1);
         let (release, wait) = regolith::sync::bounded(1);
         let first_gate = gate.clone();
@@ -740,6 +744,7 @@ fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
     workers::block_on(async {
         let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
         let db = Arc::new(db::DB::from_arc(store).unwrap());
+        db.set_network(edge::testing::edge());
         let transport = ConnectedPeerTransport::new("local", "peer-gone");
         let peer = PeerId::new("peer-gone".to_string());
 

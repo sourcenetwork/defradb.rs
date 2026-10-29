@@ -64,6 +64,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
                 let (tx, mut rx) = crate::sync::dispatch_queue(8);
                 let task = nuclei::spawn(edge::compat(handle_block_sync(
                     BlockSyncResources::new(
+                        edge::testing::edge(),
                         client.clone(),
                         peer_map,
                         cache,
@@ -150,6 +151,7 @@ async fn each_provider_fetch_is_measured() {
             let (tx, mut rx) = crate::sync::dispatch_queue(8);
             let task = nuclei::spawn(edge::compat(handle_block_sync(
                 BlockSyncResources::new(
+                    edge::testing::edge(),
                     client.clone(),
                     peer_map,
                     cache,

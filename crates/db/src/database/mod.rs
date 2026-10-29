@@ -520,23 +520,23 @@ impl<S: Store> DB<S> {
     /// Runs the database's remote inputs (signatures, embeddings) and the
     /// network waits of its P2P work on the node's network runtime. Set once
     /// at startup, before the first write that needs one; without it
-    /// signatures run in the caller's task and embeddings on the process's
-    /// on-demand network runtime.
+    /// signatures run in the caller's task, embeddings on the process's
+    /// on-demand network runtime, and P2P work is refused
+    /// ([`Error::NetworkNotSet`]).
     pub fn set_network(&self, edge: edge::Edge) {
         let p2p = self
             .network
             .set(p2p::network::Network::on(edge.clone()))
             .is_ok();
-        if !self.remote_inputs.set_runtime(inputs::Runtime::edge(edge)) || !p2p {
+        if !self.remote_inputs.set_edge(edge) || !p2p {
             tracing::warn!("the database's network runtime was already set; keeping the first");
         }
     }
 
     /// Where the database's P2P work runs its network waits: the runtime
-    /// [`set_network`](Self::set_network) set, or without one the runtime of
-    /// the task that waits.
-    pub fn network(&self) -> p2p::network::Network {
-        self.network.get().cloned().unwrap_or_default()
+    /// [`set_network`](Self::set_network) set.
+    pub fn network(&self) -> Result<p2p::network::Network> {
+        self.network.get().cloned().ok_or(Error::NetworkNotSet)
     }
 
     pub(crate) fn remote_inputs(&self) -> &crate::remote_inputs::RemoteInputs {

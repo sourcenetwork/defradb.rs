@@ -130,7 +130,7 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
         }
 
         let status: serde_json::Value =
-            net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
+            net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)), edge::testing::edge())
                 .await
                 .expect("hub sync status request")
                 .json()
@@ -156,7 +156,7 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
                 let status: serde_json::Value = net::http::get(format!(
                     "{}/api/v0/p2p/sync/status",
                     cluster.api_url(pusher)
-                ))
+                ), edge::testing::edge())
                 .await
                 .expect("pusher sync status request")
                 .json()
@@ -199,7 +199,7 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
                 .unwrap_or_default();
 
             let hub_status: serde_json::Value =
-                net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)))
+                net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(0)), edge::testing::edge())
                     .await
                     .expect("hub sync status request")
                     .json()
@@ -215,7 +215,7 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
                 let status: serde_json::Value = net::http::get(format!(
                     "{}/api/v0/p2p/sync/status",
                     cluster.api_url(pusher)
-                ))
+                ), edge::testing::edge())
                 .await
                 .expect("pusher sync status request")
                 .json()

@@ -52,7 +52,8 @@ async fn doc_sync_against_go_defradb() {
         .expect("DEFRADB_GO_DOC_ID must be set to a docID the Go node has");
 
     let store = MockBitswapStore::new();
-    let (host, handle, events, _replicators) = P2PHost::new(store).await.unwrap();
+    let (host, handle, events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
     nuclei::spawn(host.run()).detach();
     handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -74,10 +75,14 @@ async fn doc_sync_against_go_defradb() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coord, _sync_events) =
-        p2p::sync::SyncCoordinator::new(transport, blockstore, p2p::sync::SyncConfig::default())
-            .await
-            .expect("build coordinator");
+    let (coord, _sync_events) = p2p::sync::SyncCoordinator::new(
+        transport,
+        blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
+        p2p::sync::SyncConfig::default(),
+    )
+    .await
+    .expect("build coordinator");
     let coord = Arc::new(coord);
 
     let coord_pump = Arc::clone(&coord);
@@ -142,7 +147,8 @@ async fn branchable_sync_against_go_defradb() {
         .expect("DEFRADB_GO_COLLECTION_ID must be set to a branchable collection id");
 
     let store = MockBitswapStore::new();
-    let (host, handle, events, _replicators) = P2PHost::new(store).await.unwrap();
+    let (host, handle, events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
     nuclei::spawn(host.run()).detach();
     handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -163,10 +169,14 @@ async fn branchable_sync_against_go_defradb() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coord, _sync_events) =
-        p2p::sync::SyncCoordinator::new(transport, blockstore, p2p::sync::SyncConfig::default())
-            .await
-            .unwrap();
+    let (coord, _sync_events) = p2p::sync::SyncCoordinator::new(
+        transport,
+        blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
+        p2p::sync::SyncConfig::default(),
+    )
+    .await
+    .unwrap();
     let coord = Arc::new(coord);
 
     let coord_pump = Arc::clone(&coord);

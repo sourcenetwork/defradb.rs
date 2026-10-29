@@ -12,11 +12,14 @@ type WireKmsCallback = Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>;
 /// The running peer's shutdown; see [`P2PLifecycle::shutdown`].
 pub(super) struct P2PLifecycle {
     shutdown: defra_p2p_adapter::IrohPeerShutdown,
+    scope: edge::Scope,
 }
 
 impl P2PLifecycle {
+    /// Stops the peer, then drains the rest of its network work.
     pub(super) async fn shutdown(&self) {
         self.shutdown.shutdown().await;
+        crate::network::drain(&self.scope).await;
     }
 }
 
@@ -45,7 +48,7 @@ pub(super) async fn setup_p2p<S: storage::corekv::Store + 'static>(
     node_identity: Option<Arc<identity::RawIdentity>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
-    edge: &edge::Edge,
+    scope: edge::Scope,
 ) -> Result<P2PSetupResult> {
     let secret_key =
         p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref()).await?;
@@ -61,7 +64,7 @@ pub(super) async fn setup_p2p<S: storage::corekv::Store + 'static>(
             allowlist: config.allowlist.clone(),
         },
         document_acp,
-        edge.clone(),
+        scope.edge().clone(),
     );
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = p2p::sync::SyncConfig {
@@ -89,6 +92,7 @@ pub(super) async fn setup_p2p<S: storage::corekv::Store + 'static>(
         ops: Arc::clone(&peer.ops),
         lifecycle: Some(P2PLifecycle {
             shutdown: peer.shutdown.clone(),
+            scope,
         }),
         mutator: peer.replication.broadcast_mutator.clone(),
         txn_broadcaster: Arc::clone(&peer.replication.txn_broadcaster),

@@ -142,7 +142,7 @@ impl DocumentAddArgs {
             input = input_str
         );
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;
@@ -188,7 +188,7 @@ impl DocumentGetArgs {
             fields = field_selection
         );
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;
@@ -241,7 +241,7 @@ impl DocumentUpdateArgs {
                 Error::MissingInput("--updater is required for update".to_string())
             })?;
 
-            let client = HttpClient::new(&ctx.url)?
+            let client = HttpClient::new(&ctx.url, &ctx.edge)?
                 .with_auth_token(ctx.auth_token.clone())
                 .with_verbose(ctx.verbose);
 
@@ -263,7 +263,7 @@ impl DocumentDeleteArgs {
         validate_identifier(collection)?;
 
         if let Some(ref doc_id) = self.doc_id {
-            let client = HttpClient::new(&ctx.url)?
+            let client = HttpClient::new(&ctx.url, &ctx.edge)?
                 .with_auth_token(ctx.auth_token.clone())
                 .with_verbose(ctx.verbose);
 

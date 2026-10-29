@@ -3,10 +3,8 @@
 //! which has no reactor.
 //!
 //! A [`Network`] is handed to every component that spawns network work,
-//! waits on a network deadline or sleeps before a retry. With an edge it
-//! goes through the edge. Without one (a test that runs the P2P layer on its
-//! own runtime) it uses the runtime of the task it is called from; that
-//! fallback lives here, in the network layer, and nowhere on the data path.
+//! waits on a network deadline or sleeps before a retry, and always goes
+//! through its edge.
 //!
 //! [`Network::hand_off`] is the crossing the data path uses: a call made on
 //! a pool worker runs its network part on the edge and awaits it there;
@@ -17,33 +15,26 @@ use std::time::Duration;
 
 use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSend};
 
-/// The network work of one component: the edge it runs on, when it has one.
-#[derive(Clone, Default)]
+/// The network work of one component: the edge it runs on.
+#[derive(Clone)]
 pub struct Network {
-    edge: Option<edge::Edge>,
+    edge: edge::Edge,
 }
 
 /// A network deadline passed before the work finished.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the network deadline passed")]
 pub struct Elapsed;
-
-impl std::fmt::Display for Elapsed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the network deadline passed")
-    }
-}
-
-impl std::error::Error for Elapsed {}
 
 impl Network {
     /// Network work on `edge`.
     pub fn on(edge: edge::Edge) -> Self {
-        Self { edge: Some(edge) }
+        Self { edge }
     }
 
-    /// The edge network work runs on, when there is one.
-    pub fn edge(&self) -> Option<&edge::Edge> {
-        self.edge.as_ref()
+    /// The edge network work runs on.
+    pub fn edge(&self) -> &edge::Edge {
+        &self.edge
     }
 
     /// Runs `future` as detached network work.
@@ -51,10 +42,16 @@ impl Network {
     where
         F: Future<Output = ()> + MaybeSend + 'static,
     {
-        match &self.edge {
-            Some(edge) => drop(edge.spawn(future)),
-            None => crate::rt::spawn(future).detach(),
-        }
+        drop(self.edge.spawn(future));
+    }
+
+    /// Like [`Network::spawn`], but hands `future` back unstarted when the
+    /// edge no longer accepts work.
+    pub fn try_spawn<F>(&self, future: F) -> Result<(), F>
+    where
+        F: Future<Output = ()> + MaybeSend + 'static,
+    {
+        self.edge.try_spawn(future).map(drop)
     }
 
     /// Starts `future` as network work now and hands its output back when
@@ -72,12 +69,9 @@ impl Network {
         Box::pin(async move { output.recv_async().await })
     }
 
-    /// Completes after `duration`, on the edge's clock when there is one.
+    /// Completes after `duration`, on the edge's clock.
     pub fn sleep(&self, duration: Duration) -> MaybeBoxFuture<'static, ()> {
-        match &self.edge {
-            Some(edge) => Box::pin(edge.sleep(duration)),
-            None => Box::pin(crate::rt::time::sleep(duration)),
-        }
+        Box::pin(self.edge.sleep(duration))
     }
 
     /// `future`'s output, or [`Elapsed`] once `limit` passes first.
@@ -85,12 +79,7 @@ impl Network {
     where
         F: Future,
     {
-        match &self.edge {
-            Some(edge) => edge.timeout(limit, future).await.map_err(|_| Elapsed),
-            None => crate::rt::time::timeout(limit, future)
-                .await
-                .map_err(|_| Elapsed),
-        }
+        self.edge.timeout(limit, future).await.map_err(|_| Elapsed)
     }
 
     /// Runs the network work `make` builds where network work runs, and
@@ -113,7 +102,7 @@ impl Network {
     pub fn crossing(&self) -> Option<&edge::Edge> {
         #[cfg(not(target_arch = "wasm32"))]
         if workers::on_worker() {
-            return self.edge.as_ref();
+            return Some(&self.edge);
         }
         // A browser's one worker is the page's thread, which runs the event
         // loop network work needs: nothing to cross.
@@ -123,10 +112,14 @@ impl Network {
 
 impl std::fmt::Debug for Network {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Network")
-            .field("edge", &self.edge.is_some())
-            .finish()
+        f.debug_struct("Network").finish_non_exhaustive()
     }
+}
+
+/// A [`Network`] on the edge the test binary shares.
+#[cfg(test)]
+pub(crate) fn test_network() -> Network {
+    Network::on(edge::testing::edge())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

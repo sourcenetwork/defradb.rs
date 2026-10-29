@@ -1,10 +1,9 @@
-use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use super::{poll_once, runtime, runtime_with, single_threaded, DropFlag};
+use super::{poll_once, runtime, runtime_with, single_threaded, stuck, DropFlag};
 use crate::{EdgeConfig, EdgeError};
 
 #[test]
@@ -23,17 +22,20 @@ fn shutdown_stops_accepting_drains_then_stops_the_rest() {
         finishing.store(true, Ordering::SeqCst);
     }));
     let (flag, stopped) = DropFlag::new();
+    let (_hold, stuck) = stuck();
     drop(edge.spawn(async move {
         let _flag = flag;
-        pending::<()>().await
+        stuck.await
     }));
 
     let drained = runtime.shutdown().unwrap();
 
     // Stop accepting woke the closing watcher, which finished within the
-    // drain; the stuck task outlived it and was stopped with the rest.
+    // drain; the stuck task outlived it, and is dropped once woken.
     assert_eq!(drained.remaining, 1);
     assert!(finished.load(Ordering::SeqCst));
+    assert!(!stopped.load(Ordering::SeqCst));
+    drop(_hold);
     assert!(stopped.load(Ordering::SeqCst));
     assert!(edge.is_closed());
     assert_eq!(

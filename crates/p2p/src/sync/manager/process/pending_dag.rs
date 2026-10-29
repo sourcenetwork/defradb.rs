@@ -1,5 +1,6 @@
 //! Pending DAG registration and retry logic.
 
+use futures::SinkExt;
 use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
@@ -789,6 +790,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Emit event that DAG is ready for merge
         if self
             .event_tx
+            .clone()
             .send(SyncEvent::DagReady {
                 root_cid: *root_cid,
                 doc_id: info.doc_id.clone(),

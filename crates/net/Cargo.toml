@@ -17,6 +17,8 @@ libp2p = ["dep:libp2p", "dep:futures", "dep:rapidhash", "dep:socket2", "dep:if-a
 
 # Native only: nuclei has no wasm32 build.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The network runtime every task here is spawned on.
+edge = { path = "../edge" }
 nuclei.workspace = true
 regolith.workspace = true
 futures-io = "0.3"
@@ -37,8 +39,6 @@ http = "1"
 http-body = "1"
 http-body-util = "0.1"
 tower-service = "0.3"
-tower-layer = "0.3"
-pin-project-lite = "0.2"
 bytes.workspace = true
 url = "2"
 serde.workspace = true
@@ -58,6 +58,7 @@ socket2 = { version = "0.6", optional = true }
 if-addrs = { version = "0.15", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+edge = { path = "../edge", features = ["testing"] }
 rcgen = "0.13"
 futures = { workspace = true }
 tower = { workspace = true, features = ["util"] }

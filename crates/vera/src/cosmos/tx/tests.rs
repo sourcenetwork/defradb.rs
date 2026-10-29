@@ -309,6 +309,7 @@ fn test_client(base_url: &str) -> VeraClient {
         base_url.to_string(),
         base_url.to_string(),
         Duration::from_secs(5),
+        &edge::testing::edge(),
     )
     .expect("client should build")
 }

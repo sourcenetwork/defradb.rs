@@ -26,7 +26,7 @@ fn oversized_schema() -> String {
 }
 
 async fn post_schema(url: &str, sdl: String) -> net::http::StatusCode {
-    net::http::Client::new()
+    net::http::Client::new(edge::testing::edge())
         .post(format!("{url}/api/v1/collections"))
         .header("content-type", "application/json")
         .body(sdl)

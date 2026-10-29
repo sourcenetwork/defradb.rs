@@ -37,10 +37,13 @@ async fn multi_layer_self_ref_relations_test(cluster: TestCluster) {
     let client = cluster.client(0);
     client.schema_add(SCHEMA).expect("add schema");
 
-    let collections: Vec<Value> = net::http::get(format!(
-        "{}/api/v0/collections?get_inactive=true",
-        cluster.api_url(0)
-    ))
+    let collections: Vec<Value> = net::http::get(
+        format!(
+            "{}/api/v0/collections?get_inactive=true",
+            cluster.api_url(0)
+        ),
+        edge::testing::edge(),
+    )
     .await
     .expect("get collection versions")
     .json()

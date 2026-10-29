@@ -9,6 +9,7 @@ async fn coordinator(
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport,
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         Arc::new(ReplicatorRegistry::new()),

@@ -56,13 +56,14 @@ impl VeraRsProvider {
                 return successful(confirmed);
             }
         }
-        let (worker, wire) = nuclei::spawn_blocking(move || {
-            let wire = worker.prepare(ACP_ADDRESS, data)?.to_vec();
-            Ok::<_, ProviderError>((worker, wire))
-        })
-        .join()
-        .await
-        .map_err(unavailable)??;
+        let (worker, wire) = self
+            .edge
+            .spawn_blocking(move || {
+                let wire = worker.prepare(ACP_ADDRESS, data)?.to_vec();
+                Ok::<_, ProviderError>((worker, wire))
+            })
+            .await
+            .map_err(unavailable)??;
         let (_, confirmed) = self.resolve_pending(worker, wire).await?;
         successful(confirmed)
     }
@@ -107,20 +108,20 @@ impl VeraRsProvider {
         .await
         .map_err(unavailable)?;
         let trusted = self.trusted;
-        nuclei::spawn_blocking(move || {
-            let mut worker = worker;
-            let receipt = worker.acknowledge(&response, &trusted)?;
-            Ok((
-                worker,
-                ConfirmedSubmission {
-                    receipt,
-                    revision,
-                    sequence: tx.nonce,
-                },
-            ))
-        })
-        .join()
-        .await
-        .map_err(unavailable)?
+        self.edge
+            .spawn_blocking(move || {
+                let mut worker = worker;
+                let receipt = worker.acknowledge(&response, &trusted)?;
+                Ok((
+                    worker,
+                    ConfirmedSubmission {
+                        receipt,
+                        revision,
+                        sequence: tx.nonce,
+                    },
+                ))
+            })
+            .await
+            .map_err(unavailable)?
     }
 }

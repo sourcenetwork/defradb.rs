@@ -23,6 +23,8 @@ regolith = { workspace = true }
 workers = { path = "../workers" }
 # `catch_unwind` and `or` on futures, on every target.
 futures-lite.workspace = true
+# The ready queue of a `TaskSet`.
+futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
@@ -31,6 +33,8 @@ tracing.workspace = true
 nuclei.workspace = true
 # The way into a library that needs a tokio runtime (`compat`).
 async-compat.workspace = true
+# libp2p's timer thread, started on the edge's cores.
+futures-timer = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Tasks and timers on the browser's event loop.

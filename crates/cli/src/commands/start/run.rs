@@ -1,11 +1,16 @@
 //! Node run loop and shutdown coordination
 
-use nuclei::task::{AbortHandle, Join, Task};
+use std::time::Duration;
+
 use nuclei::time::timeout;
 use tracing::{error, info, warn};
 
 use super::node::Node;
 use crate::error::{Error, Result};
+
+/// How long shutdown waits for the HTTP requests in flight, as long as the
+/// network runtime's own drain.
+const HTTP_DRAIN: Duration = Duration::from_secs(30);
 
 impl Node {
     /// Run the node until shutdown
@@ -19,28 +24,45 @@ impl Node {
         };
         info!("API endpoint: {scheme}://{}", self.config.api.address);
 
-        // Start HTTP server
-        let http_task: Option<Task<()>> = if let Some(server) = self.http_server.take() {
+        // Fallible setup comes before the servers start, so an error leaves
+        // nothing running.
+        #[cfg(unix)]
+        let (mut sigint, mut sigterm) = {
+            use nuclei::signal::unix::{signal, SignalKind};
+            (
+                signal(SignalKind::interrupt()).map_err(|e| Error::Signal(e.to_string()))?,
+                signal(SignalKind::terminate()).map_err(|e| Error::Signal(e.to_string()))?,
+            )
+        };
+
+        // Start HTTP server, in its own scope. Its task is awaited below to
+        // notice a crash, so it carries no deadline.
+        let mut http_task: Option<edge::Task<()>> = if let Some(server) = self.http_server.take() {
             info!("Starting HTTP server on {}", self.config.api.address);
-            Some(nuclei::spawn(async move {
-                if let Err(e) = server.run().await {
-                    error!("HTTP server error: {}", e);
-                }
-            }))
+            Some(
+                self.http_scope
+                    .edge()
+                    .spawn(async move {
+                        if let Err(e) = server.run().await {
+                            error!("HTTP server error: {}", e);
+                        }
+                    })
+                    .within(Duration::MAX),
+            )
         } else {
             None
         };
 
         // Start PG wire protocol server
         #[cfg(not(feature = "postgres"))]
-        let pg_task: Option<Task<()>> = None;
+        let pg_task: Option<edge::Service> = None;
         #[cfg(feature = "postgres")]
-        let pg_task: Option<Task<()>> = if let Some(server) = self.pg_server.take() {
+        let pg_task: Option<edge::Service> = if let Some(server) = self.pg_server.take() {
             info!(
                 "Starting Postgres wire protocol server on {}",
                 server.address()
             );
-            Some(nuclei::spawn(async move {
+            Some(self.edge.spawn_service(async move {
                 if let Err(e) = server.run().await {
                     error!("PG server error: {}", e);
                 }
@@ -54,32 +76,26 @@ impl Node {
 
         #[cfg(unix)]
         {
-            use nuclei::signal::unix::{signal, SignalKind};
-
-            let mut sigint =
-                signal(SignalKind::interrupt()).map_err(|e| Error::Signal(e.to_string()))?;
-            let mut sigterm =
-                signal(SignalKind::terminate()).map_err(|e| Error::Signal(e.to_string()))?;
-
-            nuclei::spawn(async move {
-                nuclei::select! {
-                    _ = sigint.recv() => {
-                        info!("Received SIGINT");
+            self.edge
+                .spawn_service(async move {
+                    nuclei::select! {
+                        _ = sigint.recv() => {
+                            info!("Received SIGINT");
+                        }
+                        _ = sigterm.recv() => {
+                            info!("Received SIGTERM");
+                        }
                     }
-                    _ = sigterm.recv() => {
-                        info!("Received SIGTERM");
+                    if let Err(e) = shutdown_tx.send(()).await {
+                        error!("Failed to send shutdown signal: {}", e);
                     }
-                }
-                if let Err(e) = shutdown_tx.send(()).await {
-                    error!("Failed to send shutdown signal: {}", e);
-                }
-            })
-            .detach();
+                })
+                .detach();
         }
 
         #[cfg(not(unix))]
         {
-            nuclei::spawn(async move {
+            self.edge.spawn_service(async move {
                 match nuclei::signal::ctrl_c().await {
                     Ok(()) => {
                         info!("Received Ctrl+C");
@@ -99,9 +115,7 @@ impl Node {
         }
 
         // Wait for shutdown signal OR HTTP server crash
-        let http_abort: Option<AbortHandle> = http_task.as_ref().map(Task::abort_handle);
-        let mut http_join: Option<Join<()>> = http_task.map(Task::join);
-        let http_crashed = match &mut http_join {
+        let http_crashed = match &mut http_task {
             Some(task) => {
                 nuclei::select! {
                     _ = self.shutdown_rx.recv() => false,
@@ -110,7 +124,7 @@ impl Node {
                             Ok(()) => {
                                 error!("HTTP server exited unexpectedly");
                             }
-                            Err(e) if e.is_panic() => {
+                            Err(edge::EdgeError::Panicked(e)) => {
                                 error!("HTTP server panicked: {}", e);
                             }
                             Err(e) => {
@@ -131,23 +145,24 @@ impl Node {
             info!("Initiating shutdown due to HTTP server failure...");
         } else {
             info!("Shutting down DefraDB node...");
-            // Only abort if we're shutting down normally (not due to crash)
-            if let (Some(abort), Some(task)) = (http_abort, http_join) {
+            // Only drain if we're shutting down normally (not due to crash)
+            if let Some(task) = http_task {
                 info!("Stopping HTTP server...");
-                abort.abort();
-                match timeout(std::time::Duration::from_secs(1), task).await {
-                    Ok(_) => info!("HTTP server stopped"),
-                    Err(_) => warn!(
-                        timeout_secs = 1,
-                        "HTTP server shutdown timed out - server was forcefully terminated. \
-                         This may occur if requests were still in flight."
-                    ),
+                let drained = self.http_scope.drain(HTTP_DRAIN).await;
+                if drained.is_complete() {
+                    info!("HTTP server stopped");
+                } else {
+                    task.abort();
+                    warn!(
+                        remaining = drained.remaining,
+                        timeout_secs = HTTP_DRAIN.as_secs(),
+                        "HTTP requests still running at the shutdown deadline were stopped"
+                    );
                 }
             }
             if let Some(task) = pg_task {
                 info!("Stopping PG server...");
-                task.abort();
-                let _ = timeout(std::time::Duration::from_secs(1), task.join()).await;
+                let _ = timeout(std::time::Duration::from_secs(1), task.stopped()).await;
                 info!("PG server stopped");
             }
         }
@@ -187,16 +202,16 @@ impl Node {
                     coordinator.shutdown().await;
 
                     // Abort all tasks - they will stop when the channel closes
-                    replication_task.abort();
-                    host_task.abort();
+                    replication_task.stop();
+                    host_task.stop();
                     failure_recorder_task.abort();
                     retry_loop_task.abort();
                     if let Some(event_task) = event_handler_task {
-                        event_task.abort();
+                        event_task.stop();
                     }
 
-                    let _ = timeout(grace, replication_task.join()).await;
-                    let _ = timeout(grace, host_task.join()).await;
+                    let _ = timeout(grace, replication_task.stopped()).await;
+                    let _ = timeout(grace, host_task.stopped()).await;
                 }
                 #[cfg(feature = "iroh")]
                 super::node::P2PTasks::Iroh {

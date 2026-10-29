@@ -16,3 +16,18 @@ pub use async_compat::Compat;
 pub fn compat<T>(inner: T) -> Compat<T> {
     Compat::new(inner)
 }
+
+/// Starts async-compat's tokio runtime on the calling thread, unless it runs
+/// already. Its threads take this thread's CPUs, and it sizes itself from
+/// them: started on a network shard, it would be one thread on one CPU.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn start_runtime() {
+    futures_lite::future::block_on(Compat::new(async {}));
+}
+
+/// Starts futures-timer's one thread, which runs libp2p's timers, unless it
+/// runs already: it takes the calling thread's CPUs.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn start_timer() {
+    drop(futures_timer::Delay::new(std::time::Duration::ZERO));
+}

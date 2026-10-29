@@ -1032,7 +1032,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node shutdown order",
         name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
         tiers: &[Boundary],
     },
@@ -1151,6 +1151,59 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/p2p/src/iroh/records/verify.rs verify; crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/p2p/src/iroh/records/task.rs Records::providers, rank",
         model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // One task serves a pg-compat connection: one deadline read at the
+        // accept bounds the peek, the SSL and GSS refusals and the startup;
+        // an extended-protocol error skips to the Sync; a fatal error or a
+        // cancel request closes it and the loop returns. A copy's CopyDone
+        // leaves the copy, so an Execute copy's Sync reaches on_sync.
+        family: "Postgres wire connection loop",
+        name: "INV_StartupWithinDeadline / INV_StartedNeverTimedOut / INV_NoQueryBeforeStartup / INV_SkipUntilSync / INV_SyncResumes / INV_CopyEnds / INV_NothingAfterEnd / LIVE_Ends: no connection outlives the startup deadline unstarted, nothing but Sync is handled during a skip, nothing is read after the end",
+        axis: Tla,
+        anchor: "crates/pg-compat/src/wire/process.rs serve, run, refuse_ssl, dispatch, report; crates/pg-compat/src/wire/connection.rs Connection::next, Connection::is_closed, Connection::poll_close; crates/pg-compat/src/handler/auth.rs DIDAuthHandler::on_startup",
+        model_ref: "MC_PgWire_{Green_Startup,Green_Protocol,Red_PeekNoDeadline,Red_SslNoDeadline,Red_StartupNoDeadline,Red_FreshDeadline,Red_DeadlineAfterStartup,Red_NoAwaitingSync,Red_HandleWhileSkipping,Red_SyncKeepsSkipping,Red_CopyFlagFromMessage,Red_CopyDoneStays,Red_ExtendedCopyDoneStays,Red_LoopAfterClose,Red_LoopAfterCloseRuns,Red_LoopAfterCloseHangs,Red_FatalStaysOpen,Red_StartupErrorNotFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client redirects and body deadline",
+        name: "credentials_stay_with_their_origin / at_most_limit_plus_one_exchanges / endless_redirects_fail / same_origin_redirect_keeps_credentials / cross_origin_redirect_strips_credentials: a credential from the request or the defaults reaches only the request's origin, a proxy credential only its own hop, within eleven exchanges",
+        axis: Lean,
+        anchor: "crates/net/src/http/client.rs Client::execute, Client::follow, Client::exchange, redirect, REDIRECT_LIMIT",
+        model_ref: "HttpClient.Redirect (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client redirects and body deadline",
+        name: "ends_after_timeout / at_most_one_timeout / deadline_wins_over_a_ready_piece / never_waits_past_the_deadline / no_timeout_before_the_deadline / no_limit_no_timeout: past the limit a body stream times out once, even with a piece ready, then gives its end and nothing more",
+        axis: Lean,
+        anchor: "crates/net/src/http/response.rs BytesStream::poll_next, Response::bytes_stream",
+        model_ref: "HttpClient.BodyDeadline (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Connect fallback race",
+        name: "INV_OneSocket / INV_FallbackWaits / INV_NeverIdle / INV_ErrorOnlyWhenAllFail / INV_LastError / INV_WithinLimit / LIVE_Ends: one socket comes back, the other family starts after the delay or a failure, an error only once every family failed",
+        axis: Tla,
+        anchor: "crates/net/src/connect.rs first_connected, Connector::socket, FALLBACK_DELAY",
+        model_ref: "MC_ConnectFallback_{Green,Green_NoTimeout,Green_Single,Red_NoDelay,Red_WaitAfterFailure,Red_FirstErrorWins,Red_KeepFirstError,Red_KeepLoser,Red_TimeoutMissesRace,Red_TimeoutMissesRaceHangs}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The first shutdown caller to swap the flag builds the one drain,
+        // which owns the only completion sender; a closed edge hands the
+        // drain back and the winner runs it in place. The drain waits for
+        // pruners, takes the tracked set, and aborts what outlives its
+        // deadline, so no tracked task keeps the coordinator alive. The
+        // GREEN configurations assume prune_finished_tasks reads the flag
+        // after announcing itself; Red_PrunerIgnoresFlag is the code without
+        // that read.
+        family: "Coordinator shutdown drain",
+        name: "INV_NoLeak / INV_OneDrain / INV_ErrMeansCancelled / LIVE_CallersReturn: one drain runs, no tracked task is left running in the set once it returns, every shutdown caller returns",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs SyncShutdownHandle::shutdown, begin_shutdown, drain_background_tasks, spawn_task, spawn_here, register_task, prune_finished_tasks; crates/p2p/src/network.rs Network::try_spawn; crates/edge/src/handle.rs Edge::try_spawn",
+        model_ref: "MC_CoordinatorShutdown_{Green,Green_TwoSpawns,Red_DropRefused,Red_CheckThenSpawn,Red_NoAbort,Red_SenderOutsideDrain,Red_TwoWinners,Red_NoPrunerWait,Red_PrunerIgnoresFlag,Red_NoRecheck}.cfg",
         tiers: &[Boundary],
     },
 ];

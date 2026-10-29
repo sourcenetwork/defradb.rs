@@ -1,27 +1,41 @@
 //! A test server on a nuclei listener, plain or over TLS.
 
 use std::convert::Infallible;
+use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use http::header::AUTHORIZATION;
 use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use net::tls::{ServerConfig, TlsAcceptor};
+
+/// How many `/slow` requests the test server started answering.
+#[allow(dead_code, reason = "only the server tests wait on it")]
+pub static SLOW_STARTED: AtomicUsize = AtomicUsize::new(0);
 
 /// What the test server answers, by path:
 /// - `/echo`: the request body, with its method in `x-method`;
 /// - `/query`: the request's query string;
 /// - `/status/<code>`: that status;
 /// - `/slow`: an answer after two seconds;
-/// - `/redirect/<code>`: a redirect to `/method` with that status;
-/// - `/method`: the request's method.
+/// - `/redirect/<code>`: a redirect with that status to the URL after `to=`
+///   in the query, or to `/method`;
+/// - `/method`: the request's method;
+/// - `/authorization`: the request's `Authorization` header, or nothing.
 async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
     let query = request.uri().query().unwrap_or("").to_owned();
+    let authorization = request
+        .headers()
+        .get(AUTHORIZATION)
+        .map(|value| Bytes::copy_from_slice(value.as_bytes()))
+        .unwrap_or_default();
     let body = request
         .into_body()
         .collect()
@@ -34,10 +48,12 @@ async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Inf
             .body(Full::new(body)),
         "/query" => Response::builder().body(Full::new(Bytes::from(query))),
         "/slow" => {
+            SLOW_STARTED.fetch_add(1, Ordering::SeqCst);
             nuclei::time::sleep(Duration::from_secs(2)).await;
             Response::builder().body(Full::new(Bytes::from_static(b"late")))
         }
         "/method" => Response::builder().body(Full::new(Bytes::from(method))),
+        "/authorization" => Response::builder().body(Full::new(authorization)),
         other => {
             if let Some(code) = other.strip_prefix("/status/") {
                 Response::builder()
@@ -46,7 +62,7 @@ async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Inf
             } else if let Some(code) = other.strip_prefix("/redirect/") {
                 Response::builder()
                     .status(code.parse::<u16>().unwrap_or(302))
-                    .header("location", "/method")
+                    .header("location", query.strip_prefix("to=").unwrap_or("/method"))
                     .body(Full::new(Bytes::new()))
             } else {
                 Response::builder()
@@ -59,19 +75,31 @@ async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Inf
 }
 
 /// Starts the test server; it runs until the test's runtime ends.
+#[allow(dead_code, reason = "the server tests start their own")]
 pub async fn start(tls: Option<Arc<ServerConfig>>) -> SocketAddr {
+    let (address, server) = serve_on(tls, edge::testing::edge()).await;
+    server.detach();
+    address
+}
+
+/// Starts the test server with its connections on `edge`, and the task that
+/// serves until `edge` stops accepting and the connections end.
+pub async fn serve_on(
+    tls: Option<Arc<ServerConfig>>,
+    edge: edge::Edge,
+) -> (SocketAddr, nuclei::Task<io::Result<()>>) {
     let listener = nuclei::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the test listener binds");
     let address = listener.get_ref().local_addr().expect("a local address");
     let acceptor = tls.map(TlsAcceptor::from);
-    nuclei::spawn(net::server::serve(
+    let server = nuclei::spawn(net::server::serve(
         listener,
         acceptor,
         tower::service_fn(answer),
-    ))
-    .detach();
-    address
+        edge,
+    ));
+    (address, server)
 }
 
 /// A self-signed certificate for `localhost`, the server configuration

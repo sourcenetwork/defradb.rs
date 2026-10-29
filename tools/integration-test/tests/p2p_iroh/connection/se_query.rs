@@ -37,9 +37,13 @@ async fn roundtrip_emits_request_and_reply_events() {
         let key0 = config0.secret_key.clone();
         let key1 = config1.secret_key.clone();
         let (command_tx0, mut events0, _replicators0, task0) =
-            spawn_endpoint(config0).await.expect("spawn endpoint 0");
+            spawn_endpoint(config0, edge::testing::edge())
+                .await
+                .expect("spawn endpoint 0");
         let (command_tx1, mut events1, _replicators1, task1) =
-            spawn_endpoint(config1).await.expect("spawn endpoint 1");
+            spawn_endpoint(config1, edge::testing::edge())
+                .await
+                .expect("spawn endpoint 1");
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
 
@@ -119,8 +123,8 @@ async fn roundtrip_emits_request_and_reply_events() {
 
         transport0.shutdown().await.expect("shutdown endpoint 0");
         transport1.shutdown().await.expect("shutdown endpoint 1");
-        task0.join().await.expect("endpoint task 0");
-        task1.join().await.expect("endpoint task 1");
+        task0.await.expect("endpoint task 0");
+        task1.await.expect("endpoint task 1");
     })
     .await;
 }

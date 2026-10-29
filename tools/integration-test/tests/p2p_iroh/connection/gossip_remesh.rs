@@ -99,10 +99,12 @@ async fn remesh_after_peer_restart() {
         let key0 = config0.secret_key.clone();
         let key1 = config1.secret_key.clone();
 
-        let (tx0, mut events0, _r0, task0) =
-            spawn_endpoint(config0).await.expect("spawn endpoint 0");
-        let (tx1, mut events1, _r1, task1) =
-            spawn_endpoint(config1).await.expect("spawn endpoint 1");
+        let (tx0, mut events0, _r0, task0) = spawn_endpoint(config0, edge::testing::edge())
+            .await
+            .expect("spawn endpoint 0");
+        let (tx1, mut events1, _r1, task1) = spawn_endpoint(config1, edge::testing::edge())
+            .await
+            .expect("spawn endpoint 1");
         let transport0 = IrohTransport::new(tx0, key0);
         let transport1 = IrohTransport::new(tx1, key1.clone());
 
@@ -139,15 +141,16 @@ async fn remesh_after_peer_restart() {
 
         // Kill node 1's transport entirely.
         transport1.shutdown().await.expect("shutdown 1");
-        task1.join().await.expect("endpoint task 1");
+        task1.await.expect("endpoint task 1");
         drop(transport1);
         wait_peer_unsubscribed(&mut events0, ENCRYPTION_TOPIC, "after node 1 death").await;
 
         // Bring node 1 back under the same identity (new ephemeral port).
         let mut config1b = test_config().await;
         config1b.secret_key = key1.clone();
-        let (tx1b, mut events1b, _r1b, task1b) =
-            spawn_endpoint(config1b).await.expect("respawn endpoint 1");
+        let (tx1b, mut events1b, _r1b, task1b) = spawn_endpoint(config1b, edge::testing::edge())
+            .await
+            .expect("respawn endpoint 1");
         let transport1b = IrohTransport::new(tx1b, key1);
         transport1b
             .subscribe(DefraTopic::Encryption)
@@ -189,8 +192,8 @@ async fn remesh_after_peer_restart() {
 
         transport0.shutdown().await.expect("shutdown 0");
         transport1b.shutdown().await.expect("shutdown 1b");
-        task0.join().await.expect("endpoint task 0");
-        task1b.join().await.expect("endpoint task 1b");
+        task0.await.expect("endpoint task 0");
+        task1b.await.expect("endpoint task 1b");
     })
     .await;
 }
@@ -204,10 +207,12 @@ async fn a_revoked_peer_gets_no_more_gossip() {
         let config1 = test_config().await;
         let key0 = config0.secret_key.clone();
         let key1 = config1.secret_key.clone();
-        let (tx0, mut events0, _r0, task0) =
-            spawn_endpoint(config0).await.expect("spawn endpoint 0");
-        let (tx1, mut events1, _r1, task1) =
-            spawn_endpoint(config1).await.expect("spawn endpoint 1");
+        let (tx0, mut events0, _r0, task0) = spawn_endpoint(config0, edge::testing::edge())
+            .await
+            .expect("spawn endpoint 0");
+        let (tx1, mut events1, _r1, task1) = spawn_endpoint(config1, edge::testing::edge())
+            .await
+            .expect("spawn endpoint 1");
         let transport0 = IrohTransport::new(tx0, key0);
         let transport1 = IrohTransport::new(tx1, key1);
 
@@ -263,8 +268,8 @@ async fn a_revoked_peer_gets_no_more_gossip() {
 
         transport0.shutdown().await.expect("shutdown 0");
         transport1.shutdown().await.expect("shutdown 1");
-        task0.join().await.expect("endpoint task 0");
-        task1.join().await.expect("endpoint task 1");
+        task0.await.expect("endpoint task 0");
+        task1.await.expect("endpoint task 1");
     })
     .await;
 }

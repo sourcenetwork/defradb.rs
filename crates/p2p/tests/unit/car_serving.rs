@@ -96,6 +96,7 @@ async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         Arc::new(ReplicatorRegistry::new()),
@@ -152,6 +153,7 @@ async fn indexed_metadata_serves_a_replicators_oversized_notice_without_payload_
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         replicators,
@@ -205,6 +207,7 @@ async fn oversized_notice_fails_closed_without_indexed_metadata() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         replicators,
@@ -257,6 +260,7 @@ async fn filtered_root_grant_covers_payloads_and_only_related_size_notices() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         filtered_replicator_registry(&peer, "collection1"),
@@ -320,6 +324,7 @@ async fn oversized_car_block_keeps_sibling_and_accurate_presence_counts() {
         let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
             transport.clone(),
             blockstore,
+            crate::network::test_network(),
             SyncConfig::default(),
             AccessMode::Controlled,
             replicators,
@@ -377,6 +382,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
     let (coordinator, _events) = SyncCoordinator::new(
         NoopTransport::new(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
     )
     .await
@@ -450,10 +456,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        completion.try_recv(),
-        Err(nuclei::sync::oneshot::error::TryRecvError::Empty)
-    ));
+    assert!(matches!(completion.try_recv(), Ok(None)));
 }
 
 /// A small root the doc index cannot attribute (a doc-less collection
@@ -479,6 +482,7 @@ async fn unattributable_small_root_keeps_authority_through_its_payload() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         filtered_replicator_registry(&peer, "collection1"),
@@ -542,6 +546,7 @@ async fn oversized_notice_follows_the_acp_read_gate() {
         let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
             transport.clone(),
             blockstore,
+            crate::network::test_network(),
             SyncConfig::default(),
             AccessMode::Controlled,
             Arc::new(ReplicatorRegistry::new()),

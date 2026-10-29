@@ -38,7 +38,10 @@ fn make_data_block() -> cid::Cid {
 #[nuclei::test]
 async fn a_fetch_completing_before_registration_leaves_no_query_behind() {
     let cid = make_data_block();
-    let (host, handle, mut events, _) = P2PHost::new(MockBitswapStore::new()).await.unwrap();
+    let (host, handle, mut events, _) =
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     nuclei::spawn(host.run()).detach();
 
     BITSWAP_REGISTER_STALL_MS.store(STALL.as_millis() as u64, Ordering::Relaxed);

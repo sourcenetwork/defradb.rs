@@ -24,11 +24,11 @@ pub struct Harness {
     pub peer: PeerId,
 }
 
-pub fn start(blocks: &[Block], config: ServerConfig) -> Harness {
-    start_with(MemStore::new(blocks), config)
+pub fn start(blocks: &[Block], config: ServerConfig, edge: &edge::Edge) -> Harness {
+    start_with(MemStore::new(blocks), config, edge)
 }
 
-pub fn start_with<S: bitswap::Store>(store: S, config: ServerConfig) -> Harness {
+pub fn start_with<S: bitswap::Store>(store: S, config: ServerConfig, edge: &edge::Edge) -> Harness {
     let (network, mut events) = Network::new(PeerId::random());
     let (tx, sent) = mpsc::unbounded_channel();
     nuclei::spawn(async move {
@@ -47,7 +47,7 @@ pub fn start_with<S: bitswap::Store>(store: S, config: ServerConfig) -> Harness 
         }
     })
     .detach();
-    let server = Server::new(network, store, config);
+    let server = Server::new(network, store, config, edge.clone());
     let peer = PeerId::random();
     server.peer_connected(peer);
     Harness { server, sent, peer }

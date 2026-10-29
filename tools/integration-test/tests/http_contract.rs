@@ -172,7 +172,7 @@ async fn go_rust_http_contract() {
             .unwrap();
         let rust_url = cluster.api_url(0);
         let go_url = cluster.api_url(1);
-        let client = Client::new();
+        let client = Client::new(edge::testing::edge());
 
         add_collection(&client, rust_url).await;
         add_collection(&client, go_url).await;

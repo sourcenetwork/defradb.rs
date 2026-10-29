@@ -7,6 +7,7 @@ mod panic;
 mod scope;
 mod shutdown;
 mod spawn;
+mod task_set;
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -50,6 +51,19 @@ impl Drop for DropFlag {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
     }
+}
+
+/// Work that stays stuck while the test holds the sender. A detached task
+/// nothing can wake, such as one awaiting `pending()`, is reclaimed by
+/// nuclei, so stuck work is a wait something could still end.
+fn stuck() -> (
+    futures::channel::oneshot::Sender<()>,
+    impl Future<Output = ()>,
+) {
+    let (hold, wait) = futures::channel::oneshot::channel();
+    (hold, async move {
+        let _ = wait.await;
+    })
 }
 
 /// Polls `future` once, without an executor.

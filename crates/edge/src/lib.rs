@@ -13,7 +13,8 @@
 //! and a panic in network work fails only that work's completion and is
 //! counted ([`EdgeStats`]). Long-running work, such as an accept loop or a
 //! subscription, runs as a [`Service`] that stops when its runtime or scope
-//! stops accepting.
+//! stops accepting. Tasks one component owns together, such as a server's
+//! connections, run in a [`TaskSet`] that stops them when it is dropped.
 //!
 //! No type of the runtime underneath appears in this crate's API, so
 //! replacing it replaces this crate alone. Natively it is one nuclei
@@ -41,6 +42,7 @@ mod runtime;
 mod shared;
 mod stats;
 mod task;
+mod task_set;
 #[cfg(feature = "testing")]
 pub mod testing;
 mod timer;
@@ -57,6 +59,7 @@ pub use pool::page_pool;
 pub use runtime::EdgeRuntime;
 pub use stats::EdgeStats;
 pub use task::{Service, Task};
+pub use task_set::TaskSet;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

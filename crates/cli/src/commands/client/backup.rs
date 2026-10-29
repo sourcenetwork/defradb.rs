@@ -69,7 +69,7 @@ impl BackupExportArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -105,7 +105,7 @@ impl BackupImportArgs {
                 source: e,
             })?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -136,6 +136,7 @@ mod tests {
             tx_id: None,
             development,
             verbose: false,
+            edge: edge::testing::edge(),
         }
     }
 

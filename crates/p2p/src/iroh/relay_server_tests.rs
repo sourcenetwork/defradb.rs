@@ -4,7 +4,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
-use crate::rt::Task;
 use iroh::SecretKey;
 
 use super::{
@@ -18,7 +17,7 @@ const DENIED_DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct TestNode {
     transport: IrohTransport,
-    task: Task<()>,
+    task: edge::Task<()>,
 }
 
 impl TestNode {
@@ -30,7 +29,8 @@ impl TestNode {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             ..Default::default()
         };
-        let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+        let (command_tx, _events, _replicators, task) =
+            spawn_endpoint(config, edge::testing::edge()).await.unwrap();
         Self {
             transport: IrohTransport::new(command_tx, secret_key),
             task,
@@ -50,7 +50,7 @@ impl TestNode {
 
     async fn shutdown(self) {
         self.transport.shutdown().await.unwrap();
-        self.task.join().await.unwrap();
+        self.task.await.unwrap();
     }
 }
 

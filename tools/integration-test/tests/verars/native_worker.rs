@@ -179,6 +179,7 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
             NativeWorker::open(&directory, &keys, 9001).unwrap(),
             &AcpTuning::default(),
             None,
+            &edge::testing::edge(),
         )
         .await
         .expect("startup resolves the pending rejected request");
@@ -203,6 +204,7 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
             worker,
             &AcpTuning::default(),
             None,
+            &edge::testing::edge(),
         )
         .await
         .unwrap();

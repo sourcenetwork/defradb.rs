@@ -46,7 +46,7 @@ impl RunningNode {
         let mut node = Self {
             child,
             url: format!("http://{address}"),
-            client: net::http::Client::builder()
+            client: net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()

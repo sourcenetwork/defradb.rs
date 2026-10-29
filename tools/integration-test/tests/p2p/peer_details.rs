@@ -12,7 +12,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(200);
 
 async fn get_json(url: String) -> Value {
-    net::http::get(&url)
+    net::http::get(&url, edge::testing::edge())
         .await
         .unwrap_or_else(|error| panic!("GET {url}: {error}"))
         .json()

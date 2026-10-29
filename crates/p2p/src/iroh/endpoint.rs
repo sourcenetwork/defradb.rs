@@ -10,8 +10,8 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::rt::mpsc;
-use crate::rt::Task;
+use futures::channel::{mpsc, oneshot};
+use futures::FutureExt;
 use iroh::Endpoint;
 use kovan_map::HopscotchMap;
 use tracing::{debug, warn};
@@ -22,7 +22,7 @@ use crate::bitswap::ReplicatorRegistry;
 use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
-use super::command::IrohCommand;
+use super::command::{CommandSender, IrohCommand};
 use super::endpoint_commands::{handle_command, GossipDialer};
 use super::endpoint_config::{
     allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_transport_config,
@@ -82,12 +82,12 @@ pub(super) fn spawn_task(
     spawned_tasks.spawn(future)
 }
 
-async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
+pub(super) async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
     let tasks = spawned_tasks.close();
     let task_count = tasks.len();
     let drain = async move {
         for task in tasks {
-            let _ = task.join().await;
+            let _ = task.await;
         }
     };
     if crate::rt::time::timeout(std::time::Duration::from_secs(5), drain)
@@ -106,11 +106,12 @@ async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
 /// Returns the command sender, event receiver, and background task handle.
 pub async fn spawn_endpoint(
     config: IrohEndpointConfig,
+    edge: edge::Edge,
 ) -> crate::error::Result<(
-    mpsc::Sender<IrohCommand>,
+    CommandSender,
     crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
     Arc<ReplicatorRegistry>,
-    Task<()>,
+    edge::Task<()>,
 )> {
     // Every Defra protocol, gossip included, is multiplexed over one ALPN. The
     // version before gossip moved onto it is still served, without gossip.
@@ -144,21 +145,26 @@ pub async fn spawn_endpoint(
     })?;
 
     let (command_tx, command_rx) = mpsc::channel::<IrohCommand>(256);
+    let (running, stopped) = oneshot::channel();
     let (event_tx, event_rx) = crate::sync::dispatch_queue::<
         TransportEvent<iroh::endpoint::SendStream>,
     >(EVENT_LANE_CAPACITY);
     let replicators = Arc::new(ReplicatorRegistry::new());
 
-    let task = crate::rt::spawn(crate::rt::compat(run_event_loop(
-        endpoint,
-        node_identity,
-        admission,
-        command_rx,
-        event_tx,
-        replicators.clone(),
-    )));
+    let task = edge
+        .spawn(crate::rt::compat(run_event_loop(
+            endpoint,
+            node_identity,
+            admission,
+            command_rx,
+            running,
+            event_tx,
+            replicators.clone(),
+            edge.clone(),
+        )))
+        .within(std::time::Duration::MAX);
 
-    Ok((command_tx, event_rx, replicators, task))
+    Ok(((command_tx, stopped.shared()), event_rx, replicators, task))
 }
 
 #[cfg(test)]
@@ -172,8 +178,10 @@ async fn run_event_loop(
     node_identity: Option<Arc<identity::RawIdentity>>,
     admission: Arc<PeerAdmission>,
     mut command_rx: mpsc::Receiver<IrohCommand>,
+    running: oneshot::Sender<()>,
     event_tx: crate::sync::DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     replicators: Arc<ReplicatorRegistry>,
+    edge: edge::Edge,
 ) {
     let shutdown_started = web_time::Instant::now();
     let peer_map = Arc::new(SharedPeerMap::new());
@@ -182,7 +190,7 @@ async fn run_event_loop(
     let connection_cache = new_connection_cache(gossip.clone());
     let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
-    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::new(edge));
     let mut next_query_id: u64 = 1;
 
     let resources = EndpointResources {
@@ -225,18 +233,18 @@ async fn run_event_loop(
         warn!("Event channel closed, cannot emit Listening event");
     }
 
+    // Every transport gone: the commands still buffered have no owner.
     'endpoint: loop {
-        if command_rx.is_closed() {
+        if running.is_canceled() {
             break;
         }
-        crate::rt::select! {
-            cmd = command_rx.recv() => {
-                let Some(cmd) = cmd else { break };
+        futures::select! {
+            cmd = command_rx.recv().fuse() => {
+                let Ok(cmd) = cmd else { break };
                 let mut pending_cmd = Some(cmd);
                 let mut processed = 0;
                 while let Some(cmd) = pending_cmd.take() {
-                    // Closing a channel does not discard its buffered commands.
-                    if command_rx.is_closed() {
+                    if running.is_canceled() {
                         break 'endpoint;
                     }
                     let should_shutdown = handle_command(
@@ -259,7 +267,7 @@ async fn run_event_loop(
                     pending_cmd = command_rx.try_recv().ok();
                 }
             }
-            incoming = endpoint.accept() => {
+            incoming = endpoint.accept().fuse() => {
                 match incoming {
                     Some(incoming) => {
                         let resources = resources.clone();
@@ -271,12 +279,13 @@ async fn run_event_loop(
                     None => break,
                 }
             }
-            else => break,
+            complete => break,
         }
     }
 
     // Reject queued and new commands before waiting for network teardown.
     drop(command_rx);
+    drop(running);
 
     gossip.close();
     records.close();

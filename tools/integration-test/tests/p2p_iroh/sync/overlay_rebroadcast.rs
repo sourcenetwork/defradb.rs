@@ -23,12 +23,15 @@ const SCHEMA: &str = "type Note { title: String }";
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 const DOC_COUNT: usize = 6;
 async fn sync_status(cluster: &TestCluster, node: usize) -> serde_json::Value {
-    net::http::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
+    net::http::get(
+        format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json")
 }
 
 fn note_count(client: &integration_test::DefraClient) -> usize {

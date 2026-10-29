@@ -68,7 +68,7 @@ fn assert_id_list_arg(arg: &Value) {
 }
 
 async fn graphql_raw(api_url: &str, query: &str) -> Value {
-    net::http::Client::new()
+    net::http::Client::new(edge::testing::edge())
         .post(format!("{api_url}/api/v0/graphql"))
         .json(&json!({ "query": query }))
         .send()

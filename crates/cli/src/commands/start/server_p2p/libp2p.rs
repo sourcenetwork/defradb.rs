@@ -40,6 +40,7 @@ impl Node {
             config.net.pubsub_enabled,
             classifier.clone(),
             serve_acp.clone(),
+            edge,
         )
         .await?;
 
@@ -74,6 +75,7 @@ impl Node {
             p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
                 p2p::Libp2pTransport::new(handle.clone()),
                 sync_blockstore,
+                p2p::network::Network::on(edge.clone()),
                 Self::sync_config(config),
                 Self::access_mode(config),
                 replicator_registry,
@@ -88,9 +90,6 @@ impl Node {
 
         let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
         let coordinator = Arc::new(coordinator);
-        // Its network work runs on the edge, also when a write on a pool
-        // worker hands it a broadcast.
-        coordinator.use_network(p2p::network::Network::on(edge.clone()));
         // Its durable registrations change on the database's worker pool.
         coordinator
             .install_pending_dag_store(p2p::sync::pooled_pending_store(
@@ -177,7 +176,7 @@ impl Node {
 
         let coordinator_for_replication = coordinator.clone();
         let rebroadcast_on_merge = config.net.p2p_rebroadcast_on_merge;
-        let replication_task = nuclei::spawn(async move {
+        let replication_task = edge.spawn_service(async move {
             info!("Starting replication loop for P2P sync");
             p2p::sync::ReplicationLoop::run(
                 coordinator_for_replication,
@@ -237,7 +236,7 @@ impl Node {
         let se_transport_serve = p2p::Libp2pTransport::new(handle.clone());
         let se_correlator_for_events = se_correlator.clone();
         let se_event_bus = event_bus.clone();
-        let event_handler_task = Some(nuclei::spawn(async move {
+        let event_handler_task = Some(edge.spawn_service(async move {
             let handler_coordinator = coordinator_for_events.clone();
             coordinator_for_events.run_event_dispatcher(events, move |event, admission| {
                 let coordinator_for_events = handler_coordinator.clone();

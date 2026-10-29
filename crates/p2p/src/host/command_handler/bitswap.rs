@@ -61,91 +61,93 @@ impl<S: Store> P2PHost<S> {
         let (registered_tx, registered_rx) = crate::rt::oneshot::channel::<()>();
 
         // Spawn async task to fetch blocks (with cancellation support)
-        let task_handle = crate::rt::spawn(async move {
-            let _ = registered_rx.await;
+        let (abort, cancellation) = futures::future::AbortHandle::new_pair();
+        let fetch = futures::future::Abortable::new(
+            async move {
+                let _ = registered_rx.await;
 
-            #[cfg(feature = "test-utils")]
-            crate::testutil::block_started_fetch();
+                #[cfg(feature = "test-utils")]
+                crate::testutil::block_started_fetch();
 
-            let mut fetched = 0;
+                let mut fetched = 0;
 
-            // Timeout per block: 10 seconds. If no block arrives within this
-            // window, we give up and report partial success so the retry
-            // mechanism can try again with fresh provider info.
-            let per_block_timeout = std::time::Duration::from_secs(10);
+                // Timeout per block: 10 seconds. If no block arrives within this
+                // window, we give up and report partial success so the retry
+                // mechanism can try again with fresh provider info.
+                let per_block_timeout = std::time::Duration::from_secs(10);
 
-            loop {
-                match crate::rt::time::timeout(per_block_timeout, receiver.recv()).await {
-                    Ok(Some(block)) => {
-                        fetched += 1;
+                loop {
+                    match crate::rt::time::timeout(per_block_timeout, receiver.recv()).await {
+                        Ok(Some(block)) => {
+                            fetched += 1;
 
-                        // Send block to coordinator for storage
-                        if let Err(e) = event_tx
-                            .send(HostEvent::BitswapBlockReceived {
-                                query_id,
-                                cid: *block.cid(),
-                                data: block.data().to_vec(),
-                            })
-                            .await
-                        {
-                            tracing::warn!(
-                                query_id = query_id.0,
-                                error = %e,
-                                "Failed to send BitswapBlockReceived event"
-                            );
+                            // Send block to coordinator for storage
+                            if let Err(e) = event_tx
+                                .send(HostEvent::BitswapBlockReceived {
+                                    query_id,
+                                    cid: *block.cid(),
+                                    data: block.data().to_vec(),
+                                })
+                                .await
+                            {
+                                tracing::warn!(
+                                    query_id = query_id.0,
+                                    error = %e,
+                                    "Failed to send BitswapBlockReceived event"
+                                );
+                            }
+
+                            if fetched == missing_cids.len() {
+                                break;
+                            }
                         }
-
-                        if fetched == missing_cids.len() {
+                        Ok(None) => {
+                            tracing::debug!("Bitswap channel closed, no more blocks");
+                            break;
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                fetched = fetched,
+                                total = missing_cids.len(),
+                                "Bitswap timeout waiting for block"
+                            );
                             break;
                         }
                     }
-                    Ok(None) => {
-                        tracing::debug!("Bitswap channel closed, no more blocks");
-                        break;
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            fetched = fetched,
-                            total = missing_cids.len(),
-                            "Bitswap timeout waiting for block"
-                        );
-                        break;
-                    }
                 }
-            }
 
-            let success = fetched == missing_cids.len();
-            debug!(
-                query_id = query_id.0,
-                fetched = fetched,
-                total = missing_cids.len(),
-                success = success,
-                "Bitswap fetch complete"
-            );
-            // Dropping the receiver is enough on a timeout: the fetch in the
-            // behaviour ends once its requests resolve or time out.
-            drop(receiver);
+                let success = fetched == missing_cids.len();
+                debug!(
+                    query_id = query_id.0,
+                    fetched = fetched,
+                    total = missing_cids.len(),
+                    success = success,
+                    "Bitswap fetch complete"
+                );
+                // Dropping the receiver is enough on a timeout: the fetch in the
+                // behaviour ends once its requests resolve or time out.
+                drop(receiver);
 
-            let _ = event_tx
-                .send(HostEvent::BitswapComplete {
-                    query_id,
-                    success,
-                    error: if success {
-                        None
-                    } else {
-                        Some(format!(
-                            "Only fetched {} of {} blocks",
-                            fetched,
-                            missing_cids.len()
-                        ))
-                    },
-                })
-                .await;
-            queries.remove(&query_id);
-        });
-
-        let abort = task_handle.abort_handle();
-        task_handle.detach();
+                let _ = event_tx
+                    .send(HostEvent::BitswapComplete {
+                        query_id,
+                        success,
+                        error: if success {
+                            None
+                        } else {
+                            Some(format!(
+                                "Only fetched {} of {} blocks",
+                                fetched,
+                                missing_cids.len()
+                            ))
+                        },
+                    })
+                    .await;
+                queries.remove(&query_id);
+            },
+            cancellation,
+        );
+        drop(self.edge.spawn(fetch));
 
         #[cfg(feature = "test-utils")]
         crate::testutil::stall_before_query_registration().await;

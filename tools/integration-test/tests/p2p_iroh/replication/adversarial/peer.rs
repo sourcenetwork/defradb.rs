@@ -34,9 +34,11 @@ impl HostilePeer {
             ..Default::default()
         };
         let (commands, mut events, _replicators, endpoint) =
-            spawn_endpoint(config).await.expect("endpoint spawns");
+            spawn_endpoint(config, edge::testing::edge())
+                .await
+                .expect("endpoint spawns");
         // The endpoint loop ends on its own once the transport drops its command sender.
-        endpoint.detach();
+        drop(endpoint);
         let transport = IrohTransport::new(commands, secret_key);
 
         // The node asks the pusher for blocks it is missing. Never answering

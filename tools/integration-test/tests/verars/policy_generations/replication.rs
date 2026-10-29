@@ -36,7 +36,7 @@ async fn verified_height(http: &net::http::Client, url: &str) -> u64 {
 }
 
 fn http_client() -> net::http::Client {
-    net::http::Client::builder()
+    net::http::Client::builder(edge::testing::edge())
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap()

@@ -3,8 +3,8 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::rt::Task;
 use defra_core::thread_bounds::MaybeSend;
+use edge::Edge;
 use kovan_queue::seg_queue::SegQueue;
 
 use crate::tracked_task::{TrackedAbort, TrackedTask};
@@ -12,8 +12,8 @@ use crate::tracked_task::{TrackedAbort, TrackedTask};
 /// Tracked tasks below which a spawn does not reap.
 pub(super) const REAP_FLOOR: usize = 64;
 
-#[derive(Default)]
 pub(super) struct TaskRegistry {
+    edge: Edge,
     closed: AtomicBool,
     registering: AtomicUsize,
     tasks: SegQueue<TrackedTask>,
@@ -27,6 +27,22 @@ pub(super) struct TaskRegistry {
 }
 
 impl TaskRegistry {
+    pub(super) fn new(edge: Edge) -> Self {
+        Self {
+            edge,
+            closed: AtomicBool::new(false),
+            registering: AtomicUsize::new(0),
+            tasks: SegQueue::new(),
+            reap_at: AtomicUsize::new(0),
+            #[cfg(test)]
+            reaps: AtomicUsize::new(0),
+        }
+    }
+
+    pub(super) fn edge(&self) -> &Edge {
+        &self.edge
+    }
+
     /// Spawn into the registry, first dropping handles of finished tasks once
     /// enough have accumulated.
     /// Returns `None` once closed, without polling the future.
@@ -43,7 +59,7 @@ impl TaskRegistry {
             if self.tasks.len() >= self.reap_at.load(Ordering::Relaxed).max(REAP_FLOOR) {
                 self.reap_finished();
             }
-            let task = TrackedTask::spawn(crate::rt::compat(future));
+            let task = TrackedTask::spawn(&self.edge, crate::rt::compat(future));
             let abort = task.abort_handle();
             self.tasks.push(task);
             Some(abort)
@@ -82,8 +98,8 @@ impl TaskRegistry {
         self.closed.load(Ordering::SeqCst)
     }
 
-    /// Refuse further spawns, abort every task and hand back their join handles.
-    pub(super) fn close(&self) -> Vec<Task<()>> {
+    /// Refuse further spawns, abort every task and hand back them to await.
+    pub(super) fn close(&self) -> Vec<TrackedTask> {
         self.closed.store(true, Ordering::SeqCst);
         while self.registering.load(Ordering::SeqCst) > 0 {
             std::hint::spin_loop();
@@ -91,7 +107,7 @@ impl TaskRegistry {
         let mut handles = Vec::new();
         while let Some(task) = self.tasks.pop() {
             task.abort();
-            handles.push(task.into_join_handle());
+            handles.push(task);
         }
         handles
     }

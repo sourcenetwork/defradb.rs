@@ -82,7 +82,7 @@ async fn lifecycle_with(algorithm: &str, corpus: usize) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let http = net::http::Client::builder()
+    let http = net::http::Client::builder(edge::testing::edge())
         .timeout(Duration::from_secs(60))
         .build()
         .unwrap();

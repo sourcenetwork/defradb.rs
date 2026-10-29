@@ -5,8 +5,9 @@ mod support;
 use std::time::Duration;
 
 use futures::StreamExt;
+use net::http::header::AUTHORIZATION;
 use net::http::tls::Version as TlsVersion;
-use net::http::{Client, StatusCode, Version};
+use net::http::{Client, HeaderMap, HeaderValue, RequestBuilder, StatusCode, Version};
 use serde_json::{json, Value};
 
 fn url(address: std::net::SocketAddr, path: &str) -> String {
@@ -14,7 +15,10 @@ fn url(address: std::net::SocketAddr, path: &str) -> String {
 }
 
 fn plain() -> Client {
-    Client::builder().no_proxy().build().expect("a client")
+    Client::builder(edge::testing::edge())
+        .no_proxy()
+        .build()
+        .expect("a client")
 }
 
 #[nuclei::test]
@@ -118,6 +122,29 @@ async fn redirects_are_followed_and_change_the_method_as_the_status_says() {
 }
 
 #[nuclei::test]
+async fn credentials_follow_a_redirect_only_to_the_same_origin() {
+    let (first, second) = (support::start(None).await, support::start(None).await);
+    let mut defaults = HeaderMap::new();
+    defaults.insert(AUTHORIZATION, HeaderValue::from_static("Bearer default"));
+    let client = Client::builder(edge::testing::edge())
+        .no_proxy()
+        .default_headers(defaults)
+        .build()
+        .unwrap();
+    let redirect_to = |target| {
+        let location = url(target, "/authorization");
+        client.get(url(first, &format!("/redirect/302?to={location}")))
+    };
+    let seen = |request: RequestBuilder| async move {
+        request.send().await.unwrap().text().await.unwrap()
+    };
+
+    assert_eq!(seen(redirect_to(first)).await, "Bearer default");
+    assert_eq!(seen(redirect_to(second)).await, "");
+    assert_eq!(seen(redirect_to(second).bearer_auth("own")).await, "");
+}
+
+#[nuclei::test]
 async fn a_body_streams_in_pieces() {
     let address = support::start(None).await;
 
@@ -140,7 +167,7 @@ async fn a_body_streams_in_pieces() {
 async fn https_negotiates_http2_and_trusts_an_added_root() {
     let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
     let address = support::start(Some(config)).await;
-    let client = Client::builder()
+    let client = Client::builder(edge::testing::edge())
         .no_proxy()
         .tls_built_in_root_certs(false)
         .add_root_certificate(root)
@@ -161,7 +188,7 @@ async fn https_negotiates_http2_and_trusts_an_added_root() {
 async fn http1_only_stays_on_http_1_1_and_tls_versions_can_be_pinned() {
     let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
     let address = support::start(Some(config)).await;
-    let client = Client::builder()
+    let client = Client::builder(edge::testing::edge())
         .no_proxy()
         .tls_built_in_root_certs(false)
         .add_root_certificate(root)
@@ -184,7 +211,7 @@ async fn http1_only_stays_on_http_1_1_and_tls_versions_can_be_pinned() {
 async fn an_untrusted_certificate_is_refused() {
     let (config, _root) = support::localhost_tls(&[b"http/1.1"]);
     let address = support::start(Some(config)).await;
-    let client = Client::builder()
+    let client = Client::builder(edge::testing::edge())
         .no_proxy()
         .tls_built_in_root_certs(false)
         .build()
@@ -201,7 +228,7 @@ async fn an_untrusted_certificate_is_refused() {
 
 #[test]
 fn a_tls_version_range_with_no_version_is_refused() {
-    let built = Client::builder()
+    let built = Client::builder(edge::testing::edge())
         .min_tls_version(TlsVersion::Tls13)
         .max_tls_version(TlsVersion::Tls12)
         .build();

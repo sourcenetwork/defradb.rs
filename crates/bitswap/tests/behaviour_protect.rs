@@ -20,7 +20,12 @@ fn behaviour() -> Behaviour {
         server: None,
         ..Default::default()
     };
-    Bitswap::new(PeerId::random(), MemStore::new(&[]), config)
+    Bitswap::new(
+        PeerId::random(),
+        MemStore::new(&[]),
+        config,
+        edge::testing::edge(),
+    )
 }
 
 fn establish(behaviour: &mut Behaviour, peer: PeerId, id: usize, others: usize) {

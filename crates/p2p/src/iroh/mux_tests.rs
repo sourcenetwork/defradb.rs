@@ -128,6 +128,9 @@ async fn spawn_bare_peer() -> BarePeer {
                             }
                             Err(_) => break,
                         }
+                        // Read to the end, as a real peer does, so dropping
+                        // the stream cannot stop a send still being written.
+                        let _ = recv.read_to_end(1 << 20).await;
                         let _ = send.finish();
                     }
                 }))
@@ -144,7 +147,7 @@ async fn spawn_bare_peer() -> BarePeer {
     }
 }
 
-pub(super) async fn spawn_transport() -> (IrohTransport, Task<()>) {
+pub(super) async fn spawn_transport() -> (IrohTransport, edge::Task<()>) {
     let secret_key = SecretKey::generate();
     let config = IrohEndpointConfig {
         secret_key: secret_key.clone(),
@@ -156,7 +159,8 @@ pub(super) async fn spawn_transport() -> (IrohTransport, Task<()>) {
         max_concurrent_multipath_paths: None,
         allowlist: Default::default(),
     };
-    let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+    let (command_tx, _events, _replicators, task) =
+        spawn_endpoint(config, edge::testing::edge()).await.unwrap();
     (IrohTransport::new(command_tx, secret_key), task)
 }
 
@@ -240,7 +244,7 @@ async fn six_protocols_share_one_connection() {
 
         peer.accept_task.abort();
         transport.shutdown().await.unwrap();
-        endpoint_task.join().await.unwrap();
+        endpoint_task.await.unwrap();
     })
     .await
 }
@@ -276,7 +280,7 @@ async fn repeated_sends_do_not_redial() {
 
         peer.accept_task.abort();
         transport.shutdown().await.unwrap();
-        endpoint_task.join().await.unwrap();
+        endpoint_task.await.unwrap();
     })
     .await
 }
@@ -326,7 +330,7 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
 
         peer.accept_task.abort();
         transport.shutdown().await.unwrap();
-        endpoint_task.join().await.unwrap();
+        endpoint_task.await.unwrap();
     })
     .await
 }

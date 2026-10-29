@@ -61,8 +61,14 @@ fn server_swarm(store: MemStore, deny: RapidHashSet<Cid>) -> Swarm<Bitswap<MemSt
     let peer_id = keypair.public().to_peer_id();
     let mut config = Config::default();
     config.server.as_mut().unwrap().peer_block_request_filter = Some(Box::new(deny_filter(deny)));
-    let bitswap = Bitswap::new(peer_id, store, config);
-    net::libp2p::swarm(&keypair, bitswap, Duration::from_secs(120)).unwrap()
+    let bitswap = Bitswap::new(peer_id, store, config, edge::testing::edge());
+    net::libp2p::swarm(
+        &keypair,
+        bitswap,
+        Duration::from_secs(120),
+        edge::testing::edge(),
+    )
+    .unwrap()
 }
 
 struct OfferedProtocols {
@@ -217,6 +223,7 @@ fn probe_swarm(
             },
         },
         Duration::from_secs(120),
+        edge::testing::edge(),
     )
     .unwrap();
     (swarm, control, inbound)

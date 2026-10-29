@@ -860,6 +860,9 @@ impl EmbeddedNode {
             network.drain().await;
         }
 
+        // P2P runs in a scope of its own: stopping the peer spawns the drain
+        // of its tasks, which the node's closed scope would refuse, leaving
+        // them and the store they hold alive.
         #[cfg(feature = "p2p")]
         if let Some(lifecycle) = &self.p2p_lifecycle {
             lifecycle.shutdown().await;
@@ -1432,7 +1435,10 @@ impl NodeBuilder {
         let runs_p2p = false;
         let network = NodeEdge::start(
             self.edge,
-            node_identity_did.is_some() || serves_http || runs_p2p,
+            node_identity_did.is_some()
+                || serves_http
+                || runs_p2p
+                || !matches!(self.document_acp, DocumentAcpConfig::Local),
         )?;
 
         // The data path's worker pool comes before the store, which places
@@ -1578,9 +1584,9 @@ impl NodeBuilder {
             };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
-            // The accept loop is a service of the node's scope: shutting the
-            // node down stops it accepting.
-            let service = network.edge().spawn_service(async move {
+            // The server runs in the node's scope: draining it stops the
+            // server accepting and waits for its requests in flight.
+            drop(network.edge().spawn(async move {
                 let served = match bound {
                     Some(listener) => server.serve_on(listener).await,
                     None => server.run().await,
@@ -1588,8 +1594,7 @@ impl NodeBuilder {
                 if let Err(e) = served {
                     tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
                 }
-            });
-            service.detach();
+            }));
             tracing::info!(address = %addr, "HTTP server started");
         }
 
@@ -1742,7 +1747,7 @@ impl NodeBuilder {
                     node_p2p_identity,
                     document_acp.clone(),
                     _strict_replicated_doc_access,
-                    network.edge(),
+                    network.sibling(),
                 )
                 .await?,
             )
@@ -2020,7 +2025,7 @@ mod tests {
                     .build()
                     .await
                     .unwrap();
-                let client = net::http::Client::new();
+                let client = net::http::Client::new(edge::testing::edge());
                 let schema_url = format!("http://{address}/api/v0/collections");
                 let created = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {

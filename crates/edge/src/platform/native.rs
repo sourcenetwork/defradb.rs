@@ -222,6 +222,8 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
         Some(threads) => workers::EdgeCores::unpinned(threads),
         None => workers::EdgeCores::reserve(),
     });
+    crate::compat::start_runtime();
+    crate::compat::start_timer();
     let runtime = match build(&config, &cores) {
         Ok(runtime) => runtime,
         Err(error) => {

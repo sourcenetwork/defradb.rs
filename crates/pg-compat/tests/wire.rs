@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use nuclei::io::{AsyncReadExt, AsyncWriteExt};
 use nuclei::net::{TcpListener, TcpStream};
+use nuclei::time::Instant;
 use pgwire::api::PgWireServerHandlers;
 
 struct Defaults;
@@ -99,4 +100,17 @@ async fn a_client_that_starts_tls_directly_is_closed() {
     assert!(rest.is_empty());
     let served = nuclei::time::timeout(Duration::from_secs(5), server.join()).await;
     assert!(matches!(served, Ok(Ok(Ok(())))));
+}
+
+#[nuclei::test(start_paused = true)]
+async fn a_client_that_sends_nothing_is_closed_at_the_startup_deadline() {
+    let (mut client, server) = connection().await;
+    let connected = Instant::now();
+
+    let served = nuclei::time::timeout(Duration::from_secs(61), server.join()).await;
+    assert!(matches!(served, Ok(Ok(Ok(())))));
+    assert!(connected.elapsed() >= Duration::from_secs(60));
+    let mut rest = Vec::new();
+    client.read_to_end(&mut rest).await.unwrap();
+    assert!(rest.is_empty());
 }

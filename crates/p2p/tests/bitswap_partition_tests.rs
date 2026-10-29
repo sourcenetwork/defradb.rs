@@ -35,8 +35,19 @@ fn block(data: &[u8]) -> (cid::Cid, Vec<u8>) {
 fn swarm(store: MockBitswapStore) -> Swarm<Bitswap<MockBitswapStore>> {
     let keypair = libp2p::identity::Keypair::generate_ed25519();
     let peer_id = keypair.public().to_peer_id();
-    let bitswap = Bitswap::new(peer_id, store, BitswapConfig::default());
-    net::libp2p::swarm(&keypair, bitswap, Duration::from_secs(120)).unwrap()
+    let bitswap = Bitswap::new(
+        peer_id,
+        store,
+        BitswapConfig::default(),
+        edge::testing::edge(),
+    );
+    net::libp2p::swarm(
+        &keypair,
+        bitswap,
+        Duration::from_secs(120),
+        edge::testing::edge(),
+    )
+    .unwrap()
 }
 
 async fn listen(swarm: &mut Swarm<Bitswap<MockBitswapStore>>) -> Multiaddr {

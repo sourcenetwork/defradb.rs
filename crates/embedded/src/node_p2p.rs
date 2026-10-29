@@ -168,6 +168,7 @@ where
             database.node_identity(),
             classifier.clone(),
             serve_acp.clone(),
+            edge.clone(),
         )
         .await
         .map_err(Error::HostCreate)?;
@@ -201,6 +202,7 @@ where
         match p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
             p2p::Libp2pTransport::new(handle.clone()),
             blockstore.clone(),
+            p2p::network::Network::on(edge.clone()),
             sync_config,
             p2p::bitswap::AccessMode::Controlled,
             replicator_registry,
@@ -221,9 +223,6 @@ where
 
     let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
     let coordinator = Arc::new(coordinator);
-    // Its network work runs on the edge, also when a write on a pool worker
-    // hands it a broadcast.
-    coordinator.use_network(p2p::network::Network::on(edge.clone()));
     // Its durable registrations change on the database's worker pool.
     coordinator
         .install_pending_dag_store(p2p::sync::pooled_pending_store(

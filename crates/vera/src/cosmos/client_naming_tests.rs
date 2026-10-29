@@ -35,6 +35,7 @@ async fn lcd_requests_use_vera_routes() {
         address.clone(),
         address,
         Duration::from_secs(2),
+        &edge::testing::edge(),
     )
     .unwrap();
     assert!(client.query_policy("policy").await.unwrap().is_none());

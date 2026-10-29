@@ -44,7 +44,7 @@ async fn graphql_create_rejects_a_negative_pcounter() {
 async fn http_create_rejects_a_negative_pcounter() {
     edge::compat(async move {
         let cluster = single_node().await;
-        let response = net::http::Client::new()
+        let response = net::http::Client::new(edge::testing::edge())
             .post(format!("{}/api/v0/collections/Tally", cluster.api_url(0)))
             .json(&serde_json::json!({"name": "first", "hits": -1}))
             .send()

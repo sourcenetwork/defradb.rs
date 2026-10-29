@@ -88,7 +88,7 @@ async fn rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes() {
         let max_attempts = (target_ack_count.max(50) * 4) as i64;
 
         let writer = nuclei::spawn(async move {
-            let http = net::http::Client::builder()
+            let http = net::http::Client::builder(edge::testing::edge())
                 .timeout(Duration::from_secs(2))
                 .build()
                 .expect("http client");

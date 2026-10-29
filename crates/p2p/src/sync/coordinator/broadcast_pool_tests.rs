@@ -11,17 +11,21 @@ use crate::sync::SyncConfig;
 async fn coordinator() -> Arc<SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport>> {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let (coordinator, _events) =
-        SyncCoordinator::new(NoopTransport::new(), blockstore, SyncConfig::default())
-            .await
-            .unwrap();
+    let (coordinator, _events) = SyncCoordinator::new(
+        NoopTransport::new(),
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+    )
+    .await
+    .unwrap();
     Arc::new(coordinator)
 }
 
 #[nuclei::test]
 async fn spawn_or_run_detaches_while_a_slot_is_free() {
     let coordinator = coordinator().await;
-    let (release_tx, release_rx) = crate::rt::oneshot::channel::<()>();
+    let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
     let finished = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&finished);
 

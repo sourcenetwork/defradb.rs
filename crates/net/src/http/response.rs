@@ -78,10 +78,6 @@ impl Response {
         self.status_error().map_or(Ok(self), Err)
     }
 
-    pub fn error_for_status_ref(&self) -> Result<&Self, Error> {
-        self.status_error().map_or(Ok(self), Err)
-    }
-
     fn status_error(&self) -> Option<Error> {
         (self.status.is_client_error() || self.status.is_server_error()).then(|| Error::Status {
             url: self.url.to_string(),
@@ -131,7 +127,7 @@ impl Response {
     /// limit.
     pub fn bytes_stream(self) -> BytesStream {
         BytesStream {
-            body: self.body,
+            body: Some(self.body),
             sleep: self
                 .deadline
                 .map(|at| Box::pin(nuclei::time::sleep_until(at))),
@@ -140,9 +136,11 @@ impl Response {
     }
 }
 
-/// The pieces of a response body. See [`Response::bytes_stream`].
+/// The pieces of a response body. See [`Response::bytes_stream`]. Once the
+/// time limit passes it gives [`Error::Timeout`] and then ends.
 pub struct BytesStream {
-    body: Incoming,
+    /// The body, dropped when the time limit passes.
+    body: Option<Incoming>,
     sleep: Option<Pin<Box<Sleep>>>,
     url: Url,
 }
@@ -152,8 +150,23 @@ impl Stream for BytesStream {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
+        // The limit is looked at before the body, so a body that always has
+        // a piece ready is not read past it.
+        let due = this
+            .sleep
+            .as_mut()
+            .is_some_and(|sleep| sleep.as_mut().poll(cx).is_ready());
+        if due && this.body.take().is_some() {
+            return Poll::Ready(Some(Err(Error::Timeout {
+                url: this.url.to_string(),
+                connecting: false,
+            })));
+        }
+        let Some(body) = &mut this.body else {
+            return Poll::Ready(None);
+        };
         loop {
-            match Pin::new(&mut this.body).poll_frame(cx) {
+            match Pin::new(&mut *body).poll_frame(cx) {
                 Poll::Ready(Some(Ok(frame))) => {
                     if let Ok(data) = frame.into_data() {
                         return Poll::Ready(Some(Ok(data)));
@@ -163,18 +176,7 @@ impl Stream for BytesStream {
                     return Poll::Ready(Some(Err(body_error(&this.url, error))))
                 }
                 Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => {
-                    if let Some(sleep) = &mut this.sleep {
-                        if sleep.as_mut().poll(cx).is_ready() {
-                            this.sleep = None;
-                            return Poll::Ready(Some(Err(Error::Timeout {
-                                url: this.url.to_string(),
-                                connecting: false,
-                            })));
-                        }
-                    }
-                    return Poll::Pending;
-                }
+                Poll::Pending => return Poll::Pending,
             }
         }
     }

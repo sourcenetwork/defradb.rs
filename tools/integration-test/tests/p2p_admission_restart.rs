@@ -14,7 +14,12 @@ const PERSISTED_REGISTRATION: &str = "Persisted pending DAG registration";
 const ACCEPTED_PUSH: &str = "PushLog head hint accepted by replicator";
 
 async fn sync_status(hub_api: &str) -> Option<serde_json::Value> {
-    let Ok(response) = net::http::get(format!("{hub_api}/api/v0/p2p/sync/status")).await else {
+    let Ok(response) = net::http::get(
+        format!("{hub_api}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    else {
         return None;
     };
     response.json::<serde_json::Value>().await.ok()

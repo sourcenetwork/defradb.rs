@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use crate::rt::time::{timeout, Instant};
-use crate::rt::Task;
+
 use bytes::Bytes;
 use iroh::SecretKey;
 
@@ -36,10 +36,10 @@ fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpoint
     }
 }
 
-async fn spawn_node(allowlist: IrohAllowlistConfig) -> (IrohTransport, Events, Task<()>) {
+async fn spawn_node(allowlist: IrohAllowlistConfig) -> (IrohTransport, Events, edge::Task<()>) {
     let secret_key = SecretKey::generate();
     let (command_tx, events, _replicators, task) =
-        spawn_endpoint(config(secret_key.clone(), allowlist))
+        spawn_endpoint(config(secret_key.clone(), allowlist), edge::testing::edge())
             .await
             .unwrap();
     (IrohTransport::new(command_tx, secret_key), events, task)
@@ -104,14 +104,17 @@ async fn assert_never_connects(dialer: &IrohTransport, server: &IrohTransport, w
     }
 }
 
-/// Dial `server` from `dialer` and wait until the dialer's own view shows the
-/// connection came up. Proves the dial actually reached the server (the
-/// dialer's QUIC handshake completes locally before the server's allowlist
-/// check, running in the accept path, can close it), without depending on
-/// whether the server ends up accepting or refusing it.
+/// Dial `server` from `dialer` and prove the dial actually reached the server,
+/// without depending on whether the server ends up accepting or refusing it.
+/// A dial that succeeds completed its QUIC handshake with the server; one the
+/// server's refusal cut short shows in the dialer's own view until the close
+/// arrives (its handshake completes locally before the server's allowlist
+/// check, running in the accept path, can close it).
 async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &IrohTransport) {
     let addrs = server.listen_addresses().await.unwrap();
-    let _ = dialer.dial(server.local_peer_id(), addrs).await;
+    if dialer.dial(server.local_peer_id(), addrs).await.is_ok() {
+        return;
+    }
     timeout(Duration::from_secs(5), async {
         loop {
             if dialer
@@ -133,13 +136,13 @@ async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &Iroh
 async fn shutdown_all(
     dialer: IrohTransport,
     server: IrohTransport,
-    dialer_task: Task<()>,
-    server_task: Task<()>,
+    dialer_task: edge::Task<()>,
+    server_task: edge::Task<()>,
 ) {
     dialer.shutdown().await.unwrap();
     server.shutdown().await.unwrap();
-    dialer_task.join().await.unwrap();
-    server_task.join().await.unwrap();
+    dialer_task.await.unwrap();
+    server_task.await.unwrap();
 }
 
 /// Poll `transport`'s own view of `connected_peers` until it no longer names
@@ -411,7 +414,7 @@ async fn deny_peer_under_accept_all_bars_only_that_peer() {
         .expect("revoking one peer must not narrow who else may connect");
 
     other.shutdown().await.unwrap();
-    other_task.join().await.unwrap();
+    other_task.await.unwrap();
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }
 

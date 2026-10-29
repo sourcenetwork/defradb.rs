@@ -11,6 +11,7 @@ use regolith::sync::{HopscotchMap, SegQueue};
 
 use super::super::GossipHandle;
 use super::*;
+use crate::iroh::endpoint::shutdown_tracked_tasks;
 use crate::iroh::task_registry::TaskRegistry;
 use crate::sync::DispatchReceiver;
 use crate::transport::TransportEvent;
@@ -44,7 +45,7 @@ fn driver(dials: &Dials) -> (Driver<Dials>, Events) {
         delivery,
         Arc::new(Inbox::new(16)),
         Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-        Arc::new(TaskRegistry::default()),
+        Arc::new(TaskRegistry::new(edge::testing::edge())),
     );
     (driver, events)
 }
@@ -129,6 +130,7 @@ async fn forgetting_a_peer_leaves_its_connection_open() {
             .expect("the writer reports it is done");
         assert!(matches!(done, Some(Input::WriterDone { peer: p, .. }) if p == peer));
         assert!(connection.close_reason().is_none());
+        shutdown_tracked_tasks(Arc::clone(&driver.io.tasks)).await;
     })
     .await
 }

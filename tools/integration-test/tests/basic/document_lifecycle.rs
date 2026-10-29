@@ -174,7 +174,7 @@ async fn filtered_document_update_http_contract(cluster: TestCluster) {
         .query(r#"mutation { add_HttpFilterUser(input: {name: "Bob", age: 25}) { _docID } }"#)
         .expect("create Bob");
 
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .patch(format!(
             "{}/api/v0/collections/HttpFilterUser",
             cluster.api_url(0)
@@ -329,7 +329,7 @@ async fn filtered_document_delete_http_contract(cluster: TestCluster) {
         .query(r#"mutation { add_HttpDeleteUser(input: {name: "Bob"}) { _docID } }"#)
         .expect("create Bob");
 
-    let response = net::http::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .delete(format!(
             "{}/api/v0/collections/HttpDeleteUser",
             cluster.api_url(0)

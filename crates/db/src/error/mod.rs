@@ -68,6 +68,9 @@ pub enum Error {
     #[error("database is closed")]
     DatabaseClosed,
 
+    #[error("the database has no network runtime: set one before P2P work")]
+    NetworkNotSet,
+
     #[error("action already in progress. CollectionID: {collection_id}, Action: {action}")]
     ActionInProgress { collection_id: String, action: u16 },
 

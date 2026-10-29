@@ -27,14 +27,25 @@ tracing.workspace = true
 edge = { path = "../edge" }
 # The combinators a wait races with.
 futures-lite.workspace = true
+# Embedding request bodies and answers.
+serde_json.workspace = true
+# One Ollama wave's texts, in flight together.
+futures.workspace = true
+# `EmbeddingCallError`.
+thiserror.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# The runtime's clock, which a paused-time test moves.
+# The runtime's clock, which a paused-time test moves, and embedding
+# request deadlines.
 nuclei.workspace = true
+# Embedding requests on nuclei sockets.
+net = { path = "../net" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# The browser's clock.
+# The browser's clock, and embedding request deadlines.
 n0-future.workspace = true
+# Embedding requests through the browser's fetch.
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
 
 [lints]
 workspace = true

@@ -43,7 +43,7 @@ async fn rust_vera_policy_lifecycle() {
             .to_string();
 
         // Step 2: Verify policy exists on Vera via LCD
-        let client = net::http::Client::new();
+        let client = net::http::Client::new(edge::testing::edge());
         let policy_url = format!("{}/sourcenetwork/vera/acp/policy/{}", sh.lcd_url, policy_id);
         let resp = client
             .get(&policy_url)

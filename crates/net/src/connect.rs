@@ -5,7 +5,7 @@
 use std::future::{poll_fn, Future};
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
+use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -13,12 +13,19 @@ use std::time::Duration;
 use http::Uri;
 use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::proxy::matcher::Matcher;
+use nuclei::net::TcpStream;
 use rustls::pki_types::ServerName;
 use tower_service::Service;
 
 use crate::stream::{ClientStream, Conn, Stream};
 use crate::tls::{ClientTls, TlsConnector};
 use crate::BoxError;
+
+/// How long the connects to the first address's family run alone before
+/// the other family's start beside them: hyper's connector's default, so a
+/// host whose IPv6 route drops packets connects over IPv4 after this, not
+/// after the system's connect timeout.
+const FALLBACK_DELAY: Duration = Duration::from_millis(300);
 
 /// A connection to `uri`'s host on a nuclei socket, for a protocol spoken
 /// over it directly (a WebSocket): TLS with the system's root certificates
@@ -95,7 +102,8 @@ impl Connector {
         self.tls(tunneled.into_stream(), &dst).await
     }
 
-    /// A nuclei socket to `dst`'s host, trying each address it resolves to.
+    /// A nuclei socket to `dst`'s host, on the first address it resolves to
+    /// that takes the connection.
     async fn socket(&self, dst: &Uri) -> io::Result<Stream> {
         let host = host(dst)?;
         let port = dst
@@ -108,19 +116,15 @@ impl Connector {
                     .await?
                     .collect(),
             };
-            let mut last = None;
-            for address in addresses {
-                match nuclei::net::TcpStream::connect(address).await {
-                    Ok(socket) => {
-                        socket.get_ref().set_nodelay(true)?;
-                        return Ok(Stream::Plain(socket));
-                    }
-                    Err(error) => last = Some(error),
-                }
+            if addresses.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{host} has no address"),
+                ));
             }
-            Err(last.unwrap_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, format!("{host} has no address"))
-            }))
+            let socket = first_connected(addresses).await?;
+            socket.get_ref().set_nodelay(true)?;
+            Ok(Stream::Plain(socket))
         };
         match self.connect_timeout {
             Some(limit) => nuclei::time::timeout(limit, connecting)
@@ -139,6 +143,39 @@ impl Connector {
         let tls = connector.connect(name, stream).await?;
         let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
         Ok(Conn::new(Stream::Tls(Box::new(tls)), h2, false))
+    }
+}
+
+/// A socket to the first of `addresses` to take the connection, as hyper's
+/// connector makes one: the addresses of the first one's family in order,
+/// joined by the other family's in order once [`FALLBACK_DELAY`] passes or
+/// the first family fails. When both fail, the error of the one that failed
+/// last.
+async fn first_connected(addresses: Vec<SocketAddr>) -> io::Result<TcpStream> {
+    let ipv6 = addresses.first().is_some_and(SocketAddr::is_ipv6);
+    let (preferred, fallback): (Vec<SocketAddr>, Vec<SocketAddr>) = addresses
+        .into_iter()
+        .partition(|address| address.is_ipv6() == ipv6);
+    let mut preferred = pin!(TcpStream::connect(&preferred[..]));
+    if fallback.is_empty() {
+        return preferred.await;
+    }
+    let mut fallback = pin!(TcpStream::connect(&fallback[..]));
+    match nuclei::time::timeout(FALLBACK_DELAY, preferred.as_mut()).await {
+        Ok(Ok(socket)) => return Ok(socket),
+        Ok(Err(_)) => return fallback.await,
+        Err(_) => {}
+    }
+    nuclei::select! {
+        biased;
+        connected = preferred.as_mut() => match connected {
+            Ok(socket) => Ok(socket),
+            Err(_) => fallback.await,
+        },
+        connected = fallback.as_mut() => match connected {
+            Ok(socket) => Ok(socket),
+            Err(_) => preferred.await,
+        },
     }
 }
 

@@ -39,8 +39,9 @@ async fn setup_pair() -> (
 ) {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _r0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, events1, _r1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _r0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, events1, _r1) = P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();
@@ -78,8 +79,10 @@ async fn setup_pair() -> (
 async fn encryption_topic_late_subscribe_immediate_publish() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _r0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _r1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _r0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _r1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
     nuclei::spawn(host0.run()).detach();
     nuclei::spawn(host1.run()).detach();

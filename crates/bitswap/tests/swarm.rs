@@ -20,7 +20,13 @@ const DEADLINE: Duration = Duration::from_secs(10);
 fn build<B: NetworkBehaviour>(behaviour: impl FnOnce(PeerId) -> B) -> (PeerId, Swarm<B>) {
     let keypair = libp2p::identity::Keypair::generate_ed25519();
     let peer_id = keypair.public().to_peer_id();
-    let swarm = net::libp2p::swarm(&keypair, behaviour(peer_id), Duration::from_secs(60)).unwrap();
+    let swarm = net::libp2p::swarm(
+        &keypair,
+        behaviour(peer_id),
+        Duration::from_secs(60),
+        edge::testing::edge(),
+    )
+    .unwrap();
     (peer_id, swarm)
 }
 
@@ -80,7 +86,8 @@ async fn server_replies_on_a_new_stream_per_message() {
         let second = block_v1(b"second block");
         let store = MemStore::new(&[first.clone(), second.clone()]);
 
-        let (_, mut server) = build(|id| Bitswap::new(id, store, Config::default()));
+        let (_, mut server) =
+            build(|id| Bitswap::new(id, store, Config::default(), edge::testing::edge()));
         let server_addr = listen(&mut server).await;
         nuclei::spawn(async move {
             loop {
@@ -146,7 +153,8 @@ async fn missing_block_is_answered_with_dont_have_over_the_wire() {
         let missing = block_v1(b"not stored");
         let store = MemStore::new(&[]);
 
-        let (_, mut server) = build(|id| Bitswap::new(id, store, Config::default()));
+        let (_, mut server) =
+            build(|id| Bitswap::new(id, store, Config::default(), edge::testing::edge()));
         let server_addr = listen(&mut server).await;
         nuclei::spawn(async move {
             loop {

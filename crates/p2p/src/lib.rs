@@ -23,17 +23,17 @@
 //! use blockstore::DefraBlockstore;
 //! use std::sync::Arc;
 //!
-//! #[nuclei::main]
-//! async fn main() -> p2p::Result<()> {
+//! async fn serve(edge: edge::Edge) -> p2p::Result<()> {
 //!     // Create a blockstore for Bitswap
 //!     let blockstore = Arc::new(DefraBlockstore::new(/* storage backend */));
 //!     let bitswap_store = BitswapStoreAdapter::new(blockstore);
 //!
-//!     // Create a new P2P host with the blockstore
-//!     let (host, handle, mut events) = P2PHost::new(bitswap_store)?;
+//!     // Create a new P2P host with the blockstore, on the network edge
+//!     let (host, handle, mut events, _replicators) =
+//!         P2PHost::new(bitswap_store, edge.clone()).await?;
 //!
 //!     // Spawn the host event loop
-//!     p2p::rt::spawn(host.run()).detach();
+//!     let _host = edge.spawn_service(host.run());
 //!
 //!     // Start listening
 //!     handle.listen("/ip4/0.0.0.0/tcp/9000".parse().unwrap()).await?;

@@ -40,7 +40,7 @@ async fn open_events_sse_with_auth(
     let (connected_tx, connected_rx) = nuclei::sync::oneshot::channel::<()>();
 
     let handle = nuclei::spawn(async move {
-        let client = net::http::Client::new();
+        let client = net::http::Client::new(edge::testing::edge());
         let resp = match client.get(&url).bearer_auth(token).send().await {
             Ok(resp) => {
                 assert!(

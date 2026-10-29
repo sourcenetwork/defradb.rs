@@ -35,7 +35,7 @@ fn open_subscription(
     let (ready_tx, ready_rx) = oneshot::channel();
 
     let handle = nuclei::spawn(async move {
-        let client = net::http::Client::new();
+        let client = net::http::Client::new(edge::testing::edge());
         let response = client
             .post(&url)
             .header("Accept", "text/event-stream")

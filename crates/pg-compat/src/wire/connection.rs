@@ -34,6 +34,7 @@ pub(crate) struct Connection<S> {
     write: BytesMut,
     client: DefaultClient<S>,
     decode: DecodeContext,
+    closed: bool,
 }
 
 impl<S> Connection<S> {
@@ -45,7 +46,13 @@ impl<S> Connection<S> {
             write: BytesMut::with_capacity(READ_CHUNK),
             client: DefaultClient::new(peer, false),
             decode: DecodeContext::default(),
+            closed: false,
         }
+    }
+
+    /// Whether this side closed the connection: nothing more is read from it.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed
     }
 
     /// The next frontend message, or `None` once the client closed the
@@ -111,6 +118,7 @@ impl<S> Sink<PgWireBackendMessage> for Connection<S> {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        this.closed = true;
         ready!(this.poll_write_out(cx))?;
         Pin::new(&mut this.socket).poll_close(cx)
     }

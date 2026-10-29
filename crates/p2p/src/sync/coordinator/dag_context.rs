@@ -148,7 +148,7 @@ impl DagFetchContext {
     pub(crate) fn track_block_sync(
         &self,
         query_id: crate::QueryId,
-    ) -> Option<crate::rt::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
+    ) -> Option<futures::channel::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
         self.block_sync_completions
             .as_ref()
             .map(|tracker| tracker.register(query_id))
@@ -164,7 +164,7 @@ impl DagFetchContext {
         &self,
         root_cid: Cid,
         peer_id: &PeerId,
-    ) -> Option<crate::rt::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
+    ) -> Option<futures::channel::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
         self.rooted_car_completions
             .as_ref()
             .map(|tracker| tracker.register(root_cid, peer_id.clone()))

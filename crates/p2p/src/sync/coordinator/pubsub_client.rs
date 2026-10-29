@@ -599,10 +599,14 @@ mod tests {
         let transport = RawSubscribeFailTransport::new(2);
         let registered_topics = transport.registered_topics.clone();
         let subscribe_calls = transport.subscribe_calls.clone();
-        let (coordinator, _events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator should construct");
+        let (coordinator, _events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator should construct");
 
         let error = coordinator
             .start_pubsub_services()

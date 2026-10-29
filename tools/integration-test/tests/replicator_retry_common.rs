@@ -33,7 +33,7 @@ pub async fn retry_intervals_test(builder: TestClusterBuilder) {
     sender
         .query(r#"mutation { add_RetryDoc(input: {name: "pending"}) { _docID } }"#)
         .unwrap();
-    let client = net::http::Client::builder()
+    let client = net::http::Client::builder(edge::testing::edge())
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();

@@ -17,7 +17,7 @@ fn open_subscription(api_url: &str, query: &str) -> (Task<()>, Arc<Atom<Vec<Valu
     let events_clone = events.clone();
 
     let handle = nuclei::spawn(async move {
-        let client = net::http::Client::new();
+        let client = net::http::Client::new(edge::testing::edge());
         let resp = client
             .post(&url)
             .header("Accept", "text/event-stream")

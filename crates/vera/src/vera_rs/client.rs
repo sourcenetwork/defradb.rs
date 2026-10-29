@@ -17,12 +17,22 @@ pub struct VeraRsClient {
 }
 
 impl VeraRsClient {
-    pub fn new(url: String, request_timeout: Duration) -> Result<Self, ClientError> {
+    /// A client of the node at `url` whose connections run on `edge`.
+    pub fn new(
+        url: String,
+        request_timeout: Duration,
+        edge: &edge::Edge,
+    ) -> Result<Self, ClientError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let http = http_client::Client::builder(edge.clone());
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = edge;
+            http_client::Client::builder()
+        };
         Ok(Self {
             url,
-            http: http_client::Client::builder()
-                .timeout(request_timeout)
-                .build()?,
+            http: http.timeout(request_timeout).build()?,
             next_id: AtomicU64::new(1),
         })
     }

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use edge::Edge;
 use http::header::{
     AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, LOCATION, PROXY_AUTHORIZATION,
     TRANSFER_ENCODING, WWW_AUTHENTICATE,
@@ -26,9 +27,10 @@ use crate::tls::{Certificate, ClientTls, TlsConnector, Version};
 /// How many redirects a request follows before it fails.
 const REDIRECT_LIMIT: usize = 10;
 
-/// An HTTP client: a pool of connections on nuclei sockets, HTTP/2 where
-/// the server negotiates it, TLS with the system's root certificates, the
-/// system's proxies, and redirects followed. Cloning shares the pool.
+/// An HTTP client: a pool of connections on nuclei sockets, each driven by
+/// a task of the network edge it was built on, HTTP/2 where the server
+/// negotiates it, TLS with the system's root certificates, the system's
+/// proxies, and redirects followed. Cloning shares the pool.
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<Inner>,
@@ -49,18 +51,12 @@ impl std::fmt::Debug for Client {
     }
 }
 
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Client {
-    /// A client with every setting at its default. If the TLS configuration
-    /// cannot be built, the client still serves plain HTTP and every HTTPS
-    /// request fails with the reason.
-    pub fn new() -> Self {
-        let builder = ClientBuilder::default();
+    /// A client on `edge` with every other setting at its default. If the
+    /// TLS configuration cannot be built, the client still serves plain HTTP
+    /// and every HTTPS request fails with the reason.
+    pub fn new(edge: Edge) -> Self {
+        let builder = ClientBuilder::new(edge);
         let tls = builder
             .tls
             .config()
@@ -68,8 +64,9 @@ impl Client {
         builder.assemble(tls)
     }
 
-    pub fn builder() -> ClientBuilder {
-        ClientBuilder::default()
+    /// A builder of a client on `edge`.
+    pub fn builder(edge: Edge) -> ClientBuilder {
+        ClientBuilder::new(edge)
     }
 
     pub fn get(&self, url: impl IntoUrl) -> RequestBuilder {
@@ -103,9 +100,14 @@ impl Client {
         )
     }
 
-    /// Sends `parts`, following redirects, all within the request's time
-    /// limit (or the client's).
-    pub(crate) async fn execute(&self, parts: Parts) -> Result<Response, Error> {
+    /// Sends `parts` with the client's default headers, following
+    /// redirects, all within the request's time limit (or the client's).
+    pub(crate) async fn execute(&self, mut parts: Parts) -> Result<Response, Error> {
+        for (name, value) in &self.inner.default_headers {
+            if !parts.headers.contains_key(name) {
+                parts.headers.insert(name.clone(), value.clone());
+            }
+        }
         let deadline = parts
             .timeout
             .or(self.inner.timeout)
@@ -131,11 +133,6 @@ impl Client {
     async fn exchange(&self, parts: &Parts) -> Result<http::Response<Incoming>, Error> {
         let uri: Uri = parts.url.as_str().parse().map_err(Error::builder)?;
         let mut headers = parts.headers.clone();
-        for (name, value) in &self.inner.default_headers {
-            if !headers.contains_key(name) {
-                headers.insert(name.clone(), value.clone());
-            }
-        }
         if parts.url.scheme() == "http" && !headers.contains_key(PROXY_AUTHORIZATION) {
             let auth = self
                 .inner
@@ -201,6 +198,7 @@ fn redirect(parts: &Parts, response: &http::Response<Incoming>) -> Result<Option
 /// Builds a [`Client`].
 #[derive(Debug, Clone)]
 pub struct ClientBuilder {
+    edge: Edge,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
     pool_idle_timeout: Option<Duration>,
@@ -210,9 +208,10 @@ pub struct ClientBuilder {
     default_headers: HeaderMap,
 }
 
-impl Default for ClientBuilder {
-    fn default() -> Self {
+impl ClientBuilder {
+    fn new(edge: Edge) -> Self {
         Self {
+            edge,
             timeout: None,
             connect_timeout: None,
             pool_idle_timeout: Some(Duration::from_secs(90)),
@@ -222,9 +221,7 @@ impl Default for ClientBuilder {
             default_headers: HeaderMap::new(),
         }
     }
-}
 
-impl ClientBuilder {
     /// The time limit of every request, from connecting to the end of the
     /// response body, unless the request sets its own.
     pub fn timeout(mut self, limit: Duration) -> Self {
@@ -234,13 +231,6 @@ impl ClientBuilder {
 
     pub fn connect_timeout(mut self, limit: Duration) -> Self {
         self.connect_timeout = Some(limit);
-        self
-    }
-
-    /// How long an idle pooled connection is kept; `None`: until the
-    /// server closes it.
-    pub fn pool_idle_timeout(mut self, idle: Option<Duration>) -> Self {
-        self.pool_idle_timeout = idle;
         self
     }
 
@@ -300,7 +290,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             proxies: proxies.clone(),
         };
-        let hyper = legacy::Client::builder(Executor)
+        let hyper = legacy::Client::builder(Executor::new(self.edge))
             .timer(Timer)
             .pool_timer(Timer)
             .pool_idle_timeout(self.pool_idle_timeout)

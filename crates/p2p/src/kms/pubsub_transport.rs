@@ -471,7 +471,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
         let (tx, rx) = kms::transport_reply_channel(16);
         let transport = self.transport.clone();
         let correlator = self.correlator.clone();
-        crate::rt::spawn(async move {
+        drop(self.edge.spawn(async move {
             let deadline = crate::rt::time::Instant::now() + RESPONSE_TIMEOUT;
             let mut republish_at = crate::rt::time::Instant::now() + REPUBLISH_INTERVAL;
             loop {
@@ -552,7 +552,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
                     }
                 }
             }
-        }).detach();
+        }));
         Ok(rx)
     }
 
@@ -1171,95 +1171,100 @@ mod tests {
     /// while no reply arrives, the identical request must be republished every
     /// `REPUBLISH_INTERVAL`, and a late reply must still be correlated and
     /// surfaced through the re-registered entry.
-    #[nuclei::test(start_paused = true)]
-    async fn request_republishes_until_reply_arrives() {
-        let transport = RacyTransport::new(0);
-        let published = transport.published.clone();
-        let kt = PubsubKeyTransport::new(
-            transport,
-            Arc::new(crate::AnonymousResolver),
-            edge::testing::edge(),
-        )
-        .await
-        .unwrap();
-
-        let payload = b"retry-me".to_vec();
-        let req = EncodedFetchRequest {
-            payload: payload.clone(),
-            request_id: "r1".to_string(),
-        };
-        let mut rx = kt.send_request(req).await.expect("send_request");
-
-        // Two republish intervals with no reply → initial + 2 republishes.
-        crate::rt::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
-        {
-            let pubs = published.load();
-            assert_eq!(
-                pubs.len(),
-                3,
-                "one initial publish plus one republish per interval"
-            );
-            assert!(
-                pubs.iter()
-                    .all(|(t, d)| t == ENCRYPTION_TOPIC && d == &payload),
-                "republished bytes must be identical (same request-ID)"
-            );
-        }
-
-        // A reply arriving AFTER republishes must still correlate.
-        let reply = FetchEncryptionKeyReply {
-            links: vec![vec![1]],
-            blocks: vec![vec![2]],
-            ephemeral_public_key: vec![7; 32],
-        };
-        let envelope = InternalResponse {
-            id: crate::pubsub_rpc::derive_request_id(&payload).to_string(),
-            err: String::new(),
-            data: defra_core::cbor::to_vec(&reply).unwrap(),
-            from: Vec::new(),
-        };
-        kt.dispatch_incoming(
-            a_libp2p_peer().to_string(),
-            kt.self_response_topic().to_string(),
-            envelope.to_cbor().unwrap(),
-        )
-        .await;
-
-        let (got, _) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+    #[test]
+    fn request_republishes_until_reply_arrives() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let published = transport.published.clone();
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
             .await
-            .expect("reply within timeout")
-            .expect("reply present")
-            .expect("reply must succeed");
-        assert_eq!(got, reply);
+            .unwrap();
+
+            let payload = b"retry-me".to_vec();
+            let req = EncodedFetchRequest {
+                payload: payload.clone(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            // Two republish intervals with no reply → initial + 2 republishes.
+            crate::rt::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
+            {
+                let pubs = published.load();
+                assert_eq!(
+                    pubs.len(),
+                    3,
+                    "one initial publish plus one republish per interval"
+                );
+                assert!(
+                    pubs.iter()
+                        .all(|(t, d)| t == ENCRYPTION_TOPIC && d == &payload),
+                    "republished bytes must be identical (same request-ID)"
+                );
+            }
+
+            // A reply arriving AFTER republishes must still correlate.
+            let reply = FetchEncryptionKeyReply {
+                links: vec![vec![1]],
+                blocks: vec![vec![2]],
+                ephemeral_public_key: vec![7; 32],
+            };
+            let envelope = InternalResponse {
+                id: crate::pubsub_rpc::derive_request_id(&payload).to_string(),
+                err: String::new(),
+                data: defra_core::cbor::to_vec(&reply).unwrap(),
+                from: Vec::new(),
+            };
+            kt.dispatch_incoming(
+                a_libp2p_peer().to_string(),
+                kt.self_response_topic().to_string(),
+                envelope.to_cbor().unwrap(),
+            )
+            .await;
+
+            let (got, _) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .expect("reply within timeout")
+                .expect("reply present")
+                .expect("reply must succeed");
+            assert_eq!(got, reply);
+        })
     }
 
     /// Go parity (`fetchEncryptionKeyResponseTimeout`): with no reply at all,
     /// the reply stream must report unavailability once the response timeout
     /// elapses, so callers can retry instead of treating silence as denial.
-    #[nuclei::test(start_paused = true)]
-    async fn request_with_no_reply_reports_unavailable() {
-        let transport = RacyTransport::new(0);
-        let kt = PubsubKeyTransport::new(
-            transport,
-            Arc::new(crate::AnonymousResolver),
-            edge::testing::edge(),
-        )
-        .await
-        .unwrap();
-
-        let req = EncodedFetchRequest {
-            payload: b"never-answered".to_vec(),
-            request_id: "r1".to_string(),
-        };
-        let mut rx = kt.send_request(req).await.expect("send_request");
-
-        let error = crate::rt::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+    #[test]
+    fn request_with_no_reply_reports_unavailable() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
             .await
-            .expect("stream must resolve at the response timeout, not hang")
-            .expect("timeout result present")
-            .expect_err("no reply must be retryable unavailability");
-        assert!(matches!(error, kms::Error::KeyUnavailable));
-        assert!(rx.recv().await.is_none());
+            .unwrap();
+
+            let req = EncodedFetchRequest {
+                payload: b"never-answered".to_vec(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            let error =
+                crate::rt::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+                    .await
+                    .expect("stream must resolve at the response timeout, not hang")
+                    .expect("timeout result present")
+                    .expect_err("no reply must be retryable unavailability");
+            assert!(matches!(error, kms::Error::KeyUnavailable));
+            assert!(rx.recv().await.is_none());
+        })
     }
 
     /// An inbound request on the base topic must be answered by publishing an

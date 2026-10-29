@@ -86,7 +86,9 @@ fn write_certificate(root: &Path) -> Certificate {
 }
 
 fn client(certificate: Option<Certificate>) -> Client {
-    let mut builder = Client::builder().no_proxy().timeout(Duration::from_secs(2));
+    let mut builder = Client::builder(edge::testing::edge())
+        .no_proxy()
+        .timeout(Duration::from_secs(2));
     if let Some(certificate) = certificate {
         builder = builder.add_root_certificate(certificate);
     }
@@ -147,7 +149,7 @@ async fn node_shutdown_closes_existing_https_connections() {
     config.api.pubkey_path = root.path().join("cert.pem").display().to_string();
     config.api.privkey_path = root.path().join("key.pem").display().to_string();
     let url = format!("https://{}/health-check", config.api.address);
-    let client = Client::builder()
+    let client = Client::builder(edge::testing::edge())
         .no_proxy()
         .add_root_certificate(certificate)
         .http1_only()

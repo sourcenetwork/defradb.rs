@@ -13,6 +13,7 @@ mod receive;
 pub mod task_merger;
 pub mod wantlist;
 
+use edge::Edge;
 use kovan_channel::{bounded, unbounded};
 use libp2p::PeerId;
 use nuclei::sync::oneshot;
@@ -48,16 +49,16 @@ impl std::fmt::Debug for Server {
 }
 
 impl Server {
-    /// Spawns the server tasks on the current nuclei runtime.
-    pub fn new<S: Store>(network: Network, store: S, config: ServerConfig) -> Self {
+    /// Spawns the server tasks on `edge`.
+    pub fn new<S: Store>(network: Network, store: S, config: ServerConfig, edge: Edge) -> Self {
         let (inbound, inbound_rx) = kovan_channel::bounded(INBOUND_CAPACITY);
         let (commands, commands_rx) = kovan_channel::unbounded();
         let (reports, reports_rx) = kovan_channel::unbounded();
 
         let max_wants = config.max_queued_wantlist_entries_per_peer;
         let lookup_timeout = config.message_lookup_timeout;
-        let engine = Engine::new(&config, store.clone(), network, reports);
-        nuclei::spawn(receive::run(
+        let engine = Engine::new(&config, store.clone(), network, reports, edge.clone());
+        edge.spawn_service(receive::run(
             inbound_rx,
             commands.clone(),
             store,
@@ -66,7 +67,8 @@ impl Server {
             lookup_timeout,
         ))
         .detach();
-        nuclei::spawn(engine.run(commands_rx, reports_rx)).detach();
+        edge.spawn_service(engine.run(commands_rx, reports_rx))
+            .detach();
 
         Server { inbound, commands }
     }

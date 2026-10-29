@@ -1,5 +1,6 @@
 //! The HTTP/2 channel tonic's generated clients run on, over nuclei
-//! sockets: `Client::new(channel)` with a [`Channel`] from an [`Endpoint`].
+//! sockets driven on the network edge: `Client::new(channel)` with a
+//! [`Channel`] from an [`Endpoint`].
 
 use std::future::Future;
 use std::pin::Pin;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use edge::Edge;
 use http::uri::{Authority, PathAndQuery, Scheme};
 use http::{Request, Response, Uri};
 use hyper::body::Incoming;
@@ -44,15 +46,17 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     uri: Uri,
+    edge: Edge,
     connect_timeout: Option<Duration>,
     timeout: Option<Duration>,
     tls: ClientTls,
 }
 
 impl Endpoint {
-    /// An endpoint at `uri`: `http://` speaks HTTP/2 in the clear, `https://`
-    /// over TLS with the system's root certificates.
-    pub fn from_shared(uri: impl Into<String>) -> Result<Self, Error> {
+    /// An endpoint at `uri` whose connections run on `edge`: `http://` speaks
+    /// HTTP/2 in the clear, `https://` over TLS with the system's root
+    /// certificates.
+    pub fn from_shared(uri: impl Into<String>, edge: Edge) -> Result<Self, Error> {
         let uri: Uri = uri
             .into()
             .parse()
@@ -64,6 +68,7 @@ impl Endpoint {
         }
         Ok(Self {
             uri,
+            edge,
             connect_timeout: None,
             timeout: None,
             tls: ClientTls {
@@ -120,7 +125,7 @@ impl Endpoint {
             connect_timeout: self.connect_timeout,
             proxies: None,
         };
-        let client = legacy::Client::builder(Executor)
+        let client = legacy::Client::builder(Executor::new(self.edge))
             .timer(Timer)
             .pool_timer(Timer)
             .http2_only(true)

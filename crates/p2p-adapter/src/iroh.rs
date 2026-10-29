@@ -35,6 +35,7 @@ pub struct IrohP2PAdapter<B: Blockstore + 'static> {
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
+    network: p2p::network::Network,
 }
 
 impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
@@ -102,6 +103,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         version_syncer: Option<Arc<dyn TransportVersionSyncer>>,
         nac_checker: Arc<dyn db::NodeAccessChecker>,
     ) -> Self {
+        let network = coordinator.network();
         Self {
             transport,
             sync_coordinator: Some(coordinator),
@@ -112,6 +114,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
+            network,
         }
     }
 
@@ -211,6 +214,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         }
     }
 
@@ -275,6 +279,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 .nac_checker
                 .as_ref()
                 .map(|checker| db::bound_node_access_checker(Arc::clone(checker), context.clone())),
+            network: self.network.clone(),
         }))
     }
 
@@ -658,6 +663,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 Arc::clone(pusher),
                 plan,
                 self.event_bus.clone(),
+                self.network.clone(),
             ))
         } else {
             None
@@ -746,7 +752,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                p2p::rt::spawn(async move {
+                self.network.spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
@@ -762,7 +768,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     replay
                         .complete(result.err().map(|error| error.to_string()))
                         .await;
-                }).detach();
+                });
             } else {
                 replay.complete(None).await;
             }
@@ -1037,6 +1043,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         crate::doc_sync::sync::sync_documents(
             Arc::new(self.transport.clone()),
             event_bus.as_ref(),
+            &self.network,
             doc_ids,
             timeout.unwrap_or(crate::doc_sync::DEFAULT_DOC_SYNC_TIMEOUT),
             DOC_SYNC_DISPATCH_PARALLELISM,
@@ -1067,14 +1074,14 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             let request_clone = request.clone();
             let transport = self.transport.clone();
             let peer = peer.clone();
-            p2p::rt::spawn(async move {
+            self.network.spawn(async move {
                 if let Err(error) = transport
                     .send_branchable_sync_request(&peer, request_clone)
                     .await
                 {
                     tracing::warn!(peer_id = %peer, error = %error, "failed to send BranchableSyncRequest");
                 }
-            }).detach();
+            });
         }
 
         Ok(())
@@ -1101,12 +1108,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .as_ref()
             .ok_or_else(|| P2PError::unsupported("version syncer required"))?
             .clone();
-        p2p::rt::spawn(async move {
+        self.network.spawn(async move {
             if let Err(error) = syncer.sync_versions(version_ids, connected_peers).await {
                 tracing::warn!(error = %error, "version sync failed");
             }
-        })
-        .detach();
+        });
 
         Ok(())
     }
@@ -1231,11 +1237,11 @@ mod tests {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1266,7 +1272,7 @@ mod tests {
     async fn connect_peer_still_dials_when_not_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1292,7 +1298,7 @@ mod tests {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
 
@@ -1300,7 +1306,9 @@ mod tests {
         let mut config_b = test_endpoint_config(key_b.clone());
         config_b.allowlist = IrohAllowlistConfig::Explicit(Default::default());
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(config_b).await.expect("endpoint b");
+            spawn_endpoint(config_b, edge::testing::edge())
+                .await
+                .expect("endpoint b");
 
         let transport_a = IrohTransport::new(command_tx_a, key_a);
         let transport_b = IrohTransport::new(command_tx_b, key_b);
@@ -1363,11 +1371,11 @@ mod tests {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1422,11 +1430,11 @@ mod tests {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, mut events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1442,6 +1450,7 @@ mod tests {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         };
 
         // Endpoint B has no coordinator behind it, so it accepts the doc-sync

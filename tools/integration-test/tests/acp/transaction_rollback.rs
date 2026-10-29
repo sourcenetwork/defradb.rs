@@ -105,7 +105,7 @@ async fn acp_transaction_rollback_test(cluster: TestCluster) {
     let node = cluster.client(0);
     let binary = node.binary_path().to_path_buf();
     let api_url = cluster.api_url(0).to_string();
-    let http = net::http::Client::new();
+    let http = net::http::Client::new(edge::testing::edge());
 
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");

@@ -101,9 +101,14 @@ async fn client(response: Option<String>) -> (OrbisClient, nuclei::Task<()>, Arc
         tokens: tokens.clone(),
     };
     let task = nuclei::spawn(async move {
-        net::server::serve(listener, None, SignServiceServer::new(service))
-            .await
-            .unwrap();
+        net::server::serve(
+            listener,
+            None,
+            SignServiceServer::new(service),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
     });
     let client = OrbisClient::new(
         endpoint,

@@ -556,10 +556,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -613,10 +617,14 @@ mod tests {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, _events) =
-            SyncCoordinator::new(transport, blockstore.clone(), SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, _events) = SyncCoordinator::new(
+            transport,
+            blockstore.clone(),
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let (cid, block) = create_lww_block("name");
         let owner = coordinator
             .manager()
@@ -653,10 +661,14 @@ mod tests {
     async fn deferred_ingest_preserves_the_claimed_retry_deadline() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, _events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .unwrap();
+        let (coordinator, _events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .unwrap();
         let (field, _) = create_lww_block("name");
         let (root, block) = create_composite_block("doc123", "name", field);
         coordinator
@@ -698,10 +710,14 @@ mod tests {
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
         let transport_handle = transport.clone();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, _field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -785,10 +801,14 @@ mod tests {
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
         let transport_handle = transport.clone();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field1_cid, _field1_block) = create_lww_block("name");
         let (field2_cid, _field2_block) = create_lww_block("age");

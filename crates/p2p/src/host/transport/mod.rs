@@ -20,13 +20,22 @@ use net::libp2p::{authenticated_tcp, TcpTransport, CONNECTION_TIMEOUT};
 
 use crate::error::{Error, Result};
 
-/// The swarm's executor: each connection's task runs on nuclei, in the
-/// tokio context QUIC and DNS need.
-pub(crate) struct Executor;
+/// The swarm's executor: each connection's task runs on the network edge,
+/// in the tokio context QUIC and DNS need, until the swarm closes it or the
+/// edge stops accepting.
+pub(crate) struct Executor {
+    edge: edge::Edge,
+}
+
+impl Executor {
+    pub(crate) fn new(edge: edge::Edge) -> Self {
+        Self { edge }
+    }
+}
 
 impl libp2p::swarm::Executor for Executor {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        nuclei::spawn(edge::compat(future)).detach();
+        self.edge.spawn_service(edge::compat(future)).detach();
     }
 }
 

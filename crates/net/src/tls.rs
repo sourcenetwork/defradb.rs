@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use regolith::sync::Lazy;
 use rustls::crypto::CryptoProvider;
-use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, RootCertStore, SupportedProtocolVersion};
 
@@ -41,12 +40,6 @@ pub struct Certificate(CertificateDer<'static>);
 impl Certificate {
     pub fn from_der(der: &[u8]) -> Result<Self, TlsError> {
         Ok(Self(CertificateDer::from(der.to_vec())))
-    }
-
-    pub fn from_pem(pem: &[u8]) -> Result<Self, TlsError> {
-        CertificateDer::from_pem_slice(pem)
-            .map(Self)
-            .map_err(|error| TlsError::Certificate(error.to_string()))
     }
 }
 

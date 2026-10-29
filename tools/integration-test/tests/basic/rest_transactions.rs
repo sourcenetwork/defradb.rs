@@ -34,7 +34,7 @@ async fn rust_rest_transactions_preserve_isolation() {
     edge::compat(async move {
         let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
         let api = cluster.api_url(0);
-        let client = Client::builder()
+        let client = Client::builder(edge::testing::edge())
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap();
