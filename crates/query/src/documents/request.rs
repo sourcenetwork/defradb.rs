@@ -129,8 +129,14 @@ pub(super) fn update_with_filter(
 ) -> Result<String> {
     let collection = name(collection)?;
     let filter = filter(filter_value)?;
-    let updater: Value = serde_json::from_str(updater)
-        .map_err(|e| Error::Request(format!("cannot parse JSON: {e}")))?;
+    let updater: Value = serde_json::from_str(updater).map_err(|e| {
+        let what = if updater.trim_start().starts_with('{') {
+            "cannot parse object: "
+        } else {
+            ""
+        };
+        Error::Request(format!("cannot parse JSON: {what}{e}"))
+    })?;
     if !updater.is_object() {
         return Err(Error::Request(
             "the updater of a document is of invalid type".to_owned(),

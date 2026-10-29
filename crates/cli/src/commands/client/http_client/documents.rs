@@ -3,6 +3,7 @@
 use query::documents::{self, AddOptions, DocumentsResult, Filter};
 use reqwest::{Method, Response};
 use serde_json::{json, Value};
+use urlencoding::encode;
 
 use super::HttpClient;
 use crate::error::{Error, Result};
@@ -21,7 +22,7 @@ impl HttpClient {
             [doc] => doc.to_string(),
             many => Value::Array(many.to_vec()).to_string(),
         };
-        let path = format!("collections/{collection}");
+        let path = format!("collections/{}", encode(collection));
         let query = encryption(options);
         Ok(self
             .send(Method::POST, &path, &query, Some(body), txn)
@@ -39,7 +40,11 @@ impl HttpClient {
         doc_id: &str,
         patch: &Value,
     ) -> Result<()> {
-        let path = format!("collections/{collection}/document/{doc_id}");
+        let path = format!(
+            "collections/{}/document/{}",
+            encode(collection),
+            encode(doc_id)
+        );
         self.send(Method::PATCH, &path, &[], Some(patch.to_string()), txn)
             .await
             .map(drop)
@@ -82,7 +87,11 @@ impl HttpClient {
         collection: &str,
         doc_id: &str,
     ) -> Result<()> {
-        let path = format!("collections/{collection}/document/{doc_id}");
+        let path = format!(
+            "collections/{}/document/{}",
+            encode(collection),
+            encode(doc_id)
+        );
         self.send(Method::DELETE, &path, &[], None, txn)
             .await
             .map(drop)
@@ -98,7 +107,7 @@ impl HttpClient {
         updater: &str,
     ) -> Result<DocumentsResult> {
         let body = json!({"filter": filter_body(filter), "updater": updater}).to_string();
-        let path = format!("collections/{collection}");
+        let path = format!("collections/{}", encode(collection));
         Ok(self
             .send(Method::PATCH, &path, &[], Some(body), txn)
             .await?
@@ -115,7 +124,7 @@ impl HttpClient {
         filter: &Filter,
     ) -> Result<DocumentsResult> {
         let body = json!({"filter": filter_body(filter)}).to_string();
-        let path = format!("collections/{collection}");
+        let path = format!("collections/{}", encode(collection));
         Ok(self
             .send(Method::DELETE, &path, &[], Some(body), txn)
             .await?
@@ -160,7 +169,11 @@ impl HttpClient {
         doc: &Value,
         options: &AddOptions,
     ) -> Result<String> {
-        let path = format!("collections/{collection}/document/{doc_id}");
+        let path = format!(
+            "collections/{}/document/{}",
+            encode(collection),
+            encode(doc_id)
+        );
         let shown = [("show_deleted", "true".to_owned())];
         match self.send(Method::GET, &path, &shown, None, Some(txn)).await {
             Ok(_) => {

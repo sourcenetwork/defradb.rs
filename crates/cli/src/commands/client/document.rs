@@ -6,12 +6,11 @@ use clap::{Args, Subcommand};
 use serde_json::Value as JsonValue;
 
 use super::http_client::HttpClient;
-use super::{
-    escape_graphql_string, get_data_from_args, json_to_graphql_input, validate_identifier,
-    ClientContext,
-};
+use super::{escape_graphql_string, get_data_from_args, validate_identifier, ClientContext};
 use crate::commands::client::collection::introspection::get_collection_fields;
 use crate::error::{Error, Result};
+use defra_core::TxnId;
+use query::documents::{AddOptions, Filter};
 
 /// Interact with documents
 #[derive(Args, Debug)]
@@ -125,48 +124,46 @@ impl DocumentArgs {
     }
 }
 
+/// The client a document write runs with, and the session transaction.
+fn write_client(ctx: &ClientContext) -> Result<(HttpClient, Option<String>)> {
+    let client = HttpClient::new(&ctx.url)?
+        .with_auth_token(ctx.auth_token.clone())
+        .with_verbose(ctx.verbose);
+    let txn = ctx
+        .tx_id
+        .as_deref()
+        .map(str::parse::<TxnId>)
+        .transpose()
+        .map_err(|e| Error::MissingInput(format!("invalid transaction ID: {e}")))?;
+    Ok((client, txn.map(|id| id.to_string())))
+}
+
+fn print_json(value: &impl serde::Serialize) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn required<'a>(name: Option<&'a str>, command: &str) -> Result<&'a str> {
+    name.ok_or_else(|| Error::MissingInput(format!("--collection-name is required for {command}")))
+}
+
 impl DocumentAddArgs {
     pub async fn execute(&self, ctx: &ClientContext, name: Option<&str>) -> Result<()> {
-        let collection = name.ok_or_else(|| {
-            Error::MissingInput("--collection-name is required for add".to_string())
-        })?;
-        validate_identifier(collection)?;
-
+        let collection = required(name, "add")?;
         let data = get_data_from_args(&self.document, &self.file)?;
-        let parsed: JsonValue = serde_json::from_str(&data)?;
-
-        let input_str = json_to_graphql_input(&parsed);
-        let query = format!(
-            r#"mutation {{ add_{collection}(input: {input}) {{ _docID }} }}"#,
-            collection = collection,
-            input = input_str
-        );
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-        let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;
-
-        if response.has_errors() {
-            return Err(Error::Server(response.error_message()));
-        }
-
-        let data = response
-            .data
-            .ok_or_else(|| Error::Server("Server returned success but with no data".to_string()))?;
-
-        let key = format!("add_{}", collection);
-        let result = data.get(&key).ok_or_else(|| {
-            Error::Server(format!(
-                "Server response missing expected key '{}'. Response: {}",
-                key,
-                serde_json::to_string_pretty(&data).unwrap_or_else(|_| data.to_string())
-            ))
-        })?;
-        let output = serde_json::to_string_pretty(result)?;
-        println!("{output}");
-
-        Ok(())
+        let docs = match serde_json::from_str(&data)? {
+            JsonValue::Array(docs) => docs,
+            doc => vec![doc],
+        };
+        let options = AddOptions {
+            encrypt_doc: self.encrypt,
+            encrypted_fields: self.encrypt_fields.clone(),
+        };
+        let (client, txn) = write_client(ctx)?;
+        let ids = client
+            .add_docs(txn.as_deref(), collection, &docs, &options)
+            .await?;
+        print_json(&ids)
     }
 }
 
@@ -231,47 +228,49 @@ impl DocumentGetArgs {
 
 impl DocumentUpdateArgs {
     pub async fn execute(&self, ctx: &ClientContext, name: Option<&str>) -> Result<()> {
-        let collection = name.ok_or_else(|| {
-            Error::MissingInput("--collection-name is required for update".to_string())
-        })?;
-        validate_identifier(collection)?;
-
-        if let Some(ref doc_id) = self.doc_id {
-            let updater = self.updater.as_deref().ok_or_else(|| {
-                Error::MissingInput("--updater is required for update".to_string())
-            })?;
-
-            let client = HttpClient::new(&ctx.url)?
-                .with_auth_token(ctx.auth_token.clone())
-                .with_verbose(ctx.verbose);
-
-            client
-                .collection_update_doc(collection, doc_id, updater)
-                .await?;
-        } else {
-            eprintln!("filter-based update not yet supported");
+        let collection = required(name, "update")?;
+        let updater = self
+            .updater
+            .as_deref()
+            .ok_or_else(|| Error::MissingInput("--updater is required for update".to_string()))?;
+        let (client, txn) = write_client(ctx)?;
+        match (&self.doc_id, &self.filter) {
+            (Some(doc_id), _) => {
+                let patch = serde_json::from_str(updater)?;
+                client
+                    .update_doc(txn.as_deref(), collection, doc_id, &patch)
+                    .await
+            }
+            (None, Some(filter)) => {
+                let filter = Filter::Source(filter.clone());
+                let result = client
+                    .update_with_filter(txn.as_deref(), collection, &filter, updater)
+                    .await?;
+                print_json(&result)
+            }
+            (None, None) => Err(Error::MissingInput(
+                "--docID or --filter is required for update".to_string(),
+            )),
         }
-        Ok(())
     }
 }
 
 impl DocumentDeleteArgs {
     pub async fn execute(&self, ctx: &ClientContext, name: Option<&str>) -> Result<()> {
-        let collection = name.ok_or_else(|| {
-            Error::MissingInput("--collection-name is required for delete".to_string())
-        })?;
-        validate_identifier(collection)?;
-
-        if let Some(ref doc_id) = self.doc_id {
-            let client = HttpClient::new(&ctx.url)?
-                .with_auth_token(ctx.auth_token.clone())
-                .with_verbose(ctx.verbose);
-
-            client.collection_delete_doc(collection, doc_id).await?;
-            println!("Deleted document {}", doc_id);
-        } else {
-            eprintln!("filter-based delete not yet supported");
+        let collection = required(name, "delete")?;
+        let (client, txn) = write_client(ctx)?;
+        match (&self.doc_id, &self.filter) {
+            (Some(doc_id), _) => client.delete_doc(txn.as_deref(), collection, doc_id).await,
+            (None, Some(filter)) => {
+                let filter = Filter::Source(filter.clone());
+                let result = client
+                    .delete_with_filter(txn.as_deref(), collection, &filter)
+                    .await?;
+                print_json(&result)
+            }
+            (None, None) => Err(Error::MissingInput(
+                "--docID or --filter is required for delete".to_string(),
+            )),
         }
-        Ok(())
     }
 }
