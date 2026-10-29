@@ -58,5 +58,8 @@ jobs:
           shared-key: unit
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.group == 'surfaces' }}
       - run: cargo nextest run --cargo-profile super-dev ${{ matrix.packages }}
+      - name: Check loopback gateway discovery listeners
+        if: runner.os == 'macOS' && matrix.group == 'network'
+        run: cargo test --profile super-dev -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners -- --exact --ignored
       # nextest does not run doctests.
       - run: cargo test --doc --profile super-dev ${{ matrix.packages }}

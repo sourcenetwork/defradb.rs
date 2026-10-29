@@ -342,3 +342,24 @@ fn signing_stays_off_without_a_node_identity() {
     );
     assert!(!server.app_state().signing_enabled);
 }
+
+#[tokio::test]
+async fn router_construction_includes_extra_routes_without_a_transform() {
+    let router = server(ServerConfig::default())
+        .with_extra_routes(axum::Router::new().route(
+            "/application",
+            axum::routing::get(|| async { "application" }),
+        ))
+        .router()
+        .unwrap();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/application")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

@@ -73,6 +73,12 @@ pub enum Error {
     VeraProvider(#[source] vera::ProviderError),
     #[error("failed to initialize NAC: {0}")]
     NacInit(#[source] db::nac::Error),
+    #[error("node access control at startup needs a node identity to own it")]
+    NodeAcpWithoutIdentity,
+    #[error("malformed node identity: {0}")]
+    InvalidNodeIdentityDid(#[source] identity::Error),
+    #[error("invalid replicator retry intervals: {0}")]
+    InvalidRetrySchedule(String),
 
     #[error("malformed acting identity: {0}")]
     InvalidActingIdentity(#[source] identity::Error),

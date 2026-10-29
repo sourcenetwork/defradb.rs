@@ -30,8 +30,18 @@ The model proves:
 | `MixedField.mixedCM` + `mixed_two_converge` / `mixed_three_converge` + `mixed_not_idempotent` | Same-document `Counter × LWW` is a componentwise product of the two #1041 field instances. It converges when both components receive the same operations, but the product is still non-idempotent because the counter component still needs exactly-once dedup. The cross-field stale whole-document materialization hazard is modeled red/green by `MixedFieldMaterialization.tla`. | `crates/crdt/src/stored.rs`; `crates/crdt/src/field/{counter,lww}.rs` |
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
+| `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
 
 `#print axioms` status checked with Lean 4.18:
+
+Retry ladder (`RetrySchedule.Ladder`):
+
+- `RetrySchedule.new_keeps`, `new_valid`, `new_accepts_valid`: `[propext, Quot.sound]`
+- `RetrySchedule.cap_mem`, `cap_positive`: `[propext]`
+- `RetrySchedule.cap_follows_ladder`, `cap_repeats_last`: `[propext, Quot.sound]`
+- `RetrySchedule.default_accepted`: `[propext, Quot.sound]`
+
+Convergence:
 
 - `lwwState_merge_assoc`: `[propext]`
 - `word64Add_assoc`: `[propext, Quot.sound]`

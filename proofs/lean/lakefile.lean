@@ -4,6 +4,9 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib HttpRouterComposition where
+
+@[default_target]
 lean_lib EndpointBind where
 
 @[default_target]
@@ -110,3 +113,6 @@ lean_lib DocumentPush where
 
 @[default_target]
 lean_lib SelectedCarAuthority where
+
+@[default_target]
+lean_lib RetrySchedule where

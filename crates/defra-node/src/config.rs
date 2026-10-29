@@ -46,6 +46,7 @@ pub struct HttpConfig {
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
+    pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
 }
 
@@ -64,6 +65,7 @@ impl HttpConfig {
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
+            router_transform: None,
             listener: None,
         }
     }
@@ -107,6 +109,13 @@ impl HttpConfig {
 
     pub fn with_extra_routes(mut self, extra: axum::Router) -> Self {
         self.extra_routes = Some(extra);
+        self
+    }
+
+    /// Wrap the complete HTTP router after native and application routes are
+    /// assembled, so application middleware can cover both and their fallback.
+    pub fn with_router_transform(mut self, transform: defra_http::RouterTransform) -> Self {
+        self.router_transform = Some(transform);
         self
     }
 }

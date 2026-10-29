@@ -5,6 +5,10 @@ use identity::Did;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentOwnerObservation {
     pub doc_id: String,
+    /// The normal read path returned this live document for the chosen actor.
+    /// False does not distinguish absence from read denial. True does not
+    /// establish registered ownership or authorize any related document.
+    pub visible: bool,
     pub owner: Option<Did>,
 }
 

@@ -1050,8 +1050,9 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let key2 = SecretKey::generate();
-        // Gossip can hand node 2 node 0's address; a direct 0-2 link would
-        // deliver the unrelayed copy first and dedup would hide the relay.
+        // Gossip can hand node 2 node 0's address. The configured allowlist is
+        // inbound-only, so revoke the 0-2 pair explicitly to keep this test's
+        // topology on the relay path while allowing node 0's origin through it.
         let only = |key: &SecretKey| {
             let mut config = test_config(key.clone());
             config.allowlist = crate::iroh::IrohAllowlistConfig::Explicit(
@@ -1068,6 +1069,15 @@ mod tests {
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
         let transport2 = IrohTransport::new(command_tx2, key2);
+
+        transport0
+            .deny_peer(transport2.local_peer_id())
+            .await
+            .unwrap();
+        transport2
+            .deny_peer(transport0.local_peer_id())
+            .await
+            .unwrap();
 
         transport0
             .dial(
@@ -1158,7 +1168,10 @@ mod tests {
 
         async fn assert_direct_link_refused(dialer: &IrohTransport, server: &IrohTransport) {
             let addrs = server.listen_addresses().await.unwrap();
-            let _ = dialer.dial(server.local_peer_id(), addrs).await;
+            assert!(
+                dialer.dial(server.local_peer_id(), addrs).await.is_err(),
+                "a revoked peer must not be dialled"
+            );
             let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
             while tokio::time::Instant::now() < deadline {
                 assert!(
@@ -1167,7 +1180,7 @@ mod tests {
                         .await
                         .unwrap()
                         .contains(dialer.local_peer_id()),
-                    "the allowlist must refuse a direct link that bypasses the relay"
+                    "the revoked pair must not form a direct link that bypasses the relay"
                 );
                 tokio::task::yield_now().await;
             }

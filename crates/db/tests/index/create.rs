@@ -13,8 +13,8 @@ use db::{AutoCommitMutator, BackfillSource, Collection, IndexManager, DB};
 use document::{DocID, Document, NormalValue};
 use query::DocMutator;
 use schema::{
-    CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
-    OrderedIndexDescription,
+    CollectionVersion, DistanceMetric, FieldDescription, FieldKind, IndexKind,
+    IndexedFieldDescription, OrderedIndexDescription, VectorAlgorithm, VectorIndexDescription,
 };
 use storage::corekv::{
     IterOptions, Iterator, Key, Reader, Result as StorageResult, Store, Txn, Writer,
@@ -23,6 +23,8 @@ use storage::index::IndexIterator;
 use storage::keys::datastore::IndexDataStoreKey;
 use storage::keys::systemstore::{ActionProgressKey, CollectionKey, CollectionNameKey};
 use storage::RegolithStore;
+
+use crate::common::schema::docs_schema;
 
 pub(super) fn users_schema(name: &str, version_id: &str, collection_id: &str) -> CollectionVersion {
     CollectionVersion::new(
@@ -194,6 +196,64 @@ fn create_index_indexes_the_documents_that_already_exist() {
                 .any(|existing| existing.name == "by_name"),
             "the definition must be on the cached collection"
         );
+    })
+    .unwrap()
+}
+
+/// The index API must refuse what the schema refuses, or a vector index the
+/// SDL would reject can still be created through the CLI or HTTP.
+#[test]
+fn create_index_refuses_vector_indexes_the_schema_refuses() {
+    workers::block_on(async {
+        let cases = [
+            (
+                VectorIndexDescription::with_defaults(
+                    VectorAlgorithm::Hnsw,
+                    DistanceMetric::Cosine,
+                    0,
+                ),
+                "must set dimensions greater than zero",
+            ),
+            (
+                VectorIndexDescription::with_defaults(
+                    VectorAlgorithm::IvfFlat,
+                    DistanceMetric::Dot,
+                    4,
+                ),
+                "cannot rank by DOT",
+            ),
+        ];
+        for (vector, expected) in cases {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let db = Arc::new(DB::from_arc(store).unwrap());
+            db.create_collection(docs_schema()).await.unwrap();
+            let fields = vec![IndexedFieldDescription {
+                name: "embedding".to_string(),
+                descending: false,
+            }];
+
+            let err = db
+                .create_index(
+                    "docs",
+                    Some("by_embedding"),
+                    fields,
+                    IndexKind::Vector(vector),
+                )
+                .await
+                .expect_err("the index must be refused");
+
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got: {err}"
+            );
+            assert!(
+                db.require_collection("docs")
+                    .unwrap()
+                    .get_indexes()
+                    .is_empty(),
+                "a refused index must not be defined"
+            );
+        }
     })
     .unwrap()
 }

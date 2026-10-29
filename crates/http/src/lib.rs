@@ -136,7 +136,7 @@ pub use router::{
     ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
 };
 #[cfg(feature = "server")]
-pub use server::{Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;
 

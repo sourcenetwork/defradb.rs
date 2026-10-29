@@ -353,6 +353,13 @@ impl IndexManager {
             ));
         }
 
+        if let IndexKind::Vector(vector) = &kind {
+            let errs = vector.creation_errors(&name);
+            if !errs.is_empty() {
+                return Err(Error::Other(errs.join("; ")));
+            }
+        }
+
         for field in &fields {
             if let Some(schema_field) = schema_fields.iter().find(|f| f.name == field.name) {
                 if schema_field.crdt_type.is_counter() {
