@@ -758,6 +758,8 @@ impl<'a> SdlParser<'a> {
             is_branchable: type_def.directives.is_branchable,
             // The collection ID never carries the policy: see below.
             policy_cid: None,
+            chunked_fields: &type_def.directives.chunked_fields,
+            chunk_of: type_def.directives.chunk_of.as_ref(),
         };
         let collection_id = generate_collection_id(&type_def.name, &fields, headstore, commitments);
 
@@ -1032,6 +1034,12 @@ impl<'a> SdlParser<'a> {
             .governance_root
             .clone_from(&type_def.directives.governance_root);
         collection.policy = policy;
+        collection
+            .chunked_fields
+            .clone_from(&type_def.directives.chunked_fields);
+        collection
+            .chunk_of
+            .clone_from(&type_def.directives.chunk_of);
 
         Ok(collection)
     }

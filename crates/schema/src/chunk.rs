@@ -1,5 +1,6 @@
 //! `@chunk` settings, on the parent collection and on its chunk collection.
 
+use defra_core::{ChunkOfDelta, ChunkedFieldDelta};
 use serde::{Deserialize, Serialize};
 
 /// The relation field on a chunk that points at its parent.
@@ -56,4 +57,42 @@ pub struct ChunkSource {
     /// The parent's text field the chunks are cut from.
     #[serde(rename = "Field")]
     pub field_name: String,
+}
+
+impl From<&ChunkedField> for ChunkedFieldDelta {
+    fn from(chunked: &ChunkedField) -> Self {
+        Self {
+            field: chunked.field_name.clone(),
+            max_chars: chunked.max_chars,
+            overlap: chunked.overlap,
+        }
+    }
+}
+
+impl From<&ChunkedFieldDelta> for ChunkedField {
+    fn from(delta: &ChunkedFieldDelta) -> Self {
+        Self {
+            field_name: delta.field.clone(),
+            max_chars: delta.max_chars,
+            overlap: delta.overlap,
+        }
+    }
+}
+
+impl From<&ChunkSource> for ChunkOfDelta {
+    fn from(source: &ChunkSource) -> Self {
+        Self {
+            collection: source.collection.clone(),
+            field: source.field_name.clone(),
+        }
+    }
+}
+
+impl From<&ChunkOfDelta> for ChunkSource {
+    fn from(delta: &ChunkOfDelta) -> Self {
+        Self {
+            collection: delta.collection.clone(),
+            field_name: delta.field.clone(),
+        }
+    }
 }

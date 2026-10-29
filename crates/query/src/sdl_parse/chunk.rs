@@ -6,8 +6,8 @@
 
 use graphql_parser::schema::Directive;
 use schema::{
-    chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField, CollectionVersion,
-    CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
+    chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
+    CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -20,11 +20,10 @@ const DEFAULT_CHUNK_MAX_CHARS: u32 = 1600;
 const MIN_CHUNK_MAX_CHARS: u32 = 64;
 
 /// One `@chunk` field found while parsing.
-#[derive(Debug, Clone)]
-pub(super) struct ChunkSpec {
-    pub(super) parent: String,
-    pub(super) field: String,
-    pub(super) config: ChunkDirective,
+struct ChunkSpec {
+    parent: String,
+    field: String,
+    config: ChunkDirective,
 }
 
 pub(super) fn parse_chunk_directive(directive: &Directive<'_, String>) -> Result<ChunkDirective> {
@@ -65,8 +64,10 @@ fn field(name: &str, field_type: ParsedType) -> ParsedField {
 }
 
 impl SdlParser<'_> {
-    /// Adds the generated chunk types and list fields for every `@chunk` field.
-    pub(super) fn synthesize_chunk_types(&mut self) -> Result<Vec<ChunkSpec>> {
+    /// Adds the generated chunk types and list fields for every `@chunk` field,
+    /// with the settings both sides record. They are set before IDs are
+    /// computed, because the IDs commit to them.
+    pub(super) fn synthesize_chunk_types(&mut self) -> Result<()> {
         let mut specs = Vec::new();
         for parent in self.definition_order.clone() {
             let Some(type_def) = self.type_defs.get(&parent) else {
@@ -119,6 +120,11 @@ impl SdlParser<'_> {
             let mut hashes = scalar("String", true);
             hashes.element_non_null = true;
             parent.fields.push(field(&list, hashes));
+            parent.directives.chunked_fields.push(ChunkedField {
+                field_name: spec.field.clone(),
+                max_chars: spec.config.max_chars,
+                overlap: spec.config.overlap,
+            });
 
             // One index on `_sourceID` and `hash` serves both lookups writes need,
             // one chunk of a parent and all of them.
@@ -143,33 +149,18 @@ impl SdlParser<'_> {
                         field(CHUNK_TEXT_FIELD, scalar("String", false)),
                         field(CHUNK_HASH_FIELD, scalar("String", false)),
                     ],
-                    directives: ParsedTypeDirectives::default(),
+                    directives: ParsedTypeDirectives {
+                        chunk_of: Some(ChunkSource {
+                            collection: spec.parent.clone(),
+                            field_name: spec.field.clone(),
+                        }),
+                        ..ParsedTypeDirectives::default()
+                    },
                     is_interface: false,
                 },
             );
         }
-        Ok(specs)
-    }
-}
-
-/// Records each `@chunk` field on its parent and on its generated collection.
-pub(super) fn attach_chunk_settings(collections: &mut [CollectionVersion], specs: &[ChunkSpec]) {
-    for spec in specs {
-        let chunk_type = chunk_collection_name(&spec.parent, &spec.field);
-        for collection in collections.iter_mut() {
-            if collection.name == spec.parent {
-                collection.chunked_fields.push(ChunkedField {
-                    field_name: spec.field.clone(),
-                    max_chars: spec.config.max_chars,
-                    overlap: spec.config.overlap,
-                });
-            } else if collection.name == chunk_type {
-                collection.chunk_of = Some(ChunkSource {
-                    collection: spec.parent.clone(),
-                    field_name: spec.field.clone(),
-                });
-            }
-        }
+        Ok(())
     }
 }
 

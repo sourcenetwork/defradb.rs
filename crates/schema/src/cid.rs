@@ -5,8 +5,8 @@
 
 use cid::Cid;
 use defra_core::{
-    Block, CollectionDefinitionDeltaPayload, CollectionSetDeltaPayload, CrdtDelta, DAGLink,
-    FieldDefinitionDeltaPayload, DAG_CBOR_CODEC, SHA2_256_CODE,
+    Block, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CollectionSetDeltaPayload,
+    CrdtDelta, DAGLink, FieldDefinitionDeltaPayload, DAG_CBOR_CODEC, SHA2_256_CODE,
 };
 use multihash::Multihash;
 use sha2::{Digest, Sha256};
@@ -32,9 +32,9 @@ pub struct BlockWithCid {
 /// collection.
 ///
 /// A schema opts into carrying them by declaring a governance root. Without
-/// one, nothing here reaches the delta and every identity is byte-identical to
-/// what it was before any of this existed, whatever `@immutable` or
-/// `@branchable` the schema carries. The gate is the root because identity is
+/// one, nothing here but the `@chunk` settings reaches the delta, and every
+/// identity is byte-identical to what it was before any of this existed,
+/// whatever `@immutable` or `@branchable` the schema carries. The gate is the root because identity is
 /// derived from the schema: an opt-in that lived in node configuration would
 /// let two nodes running the same schema disagree about what a collection is,
 /// which is the failure the commitment exists to rule out.
@@ -51,6 +51,11 @@ pub struct Commitments<'a> {
     /// which collection it is. Like the rest, it reaches the delta only for a
     /// governed collection.
     pub policy_cid: Option<Cid>,
+    /// The `@chunk` settings. They reach the delta governed or not, because
+    /// they decide how every node cuts the text.
+    pub chunked_fields: &'a [crate::ChunkedField],
+    /// The parent field of a generated chunk collection.
+    pub chunk_of: Option<&'a crate::ChunkSource>,
 }
 
 /// The policy commitment for a collection's optional policy.
@@ -83,6 +88,8 @@ impl<'a> Commitments<'a> {
             governance_root: version.governance_root.as_deref(),
             is_branchable: version.is_branchable,
             policy_cid: policy_commitment(version.policy.as_ref()),
+            chunked_fields: &version.chunked_fields,
+            chunk_of: version.chunk_of.as_ref(),
         }
     }
 
@@ -276,6 +283,17 @@ fn build_collection_delta(
         if let Some(policy) = commitments.policy_cid {
             delta = delta.with_policy_cid(policy);
         }
+    }
+    // Sorted, so the order fields appear in the SDL doesn't change the identity.
+    let mut chunked: Vec<ChunkedFieldDelta> = commitments
+        .chunked_fields
+        .iter()
+        .map(ChunkedFieldDelta::from)
+        .collect();
+    chunked.sort_by(|a, b| a.field.cmp(&b.field));
+    delta = delta.with_chunked_fields(chunked);
+    if let Some(source) = commitments.chunk_of {
+        delta = delta.with_chunk_of(source.into());
     }
     delta
 }

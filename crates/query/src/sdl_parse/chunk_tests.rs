@@ -124,3 +124,33 @@ fn chunk_refuses_names_that_are_taken() {
         .to_string()
         .contains("already taken"));
 }
+
+#[test]
+fn chunk_settings_are_part_of_both_identities() {
+    let ids = |max_chars: u32, overlap: u32| {
+        let sdl = format!(
+            "type Note {{ body: String @chunk(maxChars: {max_chars}, overlap: {overlap}) }}"
+        );
+        parse_sdl(&sdl)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.collection_id, c.version_id))
+            .collect::<Vec<_>>()
+    };
+    let base = ids(64, 0);
+    assert_ne!(base, ids(1600, 0));
+    assert_ne!(base, ids(64, 1));
+    for (other, base) in ids(1600, 0).iter().zip(&base) {
+        assert_ne!(other.0, base.0);
+        assert_ne!(other.1, base.1);
+    }
+}
+
+#[test]
+fn chunk_field_order_does_not_change_the_identity() {
+    let first =
+        parse_sdl("type Note { a: String @chunk  b: String @chunk(maxChars: 300) }").unwrap();
+    let second =
+        parse_sdl("type Note { b: String @chunk(maxChars: 300)  a: String @chunk }").unwrap();
+    assert_eq!(first[0].version_id, second[0].version_id);
+}

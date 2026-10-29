@@ -13,10 +13,10 @@ use crate::{Error, Result};
 
 // Re-export delta payload types
 pub use crate::block_delta::{
-    CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
-    CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload, FieldDefinitionDeltaPayload,
-    ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload, TextDeltaPayload,
-    IMMUTABLE_LINK_NAME,
+    ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CollectionDeltaPayload,
+    CollectionSetDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
+    TextDeltaPayload, IMMUTABLE_LINK_NAME,
 };
 
 // Re-export signature/encryption types

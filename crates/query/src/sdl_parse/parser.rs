@@ -8,7 +8,6 @@ use graphql_parser::schema::{Definition, Document, InterfaceType, ObjectType, Ty
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 
-use super::chunk::attach_chunk_settings;
 use super::directives::ParsedDirectives;
 use super::helpers::{detect_missing_field_types, preprocess_empty_types};
 use super::warnings::{ParseOutput, ParseWarning};
@@ -57,6 +56,8 @@ pub(super) struct ParsedTypeDirectives {
     /// The governance root from `@governed(root:)`, a self-addressing
     /// identifier rather than a bare public key, so it survives key rotation.
     pub(super) governance_root: Option<String>,
+    pub(super) chunked_fields: Vec<schema::ChunkedField>,
+    pub(super) chunk_of: Option<schema::ChunkSource>,
 }
 
 impl Default for ParsedTypeDirectives {
@@ -71,6 +72,8 @@ impl Default for ParsedTypeDirectives {
             is_branchable: false,
             policy: None,
             governance_root: None,
+            chunked_fields: Vec::new(),
+            chunk_of: None,
         }
     }
 }
@@ -168,14 +171,13 @@ impl<'a> SdlParser<'a> {
 
         // Add `@chunk` collections and list fields now, so the passes below build
         // them like any other type.
-        let chunk_specs = self.synthesize_chunk_types()?;
+        self.synthesize_chunk_types()?;
 
         // Second pass: validate parsed types before building
         self.validate_types()?;
 
         // Third pass: resolve relations and build CollectionVersions
-        let mut collections = self.build_collections()?;
-        attach_chunk_settings(&mut collections, &chunk_specs);
+        let collections = self.build_collections()?;
 
         Ok(ParseOutput {
             collections,
