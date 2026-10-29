@@ -9,9 +9,14 @@ use std::time::Duration;
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use http::Uri;
-use nuclei::net::{TcpListener, TcpSocket, TcpStream};
-use nuclei::time::{timeout, Instant};
+#[cfg(target_os = "linux")]
+use nuclei::net::TcpStream;
+use nuclei::net::{TcpListener, TcpSocket};
+use nuclei::time::timeout;
+#[cfg(target_os = "linux")]
+use nuclei::time::Instant;
 
+#[cfg(target_os = "linux")]
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
 const LIMIT: Duration = Duration::from_secs(10);
 
@@ -74,6 +79,9 @@ async fn takes(listener: &TcpListener, byte: u8) -> bool {
     got[0] == byte
 }
 
+// A listener with a full queue drops a new SYN only on Linux; macOS takes
+// the connection, so the first family is never silent there.
+#[cfg(target_os = "linux")]
 #[nuclei::test]
 async fn the_other_family_connects_when_the_first_is_silent_past_the_delay() {
     let Some((first, other)) = both_families().await else {
@@ -126,7 +134,9 @@ async fn when_both_families_refuse_the_last_refusal_comes_back() {
     let Some((first, other)) = both_families().await else {
         return;
     };
-    let (_refusing_first, _refusing_other, port) = one_port(first, other);
+    // Closed, not just bound: a bound socket that does not listen refuses
+    // only on Linux.
+    let (_, _, port) = one_port(first, other);
 
     let connected = timeout(LIMIT, net::connect(&localhost(port)))
         .await
