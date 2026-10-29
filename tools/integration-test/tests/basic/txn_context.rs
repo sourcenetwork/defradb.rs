@@ -90,11 +90,13 @@ fn a_finished_txn_is_not_found() {
         TxnCommit {
             txn: 0,
             expected_error: not_found.clone(),
+            ..Default::default()
         }
         .into(),
         TxnDiscard {
             txn: 0,
             expected_error: not_found.clone(),
+            ..Default::default()
         }
         .into(),
         Request {
@@ -114,7 +116,8 @@ fn two_txns_writing_the_same_document_conflict() {
         Request {
             request: format!(
                 r#"mutation {{ update_Users(filter: {{name: {{_eq: "Alice"}}}}, input: {{name: "{name}"}}) {{ name }} }}"#
-            ),
+            )
+            .into(),
             expected_data: json!({ "update_Users": [{ "name": name }] }),
             txn: Some(txn),
             ..Default::default()
@@ -141,6 +144,7 @@ fn two_txns_writing_the_same_document_conflict() {
         TxnCommit {
             txn: 1,
             expected_error: Some("transaction conflict. Please retry".into()),
+            ..Default::default()
         }
         .into(),
         read(None, &["Bob"]),
