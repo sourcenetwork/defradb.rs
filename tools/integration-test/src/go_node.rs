@@ -28,9 +28,20 @@ pub enum GoNodeError {
 
 /// A running Go node, killed when dropped.
 pub struct GoNode {
-    child: Child,
+    _process: Process,
     api_url: String,
     _root: TempDir,
+}
+
+/// The node's process, killed when dropped, so a failed start leaves nothing
+/// running.
+struct Process(Child);
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 impl GoNode {
@@ -39,7 +50,8 @@ impl GoNode {
         let root = tempfile::tempdir()?;
         let log_path = root.path().join("node.log");
         let log = File::create(&log_path)?;
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .arg("--rootdir")
             .arg(root.path().join("data"))
             .args(["--no-log-color", "start", "--url", "127.0.0.1:0"])
@@ -50,33 +62,35 @@ impl GoNode {
                 "--no-p2p",
                 "--no-telemetry",
             ])
-            // Off by default, as backbone's TestCluster started Go nodes.
-            .args([
-                "--no-encryption",
-                "--no-searchable-encryption",
-                "--no-signing",
-            ])
-            .stdin(Stdio::null())
-            .stdout(log.try_clone()?)
-            .stderr(log)
-            .spawn()?;
+            // Encryption and signing are off, as backbone's TestCluster
+            // started Go nodes, unless the signed-docs multiplier turns
+            // signing on.
+            .args(["--no-encryption", "--no-searchable-encryption"]);
+        if !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
+            command.arg("--no-signing");
+        }
+        let mut process = Process(
+            command
+                .stdin(Stdio::null())
+                .stdout(log.try_clone()?)
+                .stderr(log)
+                .spawn()?,
+        );
 
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
-            let text = std::fs::read_to_string(&log_path)?;
+            let text = String::from_utf8_lossy(&std::fs::read(&log_path)?).into_owned();
             if let Some(api_url) = ready_url(&text) {
                 return Ok(Self {
-                    child,
+                    _process: process,
                     api_url,
                     _root: root,
                 });
             }
-            if let Some(status) = child.try_wait()? {
+            if let Some(status) = process.0.try_wait()? {
                 return Err(GoNodeError::Exited { status, log: text });
             }
             if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
                 return Err(GoNodeError::NotReady { log: text });
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -88,11 +102,10 @@ impl GoNode {
     }
 }
 
-impl Drop for GoNode {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+/// Whether `DEFRA_MULTIPLIERS` names the `signed-docs` multiplier, which
+/// turns signing on, as backbone's `TestCluster` did.
+fn signed_docs(multipliers: Option<&str>) -> bool {
+    multipliers.is_some_and(|list| list.split(',').any(|m| m.trim() == "signed-docs"))
 }
 
 /// The API URL from the node's ready line, once the whole line is written.
@@ -104,7 +117,7 @@ fn ready_url(log: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::ready_url;
+    use super::{ready_url, signed_docs};
 
     #[test]
     fn reads_the_bound_address_from_the_ready_line() {
@@ -120,5 +133,13 @@ mod tests {
             None
         );
         assert_eq!(ready_url("INF cli Starting DefraDB\n"), None);
+    }
+
+    #[test]
+    fn signs_only_under_the_signed_docs_multiplier() {
+        assert!(signed_docs(Some("signed-docs")));
+        assert!(signed_docs(Some("foo, signed-docs")));
+        assert!(!signed_docs(Some("foo")));
+        assert!(!signed_docs(None));
     }
 }
