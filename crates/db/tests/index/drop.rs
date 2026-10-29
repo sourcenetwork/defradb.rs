@@ -196,9 +196,20 @@ fn a_drop_during_a_running_backfill_leaves_no_action() {
         drop(mutator);
 
         let (fields, kind) = by_name();
-        let create = db.create_index(COLLECTION, Some("by_name"), fields, kind);
+        let created_done = std::cell::Cell::new(false);
+        let create = async {
+            let created = db
+                .create_index(COLLECTION, Some("by_name"), fields, kind)
+                .await;
+            created_done.set(true);
+            created
+        };
         let drop_while_running = async {
             while actions_for(&db, Action::BACKFILL_INDEX).await.is_empty() {
+                assert!(
+                    !created_done.get(),
+                    "the backfill finished before the drop saw it running"
+                );
                 workers::yield_now().await;
             }
             db.drop_index(COLLECTION, "by_name").await
