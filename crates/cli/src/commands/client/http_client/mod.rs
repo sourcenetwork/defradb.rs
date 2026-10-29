@@ -18,6 +18,7 @@ mod acp;
 mod backup;
 mod block;
 mod collection;
+mod documents;
 mod dump;
 mod encrypted_index;
 mod graphql;

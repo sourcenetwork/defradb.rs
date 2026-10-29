@@ -60,6 +60,9 @@ pub enum Error {
     /// A schema policy does not match its policy definition.
     #[error("schema policy validation error: {0}")]
     PolicyValidation(String),
+    /// A document write was refused.
+    #[error(transparent)]
+    Documents(#[from] query::documents::Error),
     /// An add-collection request was refused.
     #[error(transparent)]
     AddCollection(#[from] db::AddCollectionError),

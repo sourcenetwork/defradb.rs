@@ -6190,6 +6190,7 @@ dependencies = [
  "mantra-macros",
  "p2p",
  "paste",
+ "query",
  "rapidhash",
  "regolith 0.2.3",
  "reqwest 0.12.28",

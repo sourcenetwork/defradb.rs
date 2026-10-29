@@ -41,16 +41,23 @@ impl Node {
         context: &RequestContext,
         request: QueryRequest,
     ) -> Result<QueryResponse> {
-        let identity = context
-            .identity()
-            .map(Did::new)
-            .transpose()
-            .map_err(Error::InvalidActingIdentity)?;
+        let identity = acting_identity(context)?;
+        Ok(self.run_as_identity(context, identity, request).await)
+    }
+
+    /// Run `request` in all of `context` as `identity`, in the transaction
+    /// `context` carries if it carries one.
+    pub(crate) async fn run_as_identity(
+        &self,
+        context: &RequestContext,
+        identity: Option<Did>,
+        request: QueryRequest,
+    ) -> QueryResponse {
         let request = request_in(context, identity, request);
-        Ok(match context.txn() {
+        match context.txn() {
             Some(id) => self.execute_request_in_txn(request, &handle(id)).await,
             None => self.execute_request(request).await,
-        })
+        }
     }
 
     /// Begin an explicit transaction for the caller `context` names. Requests
@@ -106,6 +113,15 @@ fn request_in(
         .with_identity(identity)
 }
 
+/// The identity acting in `context`; a malformed one fails.
+pub(crate) fn acting_identity(context: &RequestContext) -> Result<Option<Did>> {
+    context
+        .identity()
+        .map(Did::new)
+        .transpose()
+        .map_err(Error::InvalidActingIdentity)
+}
+
 fn handle(id: TxnId) -> TransactionHandle {
     TransactionHandle::new(id.to_string())
 }
@@ -119,7 +135,6 @@ fn transaction_error(error: TransactionError) -> Error {
         other => Error::Transaction(other),
     }
 }
-
 #[cfg(test)]
 mod tests {
     use defra_core::{RequestContext, TxnId};

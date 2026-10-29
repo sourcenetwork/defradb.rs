@@ -32,18 +32,16 @@ impl CollectionDocIdsPage {
     }
 }
 
-/// REST operations trait for collection and document CRUD.
+/// REST reads: collection listing and documents by ID. Document writes are
+/// [`crate::documents`].
 ///
 /// This trait provides REST-specific operations separate from GraphQL execution.
 /// Operations use auto-commit unless bound to an explicit transaction.
 ///
 /// # Identity and ACP
 ///
-/// All document operations accept an optional `identity` parameter for access control.
-/// When provided, the identity is used for ACP (Access Control Policy) permission checks:
-/// - Read operations check read permission on protected documents
-/// - Create operations register the document with the identity as owner
-/// - Update/Delete operations check the corresponding permissions
+/// All document operations accept an optional `identity` parameter for access
+/// control: read operations check read permission on protected documents.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RestOperations: MaybeSendSync {
@@ -98,62 +96,4 @@ pub trait RestOperations: MaybeSendSync {
         doc_id: &str,
         identity: Option<&Did>,
     ) -> RestResult<Option<JsonValue>>;
-
-    /// Create a single document.
-    async fn add_document(
-        &self,
-        collection: &str,
-        data: JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<JsonValue>;
-
-    /// Create multiple documents.
-    async fn add_many_documents(
-        &self,
-        collection: &str,
-        data: Vec<JsonValue>,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<JsonValue>>;
-
-    /// Update a single document.
-    async fn update_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        patch: JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<JsonValue>;
-
-    /// Delete a single document.
-    async fn delete_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        identity: Option<&Did>,
-    ) -> RestResult<bool>;
-
-    /// Delete every document matching a filter.
-    ///
-    /// This is Go's `DeleteDocumentsWithFilter`. The filter is a GraphQL
-    /// filter object, as the `filter` argument of a `delete_<Collection>`
-    /// mutation takes it, and the returned ids are the documents deleted.
-    async fn delete_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<String>>;
-
-    /// Apply an update to every document matching a filter.
-    ///
-    /// This is Go's `UpdateDocumentsWithFilter`. `updater` is the patch to
-    /// apply, as the `input` argument of an `update_<Collection>` mutation
-    /// takes it, and the returned ids are the documents updated.
-    async fn update_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        updater: &JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<String>>;
 }

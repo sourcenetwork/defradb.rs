@@ -22,6 +22,7 @@ pub mod access_hooks;
 pub(crate) mod collection_provider;
 pub(crate) mod doc;
 pub mod document;
+pub mod documents;
 pub mod error;
 pub mod json_convert;
 pub mod limits;
