@@ -36,7 +36,9 @@ jobs:
           - group: data
             packages: -p query -p db -p vera -p pg-compat
           - group: network
-            packages: -p p2p -p defra-p2p-adapter -p orbis
+            packages: >-
+              -p p2p -p defra-p2p-adapter -p orbis -p net -p edge -p inputs
+              -p workers
           - group: surfaces
             packages: >-
               -p defra-http -p embedded -p cli -p ffi -p defra-node
