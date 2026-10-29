@@ -23,6 +23,20 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// on it. Once the command returns, this thread waits while it shuts down in
 /// order, its owner thread dropping it outside any async context.
 fn main() -> ExitCode {
+    // CI's comparison run sets it to 0 to run every shard without multishot
+    // receive buffers.
+    if let Some(recv_buffers) = std::env::var("DEFRA_NUCLEI_RECV_BUFFERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        nuclei::Proactor::with_config(nuclei::config::NucleiConfig {
+            iouring: nuclei::config::IoUringConfiguration {
+                recv_buffers,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
     let runtime = match edge::EdgeRuntime::start(edge::EdgeConfig::default()) {
         Ok(runtime) => runtime,
         Err(error) => {
