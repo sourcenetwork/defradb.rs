@@ -282,3 +282,12 @@ fn an_updater_that_is_not_an_object_is_refused_with_go_text() {
         "the updater of a document is of invalid type"
     );
 }
+
+#[test]
+fn an_updater_object_that_is_not_json_is_refused_with_go_text() {
+    let filter = Filter::from(json!({"name": {"_eq": "Alice"}}));
+    let error = update_with_filter("Users", &filter, r#"{name: "Eric"}"#).unwrap_err();
+    assert!(error
+        .to_string()
+        .starts_with("cannot parse JSON: cannot parse object"));
+}

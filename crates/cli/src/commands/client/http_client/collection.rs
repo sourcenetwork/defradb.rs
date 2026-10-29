@@ -14,26 +14,6 @@ fn collection_patch_body(patch: &str, migration: Option<&str>) -> Result<String>
 }
 
 impl HttpClient {
-    pub async fn collection_update_doc(&self, name: &str, doc_id: &str, patch: &str) -> Result<()> {
-        let url = format!(
-            "{}/api/v0/collections/{}/document/{}",
-            self.base_url,
-            encode(name),
-            encode(doc_id)
-        );
-        self.request_void("PATCH", &url, Some(patch)).await
-    }
-
-    pub async fn collection_delete_doc(&self, name: &str, doc_id: &str) -> Result<()> {
-        let url = format!(
-            "{}/api/v0/collections/{}/document/{}",
-            self.base_url,
-            encode(name),
-            encode(doc_id)
-        );
-        self.request_void("DELETE", &url, None).await
-    }
-
     pub async fn collection_patch(&self, patch: &str, migration: Option<&str>) -> Result<()> {
         let url = format!("{}/api/v0/collections", self.base_url);
         let body_str = collection_patch_body(patch, migration)?;
