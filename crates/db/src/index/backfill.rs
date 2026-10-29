@@ -23,7 +23,7 @@ use storage::corekv::{Key, Store};
 use storage::keys::systemstore::ActionProgressKey;
 
 use crate::collection::Collection;
-use crate::database::action::{action_executions, ActionExecutionLease};
+use crate::database::action::{action_executions, stage_action_failure, ActionExecutionLease};
 use crate::definition::lens::build_collection_history;
 use crate::definition::loader::get_collections_by_collection_id;
 use crate::definition::migration::helpers::{
@@ -112,16 +112,52 @@ impl<S: Store> DB<S> {
                 self.complete_action(lease).await?;
             }
             Err(error) => {
-                tracing::error!(
-                    collection_id = %plan.collection_id,
-                    index_id = plan.index_id,
-                    %error,
-                    "index backfill failed"
-                );
-                self.fail_action(lease, &error.to_string()).await?;
+                let reason = error.to_string();
+                if self.record_backfill_failure(&plan, &reason).await? {
+                    tracing::error!(
+                        collection_id = %plan.collection_id,
+                        index_id = plan.index_id,
+                        %error,
+                        "index backfill failed"
+                    );
+                    self.publish_failed_action(&lease, &reason);
+                } else {
+                    tracing::info!(
+                        collection_id = %plan.collection_id,
+                        index_id = plan.index_id,
+                        "index dropped during its backfill"
+                    );
+                }
             }
         }
         self.reload_cache().await
+    }
+
+    /// Write a backfill's failure on its record, unless its index is gone.
+    /// The drop deletes the record in the commit that removes the index, so
+    /// a failure written after it would show a failed backfill for an index
+    /// that no longer exists. The definition is read in the same transaction
+    /// as the write, so a drop committing first makes the attempt run again.
+    async fn record_backfill_failure(&self, plan: &BackfillPlan, reason: &str) -> Result<bool> {
+        let attempt = FailBackfillAttempt {
+            plan: plan.clone(),
+            reason: reason.to_string(),
+            crdts: self.crdts().clone(),
+        };
+        match self
+            .store()
+            .transact_retry(self.options().retry_options(), Box::new(attempt))
+            .await
+        {
+            Ok(value) => value
+                .downcast::<bool>()
+                .map(|recorded| *recorded)
+                .map_err(|_| Error::Other("invalid backfill failure result".into())),
+            Err(error) => Err(match error.downcast_abort::<Error>() {
+                Ok(error) => error,
+                Err(error) => Error::Storage(error.into_storage()),
+            }),
+        }
     }
 
     /// Resume every backfill a restart interrupted, before the database
@@ -132,9 +168,7 @@ impl<S: Store> DB<S> {
         {
             let systemstore = txn.systemstore()?;
             for execution in action_executions(&systemstore).await? {
-                if execution.action != Action::BACKFILL_INDEX
-                    || execution.status != ActionStatus::IN_PROGRESS
-                {
+                if execution.action != Action::BACKFILL_INDEX {
                     continue;
                 }
                 let progress = systemstore
@@ -183,6 +217,9 @@ impl<S: Store> DB<S> {
                 .await?;
                 continue;
             };
+            if execution.status != ActionStatus::IN_PROGRESS {
+                continue;
+            }
             let (fence, last) = match progress {
                 Some(progress) => progress,
                 None => (self.reserve_doc_short_id_fence().await?, 0),
@@ -298,6 +335,63 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
             let (io, callbacks) = txn.into_retry_attempt()?;
             retry.finish_attempt_io(io, callbacks)?;
             Ok(Box::new(()) as storage::corekv::RetryAttemptValue)
+        })
+    }
+}
+
+/// Settle a failed backfill against the definition the attempt reads.
+struct FailBackfillAttempt {
+    plan: BackfillPlan,
+    reason: String,
+    crdts: storage::Crdts,
+}
+
+impl storage::corekv::RetryAttemptFn for FailBackfillAttempt {
+    fn run<'a>(
+        &'a mut self,
+        retry: &'a mut dyn storage::corekv::RetryTxn,
+    ) -> storage::corekv::RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            let io = retry.begin_attempt_io()?;
+            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.crdts.clone());
+            let systemstore = txn.systemstore();
+            let recorded: Result<bool> = async {
+                let collection = crate::collection::loader::load_collection_from_systemstore(
+                    &systemstore,
+                    &self.plan.collection_name,
+                )
+                .await
+                .map_err(|error| Error::Other(error.to_string()))?;
+                let defined = collection.is_some_and(|collection| {
+                    collection
+                        .schema()
+                        .indexes
+                        .iter()
+                        .any(|index| index.id == self.plan.index_id)
+                });
+                if defined {
+                    stage_action_failure(
+                        &systemstore,
+                        &self.plan.collection_id,
+                        Action::BACKFILL_INDEX,
+                        &self.plan.index_id.to_string(),
+                        &self.reason,
+                    )
+                    .await?;
+                    systemstore
+                        .delete(&self.plan.progress_key().bytes())
+                        .await
+                        .map_err(Error::Storage)?;
+                }
+                Ok(defined)
+            }
+            .await;
+            let recorded = recorded
+                .map_err(|error| storage::corekv::RetryAttemptError::Abort(Box::new(error)))?;
+            drop(systemstore);
+            let (io, callbacks) = txn.into_retry_attempt()?;
+            retry.finish_attempt_io(io, callbacks)?;
+            Ok(Box::new(recorded) as storage::corekv::RetryAttemptValue)
         })
     }
 }
