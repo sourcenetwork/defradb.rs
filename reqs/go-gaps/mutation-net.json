@@ -1,21 +1,28 @@
 [
   {
     "id": "go.mutation.add.basic",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
-      "tools/integration-test/tests/basic/multi_collection.rs::many_collections_field_ids_test",
-      "tools/integration-test/tests/nac/multi_doc_create.rs::nac_multi_doc_create_gate_test",
-      "tools/integration-test/tests/query/default_values_v1.rs::default_directive_value_v1_test"
+      "tools/integration-test/tests/mutation/add/simple.rs::mutation_add",
+      "tools/integration-test/tests/mutation/add/simple.rs::mutation_add_given_empty_input",
+      "tools/integration-test/tests/mutation/add/simple.rs::mutation_add_with10_collections",
+      "tools/integration-test/tests/mutation/add/simple_add_many.rs::mutation_add_many",
+      "tools/integration-test/tests/mutation/add/with_version.rs::mutation_add_returns_version_cid"
     ],
-    "evidence": "smoke.rs:43-48 asserts add_User result and a later User query return the doc; multi_collection.rs:110-133 asserts _docID is a string and each of 12 collections returns its field; multi_doc_create.rs:48-50 asserts a two-element array create returns 2 docs; default_values_v1.rs:28 creates with input: {} and 50-58 reads it back",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/defra-node/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
   },
   {
     "id": "go.mutation.add.null_input",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/add/with_null_input.rs::mutation_add_with_null_encrypt_fields_succeeds",
+      "tools/integration-test/tests/mutation/add/with_null_input.rs::mutation_add_with_null_encrypt_succeeds",
+      "tools/integration-test/tests/mutation/add/with_null_input.rs::mutation_add_with_null_input_entry_returns_error",
+      "tools/integration-test/tests/mutation/add/with_null_input.rs::mutation_add_with_null_input_succeeds",
+      "tools/integration-test/tests/mutation/add/with_null_value.rs::mutation_add_with_omitted_value_and_explicit_null_value"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched for `input: null`, `input: [null]`, `encrypt: null`, `encryptFields: null` and explicit-null create inputs across crates/*/tests, crates/query/src and tools/integration-test/tests: no matches (the only null input found is an update in p2p_iroh/schema/encryption.rs). The omitted-vs-explicit-null distinct-docs case is not tested either."
   },
   {
@@ -30,22 +37,31 @@
   },
   {
     "id": "go.mutation.add.default_values",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/default_values_v1.rs::default_directive_value_v1_test",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_for_all_scalar_types"
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_bool_value_should_be_set",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_deep_object_value_should_be_set",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_float_value_should_be_set",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_int_value_should_be_set",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_null_value_return_error",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_json_object_values_should_be_set",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_value_no_value_provided_added_twice_unique_index_returns_error",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_values_nil_values_provided_sets_nil_value",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_values_no_values_provided_sets_default_value",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_values_values_provided_sets_value"
     ],
-    "evidence": "default_values_v1.rs:50-58 asserts omitted Boolean, DateTime, String, Int, Float, Float32, Float64, JSON and Blob fields take their @default values",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Not asserted: explicit null stores null; provided values win over defaults; JSON int/float/bool/object/nested-object defaults returned as canonical JSON; `@default(value: null)` on JSON failing with `default value is invalid`; a defaulted value violating a unique index."
   },
   {
     "id": "go.mutation.duplicate",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/write/identical_create.rs::concurrent_identical_autocommit_creates_exactly_one_commits",
-      "crates/db/tests/write/identical_create.rs::two_identical_creates_exactly_one_commits"
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_duplicate_json_field_returns_error",
+      "tools/integration-test/tests/mutation/add/simple.rs::mutation_add_given_duplicate_errors",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_value_no_value_provided_added_twice_returns_error"
     ],
-    "evidence": "identical_create.rs:57 asserts identical content derives one DocID; :115-121 asserts every losing identical create errors with 'already exists' and only one commits",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Rust-API concurrency tests only. Not asserted: a sequential duplicate add_ through GraphQL/collection API with the full message `a document with the given ID already exists`; two all-default docs; JSON objects differing only in key order yielding the same docID."
   },
   {
@@ -59,11 +75,19 @@
   },
   {
     "id": "go.mutation.unknown_field",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/document/tests/document_tests.rs::set_unknown_field_errors"
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_alias.rs::mutation_add_one_to_many_aliased_relation_name_non_existing_relation_single_side_no_id_field_error",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_alias.rs::mutation_add_one_to_many_aliased_relation_name_with_invalid_field_error",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_simple.rs::mutation_add_one_to_many_non_existing_relation_single_side_no_id_field_error",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_simple.rs::mutation_add_one_to_many_with_invalid_field_error",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_one/with_alias.rs::mutation_add_one_to_one_use_alias_with_invalid_field_error",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_one/with_simple.rs::mutation_add_one_to_one_with_invalid_field_error",
+      "tools/integration-test/tests/mutation/add/simple.rs::mutation_add_given_non_existant_field_errors",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_many/simple.rs::mutation_update_one_to_many_relation_id_to_link_from_many_side_with_wrong_field_error",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_many/with_alias.rs::mutation_update_one_to_many_alias_relation_name_to_link_from_many_side_with_wrong_field_error"
     ],
-    "evidence": "document_tests.rs:498-500 asserts setting a missing field returns FieldNotExist('missing') with 'does not exist' and leaves the doc empty",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Document-level only: no create/update through the collection API or GraphQL asserting `the given field does not exist. Name: <field>` and that nothing is written; relation one-side `published`/`_publishedID` on Author not covered."
   },
   {
@@ -89,27 +113,43 @@
   },
   {
     "id": "go.mutation.null_args",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/delete/with_null_input.rs::mutation_delete_with_null_doc_i_ds_succeeds",
+      "tools/integration-test/tests/mutation/delete/with_null_input.rs::mutation_delete_with_null_doc_id_succeeds",
+      "tools/integration-test/tests/mutation/delete/with_null_input.rs::mutation_delete_with_null_filter_succeeds",
+      "tools/integration-test/tests/mutation/update/with_null_input.rs::mutation_update_with_null_doc_i_ds_succeeds",
+      "tools/integration-test/tests/mutation/update/with_null_input.rs::mutation_update_with_null_doc_id_succeeds",
+      "tools/integration-test/tests/mutation/update/with_null_input.rs::mutation_update_with_null_filter_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Go-Bug-Suspect leaf. No test passes `filter: null` or `docID: null` to update_/delete_ (searched `filter: ?null`, `docID: ?null`); only omitted targets are tested at parse level (mutation_tests.rs::test_update_without_target_succeeds, test_delete_without_target_succeeds), so Rust's behaviour for an explicit null (update/delete everything, or reject like truncate) is unverified."
   },
   {
     "id": "go.mutation.constraints",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/write/size_constraint.rs::create_rejects_an_array_of_the_wrong_size",
-      "crates/db/tests/write/size_constraint.rs::update_rejects_an_array_of_the_wrong_size",
-      "crates/db/tests/write/size_constraint.rs::create_and_update_accept_an_array_of_the_right_size"
+      "tools/integration-test/tests/mutation/add/constraints/size_constraint.rs::mutation_add_with_size_constrain_mismatch_should_error",
+      "tools/integration-test/tests/mutation/add/constraints/size_constraint.rs::mutation_add_with_size_constrain_should_succeed",
+      "tools/integration-test/tests/mutation/update/constraints/size_constraint.rs::mutation_update_with_size_constrain_mismatch_should_error",
+      "tools/integration-test/tests/mutation/update/constraints/size_constraint.rs::mutation_update_with_size_constrain_should_succeed"
     ],
-    "evidence": "size_constraint.rs:34 and :54 assert 'array size mismatch' on create and update with 3 elements; :65 and :69-72 expect a 2-element create and update to succeed",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Rust mutator API only (no GraphQL); the accepted two-element array is not read back and compared."
   },
   {
     "id": "go.mutation.utc_now",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_field_kinds_with_date_time_with_utc_now",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_with_date_time_sets_two_equal_utc_now_values",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_values_no_values_provided_sets_two_equal_utc_now_default_value",
+      "tools/integration-test/tests/mutation/add/with_default_values.rs::mutation_add_with_default_values_no_values_provided_sets_utc_now_default_value",
+      "tools/integration-test/tests/mutation/update/field_kinds/date_time.rs::mutation_update_with_date_time_field_with_utc_now",
+      "tools/integration-test/tests/mutation/update/field_kinds/date_time.rs::mutation_update_with_date_time_field_with_utc_now_should_be_equal",
+      "tools/integration-test/tests/mutation/upsert/date_time.rs::mutation_upsert_with_date_time_field_with_utc_now_should_be_equal"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "rg 'UTC_NOW|utc_now' finds only implementation (query/src/plan/mutation/{add,update,upsert}.rs, runner/mutation.rs, sdl_parse/fields.rs); no test uses UTC_NOW as an input or @default, or asserts that two UTC_NOWs in one request are equal."
   },
   {
@@ -143,21 +183,34 @@
   },
   {
     "id": "go.mutation.field_kinds.other_scalars",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/document/tests/encoding_tests.rs::test_time_to_json_with_nanoseconds"
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_blob.rs::mutation_add_field_kinds_with_blob",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_blob.rs::mutation_add_field_kinds_with_non_nillable_blob",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_bool.rs::mutation_add_field_kinds_with_bool",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_bool.rs::mutation_add_field_kinds_with_non_nillable_bool",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_field_kinds_with_date_time",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_field_kinds_with_date_times_nano_seconds_appart",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_field_kinds_with_non_nillable_date_time",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_string.rs::mutation_add_field_kinds_with_non_nillable_string",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_string.rs::mutation_add_field_kinds_with_string"
     ],
-    "evidence": "cross_runtime_queries.rs:89 asserts Rust returns the same Boolean, String, Blob ('00FF') and DateTime values (nillable and !) as Go; encoding_tests.rs:209 asserts DateTime JSON round-trip keeps nanoseconds",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Not asserted end to end: DateTimes 1 ns apart stored as three distinct documents with distinct times."
   },
   {
     "id": "go.mutation.field_kinds.null_scalars",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_blob.rs::mutation_add_field_kinds_with_nillable_blob_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_bool.rs::mutation_add_field_kinds_with_nillable_bool_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_date_time.rs::mutation_add_field_kinds_with_nillable_date_time_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_float.rs::mutation_add_field_kinds_with_nillable_float32_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_float.rs::mutation_add_field_kinds_with_nillable_float64_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_int.rs::mutation_add_field_kinds_with_nillable_int_nil",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_string.rs::mutation_add_field_kinds_with_nillable_string_nil"
     ],
-    "evidence": "cross_runtime_indexes.rs:249-258 asserts a doc created with optionalInteger: null returns null",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Only a nillable Int created with explicit null is asserted; Float32, Float64, Boolean, String, Blob and DateTime created with null are not (cross_runtime_queries omits those fields instead of passing null)."
   },
   {
@@ -181,13 +234,17 @@
   },
   {
     "id": "go.mutation.field_kinds.json",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates"
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_boolean_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_int_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_list_of_objects_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_list_of_scalars_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_null_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_object_value_succeeds",
+      "tools/integration-test/tests/mutation/add/field_kinds/field_kind_json.rs::mutation_add_with_json_field_given_string_value_succeeds"
     ],
-    "evidence": "mutation_input_variables.rs:41-44 asserts a JSON object with a nested list incl. null is returned exactly; cross_runtime_queries.rs:89 asserts an object JSON value matches Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "json_update_revalidation.rs:63-66 creates list, scalar and null JSON payloads but only asserts the value is unchanged by a later update, never that it equals the input; a number returned as float64 (250), a string, a boolean and null are not asserted against the stored value."
   },
   {
@@ -239,9 +296,13 @@
   },
   {
     "id": "go.mutation.relation.one_to_one_unique",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_one/with_simple.rs::mutation_add_one_to_one_errors_given_relation_already_established_via_primary",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_one/with_alias.rs::mutation_update_one_to_one_alias_relation_name_to_link_from_primary_side",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_one/with_simple.rs::mutation_update_one_to_one_relation_id_to_link_from_primary_side"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "crates/query/src/sdl_parse/parser_tests.rs (~line 1985) only asserts that a one-to-one primary gets an implicit unique FK index; no mutation creates or updates a second Author pointing at an already-linked book and asserts `violates unique index`."
   },
   {
@@ -264,9 +325,15 @@
   },
   {
     "id": "go.mutation.relation.dangling",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_alias.rs::mutation_add_one_to_many_aliased_relation_name_non_existing_relation_many_side_added_doc",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_many/with_simple.rs::mutation_add_one_to_many_non_existing_relation_many_side_added_doc",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_one/with_alias.rs::mutation_add_one_to_one_use_alias_with_non_existing_relation_primary_side_added_doc",
+      "tools/integration-test/tests/mutation/add/field_kinds/one_to_one/with_simple.rs::mutation_add_one_to_one_no_child",
+      "tools/integration-test/tests/mutation/update/field_kinds/one_to_one/with_simple.rs::mutation_update_one_to_one_no_child"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Go-Bug-Suspect leaf. No test creates or updates a doc whose relation ID is a well-formed but non-existent docID (searched dangling/orphan/nonexistent across tests). Rust's choice (accept like Go, or reject) is unverified."
   },
   {
@@ -288,12 +355,14 @@
   },
   {
     "id": "go.mutation.update.by_id",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/write/same_request.rs::a_same_request_update_by_the_created_document_id_applies_with_kms_on",
-      "tools/integration-test/tests/issue1194_repro.rs::issue1194_same_doc_txn_pair_still_conflicts"
+      "tools/integration-test/tests/mutation/update/with_id.rs::mutation_update_with_id",
+      "tools/integration-test/tests/mutation/update/with_id.rs::mutation_update_with_non_existant_id",
+      "tools/integration-test/tests/mutation/update/with_id_and_version.rs::mutation_update_with_id_and_version_return_results",
+      "tools/integration-test/tests/mutation/update/with_ids.rs::mutation_update_with_ids"
     ],
-    "evidence": "same_request.rs:61-62 asserts update_Secrets(docID:) returns that doc with the new value; same_request.rs:66 asserts the stored value",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Unverified: a list of docIDs updates exactly those docs (only a mock-level preparation test, crates/query/src/runner/mutation.rs::update_preparation_keeps_custom_hook_and_only_records_found_targets, checks target recording), an unknown docID returns an empty list without error, and `_version { cid }` on update returns two entries (update commit then create commit)."
   },
   {
@@ -309,13 +378,15 @@
   },
   {
     "id": "go.mutation.update.collection_filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/document_lifecycle.rs::filtered_document_update_http_contract",
-      "crates/http/tests/filtered_document_update.rs::a_bare_scalar_condition_means_equality",
-      "crates/http/tests/filtered_document_update.rs::an_incomplete_request_is_refused"
+      "tools/integration-test/tests/mutation/update/with_filter_action.rs::update_with_filter_succeeds",
+      "tools/integration-test/tests/mutation/update/with_filter_action.rs::update_with_map_filter_large_integer_straddling2_to53_updates_only_exact_match",
+      "tools/integration-test/tests/mutation/update/with_filter_action.rs::update_with_map_filter_succeeds",
+      "tools/integration-test/tests/mutation/update/with_filter_action.rs::update_with_none_option_filter_updates_all_documents",
+      "tools/integration-test/tests/mutation/update/with_filter_action.rs::update_with_some_option_filter_succeeds"
     ],
-    "evidence": "document_lifecycle.rs:197-216 asserts PATCH /collections/X with a GraphQL-text filter and JSON updater updates only Alice on a real node; filtered_document_update.rs:246 (mock store) asserts a map filter is applied",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Map filter is only checked against MockRestOperations. No-filter (None option) updating every document diverges: Rust refuses a missing/null filter with 400 (filtered_document_update.rs:154,162). The 2^53 int filter (9007199254740993 vs ...992) is not tested."
   },
   {
@@ -331,92 +402,154 @@
   },
   {
     "id": "go.mutation.update.set_null",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/p2p_iroh/schema/encryption.rs::updates_set_string_to_null"
+      "tools/integration-test/tests/mutation/update/field_kinds/blob.rs::mutation_update_if_blob_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/bool.rs::mutation_update_if_bool_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/date_time.rs::mutation_update_if_date_time_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/float.rs::mutation_update_if_float_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/int.rs::mutation_update_if_int_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/json.rs::mutation_update_if_json_field_set_to_null_should_be_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/string.rs::mutation_update_if_string_field_set_to_null_should_be_nil"
     ],
-    "evidence": "encryption.rs:339 asserts name is null on the peer after update_Users(input: {name: null})",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Only String, and only observed on a replicated encrypted doc. Blob, Boolean, DateTime, Float, Int and JSON set to null are unverified; searched for update_ mutations with `: null` inputs."
   },
   {
     "id": "go.mutation.update.array_clear",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/update/field_kinds/array_bool.rs::mutation_update_with_array_of_booleans_to_empty",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_bool.rs::mutation_update_with_array_of_booleans_to_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_float.rs::mutation_update_with_array_of_floats_to_empty",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_float.rs::mutation_update_with_array_of_floats_to_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_empty",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_nil",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_empty",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_nil"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched update_ mutations with array inputs ([] / null) and array-named test fns; crates/db/tests/write/empty_arrays.rs only checks a stored [] survives an unrelated update, not updating an array to null or []."
   },
   {
     "id": "go.mutation.update.array_replace",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/update/field_kinds/array_bool.rs::mutation_update_with_array_of_booleans_to_larger_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_bool.rs::mutation_update_with_array_of_booleans_to_same_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_bool.rs::mutation_update_with_array_of_booleans_to_smaller_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_float.rs::mutation_update_with_array_of_floats_to_larger_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_float.rs::mutation_update_with_array_of_floats_to_same_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_float.rs::mutation_update_with_array_of_floats_to_smaller_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_larger_size_positive_values",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_same_size_mixed_values",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_same_size_positive_values",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_int.rs::mutation_update_with_array_of_ints_to_smaller_size_positive_values",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_larger_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_same_size",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_smaller_size"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched update_ mutations with list inputs (only a vector embedding update in vector.rs) and array-named test fns; no test updates [Boolean!]/[Float!]/[Int!]/[String!] to a same/shorter/longer list and checks the result."
   },
   {
     "id": "go.mutation.update.nillable_arrays",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/update/field_kinds/array_nillable_bool.rs::mutation_update_with_array_of_nillable_booleans",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_nillable_float.rs::mutation_update_with_array_of_nillable_floats",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_nillable_int.rs::mutation_update_with_array_of_nillable_ints",
+      "tools/integration-test/tests/mutation/update/field_kinds/array_nillable_string.rs::mutation_update_with_array_of_strings_ints"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "No test updates a nillable-element array ([Int] etc.) with null elements and reads it back; same searches as array_replace."
   },
   {
     "id": "go.mutation.upsert.apply",
     "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
-      "tools/integration-test/tests/basic/document_lifecycle.rs::filter_mutations_return_post_update_docs",
-      "tools/integration-test/tests/basic/upsert_counter.rs::upsert_adds_to_counters_and_refuses_a_negative_pcounter"
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_filter_match_and_version_updates_doc",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_filter_match_on_same_field_updates_doc",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_filter_match_updates_doc",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_no_filter_match_adds_new_doc"
     ],
-    "evidence": "mutation_input_variables.rs:32-35 asserts the first upsert returns the added doc (label created) and the second returns the updated doc (label updated); document_lifecycle.rs:290-302 asserts an upsert matching name Bob changes name to Robert and returns it",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "The `_version` variant (WithFilterMatchAndVersion) is not separately checked."
   },
   {
     "id": "go.mutation.upsert.errors",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_filter_error",
-      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_add_error",
-      "crates/query/src/query_parse/mutation_tests.rs::test_upsert_missing_update_error"
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_filter_match_multiple_returns_error",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_null_add_input_returns_error",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_null_filter_input_returns_error",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_null_update_input_returns_error",
+      "tools/integration-test/tests/mutation/upsert/simple.rs::mutation_upsert_simple_with_unique_composite_index_and_duplicate_update_returns_error"
     ],
-    "evidence": "mutation_tests.rs:447,465,483 assert an upsert omitting filter/add/update fails naming that argument",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Parser-level, and for omitted arguments rather than explicit `null` (Go message `Argument \"add\" has invalid value <nil>` not asserted). `cannot upsert multiple matching documents` (code at crates/query/src/plan/mutation/upsert.rs:456) has no test; the unique composite index collision on upsert-update has no test."
   },
   {
     "id": "go.mutation.delete.by_id",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/acp/transaction_rollback.rs::acp_transaction_rollback_test",
-      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility",
-      "tools/integration-test/tests/query/limit_pushdown.rs::deleted_documents_do_not_shorten_a_limited_page"
+      "tools/integration-test/tests/mutation/delete/with_deleted_field.rs::mutation_deletion_with_deleted_field",
+      "tools/integration-test/tests/mutation/delete/with_id.rs::mutation_deletion_with_id_unknown_value",
+      "tools/integration-test/tests/mutation/delete/with_id.rs::mutation_deletion_with_id_unknown_value_and_unrelated_record_in_collection",
+      "tools/integration-test/tests/mutation/delete/with_id_alias.rs::mutation_deletion_with_id_and_alias",
+      "tools/integration-test/tests/mutation/delete/with_ids.rs::mutation_deletion_with_empty_i_ds",
+      "tools/integration-test/tests/mutation/delete/with_ids.rs::mutation_deletion_with_i_ds",
+      "tools/integration-test/tests/mutation/delete/with_ids.rs::mutation_deletion_with_i_ds_known_and_unknown",
+      "tools/integration-test/tests/mutation/delete/with_ids.rs::mutation_deletion_with_i_ds_multiple_unknown_id",
+      "tools/integration-test/tests/mutation/delete/with_ids.rs::mutation_deletion_with_i_ds_single_unknown_id",
+      "tools/integration-test/tests/mutation/delete/with_ids_alias.rs::mutation_deletion_with_i_ds_and_select_alias",
+      "tools/integration-test/tests/mutation/delete/with_ids_filter.rs::mutation_deletion_with_i_ds_and_empty_filter",
+      "tools/integration-test/tests/mutation/delete/with_ids_update_alias.rs::mutation_deletion_with_update_and_i_ds_and_select_alias"
     ],
-    "evidence": "transaction_rollback.rs:171 asserts delete_User(docID:) returns that docID; point_read_query_path.rs:86-92 asserts the doc is gone and visible with showDeleted; limit_pushdown.rs:149 asserts docs deleted by a docIDs list are not returned",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Unverified: `_deleted: true` in the delete response, aliasing `_docID` (also after an update), unknown IDs skipped without error (alone or mixed with known), `docID: []` deleting nothing, and `filter: {}` alongside docIDs not widening the delete."
   },
   {
     "id": "go.mutation.delete.by_filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence"
+      "tools/integration-test/tests/mutation/delete/with_filter.rs::mutation_deletion_with_empty_filter",
+      "tools/integration-test/tests/mutation/delete/with_filter.rs::mutation_deletion_with_filter",
+      "tools/integration-test/tests/mutation/delete/with_filter.rs::mutation_deletion_with_filter_matching_multiple_docs",
+      "tools/integration-test/tests/mutation/delete/with_filter.rs::mutation_deletion_with_filter_no_match",
+      "tools/integration-test/tests/mutation/delete/with_filter.rs::mutation_deletion_with_filter_on_empty_collection"
     ],
-    "evidence": "cross_runtime_queries.rs:147 asserts delete_QueryCase(filter: {name: {_eq: \"omega\"}}) returns the same as Go, and the following query (:153) matches Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Only a single-match filter. Unverified: a filter matching several docs, `filter: {}` deleting all, and no-match / empty-collection returning an empty list."
   },
   {
     "id": "go.mutation.delete.collection_filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/document_lifecycle.rs::filtered_document_delete_http_contract",
-      "crates/http/tests/filtered_document_delete.rs::a_bare_scalar_condition_means_equality",
-      "crates/http/tests/filtered_document_delete.rs::a_request_without_a_usable_filter_is_refused"
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_filter_succeeds",
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_filter_with_multiple_matching_docs_deletes_all",
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_map_filter_large_integer_straddling2_to53_deletes_only_exact_match",
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_map_filter_succeeds",
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_none_option_filter_deletes_all_documents",
+      "tools/integration-test/tests/mutation/delete/with_filter_action.rs::delete_with_some_option_filter_succeeds"
     ],
-    "evidence": "document_lifecycle.rs:348-357 asserts DELETE /collections/X with a GraphQL-text filter deletes only Alice on a real node; filtered_document_delete.rs:249-250 (mock store) asserts a map filter",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Map filter only against a mock. No-filter deleting all documents diverges: Rust refuses a missing/null filter with 400 (filtered_document_delete.rs:141). Multiple matches deleted only on the mock; the 2^53 int filter is not tested."
   },
   {
     "id": "go.mutation.delete.relation",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_many/with_show_deleted.rs::deletion_of_a_document_using_single_doc_id_with_show_deleted_document_query",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_id.rs::relational_deletion_of_a_document_using_single_key_success",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_id.rs::relational_deletion_of_a_document_using_single_key_with_alias_success",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_id.rs::relational_deletion_of_a_document_using_single_key_with_multi_documents_with_alias_success",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::txn_deletion_of_related_doc_from_non_primary_side_backward_direction",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::txn_deletion_of_related_doc_from_non_primary_side_forward_direction",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::txn_deletion_of_related_doc_from_primary_side_backward_direction",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::txn_deletion_of_related_doc_from_primary_side_forward_direction"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched for Publisher/Book/Author one-to-one-to-one deletes, relational queries after delete, and `showDeleted: true` on a relation field; no test deletes a related doc and checks the relation goes null or that `Author(showDeleted: true) { published { _deleted } }` lists it."
   },
   {
@@ -442,13 +575,18 @@
   },
   {
     "id": "go.mutation.txn.isolation",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/transactions.rs::transactions_test",
-      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation",
-      "tools/integration-test/tests/acp/transaction_rollback.rs::acp_transaction_rollback_test"
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::a_txn_can_read_a_record_that_is_deleted_in_a_non_commited_txn_backward_direction",
+      "tools/integration-test/tests/mutation/delete/field_kinds/one_to_one_to_one/with_txn.rs::a_txn_can_read_a_record_that_is_deleted_in_a_non_commited_txn_forward_direction",
+      "tools/integration-test/tests/mutation/delete/with_id_txn.rs::mutation_deletion_with_id_and_txn",
+      "tools/integration-test/tests/mutation/delete/with_ids_txn.rs::mutation_deletion_with_i_ds_and_txn",
+      "tools/integration-test/tests/mutation/mix/with_txn.rs::mutation_with_txn_deletes_user_given_same_transaction",
+      "tools/integration-test/tests/mutation/mix/with_txn.rs::mutation_with_txn_does_not_deletes_user_given_different_transactions",
+      "tools/integration-test/tests/mutation/mix/with_txn.rs::mutation_with_txn_does_not_update_user_given_different_transactions",
+      "tools/integration-test/tests/mutation/mix/with_txn.rs::mutation_with_txn_does_update_user_given_same_transactions"
     ],
-    "evidence": "transactions.rs:304,319 assert an add in a txn is visible inside only; rest_transactions.rs:144-146 assert a txn sees its update while outside sees the old value, :157-166 a txn's own delete makes the doc 404 inside it; transaction_rollback.rs:185 a txn's delete hides the doc inside it",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Comparisons are against autocommit reads, not a second open transaction. Unverified: a second txn's delete_User of a doc added in an uncommitted txn returns empty, and a second txn still reading a doc (and its relation, both directions) deleted in an uncommitted txn."
   },
   {
@@ -464,13 +602,14 @@
   },
   {
     "id": "go.mutation.txn.atomic",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/rest_transactions.rs::rust_rest_transactions_preserve_isolation",
-      "crates/db/tests/txn/requests.rs::concurrent_mutations_on_one_transaction_all_succeed",
-      "crates/db/tests/txn/registry_suite.rs::test_concurrent_commit_and_discard_same_transaction"
+      "tools/integration-test/tests/mutation/add/txn_discard.rs::mutation_add_add_after_discard",
+      "tools/integration-test/tests/mutation/update/concurrent.rs::mutation_update_concurrent_commit",
+      "tools/integration-test/tests/mutation/update/concurrent.rs::mutation_update_concurrent_discard",
+      "tools/integration-test/tests/mutation/update/concurrent.rs::mutation_update_concurrent_write"
     ],
-    "evidence": "rest_transactions.rs:179-188 asserts a write to a discarded txn returns 404 and :231 that nothing extra was stored; requests.rs:87,93 assert concurrent adds on one txn are invisible before commit and all present after; registry_suite.rs:975 asserts exactly one of a racing commit/discard succeeds",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "The `transaction not found` message is not asserted (status only). Unverified: two concurrent updates of one doc in one txn leave one update whole (never a field mix), an update racing a commit leaves old or new values whole, and an add racing a discard leaves the collection empty (the registry race test has no writes)."
   },
   {

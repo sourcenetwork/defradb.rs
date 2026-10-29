@@ -121,6 +121,9 @@ pub enum Error {
     #[error("server returned error: {0}")]
     Server(String),
 
+    #[error(transparent)]
+    Documents(#[from] query::documents::Error),
+
     #[error("failed to read file {path}: {source}")]
     ReadFile {
         path: PathBuf,

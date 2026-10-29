@@ -10,43 +10,12 @@ Creating, updating, upserting, deleting and truncating documents through GraphQL
 
 `add_<Collection>` mutations and the collection create/save API.
 
-# `go.mutation.add.basic`: Adding documents returns them and makes them queryable
-
-- **Parents:** ["go.mutation.add"]
-- **Go-Tests:** ["mutation/add/simple_test.go::TestMutationAdd", "mutation/add/simple_add_many_test.go::TestMutationAddMany", "mutation/add/simple_test.go::TestMutationAdd_GivenEmptyInput", "mutation/add/simple_test.go::TestMutationAdd_With10Collections", "mutation/add/with_version_test.go::TestMutationAdd_ReturnsVersionCID"]
-
-A created document (single or a JSON array of several) is returned by a later `Users { _docID name age }` query with its generated `_docID`. `add_Users(input: {})` creates a document and returns a valid `_docID`; in a schema with ten collections `add_Foo1` returns the given fields; selecting `_version { cid }` on `add_Users` returns one valid CID.
-
-# `go.mutation.add.null_input`: Null and omitted add arguments
-
-- **Parents:** ["go.mutation.add"]
-- **Go-Tests:** ["mutation/add/with_null_input_test.go::TestMutationAdd_WithNullEncrypt_Succeeds", "mutation/add/with_null_input_test.go::TestMutationAdd_WithNullInput_Succeeds", "mutation/add/with_null_input_test.go::TestMutationAdd_WithNullInputEntry_ReturnsError", "mutation/add/with_null_input_test.go::TestMutationAdd_WithNullEncryptFields_Succeeds", "mutation/add/with_null_value_test.go::TestMutationAdd_WithOmittedValueAndExplicitNullValue"]
-- **Scope:** "TestMutationAdd_WithOmittedValueAndExplicitNullValue runs only on the GQL and collection-named mutation types (Collection.Save treats the second create as an update)"
-
-`add_Users(encrypt: null, ...)` and `add_Users(encryptFields: null, ...)` behave as if the argument were absent; `add_Users(input: null)` returns an empty list; `add_Users(input: [null])` fails with `Expected "UsersMutationInputArg!", found null.`. Adding `{"name": "John"}` and then `{"name": "John", "age": null}` creates two distinct documents, both with `age` null.
-
 # `go.mutation.add.variables`: GraphQL variables in add mutations
 
 - **Parents:** ["go.mutation.add"]
 - **Go-Tests:** ["mutation/add/with_variables_test.go::TestMutationAddWithNonNullVariable", "mutation/add/with_variables_test.go::TestMutationAddWithDefaultVariable", "mutation/add/with_variables_test.go::TestMutationAdd_WithVariableInJSONObject_Succeeds", "mutation/add/with_variables_test.go::TestMutationAdd_WithJSONVariable_Succeeds"]
 
 `add_Users(input: $user)` accepts a `[UsersMutationInputArg!]!` variable and a variable with a default value. A variable can be used inside a JSON object literal (`{embed: {message: $message}}`) or as the whole value of a `JSON` field, and the stored JSON is returned with the substituted values.
-
-# `go.mutation.add.default_values`: `@default` field values on create
-
-- **Parents:** ["go.mutation.add"]
-- **Go-Tests:** ["mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValues_NoValuesProvided_SetsDefaultValue", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValues_NilValuesProvided_SetsNilValue", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValues_ValuesProvided_SetsValue", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValue_NoValueProvided_AddedTwice_UniqueIndex_ReturnsError", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONIntValue_ShouldBeSet", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONFloatValue_ShouldBeSet", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONBoolValue_ShouldBeSet", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONNullValue_ReturnError", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONObjectValues_ShouldBeSet", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultJSONDeepObjectValue_ShouldBeSet"]
-- **Scope:** "the unique-index test runs only on the GQL and collection-named mutation types"
-
-Omitted fields take their `@default(value: ...)` for Boolean, DateTime, String, Int, Float, Float32, Float64, JSON and Blob; explicit nulls store null and provided values win. JSON defaults may be int, float, bool, an object or a nested object (returned as canonical sorted-key JSON text); `@default(value: null)` on a JSON field fails schema creation with `default value is invalid`. A defaulted value still counts for a unique index: a second doc defaulting to the same `name` fails with `can not index a doc's field(s) that violates unique index`.
-
-# `go.mutation.duplicate`: Identical content yields the same docID and is rejected
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/add/simple_test.go::TestMutationAdd_GivenDuplicate_Errors", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValue_NoValueProvided_AddedTwice_ReturnsError", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithDuplicateJSONField_ReturnsError"]
-- **Scope:** "GQL and collection-named mutation types only (Collection.Save turns the second create into an update)"
-
-Creating a document whose content matches an existing one (including two all-default documents, or JSON objects whose keys differ only in order) fails with `a document with the given ID already exists`, because the docID is derived deterministically from content.
 
 # `go.mutation.deleted_doc`: A deleted docID cannot be re-created or updated
 
@@ -55,14 +24,6 @@ Creating a document whose content matches an existing one (including two all-def
 - **Scope:** "TestUpdateSave_DeletedDoc_DoesNothing runs only on the Collection.Save mutation type"
 
 Re-adding the same content after a delete, or saving an update to a deleted document, fails with `a document with the given ID has been deleted`, and the document stays deleted (a later `Users` query returns nothing).
-
-# `go.mutation.unknown_field`: Writing a field the collection does not have
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/add/simple_test.go::TestMutationAdd_GivenNonExistantField_Errors", "mutation/add/field_kinds/one_to_many/with_simple_test.go::TestMutationAddOneToMany_WithInvalidField_Error", "mutation/add/field_kinds/one_to_many/with_simple_test.go::TestMutationAddOneToMany_NonExistingRelationSingleSide_NoIDFieldError", "mutation/add/field_kinds/one_to_many/with_alias_test.go::TestMutationAddOneToMany_AliasedRelationNameWithInvalidField_Error", "mutation/add/field_kinds/one_to_many/with_alias_test.go::TestMutationAddOneToMany_AliasedRelationNameNonExistingRelationSingleSide_NoIDFieldError", "mutation/add/field_kinds/one_to_one/with_simple_test.go::TestMutationAddOneToOne_WithInvalidField_Error", "mutation/add/field_kinds/one_to_one/with_alias_test.go::TestMutationAddOneToOne_UseAliasWithInvalidField_Error", "mutation/update/field_kinds/one_to_many/simple_test.go::TestMutationUpdateOneToMany_RelationIDToLinkFromManySideWithWrongField_Error", "mutation/update/field_kinds/one_to_many/with_alias_test.go::TestMutationUpdateOneToMany_AliasRelationNameToLinkFromManySideWithWrongField_Error"]
-- **Scope:** "collection-named and Collection.Save mutation types only (the GQL mutation fails earlier with a different error)"
-
-Creating or updating a document with an unknown field fails with `the given field does not exist. Name: <field>` (e.g. `fieldDoesNotExist`, `notName`) and writes nothing. Setting a relation from the one side of a one-to-many (`published` or `_publishedID` on `Author`) fails the same way, naming that field.
 
 # `go.mutation.ordering`: Mutation fields run in request order
 
@@ -77,28 +38,6 @@ Several aliased `add_User` fields in one mutation execute serially in the order 
 - **Go-Tests:** ["mutation/special/invalid_operation_test.go::TestMutationInvalidMutation", "mutation/delete/simple_test.go::TestMutationDeletion_WithoutSubSelection", "mutation/delete/simple_test.go::TestMutationDeletion_WithoutSubSelectionFields"]
 
 An unknown mutation field fails with `Cannot query field "dostuff_User" on type "Mutation".`; `delete_User` without a selection set fails with `Field "delete_User" of type "[User]" must have a sub selection.`; an empty selection set fails with a `Syntax Error GraphQL` error.
-
-# `go.mutation.null_args`: Null filter or docID on update and delete
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/update/with_null_input_test.go::TestMutationUpdate_WithNullFilter_Succeeds", "mutation/update/with_null_input_test.go::TestMutationUpdate_WithNullDocID_Succeeds", "mutation/update/with_null_input_test.go::TestMutationUpdate_WithNullDocIDs_Succeeds", "mutation/delete/with_null_input_test.go::TestMutationDelete_WithNullFilter_Succeeds", "mutation/delete/with_null_input_test.go::TestMutationDelete_WithNullDocID_Succeeds", "mutation/delete/with_null_input_test.go::TestMutationDelete_WithNullDocIDs_Succeeds"]
-- **Go-Bug-Suspect:** "'docID: null' is treated as no restriction, so the update or delete hits every document in the collection; truncate rejects the same null ('truncate docID cannot be null'). The NullDocIDs tests are copies of the NullDocID tests (both pass 'docID: null')."
-
-`update_Users(filter: null, ...)` / `update_Users(docID: null, ...)` update every document, and `delete_Users(filter: null)` / `delete_Users(docID: null)` delete every document, returning them.
-
-# `go.mutation.constraints`: `@constraints(size:)` on array fields
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/add/constraints/size_constraint_test.go::TestMutationAdd_WithSizeConstrain_ShouldSucceed", "mutation/add/constraints/size_constraint_test.go::TestMutationAdd_WithSizeConstrainMismatch_ShouldError", "mutation/update/constraints/size_constraint_test.go::TestMutationUpdate_WithSizeConstrain_ShouldSucceed", "mutation/update/constraints/size_constraint_test.go::TestMutationUpdate_WithSizeConstrainMismatch_ShouldError"]
-
-For `numbers: [Int!] @constraints(size: 2)`, creating or updating with a two-element array succeeds and is returned; any other length fails with `array size mismatch`.
-
-# `go.mutation.utc_now`: The `UTC_NOW` DateTime literal
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithDateTime_WithUTCNow", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAdd_WithDateTime_SetsTwoEqualUTCNowValues", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValues_NoValuesProvided_SetsUTCNowDefaultValue", "mutation/add/with_default_values_test.go::TestMutationAdd_WithDefaultValues_NoValuesProvided_SetsTwoEqualUTCNowDefaultValue", "mutation/update/field_kinds/date_time_test.go::TestMutationUpdate_WithDateTimeField_WithUTCNow", "mutation/update/field_kinds/date_time_test.go::TestMutationUpdate_WithDateTimeField_WithUTCNow_ShouldBeEqual", "mutation/upsert/date_time_test.go::TestMutationUpsert_WithDateTimeField_WithUTCNow_ShouldBeEqual"]
-
-`UTC_NOW` as an add, update or upsert input value, or as `@default(value: UTC_NOW)`, stores the current UTC timestamp. Every `UTC_NOW` within one request resolves to the same timestamp, so two aliased mutations in one request return equal `created` values.
 
 # `go.mutation.embeddings`: `@embedding` vector fields
 
@@ -135,20 +74,6 @@ Values of each scalar and array kind written with `add_` or the collection API a
 
 `Int`/`Int!` store and return 42 as int64; `Float`, `Float64` (nillable and `!`) return 1.2 as float64, and `Float32`/`Float32!` return 1.2 as float32.
 
-# `go.mutation.field_kinds.other_scalars`: Boolean, String, Blob and DateTime scalars round-trip
-
-- **Parents:** ["go.mutation.field_kinds"]
-- **Go-Tests:** ["mutation/add/field_kinds/field_kind_bool_test.go::TestMutationAddFieldKinds_WithBool", "mutation/add/field_kinds/field_kind_bool_test.go::TestMutationAddFieldKinds_WithNonNillableBool", "mutation/add/field_kinds/field_kind_string_test.go::TestMutationAddFieldKinds_WithString", "mutation/add/field_kinds/field_kind_string_test.go::TestMutationAddFieldKinds_WithNonNillableString", "mutation/add/field_kinds/field_kind_blob_test.go::TestMutationAddFieldKinds_WithBlob", "mutation/add/field_kinds/field_kind_blob_test.go::TestMutationAddFieldKinds_WithNonNillableBlob", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithDateTime", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithNonNillableDateTime", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithDateTimesNanoSecondsAppart"]
-
-Boolean, String, Blob (hex string `"00FF"` returned unchanged) and DateTime (RFC 3339 string or time value) fields, nillable or `!`, return the stored value. DateTime keeps nanosecond precision: values 1 ns apart are stored as three distinct documents with distinct times.
-
-# `go.mutation.field_kinds.null_scalars`: Nillable scalars accept null
-
-- **Parents:** ["go.mutation.field_kinds"]
-- **Go-Tests:** ["mutation/add/field_kinds/field_kind_int_test.go::TestMutationAddFieldKinds_WithNillableInt_Nil", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNillableFloat64_Nil", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNillableFloat32_Nil", "mutation/add/field_kinds/field_kind_bool_test.go::TestMutationAddFieldKinds_WithNillableBool_Nil", "mutation/add/field_kinds/field_kind_string_test.go::TestMutationAddFieldKinds_WithNillableString_Nil", "mutation/add/field_kinds/field_kind_blob_test.go::TestMutationAddFieldKinds_WithNillableBlob_Nil", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithNillableDateTime_Nil"]
-
-Creating a document with null for a nillable Int, Float32, Float64, Boolean, String, Blob or DateTime field returns null for that field.
-
 # `go.mutation.field_kinds.nillable_arrays`: Nillable-element arrays round-trip, including null elements
 
 - **Parents:** ["go.mutation.field_kinds"]
@@ -162,13 +87,6 @@ Creating a document with null for a nillable Int, Float32, Float64, Boolean, Str
 - **Go-Tests:** ["mutation/add/field_kinds/field_kind_bool_test.go::TestMutationAddFieldKinds_WithNonNillableBoolArray_FromTypedSlice", "mutation/add/field_kinds/field_kind_bool_test.go::TestMutationAddFieldKinds_WithNonNillableBoolArray_FromAnySlice", "mutation/add/field_kinds/field_kind_int_test.go::TestMutationAddFieldKinds_WithNonNillableIntArray_FromTypedSlice", "mutation/add/field_kinds/field_kind_int_test.go::TestMutationAddFieldKinds_WithNonNillableIntArray_FromAnySlice", "mutation/add/field_kinds/field_kind_int_test.go::TestMutationAddFieldKinds_WithNonNillableIntArray_FromIntSlice", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNonNillableFloatArray_FromTypedSlice", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNonNillableFloatArray_FromAnySlice", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNonNillableFloat64Array_FromTypedSlice", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNonNillableFloat32Array_FromTypedSlice", "mutation/add/field_kinds/field_kind_float_test.go::TestMutationAddFieldKinds_WithNonNillableFloat32Array_FromAnySlice", "mutation/add/field_kinds/field_kind_string_test.go::TestMutationAddFieldKinds_WithNonNillableStringArray_FromTypedSlice", "mutation/add/field_kinds/field_kind_string_test.go::TestMutationAddFieldKinds_WithNonNillableStringArray_FromAnySlice", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithNonNillableDateTimeArray_FromTypedSlice", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithNonNillableDateTimeArray_FromAnySlice", "mutation/add/field_kinds/field_kind_date_time_test.go::TestMutationAddFieldKinds_WithNonNillableDateTimeArray_FromStringSlice"]
 
 `[Boolean!]`, `[Int!]`, `[Float!]`, `[Float32!]`, `[Float64!]`, `[String!]` and `[DateTime!]` fields return exactly the given elements in order, whether the input was a typed list, an untyped list, a Go `[]int`, or RFC 3339 strings for DateTime.
-
-# `go.mutation.field_kinds.json`: JSON fields hold any JSON value
-
-- **Parents:** ["go.mutation.field_kinds"]
-- **Go-Tests:** ["mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenObjectValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenListOfScalarsValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenListOfObjectsValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenIntValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenStringValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenBooleanValue_Succeeds", "mutation/add/field_kinds/field_kind_json_test.go::TestMutationAdd_WithJSONFieldGivenNullValue_Succeeds"]
-
-A `JSON` field stores and returns an object, a list of scalars, a list of objects, a number (returned as float64, e.g. 250), a string, a boolean or null.
 
 # `go.mutation.crdt`: Counter CRDT fields under mutation
 
@@ -222,13 +140,6 @@ Setting `_publishedID` or `published` (the `@primary` side) on create or update 
 
 Setting `author` or `_authorID` on `Book` (the non-primary side) on create or update fails with `cannot set relation from secondary side` through the collection API, and with `Argument "input" has invalid value` through GraphQL, because the GQL input type has no such field.
 
-# `go.mutation.relation.one_to_one_unique`: A one-to-one primary can link only one document
-
-- **Parents:** ["go.mutation.relation"]
-- **Go-Tests:** ["mutation/add/field_kinds/one_to_one/with_simple_test.go::TestMutationAddOneToOne_ErrorsGivenRelationAlreadyEstablishedViaPrimary", "mutation/update/field_kinds/one_to_one/with_simple_test.go::TestMutationUpdateOneToOne_RelationIDToLinkFromPrimarySide", "mutation/update/field_kinds/one_to_one/with_alias_test.go::TestMutationUpdateOneToOne_AliasRelationNameToLinkFromPrimarySide"]
-
-Creating or updating a second `Author` whose `_publishedID`/`published` points at a book another author already links fails with `can not index a doc's field(s) that violates unique index`.
-
 # `go.mutation.relation.one_to_many_link`: Linking a one-to-many from the many side
 
 - **Parents:** ["go.mutation.relation"]
@@ -244,14 +155,6 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 - **Scope:** "the '_Error' and '_CollectionApi' tests run on collection mutation types, '_GQL' on the GQL mutation type only"
 
 Updating an `Author` with `_publishedID` fails with `the given field does not exist. Name: _publishedID`; with `published` it fails with `cannot set relation from secondary side` (collection API) or `Argument "input" has invalid value` (GraphQL).
-
-# `go.mutation.relation.dangling`: Links to non-existent documents are accepted
-
-- **Parents:** ["go.mutation.relation"]
-- **Go-Tests:** ["mutation/add/field_kinds/one_to_one/with_simple_test.go::TestMutationAddOneToOneNoChild", "mutation/add/field_kinds/one_to_one/with_alias_test.go::TestMutationAddOneToOne_UseAliasWithNonExistingRelationPrimarySide_AddedDoc", "mutation/add/field_kinds/one_to_many/with_simple_test.go::TestMutationAddOneToMany_NonExistingRelationManySide_AddedDoc", "mutation/add/field_kinds/one_to_many/with_alias_test.go::TestMutationAddOneToMany_AliasedRelationNameNonExistingRelationManySide_AddedDoc", "mutation/update/field_kinds/one_to_one/with_simple_test.go::TestMutationUpdateOneToOneNoChild"]
-- **Go-Bug-Suspect:** "each test carries the comment 'This test should probably not pass, as it contains a reference to a document that doesnt exist'"
-
-Creating or updating a document whose relation ID (`_publishedID`, `published`, `_authorID`, `author`) is a well-formed docID that does not exist succeeds, and the document is returned by a query.
 
 # `go.mutation.relation.invalid_id`: Malformed relation IDs are rejected
 
@@ -274,13 +177,6 @@ Updating a relation field with `bae-35953ca-518d-9e6b-9ce6cd00eff5` (a 30-charac
 
 An update replaces the given fields and leaves others alone: on `My_User` (underscored name) `name` becomes "Fred"; a stored `score: 0` with `@default(value: 100)` stays 0 after updating `name`; Blob and DateTime values are replaced. `update_Users(input: {created_at: ...})` with no filter updates every document.
 
-# `go.mutation.update.by_id`: Update by docID
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/with_id_test.go::TestMutationUpdate_WithId", "mutation/update/with_id_test.go::TestMutationUpdate_WithNonExistantId", "mutation/update/with_ids_test.go::TestMutationUpdate_WithIds", "mutation/update/with_id_and_version_test.go::TestMutationUpdate_WithIdAndVersion_ReturnResults"]
-
-`update_Users(docID: "<id>", input: {points: 59})` updates and returns only that document; a list of docIDs updates exactly those documents; an unknown docID (`bae-does-not-exist`) returns an empty list without error. Selecting `_version { cid }` returns two entries, the update commit then the create commit.
-
 # `go.mutation.update.by_filter`: Update by GraphQL filter
 
 - **Parents:** ["go.mutation.update"]
@@ -288,14 +184,6 @@ An update replaces the given fields and leaves others alone: on `My_User` (under
 - **Scope:** "the three relation tests run on the GQL mutation type only"
 
 `update_Users(filter: ..., input: ...)` updates only matching documents and returns them with their new values, even when the update makes them no longer match (filter `verified: true`, input `verified: false`; filter `name: "John"`, input `name: "Jane"`). A filter on a related field (`published: {rating: {_gt: 3}}`) selects by the relation, and the response can select related fields.
-
-# `go.mutation.update.collection_filter`: Collection API update-with-filter
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/with_filter_action_test.go::TestUpdateWithFilter_Succeeds", "mutation/update/with_filter_action_test.go::TestUpdateWithMapFilter_Succeeds", "mutation/update/with_filter_action_test.go::TestUpdateWithSomeOptionFilter_Succeeds", "mutation/update/with_filter_action_test.go::TestUpdateWithNoneOptionFilter_UpdatesAllDocuments", "mutation/update/with_filter_action_test.go::TestUpdateWithMapFilter_LargeIntegerStraddling2To53_UpdatesOnlyExactMatch"]
-- **Scope:** "the 2^53 test excludes the JS client (Go issue #5176) and runs only on collection mutation types"
-
-The collection's update-with-filter accepts a filter as GraphQL text, a map, or an optional filter, plus a JSON updater (`{"name": "Eric"}`), and updates matching documents; no filter updates every document. An int filter `_eq: 9007199254740993` updates only that document, not its neighbour 9007199254740992.
 
 # `go.mutation.update.collection_filter_errors`: Invalid update-with-filter input
 
@@ -306,88 +194,17 @@ The collection's update-with-filter accepts a filter as GraphQL text, a map, or 
 
 A filter of an unsupported type fails with `unsupported filter type` (Go client) or `collection not found` (HTTP, CLI); an empty filter string fails with `filter cannot be empty`; an updater that is not JSON fails with `cannot parse JSON: cannot parse object`; a JSON string updater fails with `the updater of a document is of invalid type`; a JSON array updater leaves the document unchanged.
 
-# `go.mutation.update.set_null`: Setting a scalar to null
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/field_kinds/blob_test.go::TestMutationUpdate_IfBlobFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/bool_test.go::TestMutationUpdate_IfBoolFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/date_time_test.go::TestMutationUpdate_IfDateTimeFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/float_test.go::TestMutationUpdate_IfFloatFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/int_test.go::TestMutationUpdate_IfIntFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/json_test.go::TestMutationUpdate_IfJSONFieldSetToNull_ShouldBeNil", "mutation/update/field_kinds/string_test.go::TestMutationUpdate_IfStringFieldSetToNull_ShouldBeNil"]
-
-Updating a nillable Blob, Boolean, DateTime, Float, Int, JSON or String field to `null` makes a later query return null for it.
-
-# `go.mutation.update.array_clear`: Updating an array to null or empty
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/field_kinds/array_bool_test.go::TestMutationUpdate_WithArrayOfBooleansToNil", "mutation/update/field_kinds/array_bool_test.go::TestMutationUpdate_WithArrayOfBooleansToEmpty", "mutation/update/field_kinds/array_float_test.go::TestMutationUpdate_WithArrayOfFloatsToNil", "mutation/update/field_kinds/array_float_test.go::TestMutationUpdate_WithArrayOfFloatsToEmpty", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToNil", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToEmpty", "mutation/update/field_kinds/array_string_test.go::TestMutationUpdate_WithArrayOfStringsToNil", "mutation/update/field_kinds/array_string_test.go::TestMutationUpdate_WithArrayOfStringsToEmpty"]
-
-Updating a `[Boolean!]`, `[Float!]`, `[Int!]` or `[String!]` field to `null` returns null, and to `[]` returns an empty list (distinct from null).
-
-# `go.mutation.update.array_replace`: Updating an array replaces it whole
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/field_kinds/array_bool_test.go::TestMutationUpdate_WithArrayOfBooleansToSameSize", "mutation/update/field_kinds/array_bool_test.go::TestMutationUpdate_WithArrayOfBooleansToSmallerSize", "mutation/update/field_kinds/array_bool_test.go::TestMutationUpdate_WithArrayOfBooleansToLargerSize", "mutation/update/field_kinds/array_float_test.go::TestMutationUpdate_WithArrayOfFloatsToSameSize", "mutation/update/field_kinds/array_float_test.go::TestMutationUpdate_WithArrayOfFloatsToSmallerSize", "mutation/update/field_kinds/array_float_test.go::TestMutationUpdate_WithArrayOfFloatsToLargerSize", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToSameSizePositiveValues", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToSameSizeMixedValues", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToSmallerSizePositiveValues", "mutation/update/field_kinds/array_int_test.go::TestMutationUpdate_WithArrayOfIntsToLargerSizePositiveValues", "mutation/update/field_kinds/array_string_test.go::TestMutationUpdate_WithArrayOfStringsToSameSize", "mutation/update/field_kinds/array_string_test.go::TestMutationUpdate_WithArrayOfStringsToSmallerSize", "mutation/update/field_kinds/array_string_test.go::TestMutationUpdate_WithArrayOfStringsToLargerSize"]
-
-Updating `[Boolean!]`, `[Float!]`, `[Int!]` or `[String!]` with a same-size, shorter or longer list returns exactly the new list (e.g. `[1, 2, 3, 5, 8]` to `[1, 2, 3]` returns `[1, 2, 3]`; negative ints kept), with no leftover elements.
-
-# `go.mutation.update.nillable_arrays`: Updating arrays with null elements
-
-- **Parents:** ["go.mutation.update"]
-- **Go-Tests:** ["mutation/update/field_kinds/array_nillable_bool_test.go::TestMutationUpdate_WithArrayOfNillableBooleans", "mutation/update/field_kinds/array_nillable_float_test.go::TestMutationUpdate_WithArrayOfNillableFloats", "mutation/update/field_kinds/array_nillable_int_test.go::TestMutationUpdate_WithArrayOfNillableInts", "mutation/update/field_kinds/array_nillable_string_test.go::TestMutationUpdate_WithArrayOfStringsInts"]
-
-Updating a `[Boolean]`, `[Float]`, `[Int]` or `[String]` field from e.g. `[1, null, 3]` to `[null, 2, 3, null, 8]` returns the new list with nulls in their positions.
-
 # `go.mutation.upsert`: Upsert
 
 - **Parents:** ["go.mutation"]
 
 `upsert_<Collection>(filter:, add:, update:)`.
 
-# `go.mutation.upsert.apply`: Upsert adds on no match and updates on one match
-
-- **Parents:** ["go.mutation.upsert"]
-- **Go-Tests:** ["mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithNoFilterMatch_AddsNewDoc", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithFilterMatch_UpdatesDoc", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithFilterMatchOnSameField_UpdatesDoc", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithFilterMatchAndVersion_UpdatesDoc"]
-
-With no document matching `filter`, `upsert_Users` creates one from `add` and returns it; with exactly one match it applies `update` to that document (including changing the filtered field, `name` "Bob" to "John") and returns the updated document.
-
-# `go.mutation.upsert.errors`: Upsert rejects ambiguous or missing arguments
-
-- **Parents:** ["go.mutation.upsert"]
-- **Go-Tests:** ["mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithFilterMatchMultiple_ReturnsError", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithNullAddInput_ReturnsError", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithNullUpdateInput_ReturnsError", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithNullFilterInput_ReturnsError", "mutation/upsert/simple_test.go::TestMutationUpsertSimple_WithUniqueCompositeIndexAndDuplicateUpdate_ReturnsError"]
-
-A filter matching several documents fails with `cannot upsert multiple matching documents`; `add: null`, `update: null` or `filter: null` fail with `Argument "add" has invalid value <nil>` (resp. `"update"`, `"filter"`); an update that collides on a unique composite index fails with `can not index a doc's field(s) that violates unique index`.
-
 # `go.mutation.delete`: Document deletion
 
 - **Parents:** ["go.mutation"]
 
 `delete_<Collection>` mutations and the collection delete API.
-
-# `go.mutation.delete.by_id`: Delete by docID
-
-- **Parents:** ["go.mutation.delete"]
-- **Go-Tests:** ["mutation/delete/with_deleted_field_test.go::TestMutationDeletion_WithDeletedField", "mutation/delete/with_id_alias_test.go::TestMutationDeletion_WithIDAndAlias", "mutation/delete/with_id_test.go::TestMutationDeletion_WithIDUnknownValue", "mutation/delete/with_id_test.go::TestMutationDeletion_WithIDUnknownValueAndUnrelatedRecordInCollection", "mutation/delete/with_ids_test.go::TestMutationDeletion_WithIDs", "mutation/delete/with_ids_test.go::TestMutationDeletion_WithEmptyIDs", "mutation/delete/with_ids_test.go::TestMutationDeletion_WithIDsSingleUnknownID", "mutation/delete/with_ids_test.go::TestMutationDeletion_WithIDsMultipleUnknownID", "mutation/delete/with_ids_test.go::TestMutationDeletion_WithIDsKnownAndUnknown", "mutation/delete/with_ids_alias_test.go::TestMutationDeletion_WithIDsAndSelectAlias", "mutation/delete/with_ids_filter_test.go::TestMutationDeletion_WithIDsAndEmptyFilter", "mutation/delete/with_ids_update_alias_test.go::TestMutationDeletion_WithUpdateAndIDsAndSelectAlias"]
-
-`delete_User(docID: ...)` with one ID or a list deletes and returns those documents (`_deleted` is true in the response; `_docID` can be aliased, also after an update); unknown IDs are skipped and return nothing, without error; `docID: []` deletes nothing; an empty `filter: {}` alongside docIDs does not widen the deletion.
-
-# `go.mutation.delete.by_filter`: Delete by GraphQL filter
-
-- **Parents:** ["go.mutation.delete"]
-- **Go-Tests:** ["mutation/delete/with_filter_test.go::TestMutationDeletion_WithFilter", "mutation/delete/with_filter_test.go::TestMutationDeletion_WithFilterMatchingMultipleDocs", "mutation/delete/with_filter_test.go::TestMutationDeletion_WithEmptyFilter", "mutation/delete/with_filter_test.go::TestMutationDeletion_WithFilterNoMatch", "mutation/delete/with_filter_test.go::TestMutationDeletion_WithFilterOnEmptyCollection"]
-
-`delete_User(filter: {name: {_eq: "Shahzad"}})` deletes and returns every matching document; `filter: {}` deletes all; a filter with no match, or on an empty collection, returns an empty list.
-
-# `go.mutation.delete.collection_filter`: Collection API delete-with-filter
-
-- **Parents:** ["go.mutation.delete"]
-- **Go-Tests:** ["mutation/delete/with_filter_action_test.go::TestDeleteWithFilter_Succeeds", "mutation/delete/with_filter_action_test.go::TestDeleteWithMapFilter_Succeeds", "mutation/delete/with_filter_action_test.go::TestDeleteWithMapFilter_LargeIntegerStraddling2To53_DeletesOnlyExactMatch", "mutation/delete/with_filter_action_test.go::TestDeleteWithSomeOptionFilter_Succeeds", "mutation/delete/with_filter_action_test.go::TestDeleteWithNoneOptionFilter_DeletesAllDocuments", "mutation/delete/with_filter_action_test.go::TestDeleteWithFilter_WithMultipleMatchingDocs_DeletesAll"]
-- **Scope:** "the 2^53 test excludes the JS client (Go issue #5176) and runs only on collection mutation types"
-
-The collection's delete-with-filter accepts GraphQL filter text, a map or an optional filter and deletes every matching document; no filter deletes all documents. An int filter `_eq: 9007199254740993` deletes only that document, not 9007199254740992.
-
-# `go.mutation.delete.relation`: Deleting related documents
-
-- **Parents:** ["go.mutation.delete"]
-- **Go-Tests:** ["mutation/delete/field_kinds/one_to_one_to_one/with_id_test.go::TestRelationalDeletionOfADocumentUsingSingleKey_Success", "mutation/delete/field_kinds/one_to_one_to_one/with_id_test.go::TestRelationalDeletionOfADocumentUsingSingleKeyWithAlias_Success", "mutation/delete/field_kinds/one_to_one_to_one/with_id_test.go::TestRelationalDeletionOfADocumentUsingSingleKeyWithMultiDocumentsWithAlias_Success", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestTxnDeletionOfRelatedDocFromPrimarySideForwardDirection", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestTxnDeletionOfRelatedDocFromPrimarySideBackwardDirection", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestTxnDeletionOfRelatedDocFromNonPrimarySideForwardDirection", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestTxnDeletionOfRelatedDocFromNonPrimarySideBackwardDirection", "mutation/delete/field_kinds/one_to_many/with_show_deleted_test.go::TestDeletionOfADocumentUsingSingleDocIDWithShowDeletedDocumentQuery"]
-
-Deleting a document that takes part in relations (Book/Author/Publisher one-to-one-to-one) returns its docID. After a committed delete of a linked book, `Publisher { published }` is null and `Book` is empty; after deleting the publisher, `Book { publisher }` is null. `Author(showDeleted: true) { published { _deleted } }` lists the deleted book with `_deleted: true` next to live ones.
 
 # `go.mutation.truncate`: Truncate
 
@@ -415,14 +232,6 @@ Truncate alongside another mutation field fails with `truncate mutation must be 
 
 Requests carrying a transaction ID, committed or discarded later.
 
-# `go.mutation.txn.isolation`: Uncommitted writes are visible only inside their transaction
-
-- **Parents:** ["go.mutation.txn"]
-- **Go-Tests:** ["mutation/mix/with_txn_test.go::TestMutationWithTxnDeletesUserGivenSameTransaction", "mutation/mix/with_txn_test.go::TestMutationWithTxnDoesNotDeletesUserGivenDifferentTransactions", "mutation/mix/with_txn_test.go::TestMutationWithTxnDoesUpdateUserGivenSameTransactions", "mutation/mix/with_txn_test.go::TestMutationWithTxnDoesNotUpdateUserGivenDifferentTransactions", "mutation/delete/with_id_txn_test.go::TestMutationDeletion_WithIDAndTxn", "mutation/delete/with_ids_txn_test.go::TestMutationDeletion_WithIDsAndTxn", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestATxnCanReadARecordThatIsDeletedInANonCommitedTxnForwardDirection", "mutation/delete/field_kinds/one_to_one_to_one/with_txn_test.go::TestATxnCanReadARecordThatIsDeletedInANonCommitedTxnBackwardDirection"]
-- **Scope:** "tests using two concurrent transactions run only on Badger file, Badger in-memory and Defra in-memory databases (LevelDB lacks concurrent transactions, Go issue #4442); mix tests excluded from the signed-docs multiplier"
-
-A transaction sees its own adds, updates and deletes (a doc deleted in txn 0 is absent from txn 0's queries). Another open transaction does not: it cannot delete a doc added in an uncommitted txn (`delete_User` returns empty), sees the pre-update value, and still reads a doc (and its relation, both directions) deleted in an uncommitted txn until that txn commits.
-
 # `go.mutation.txn.conflict`: Concurrent transactions and commit conflicts
 
 - **Parents:** ["go.mutation.txn"]
@@ -431,14 +240,6 @@ A transaction sees its own adds, updates and deletes (a doc deleted in txn 0 is 
 - **Go-Bug-Suspect:** "in the relational creation tests two transactions each add a different book linked to a different publisher, yet the second commit must fail with 'transaction conflict' only because each txn ran a read query over the other's publisher (SSI anti-dependency); defradb.rs validates query snapshots never, so it is expected to commit both"
 
 Two transactions updating the same document: the first commit wins and the second fails with `transaction conflict. Please retry`; the stored value is the first's. Two transactions updating different documents both commit (regression for Go issue #5257). Two transactions that create and link books to different publishers and then query publishers: Go fails the second commit with `transaction conflict` and only the first book is stored.
-
-# `go.mutation.txn.atomic`: Discarded and concurrently used transactions stay atomic
-
-- **Parents:** ["go.mutation.txn"]
-- **Go-Tests:** ["mutation/add/txn_discard_test.go::TestMutationAdd_AddAfterDiscard", "mutation/update/concurrent_test.go::TestMutationUpdate_ConcurrentWrite", "mutation/update/concurrent_test.go::TestMutationUpdate_ConcurrentCommit", "mutation/update/concurrent_test.go::TestMutationUpdate_ConcurrentDiscard"]
-- **Scope:** "the discard and concurrent commit/discard tests exclude the C client (racy error, Go issue #4771)"
-
-A write to a discarded transaction fails with `transaction not found` and nothing is stored. Two concurrent updates in one transaction leave either one update or the other, never a mix of their fields; an update racing a commit leaves either the old or the new values whole; an add racing a discard leaves the collection empty.
 
 # `go.net`: P2P networking and replication
 

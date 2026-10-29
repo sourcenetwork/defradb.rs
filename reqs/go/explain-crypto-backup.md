@@ -4,13 +4,6 @@
 
 An operation annotated with `@explain` returns a description of its query plan (default and `simple`), the plan's node names only (`debug`), or per-node execution counters (`execute`) instead of its normal result.
 
-# `go.explain.errors`: Invalid explain requests are rejected by GraphQL validation
-
-- **Parents:** ["go.explain"]
-- **Go-Tests:** ["explain/default/basic_test.go::TestDefaultExplainOnWrongFieldDirective_BadUsage", "explain/default/invalid_type_arg_test.go::TestInvalidExplainRequestTypeReturnsError", "explain/default/delete_with_error_test.go::TestDefaultExplainMutationRequestWithDeleteHavingNoSubSelection", "explain/debug/delete_with_error_test.go::TestDebugExplainMutationRequestWithDeleteHavingNoSubSelection", "explain/default/with_order_join_test.go::TestDefaultExplainRequestWhereParentIsOrderedByItsRelatedChild", "explain/debug/with_order_join_test.go::TestDebugExplainRequestWhereParentIsOrderedByItsRelatedChild", "explain/execute/with_order_test.go::TestExecuteExplainRequestWhereParentFieldIsOrderedByChildField"]
-
-`@explain` on a field instead of the operation fails with `Directive "explain" may not be used on FIELD.`; `@explain(type: invalid)` fails with `Argument "type" has invalid value invalid.\nExpected type "ExplainType", found invalid.`; an explained `delete_Author(docID: [...])` with no sub-selection fails with `Field "delete_Author" of type "[Author]" must have a sub selection.`; ordering a parent by a one-to-many child (`order: {articles: {name: ASC}}`) fails with `Argument "order" has invalid value {articles: {name: ASC}}.\nIn field "articles": Unknown field.` in default, debug and execute modes.
-
 # `go.explain.default`: Default (and `simple`) explain: plan graph with node attributes
 
 - **Parents:** ["go.explain"]
@@ -324,70 +317,6 @@ With `@exhaustive`, ordering a primary-side parent by a related field (`Publishe
 - **Parents:** ["go.explain"]
 
 `@explain(type: execute)` runs the operation and returns `{executionSuccess: true, sizeOfResult, planExecutions, operationNode: [...]}` where each node reports counters such as `iterations`, `filterMatches`, `docFetches`, `fieldFetches` and `indexFetches`.
-
-# `go.explain.execute.scan`: Scan counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/scan_test.go::TestExecuteExplainRequestWithAllDocumentsMatching", "explain/execute/scan_test.go::TestExecuteExplainRequestWithNoDocuments", "explain/execute/scan_test.go::TestExecuteExplainRequestWithSomeDocumentsMatching", "explain/execute/scan_test.go::TestExecuteExplainRequestWithDocumentsButNoMatches", "explain/execute/query_deleted_docs_test.go::TestExecuteExplainQueryDeletedDocs"]
-
-With no docs, all docs matching, some matching, or none matching a filter, `selectNode` reports `iterations` (rows + 1) and `filterMatches`, and `scanNode` reports `iterations`, `docFetches`, `fieldFetches` and `indexFetches: 0`; `showDeleted: true` counts deleted documents too.
-
-# `go.explain.execute.mutation`: Mutation counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/add_test.go::TestExecuteExplainMutationRequestWithAdd", "explain/execute/delete_test.go::TestExecuteExplainMutationRequestWithDeleteUsingID", "explain/execute/delete_test.go::TestExecuteExplainMutationRequestWithDeleteUsingFilter", "explain/execute/update_test.go::TestExecuteExplainMutationRequestWithUpdateUsingIDs", "explain/execute/update_test.go::TestExecuteExplainMutationRequestWithUpdateUsingFilter", "explain/execute/upsert_test.go::TestExecuteExplainMutationRequest_WithUpsertAndMatchingFilter_Succeeds", "explain/execute/upsert_test.go::TestExecuteExplainMutationRequest_WithUpsertAndNoMatchingFilter_Succeeds"]
-- **Go-Bug-Suspect:** "'upsert_ContactAddress' whose filter matches one of two documents reports 'selectNode{iterations: 4, filterMatches: 2}', counting the matched document twice."
-
-Explained `add_`, `delete_` (by docID or filter), `update_` (by docIDs or filter) and `upsert_` (matching or not) run the mutation and report the counts of the mutation node's inner select and scan.
-
-# `go.explain.execute.dagscan`: Commit scan counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/dagscan_test.go::TestExecuteExplainCommitsDagScan"]
-
-`_commits(docID: ...)` under execute explain reports `dagScanNode` iteration counts and the select node's `filterMatches` for the document's commits.
-
-# `go.explain.execute.shaping`: Group, limit and order counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/group_test.go::TestExecuteExplainRequestWithGroup", "explain/execute/with_limit_test.go::TestExecuteExplainRequestWithBothLimitAndOffsetOnParent", "explain/execute/with_limit_test.go::TestExecuteExplainRequestWithBothLimitAndOffsetOnParentAndLimitOnChild", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithOrderFieldOnParent", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithMultiOrderFieldsOnParent", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithOrderFieldOnChild", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithOrderFieldOnBothParentAndChild", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithSubqueryOrderByNestedRelationField", "explain/execute/with_order_test.go::TestExecuteExplainRequestWithSubqueryOrderByNestedRelationFieldASC"]
-
-`groupBy`, parent and child `limit`/`offset`, and parent, child and nested-relation `order` report counters on the `groupNode`, `limitNode` and `orderNode` and the scans below them.
-
-# `go.explain.execute.aggregate`: Aggregate counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/top_level_test.go::TestExecuteExplainTopLevelAverageRequest", "explain/execute/top_level_test.go::TestExecuteExplainTopLevelCountRequest", "explain/execute/top_level_test.go::TestExecuteExplainTopLevelSumRequest", "explain/execute/with_average_test.go::TestExecuteExplainAverageRequestOnArrayField", "explain/execute/with_average_test.go::TestExplainExplainAverageRequestOnJoinedField", "explain/execute/with_count_test.go::TestExecuteExplainRequestWithCountOnOneToManyRelation", "explain/execute/with_max_test.go::TestExecuteExplainRequest_WithMaxOfInlineArrayField_Succeeds", "explain/execute/with_max_test.go::TestExecuteExplainRequest_MaxOfRelatedOneToManyField_Succeeds", "explain/execute/with_min_test.go::TestExecuteExplainRequest_WithMinOfInlineArrayField_Succeeds", "explain/execute/with_min_test.go::TestExecuteExplainRequest_MinOfRelatedOneToManyField_Succeeds", "explain/execute/with_sum_test.go::TestExecuteExplainRequestWithSumOfInlineArrayField", "explain/execute/with_sum_test.go::TestExecuteExplainRequestSumOfRelatedOneToManyField"]
-
-Top-level `COUNT`/`SUM`/`AVG`, and `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` over inline arrays and one-to-many relations, report iteration counts on the aggregate nodes and the fetch counters of the scans and joins below.
-
-# `go.explain.execute.join`: Join counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/type_join_test.go::TestExecuteExplainRequestWithAOneToOneJoin", "explain/execute/type_join_test.go::TestExecuteExplainWithMultipleOneToOneJoins", "explain/execute/type_join_test.go::TestExecuteExplainWithTwoLevelDeepNestedJoins", "explain/execute/type_join_test.go::TestExecuteExplain_WithOneToOneJoinFromSecondarySide_ShouldIncludeIndex"]
-
-One-to-one joins (single, two in parallel, two levels deep, and from the secondary side) report `typeIndexJoin` iterations and the fetch counters of both sides; joining from the secondary side reports `indexFetches` from the relation index.
-
-# `go.explain.execute.index`: Index fetch counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/with_index_test.go::TestExecuteExplainWithIndexOnFilter", "explain/execute/with_index_test.go::TestExecuteExplainWithIndexOnOrder", "explain/execute/with_index_test.go::TestExecuteExplainWithIndexOnRelationOrder", "explain/execute/with_index_test.go::TestExecuteExplainWithIndexOnSubqueryNestedRelationOrder"]
-
-With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort.
-
-# `go.explain.execute.orphan`: Orphan node counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/with_orphan_test.go::TestExecuteExplainWithOrphanNode_WithPrimaryParent_ReportsMetrics", "explain/execute/with_orphan_test.go::TestExecuteExplainWithOrphanNode_WithSecondaryParent_ReportsMetrics"]
-
-With `@exhaustive` and ordering by a relation field, the `orphanNode` reports `iterations`, `docFetches`, `fieldFetches` and `indexFetches` for both the primary-parent and secondary-parent paths.
-
-# `go.explain.execute.similarity`: Similarity counters
-
-- **Parents:** ["go.explain.execute"]
-- **Go-Tests:** ["explain/execute/with_similarity_test.go::TestExecuteExplainRequest_WithSimilarity"]
-
-`SIMILARITY(pointsList: {vector: [1, 2, 0]})` reports `similarityNode` iterations above the select and scan counters.
 
 # `go.encryption`: Document and field encryption
 

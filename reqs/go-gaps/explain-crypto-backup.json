@@ -1,9 +1,17 @@
 [
   {
     "id": "go.explain.errors",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/delete_with_error.rs::debug_explain_mutation_request_with_delete_having_no_sub_selection",
+      "tools/integration-test/tests/explain/debug/with_order_join.rs::debug_explain_request_where_parent_is_ordered_by_its_related_child",
+      "tools/integration-test/tests/explain/default/basic.rs::default_explain_on_wrong_field_directive_bad_usage",
+      "tools/integration-test/tests/explain/default/delete_with_error.rs::default_explain_mutation_request_with_delete_having_no_sub_selection",
+      "tools/integration-test/tests/explain/default/invalid_type_arg.rs::invalid_explain_request_type_returns_error",
+      "tools/integration-test/tests/explain/default/with_order_join.rs::default_explain_request_where_parent_is_ordered_by_its_related_child",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_where_parent_field_is_ordered_by_child_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "No test asserts any of the four errors. The messages exist in code (crates/query/src/query_parse/explain.rs:34,52; query_parse/mutations.rs:249; planner/builder/scan_setup.rs:87) but rg for 'may not be used on', 'ExplainType\", found', 'must have a sub selection', and the order Unknown-field message finds no test. query_parse_explain_tests.rs only tests valid types."
   },
   {
@@ -275,75 +283,119 @@
   },
   {
     "id": "go.explain.execute.scan",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+      "tools/integration-test/tests/explain/execute/query_deleted_docs.rs::execute_explain_query_deleted_docs",
+      "tools/integration-test/tests/explain/execute/scan.rs::execute_explain_request_with_all_documents_matching",
+      "tools/integration-test/tests/explain/execute/scan.rs::execute_explain_request_with_documents_but_no_matches",
+      "tools/integration-test/tests/explain/execute/scan.rs::execute_explain_request_with_no_documents",
+      "tools/integration-test/tests/explain/execute/scan.rs::execute_explain_request_with_some_documents_matching"
     ],
-    "evidence": "crates/defra-node/tests/point_read_query_path.rs:55 asserts summed docFetches == 1 for docID reads and :70 docFetches == 0 for a missing docID",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Only docFetches on docID-selected reads. Unverified: selectNode iterations (rows+1) and filterMatches, scanNode iterations/fieldFetches/indexFetches: 0 for no docs / all / some / no matches, and showDeleted: true counting deleted docs in explain (the showDeleted part of that test checks query results, not counters)."
   },
   {
     "id": "go.explain.execute.mutation",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/execute/add.rs::execute_explain_mutation_request_with_add",
+      "tools/integration-test/tests/explain/execute/delete.rs::execute_explain_mutation_request_with_delete_using_filter",
+      "tools/integration-test/tests/explain/execute/delete.rs::execute_explain_mutation_request_with_delete_using_id",
+      "tools/integration-test/tests/explain/execute/update.rs::execute_explain_mutation_request_with_update_using_filter",
+      "tools/integration-test/tests/explain/execute/update.rs::execute_explain_mutation_request_with_update_using_i_ds",
+      "tools/integration-test/tests/explain/execute/upsert.rs::execute_explain_mutation_request_with_upsert_and_matching_filter_succeeds",
+      "tools/integration-test/tests/explain/execute/upsert.rs::execute_explain_mutation_request_with_upsert_and_no_matching_filter_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched all Rust tests for '@explain(type: execute)' (explain_nested.rs, cross_runtime_indexes.rs, vector.rs, crates/defra-node/tests/{ordinary_indexes,point_read_query_path,vector_*}.rs, crates/db/tests/read/limit_pushdown.rs); none assert anything about an explained add_/delete_/update_/upsert_ mutation (not even that it runs)."
   },
   {
     "id": "go.explain.execute.dagscan",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/execute/dagscan.rs::execute_explain_commits_dag_scan"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched all Rust tests for '@explain(type: execute)' (explain_nested.rs, cross_runtime_indexes.rs, vector.rs, crates/defra-node/tests/{ordinary_indexes,point_read_query_path,vector_*}.rs, crates/db/tests/read/limit_pushdown.rs); none assert dagScanNode counters; no execute explain of _commits."
   },
   {
     "id": "go.explain.execute.shaping",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/ordinary_indexes.rs::ordered_index_stream_stops_after_passing_residual_rows",
-      "crates/defra-node/tests/ordinary_indexes.rs::ordered_prefix_sorts_only_the_boundary_tie_group"
+      "tools/integration-test/tests/explain/execute/group.rs::execute_explain_request_with_group",
+      "tools/integration-test/tests/explain/execute/with_limit.rs::execute_explain_request_with_both_limit_and_offset_on_parent",
+      "tools/integration-test/tests/explain/execute/with_limit.rs::execute_explain_request_with_both_limit_and_offset_on_parent_and_limit_on_child",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_multi_order_fields_on_parent",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_order_field_on_both_parent_and_child",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_order_field_on_child",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_order_field_on_parent",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_subquery_order_by_nested_relation_field",
+      "tools/integration-test/tests/explain/execute/with_order.rs::execute_explain_request_with_subquery_order_by_nested_relation_field_asc"
     ],
-    "evidence": "crates/defra-node/tests/ordinary_indexes.rs:125-128 asserts indexFetches in 24..=25 and :178-179 docFetches <= 6 for ordered, limited queries",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Only scan-level fetch bounds under order+limit (a performance check). Unverified: any counter on groupNode, limitNode or orderNode; groupBy execute explain; child limit; child and nested-relation order counters."
   },
   {
     "id": "go.explain.execute.aggregate",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/execute/top_level.rs::execute_explain_top_level_average_request",
+      "tools/integration-test/tests/explain/execute/top_level.rs::execute_explain_top_level_count_request",
+      "tools/integration-test/tests/explain/execute/top_level.rs::execute_explain_top_level_sum_request",
+      "tools/integration-test/tests/explain/execute/with_average.rs::execute_explain_average_request_on_array_field",
+      "tools/integration-test/tests/explain/execute/with_average.rs::explain_explain_average_request_on_joined_field",
+      "tools/integration-test/tests/explain/execute/with_count.rs::execute_explain_request_with_count_on_one_to_many_relation",
+      "tools/integration-test/tests/explain/execute/with_max.rs::execute_explain_request_max_of_related_one_to_many_field_succeeds",
+      "tools/integration-test/tests/explain/execute/with_max.rs::execute_explain_request_with_max_of_inline_array_field_succeeds",
+      "tools/integration-test/tests/explain/execute/with_min.rs::execute_explain_request_min_of_related_one_to_many_field_succeeds",
+      "tools/integration-test/tests/explain/execute/with_min.rs::execute_explain_request_with_min_of_inline_array_field_succeeds",
+      "tools/integration-test/tests/explain/execute/with_sum.rs::execute_explain_request_sum_of_related_one_to_many_field",
+      "tools/integration-test/tests/explain/execute/with_sum.rs::execute_explain_request_with_sum_of_inline_array_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched all Rust tests for '@explain(type: execute)' (explain_nested.rs, cross_runtime_indexes.rs, vector.rs, crates/defra-node/tests/{ordinary_indexes,point_read_query_path,vector_*}.rs, crates/db/tests/read/limit_pushdown.rs); none assert aggregate node counters; no execute explain of COUNT/SUM/AVG/MIN/MAX."
   },
   {
     "id": "go.explain.execute.join",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/explain_nested.rs::explain_nested_execute_test"
+      "tools/integration-test/tests/explain/execute/type_join.rs::execute_explain_request_with_a_one_to_one_join",
+      "tools/integration-test/tests/explain/execute/type_join.rs::execute_explain_with_multiple_one_to_one_joins",
+      "tools/integration-test/tests/explain/execute/type_join.rs::execute_explain_with_one_to_one_join_from_secondary_side_should_include_index",
+      "tools/integration-test/tests/explain/execute/type_join.rs::execute_explain_with_two_level_deep_nested_joins"
     ],
-    "evidence": "tools/integration-test/tests/query/explain_nested.rs:158-257 walks selectTopNode>selectNode>typeIndexJoin>typeJoinOne>{root: scanNode, subType: ...typeIndexJoin>typeJoinOne...} and asserts iterations/filterMatches/docFetches/fieldFetches/indexFetches are numeric at every level",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Two-level-deep one-to-one shape and presence of counters only; no counter value is checked against Go's. Unverified: single one-to-one counts, two one-to-one joins in parallel, and the secondary-side join reporting indexFetches from the relation index."
   },
   {
     "id": "go.explain.execute.index",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
-      "crates/defra-node/tests/ordinary_indexes.rs::ordered_index_stream_stops_after_passing_residual_rows"
+      "tools/integration-test/tests/explain/execute/with_index.rs::execute_explain_with_index_on_filter",
+      "tools/integration-test/tests/explain/execute/with_index.rs::execute_explain_with_index_on_order",
+      "tools/integration-test/tests/explain/execute/with_index.rs::execute_explain_with_index_on_relation_order",
+      "tools/integration-test/tests/explain/execute/with_index.rs::execute_explain_with_index_on_subquery_nested_relation_order"
     ],
-    "evidence": "tools/integration-test/tests/query/cross_runtime_indexes.rs:119-122 asserts some indexFetches > 0 for order-by-indexed-field and filter+order queries on both Rust and Go; crates/defra-node/tests/ordinary_indexes.rs:125-128 bounds indexFetches",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Index use on filter and order is asserted only as indexFetches > 0. Unverified: the exact Go counts (scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}), ordering by an indexed relation field with @exhaustive, and a child ordered by an indexed related field."
   },
   {
     "id": "go.explain.execute.orphan",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/execute/with_orphan.rs::execute_explain_with_orphan_node_with_primary_parent_reports_metrics",
+      "tools/integration-test/tests/explain/execute/with_orphan.rs::execute_explain_with_orphan_node_with_secondary_parent_reports_metrics"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched all Rust tests for '@explain(type: execute)' (explain_nested.rs, cross_runtime_indexes.rs, vector.rs, crates/defra-node/tests/{ordinary_indexes,point_read_query_path,vector_*}.rs, crates/db/tests/read/limit_pushdown.rs); none assert orphanNode counters. relation_order_panic_1594.rs::exhaustive_execution_test checks @exhaustive result order, not explain counters."
   },
   {
     "id": "go.explain.execute.similarity",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/execute/with_similarity.rs::execute_explain_request_with_similarity"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
     "note": "Searched all Rust tests for '@explain(type: execute)' (explain_nested.rs, cross_runtime_indexes.rs, vector.rs, crates/defra-node/tests/{ordinary_indexes,point_read_query_path,vector_*}.rs, crates/db/tests/read/limit_pushdown.rs); none assert similarityNode iterations; vector tests (tools/integration-test/tests/vector.rs::assert_page, crates/defra-node/tests/vector_index_query_path.rs) only check routed scan indexFetches/docFetches on an indexed vector field."
   },
   {
