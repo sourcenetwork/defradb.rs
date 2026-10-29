@@ -1,7 +1,7 @@
 [
   {
     "id": "go.query.simple.select.fields",
-    "verdict": "covered",
+    "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
       "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
@@ -374,7 +374,7 @@
   },
   {
     "id": "go.query.simple.aggregate.count-group-by",
-    "verdict": "covered",
+    "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_single_field_test",
       "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_multiple_fields_test",
@@ -383,7 +383,7 @@
       "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_empty_collection_test"
     ],
     "evidence": "aggregate_groupby_1595.rs:53 (2 groups), :70 (3 tuples), :86 (1 group), :103 (filter before grouping, 2), :171 (empty collection, 0)",
-    "note": ""
+    "note": "on_multiple_fields_test uses three documents with three distinct (Age, Name) tuples, the same data as Go's test, so it can't tell grouping by the tuple from counting documents; no test groups by several fields with a repeated tuple."
   },
   {
     "id": "go.query.simple.aggregate.sum",
@@ -645,7 +645,7 @@
       "tools/integration-test/tests/query/commits_collection_id.rs::commits_and_versions_include_collection_id"
     ],
     "evidence": "commits_collection_id.rs:98-101 '_version { collectionID }' equals the collection ID",
-    "note": "Only the collection ID is asserted. cid, delta, docID, fieldName null, height (2 after an update), links sorted by child CID plus previous head, heads, and combination with order are untested."
+    "note": "Only the collection ID is asserted. Untested: both commits returned after an update (newest first), cid, delta, docID, fieldName \"_C\", height, links (the update links only the changed field; the create links every field, sorted by child CID), heads (the update names the create commit), and combination with order."
   },
   {
     "id": "go.query.simple.version.aliased",
