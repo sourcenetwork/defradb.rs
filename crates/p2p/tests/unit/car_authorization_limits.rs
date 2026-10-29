@@ -4,7 +4,7 @@ pub(super) fn progress_with_budget(limit: usize) -> RootedAuthorizationProgress 
     RootedAuthorizationProgress::with_retention_limit(limit)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
     let budget = Budget::new(8);
     let barrier = Arc::new(regolith::sync::Barrier::new(17));
@@ -12,7 +12,7 @@ async fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
         .map(|_| {
             let budget = budget.clone();
             let barrier = barrier.clone();
-            tokio::spawn(async move {
+            nuclei::spawn(async move {
                 let reservation = budget.reserve(1);
                 barrier.wait().await;
                 barrier.wait().await;
@@ -26,7 +26,6 @@ async fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
     let admitted = futures::future::join_all(workers)
         .await
         .into_iter()
-        .map(|worker| worker.unwrap())
         .filter(|admitted| *admitted)
         .count();
     assert_eq!(used, 8);
@@ -34,7 +33,7 @@ async fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
     assert_eq!(budget.used(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn final_requested_read_error_preserves_the_reached_grant_for_retry() {
     let store = CountingReads::new(10);
     let (root, data) = ipld_block(1);
@@ -60,7 +59,7 @@ async fn final_requested_read_error_preserves_the_reached_grant_for_retry() {
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn missing_branch_preserves_exact_reached_grants_across_retries() {
     let store = CountingReads::new(100);
     let (leaf, data) = ipld_block(1000);
@@ -96,7 +95,7 @@ async fn missing_branch_preserves_exact_reached_grants_across_retries() {
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_cursor_keeps_reached_grants_without_retaining_state() {
     let store = CountingReads::new(100);
     let links: Vec<_> = (0..10)
@@ -127,7 +126,7 @@ async fn oversized_cursor_keeps_reached_grants_without_retaining_state() {
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn distinct_want_lists_share_one_retention_budget() {
     let store = CountingReads::new(10_000);
     let (mut root, _) = ipld_block(777);
@@ -164,7 +163,7 @@ async fn distinct_want_lists_share_one_retention_budget() {
     assert_eq!(progress.cid_budget.used(), retained);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_want_list_does_not_evict_an_existing_cursor() {
     let store = CountingReads::new(10);
     let (root, _) = ipld_block(0);
@@ -184,7 +183,7 @@ async fn oversized_want_list_does_not_evict_an_existing_cursor() {
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn spare_want_list_capacity_is_not_retained() {
     let store = CountingReads::new(10);
     let (root, _) = ipld_block(1);
@@ -201,7 +200,7 @@ async fn spare_want_list_capacity_is_not_retained() {
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn idle_eviction_releases_its_retention_charge() {
     let store = CountingReads::new(10);
     let progress = progress_with_budget(2);
@@ -219,7 +218,7 @@ async fn idle_eviction_releases_its_retention_charge() {
     assert_eq!(progress.cursors.keys().next().unwrap().root, second);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn expired_idle_cursors_release_the_budget_on_next_request() {
     let store = CountingReads::new(10);
     let progress = progress_with_budget(8);
@@ -230,7 +229,7 @@ async fn expired_idle_cursors_release_the_budget_on_next_request() {
         .await
         .unwrap()
         .is_empty());
-    tokio::time::advance(CURSOR_IDLE_TTL).await;
+    nuclei::time::advance(CURSOR_IDLE_TTL).await;
     assert!(progress
         .walk(&store, second, RapidHashSet::from_iter([second]))
         .await
@@ -241,7 +240,7 @@ async fn expired_idle_cursors_release_the_budget_on_next_request() {
     assert_eq!(progress.cursors.keys().next().unwrap().root, second);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn idle_expiry_does_not_cancel_an_active_walk() {
     let store = CountingReads::new(0);
     let (root, data) = ipld_block(1);
@@ -257,7 +256,7 @@ async fn idle_expiry_does_not_cancel_an_active_walk() {
         100,
     ));
     assert!(futures::poll!(active.as_mut()).is_pending());
-    tokio::time::advance(CURSOR_IDLE_TTL).await;
+    nuclei::time::advance(CURSOR_IDLE_TTL).await;
     assert!(progress
         .walk(&store, missing, RapidHashSet::from_iter([missing]))
         .await
@@ -271,7 +270,7 @@ async fn idle_expiry_does_not_cancel_an_active_walk() {
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn stale_eviction_cannot_remove_a_replacement_cursor() {
     let store = CountingReads::new(10);
     let (root, _) = ipld_block(1);
@@ -294,7 +293,7 @@ async fn stale_eviction_cannot_remove_a_replacement_cursor() {
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_full_retention_cache_cannot_reject_a_valid_walk() {
     let store = CountingReads::new(10);
     let (missing, _) = ipld_block(1);

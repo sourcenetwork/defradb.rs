@@ -41,14 +41,16 @@ libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "identify", "r
 bitswap = { path = "../bitswap", optional = true }
 libp2p-stream = { workspace = true, optional = true }
 multiaddr = { workspace = true, optional = true }
+# libp2p's TCP transport on nuclei sockets.
+net = { path = "../net", features = ["libp2p"], optional = true }
 
 # Async
-tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
 async-trait = { workspace = true }
 futures = { workspace = true }
-# Spawning that resolves to tokio natively and to wasm-bindgen-futures in a
-# browser, behind one JoinHandle surface. iroh already builds on it.
+# Tasks and timers on the browser's event loop, and natively the clock type
+# iroh-gossip's state machine takes (only the type: nothing runs on tokio).
 n0-future.workspace = true
+futures-lite.workspace = true
 # std::time::Instant and SystemTime panic in a browser. This is std verbatim
 # off-wasm, so native timing behavior is untouched.
 web-time.workspace = true
@@ -110,6 +112,7 @@ libp2p-transport = [
     "dep:multiaddr",
     "dep:rlimit",
     "dep:sysinfo",
+    "dep:net",
 ]
 # The KMS pubsub-RPC layer (crate::kms + crate::pubsub_rpc + the coordinator's
 # KMS transport slot). Transport-generic; implied by libp2p-transport and
@@ -121,11 +124,12 @@ iroh-transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:noq", 
 iroh-relay-server = ["iroh-transport", "dep:iroh-relay", "dep:rustls"]
 
 # iroh links noq only off-wasm, so the feature pin preserving its bloom token
-# log and ring provider belongs here, not in the shared dependency list. tokio's
-# fs driver has no wasm implementation and only the secret-key loader wants it.
+# log and ring provider belongs here, not in the shared dependency list.
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
-tokio = { workspace = true, features = ["fs"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nuclei = { workspace = true }
 
 # rand reaches getrandom 0.3, which refuses to build for the browser without an
 # explicit backend. The matching --cfg lives in .cargo/config.toml.
@@ -137,7 +141,8 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+# Test swarms on nuclei sockets.
+net = { path = "../net", features = ["libp2p"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"

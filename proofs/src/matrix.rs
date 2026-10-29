@@ -64,6 +64,10 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "JSON CRDT per-path merge",
     "Custom CRDT types",
     "Document write pipeline",
+    "Postgres wire connection loop",
+    "HTTP client redirects and body deadline",
+    "Connect fallback race",
+    "Coordinator shutdown drain",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

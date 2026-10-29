@@ -15,7 +15,10 @@ default = []
 # at runtime.
 otlp = [
     "dep:kovan",
-    "dep:reqwest",
+    "dep:net",
+    "dep:edge",
+    "dep:opentelemetry-http",
+    "dep:async-trait",
     "dep:tracing-subscriber",
     "dep:thiserror",
     "dep:opentelemetry",
@@ -44,24 +47,25 @@ bench = false
 kovan = { workspace = true, optional = true }
 rapidhash.workspace = true
 regolith.workspace = true
-reqwest = { version = "0.13", default-features = false, features = ["blocking"], optional = true }
+# OTLP exports go out on nuclei sockets (`src/transport.rs`), as tasks of
+# the on-demand network runtime.
+net = { path = "../net", optional = true }
+edge = { path = "../edge", optional = true }
+opentelemetry-http = { version = "0.32", default-features = false, optional = true }
+async-trait = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["registry", "std"], optional = true }
 thiserror = { workspace = true, optional = true }
 
 opentelemetry = { version = "0.32", features = ["metrics"], optional = true }
-# `experimental_async_runtime` (not `rt-tokio`) is all that's needed: with the
-# `reqwest-blocking-client` transport the OTLP exporter selects the `NoAsync`
-# runtime, and the batch processors run on dedicated `std::thread` workers — no
-# Tokio runtime is touched. `rt-tokio` would additionally pull tokio/rt,
-# tokio/time, and tokio-stream for nothing.
+# `experimental_async_runtime` (not `rt-tokio`) is all that's needed: the
+# batch processors run on dedicated `std::thread` workers, and no tokio
+# runtime is touched.
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["experimental_async_runtime"], optional = true }
 # OTLP over HTTP/proto, mirroring Go DefraDB's `otlptracehttp.New`. Default
-# endpoint is http://localhost:4318 — same default as the Go upstream.
-# `reqwest-blocking-client` runs on the SDK's batch-exporter thread, sidestepping
-# the workspace's locked reqwest 0.13 (which has dropped the `webpki-roots`
-# feature that `opentelemetry-http` still asks for under the async client).
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "reqwest-blocking-client"], optional = true }
+# endpoint is http://localhost:4318, the same default as the Go upstream. The
+# HTTP client is ours (`src/transport.rs`).
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto"], optional = true }
 # Provides the `SCHEMA_URL` constant for the resource's schema declaration,
 # matching Go's `resource.WithSchemaURL(semconv.SchemaURL)`.
 opentelemetry-semantic-conventions = { version = "0.33", optional = true }

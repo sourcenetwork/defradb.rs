@@ -50,12 +50,12 @@ async fn submit(
         .to_vec();
     let hash = NativeTx::decode_wire(&wire).unwrap().tx_id().0;
     client.send_native_tx(&wire).await.unwrap();
-    let proof = tokio::time::timeout(Duration::from_secs(30), async {
+    let proof = nuclei::time::timeout(Duration::from_secs(30), async {
         loop {
             if let Some(proof) = client.read_receipt(hash, trusted).await.unwrap() {
                 return proof;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            nuclei::time::sleep(Duration::from_millis(50)).await;
         }
     })
     .await
@@ -112,17 +112,23 @@ fn assert_visibility(
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_protected_collection_keeps_revocations_across_relation_recreation() {
-    exercise_policy_generations(false).await;
+    edge::compat(async {
+        exercise_policy_generations(false).await;
+    })
+    .await;
 }
 
 /// Certified revocation also governs replicated data and persisted commit history.
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart() {
-    exercise_policy_generations(true).await;
+    edge::compat(async {
+        exercise_policy_generations(true).await;
+    })
+    .await;
 }
 
 async fn exercise_policy_generations(replicated: bool) {

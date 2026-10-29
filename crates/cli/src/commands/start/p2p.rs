@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use super::node::Node;
@@ -68,10 +67,11 @@ impl Node {
         Ok(p2p::Keypair::from(ed25519::Keypair::from(secret_key)))
     }
 
-    /// Start P2P networking with the given bitswap store and optional keypair.
+    /// Start P2P networking on `edge` with the given bitswap store and optional keypair.
     ///
     /// Returns the handle, events receiver, and host task handle so that the caller
     /// can connect events to the sync coordinator and track the host task for shutdown.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn start_p2p(
         config: &Config,
         bitswap_store: p2p::BitswapStoreAdapter<blockstore::DefraBlockstore<storage::DynStore>>,
@@ -80,11 +80,12 @@ impl Node {
         enable_pubsub: bool,
         classifier: std::sync::Arc<dyn p2p::bitswap::BlockClassifier>,
         serve_acp: std::sync::Arc<p2p::bitswap::LateBoundServeAcp>,
+        edge: &edge::Edge,
     ) -> Result<(
         p2p::P2PHostHandle,
-        tokio::sync::mpsc::Receiver<p2p::HostEvent>,
+        nuclei::sync::mpsc::Receiver<p2p::HostEvent>,
         std::sync::Arc<p2p::ReplicatorRegistry>,
-        JoinHandle<()>,
+        edge::Service,
     )> {
         let access_mode = if config.acp.document_type != AcpDocumentType::None {
             p2p::bitswap::AccessMode::Controlled
@@ -115,13 +116,14 @@ impl Node {
                 node_identity,
                 classifier,
                 serve_acp,
+                edge.clone(),
             )
             .await
             .map_err(Error::P2P)?;
 
         // Spawn the host event loop FIRST - it must be running to process commands
         // Track the task handle for graceful shutdown
-        let host_task = tokio::spawn(host.run());
+        let host_task = edge.spawn_service(host.run());
 
         // Start listening on configured addresses
         for addr_str in &config.net.p2p_addresses {

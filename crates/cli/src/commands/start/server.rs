@@ -329,6 +329,9 @@ impl Node {
 
         #[cfg(feature = "postgres")]
         let zanzibar_store_for_pg = zanzibar_store.clone();
+        // The HTTP server runs in a scope of its own, so shutdown drains its
+        // requests in flight apart from the rest of the network.
+        let http_scope = edge.scope();
         let http_server = Self::build_http_server(HttpServerArgs {
             database: database.clone(),
             config,
@@ -341,7 +344,7 @@ impl Node {
             zanzibar_store,
             user_did: user_did.as_ref(),
             node_identity_did: node_did.map(|did| did.to_string()),
-            edge: edge.clone(),
+            edge: http_scope.edge().clone(),
         })?;
         #[cfg(feature = "postgres")]
         let pg_server = Self::build_pg_server(
@@ -350,6 +353,7 @@ impl Node {
             &query_setup,
             &acp_setup,
             zanzibar_store_for_pg,
+            edge,
         )?;
 
         Ok(ServerSetup {
@@ -360,6 +364,7 @@ impl Node {
             vector_rebuild_task,
             txn_cleanup_task,
             http_server,
+            http_scope,
             #[cfg(feature = "postgres")]
             pg_server,
         })

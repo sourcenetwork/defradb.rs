@@ -24,7 +24,7 @@ pub(crate) const NETWORK_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 const OWNED_RUNTIME_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1);
 
 pub(crate) struct NodeEdge {
-    #[cfg(feature = "otel")]
+    #[cfg(any(feature = "otel", feature = "p2p"))]
     runtime: Edge,
     scope: Scope,
     owned: SegQueue<EdgeRuntime>,
@@ -52,7 +52,7 @@ impl NodeEdge {
         };
         Ok(Some(Self {
             scope: edge.scope(),
-            #[cfg(feature = "otel")]
+            #[cfg(any(feature = "otel", feature = "p2p"))]
             runtime: edge,
             owned,
         }))
@@ -70,17 +70,17 @@ impl NodeEdge {
         &self.runtime
     }
 
+    /// A scope of the runtime beside the node's own, so its work goes on
+    /// after [`drain`](Self::drain) and is drained apart.
+    #[cfg(feature = "p2p")]
+    pub(crate) fn sibling(&self) -> Scope {
+        self.runtime.scope()
+    }
+
     /// Stops accepting the node's network work, which stops its services,
     /// then waits up to [`NETWORK_DRAIN_TIMEOUT`] for the rest.
     pub(crate) async fn drain(&self) {
-        let drained = self.scope.drain(NETWORK_DRAIN_TIMEOUT).await;
-        if !drained.is_complete() {
-            tracing::warn!(
-                remaining = drained.remaining,
-                timeout_secs = NETWORK_DRAIN_TIMEOUT.as_secs(),
-                "timed out draining the node's network work during shutdown"
-            );
-        }
+        drain(&self.scope).await;
     }
 
     /// Shuts down the runtime the node started, if it started one.
@@ -91,6 +91,19 @@ impl NodeEdge {
         if let Err(error) = runtime.shutdown_async().await {
             tracing::warn!(%error, "the node's network runtime did not shut down cleanly");
         }
+    }
+}
+
+/// Stops accepting work through `scope`, which stops its services, then
+/// waits up to [`NETWORK_DRAIN_TIMEOUT`] for the rest.
+pub(crate) async fn drain(scope: &Scope) {
+    let drained = scope.drain(NETWORK_DRAIN_TIMEOUT).await;
+    if !drained.is_complete() {
+        tracing::warn!(
+            remaining = drained.remaining,
+            timeout_secs = NETWORK_DRAIN_TIMEOUT.as_secs(),
+            "timed out draining the node's network work during shutdown"
+        );
     }
 }
 
@@ -114,6 +127,27 @@ mod tests {
         assert_ne!(network.edge(), &given);
         given.block_on(network.drain()).unwrap();
         assert!(network.edge().is_closed());
+        assert!(!given.is_closed());
+    }
+
+    #[cfg(feature = "p2p")]
+    #[test]
+    fn a_sibling_scope_accepts_work_after_the_node_drains_and_drains_apart() {
+        let given = edge::testing::edge();
+        let network = NodeEdge::start(Some(given.clone()), true)
+            .unwrap()
+            .expect("a given runtime is used");
+        let sibling = network.sibling();
+
+        given
+            .block_on(async {
+                network.drain().await;
+                assert!(network.edge().is_closed());
+                assert_eq!(sibling.edge().spawn(async { 1 }).await, Ok(1));
+                super::drain(&sibling).await;
+            })
+            .unwrap();
+        assert!(sibling.edge().is_closed());
         assert!(!given.is_closed());
     }
 

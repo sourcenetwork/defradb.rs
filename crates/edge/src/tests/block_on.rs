@@ -1,17 +1,14 @@
 use super::runtime;
-use crate::EdgeError;
 
 #[test]
-fn block_on_refuses_to_stall_a_single_threaded_executor() {
+fn block_on_inside_another_runtime_nests_and_gives_the_value() {
     let runtime = runtime();
     let edge = runtime.edge().clone();
-    let current = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let other = super::single_threaded();
 
-    let refused = current.block_on(async { edge.block_on(async { 1 }) });
+    let nested = other.block_on(async { edge.block_on(async { 1 }) });
 
-    assert_eq!(refused, Err(EdgeError::WouldBlock));
+    assert_eq!(nested, Ok(1));
 }
 
 #[test]

@@ -23,9 +23,10 @@ use integration_test::{
 use serial_test::serial;
 
 /// Core ↔ Near trust boundary with asymmetric ACP over iroh.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn iroh_trust_boundary() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_iroh_transport()
@@ -248,4 +249,6 @@ async fn iroh_trust_boundary() {
         anon_near_names.contains(&"Core Secret"),
         "anonymous should see the now-public Core Secret on near"
     );
+})
+    .await;
 }

@@ -3,17 +3,17 @@
 use cli::commands::client::http_client::{
     GraphQLError, GraphQLRequest, GraphQLResponse, HttpClient,
 };
-use reqwest::StatusCode;
+use net::http::StatusCode;
 
 #[test]
 fn test_http_client_new() {
-    let client = HttpClient::new("http://localhost:9181/").unwrap();
+    let client = HttpClient::new("http://localhost:9181/", &edge::testing::edge()).unwrap();
     assert_eq!(client.base_url(), "http://localhost:9181");
 }
 
 #[test]
 fn test_http_client_new_invalid_url() {
-    let result = HttpClient::new("not-a-valid-url");
+    let result = HttpClient::new("not-a-valid-url", &edge::testing::edge());
     assert!(result.is_err());
 }
 

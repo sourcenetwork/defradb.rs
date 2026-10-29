@@ -143,8 +143,11 @@ async fn unsupported_index_filters_fall_back_to_scan_test(cluster: TestCluster) 
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_unsupported_index_filters_fall_back_to_scan() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    unsupported_index_filters_fall_back_to_scan_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        unsupported_index_filters_fall_back_to_scan_test(cluster).await;
+    })
+    .await;
 }

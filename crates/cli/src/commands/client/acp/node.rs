@@ -110,7 +110,7 @@ impl AcpNodeRelationshipAddArgs {
             .as_deref()
             .ok_or_else(|| crate::error::Error::MissingInput("--actor is required".to_string()))?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -130,7 +130,7 @@ impl AcpNodeRelationshipDeleteArgs {
             .as_deref()
             .ok_or_else(|| crate::error::Error::MissingInput("--actor is required".to_string()))?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -142,7 +142,7 @@ impl AcpNodeRelationshipDeleteArgs {
 
 impl AcpNodeStatusArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -154,7 +154,7 @@ impl AcpNodeStatusArgs {
 
 impl AcpNodeDisableArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -166,7 +166,7 @@ impl AcpNodeDisableArgs {
 
 impl AcpNodeReEnableArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

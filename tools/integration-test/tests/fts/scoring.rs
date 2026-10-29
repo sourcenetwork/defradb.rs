@@ -6,8 +6,9 @@ const SCHEMA: &str = r#"type Article {
     category: String
 }"#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_score_ordering() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -49,10 +50,13 @@ async fn bm25_score_ordering() {
     );
     // Python guide should score 0
     assert_eq!(scored[2].1, 0.0);
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_idf_rare_term_scores_higher() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -110,10 +114,13 @@ async fn bm25_idf_rare_term_scores_higher() {
         max_rare,
         max_common
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_multi_field_combination() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -156,4 +163,6 @@ async fn bm25_multi_field_combination() {
     for (title, score) in &scored {
         assert!(score > &0.0, "'{}' should have positive score", title);
     }
+})
+    .await;
 }

@@ -23,6 +23,35 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// on it. Once the command returns, this thread waits while it shuts down in
 /// order, its owner thread dropping it outside any async context.
 fn main() -> ExitCode {
+    // CI's comparison run sets it to 0 to run every shard without multishot
+    // receive buffers.
+    if let Some(recv_buffers) = std::env::var("DEFRA_NUCLEI_RECV_BUFFERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        nuclei::Proactor::with_config(nuclei::config::NucleiConfig {
+            iouring: nuclei::config::IoUringConfiguration {
+                recv_buffers,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    // CI's stall diagnosis: the node prints the runtime's counters and every
+    // socket's read state when the stall watchdog leaves a file named after
+    // its pid.
+    if let Some(dir) = std::env::var_os("DEFRA_DIAG_DIR") {
+        let trigger = std::path::Path::new(&dir).join(std::process::id().to_string());
+        let _ = std::thread::Builder::new()
+            .name("defra-diag".into())
+            .spawn(move || loop {
+                if std::fs::remove_file(&trigger).is_ok() {
+                    eprintln!("NUCLEI-STATS {:#?}", nuclei::stats());
+                    nuclei::debug_dump(None);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            });
+    }
     let runtime = match edge::EdgeRuntime::start(edge::EdgeConfig::default()) {
         Ok(runtime) => runtime,
         Err(error) => {

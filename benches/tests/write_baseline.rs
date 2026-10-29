@@ -1,7 +1,7 @@
 #[path = "../benches/write_baseline/workload.rs"]
 mod workload;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn concurrent_workloads_account_for_every_request_and_persist_their_writes() {
     for scenario in workload::Scenario::ALL {
         let result = workload::run(scenario, 4, 4).await;

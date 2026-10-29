@@ -43,6 +43,7 @@ where
                     &vera_config.signer_key,
                     &vera_config.chain_id,
                     &tuning,
+                    &remote_edge(network)?,
                 )
                 .map_err(Error::VeraProvider)?,
             );
@@ -69,6 +70,7 @@ where
                     &vera_config.signer_key,
                     &vera_config.chain_id,
                     &tuning,
+                    &remote_edge(network)?,
                 )
                 .map_err(Error::VeraProvider)?,
             );
@@ -87,6 +89,16 @@ where
             let document_acp = Arc::new(acp::ZanzibarDocumentACP::new(zanzibar_store.clone()));
             Ok(local_document_acp_setup(document_acp, zanzibar_store))
         }
+    }
+}
+
+/// The edge the Vera provider's connections run on: the node's, or for a
+/// node that runs no other network work, the process's on-demand one.
+#[cfg(feature = "vera")]
+fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
+    match network {
+        Some(edge) => Ok(edge.clone()),
+        None => edge::on_demand().cloned().map_err(Error::EdgeRuntime),
     }
 }
 

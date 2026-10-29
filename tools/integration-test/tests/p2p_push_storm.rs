@@ -162,12 +162,15 @@ impl Drop for StalledPeers {
 }
 
 async fn sync_status(api_url: &str) -> serde_json::Value {
-    reqwest::get(format!("{api_url}/api/v0/p2p/sync/status"))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
+    net::http::get(
+        format!("{api_url}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json")
 }
 
 fn hub_log(cluster: &TestCluster) -> PathBuf {
@@ -377,7 +380,7 @@ async fn wait_for_backlog_idle(api_url: &str) {
             Instant::now() < deadline,
             "initial document pushes did not drain: {backlog}"
         );
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        nuclei::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -407,7 +410,7 @@ async fn wait_for_stalled_push(
             "no selected stalled peer entered an active push slot: {}",
             status["push_backlog"]
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        nuclei::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -466,7 +469,7 @@ async fn wait_for_stalled_outcome(
             "an active stalled push produced neither a timeout nor a failed-job outcome within \
              {timeout:?}"
         );
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        nuclei::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -515,7 +518,7 @@ async fn measure_healthy_convergence(
         if incomplete.is_empty() || Instant::now() >= deadline {
             return healthy_peers.len() - incomplete.len();
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        nuclei::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -525,270 +528,273 @@ fn optional_counter(status: &serde_json::Value, pointers: &[&str]) -> Option<u64
         .find_map(|pointer| status.pointer(pointer).and_then(serde_json::Value::as_u64))
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[nuclei::test]
 #[ignore = "manual stress/profile harness; waits for a stalled transport outcome"]
 async fn outbound_push_storm_matches_fleet_shape() {
-    let config = StormConfig::from_env();
-    assert!(config.docs > 0, "DEFRA_PUSH_STORM_DOCS must be positive");
-    assert!(
-        config.updates > 0,
-        "DEFRA_PUSH_STORM_UPDATES must be positive"
-    );
-
-    let mut cluster_builder = TestCluster::builder()
-        .rust_nodes(1 + config.peers)
-        .with_p2p();
-    if let Ok(store) = std::env::var("DEFRA_PUSH_STORM_HUB_STORE") {
-        cluster_builder = cluster_builder.with_node_store(0, store);
-    }
-    let cluster = cluster_builder.build().await.expect("cluster start");
-    for node in 0..=config.peers {
-        cluster
-            .wait_for_log(node, "p2p_listening", Duration::from_secs(30))
-            .await
-            .unwrap_or_else(|error| panic!("node{node} P2P listener did not start: {error}"));
-    }
-
-    let hub = cluster.client(0);
-    hub.schema_add(SCHEMA).expect("hub schema");
-    let mut peers_sorted_for_stall_selection = Vec::with_capacity(config.peers);
-    for peer in 1..=config.peers {
-        let client = cluster.client(peer);
-        client.schema_add(SCHEMA).expect("peer schema");
-        let info = client.p2p_info().expect("peer p2p info");
-        let addr = info
-            .as_array()
-            .and_then(|values| values.first())
-            .and_then(|value| value.as_str())
-            .expect("peer has no P2P address")
-            .to_string();
-        let peer_id = addr
-            .rsplit('/')
-            .next()
-            .expect("peer address has no ID")
-            .to_string();
-        hub.p2p_connect(&[&addr]).expect("connect hub to peer");
-        hub.p2p_replicator_set(&["StormDoc"], &addr)
-            .expect("set hub to peer replicator");
-        peers_sorted_for_stall_selection.push((peer_id, peer));
-    }
-    peers_sorted_for_stall_selection.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-
-    let mut doc_ids = Vec::with_capacity(config.docs);
-    for doc in 0..config.docs {
-        let mutation = format!(
-            r#"mutation {{ add_StormDoc(input: {{lifecycle_state: "initial-{doc}", status: "initial-{doc}"}}) {{ _docID }} }}"#
+    edge::compat(async {
+        let config = StormConfig::from_env();
+        assert!(config.docs > 0, "DEFRA_PUSH_STORM_DOCS must be positive");
+        assert!(
+            config.updates > 0,
+            "DEFRA_PUSH_STORM_UPDATES must be positive"
         );
-        let result = hub.query(&mutation).expect("create storm document");
-        doc_ids.push(
-            result["add_StormDoc"][0]["_docID"]
-                .as_str()
-                .expect("created document has no ID")
-                .to_string(),
-        );
-    }
 
-    let hub_api = cluster.api_url(0).to_string();
-    wait_for_backlog_idle(&hub_api).await;
-    let hub_pid = cluster.nodes[0].process.id().expect("hub pid");
-    let hub_log = hub_log(&cluster);
-    let mut log_cursor = LogCursor::open(&hub_log);
-    let baseline_logs = log_cursor.scan();
-    let baseline_status = sync_status(&hub_api).await;
-    assert_eq!(
-        baseline_status["push_backlog"]["worker_count"].as_u64(),
-        Some(8),
-        "the default-concurrency repro contract changed"
-    );
-    let baseline_item_quota_deferrals = baseline_status["push_backlog"]["rejected_items_total"]
-        .as_u64()
-        .unwrap_or(0);
-    let baseline_byte_quota_deferrals = baseline_status["push_backlog"]["rejected_bytes_total"]
-        .as_u64()
-        .unwrap_or(0);
-    let baseline_failed_jobs = baseline_status["push_backlog"]["failed_total"]
-        .as_u64()
-        .unwrap_or(0);
-
-    let stalled_indices: RapidHashSet<usize> = peers_sorted_for_stall_selection
-        .iter()
-        .take(config.stalled_peers)
-        .map(|(_, peer)| *peer)
-        .collect();
-    let stalled_peer_ids: RapidHashSet<String> = peers_sorted_for_stall_selection
-        .iter()
-        .take(config.stalled_peers)
-        .map(|(peer_id, _)| peer_id.clone())
-        .collect();
-    let healthy_indices: Vec<usize> = (1..=config.peers)
-        .filter(|peer| !stalled_indices.contains(peer))
-        .collect();
-    let stalled_pids: Vec<u32> = stalled_indices
-        .iter()
-        .map(|peer| cluster.nodes[*peer].process.id().expect("stalled peer pid"))
-        .collect();
-    for pid in &stalled_pids {
-        require_signal(*pid, "-STOP");
-    }
-    let _stalled = StalledPeers(stalled_pids);
-
-    let idle_started = Instant::now();
-    let idle_cpu_started = process_cpu_seconds(hub_pid).expect("read initial hub CPU time");
-    tokio::time::sleep(config.idle).await;
-    let idle_cpu = process_cpu_seconds(hub_pid).expect("read idle hub CPU time") - idle_cpu_started;
-    let idle_wall = idle_started.elapsed().as_secs_f64();
-    let idle_cores = idle_cpu / idle_wall;
-
-    let rss_started = process_rss_kib(hub_pid).unwrap_or(0);
-    let (rss_running, peak_rss, rss_thread) = start_rss_monitor(hub_pid);
-    let sample = start_symbolized_sample(hub_pid);
-    let storm_started = Instant::now();
-    let storm_cpu_started = process_cpu_seconds(hub_pid).expect("read storm hub CPU time");
-
-    std::thread::scope(|scope| {
-        for doc_id in doc_ids.iter().cloned() {
-            let client = cluster.client(0);
-            scope.spawn(move || run_update_storm(client, doc_id, config.updates));
+        let mut cluster_builder = TestCluster::builder()
+            .rust_nodes(1 + config.peers)
+            .with_p2p();
+        if let Ok(store) = std::env::var("DEFRA_PUSH_STORM_HUB_STORE") {
+            cluster_builder = cluster_builder.with_node_store(0, store);
         }
-    });
-    tokio::time::sleep(config.storm_settle).await;
-    let storm_cpu =
-        process_cpu_seconds(hub_pid).expect("read post-storm hub CPU time") - storm_cpu_started;
-    let storm_wall = storm_started.elapsed().as_secs_f64();
-    let storm_cores = storm_cpu / storm_wall;
-    let storm_cpu_ratio = storm_cores / idle_cores.max(MIN_TRUSTED_IDLE_CORES);
+        let cluster = cluster_builder.build().await.expect("cluster start");
+        for node in 0..=config.peers {
+            cluster
+                .wait_for_log(node, "p2p_listening", Duration::from_secs(30))
+                .await
+                .unwrap_or_else(|error| panic!("node{node} P2P listener did not start: {error}"));
+        }
 
-    let stall_started = Instant::now();
-    let stall_cpu_started = process_cpu_seconds(hub_pid).expect("read stalled hub CPU time");
-    wait_for_stalled_push(&hub_api, &stalled_peer_ids).await;
-    let stalled_outcome = wait_for_stalled_outcome(
-        &hub_api,
-        &stalled_peer_ids,
-        &mut log_cursor,
-        baseline_logs,
-        baseline_failed_jobs,
-        config.observe,
-    )
-    .await;
-    let stall_cpu =
-        process_cpu_seconds(hub_pid).expect("read post-stall hub CPU time") - stall_cpu_started;
-    let stall_wall = stall_started.elapsed().as_secs_f64();
-    let stall_cores = stall_cpu / stall_wall;
-    let stall_cpu_ratio = stall_cores / idle_cores.max(MIN_TRUSTED_IDLE_CORES);
+        let hub = cluster.client(0);
+        hub.schema_add(SCHEMA).expect("hub schema");
+        let mut peers_sorted_for_stall_selection = Vec::with_capacity(config.peers);
+        for peer in 1..=config.peers {
+            let client = cluster.client(peer);
+            client.schema_add(SCHEMA).expect("peer schema");
+            let info = client.p2p_info().expect("peer p2p info");
+            let addr = info
+                .as_array()
+                .and_then(|values| values.first())
+                .and_then(|value| value.as_str())
+                .expect("peer has no P2P address")
+                .to_string();
+            let peer_id = addr
+                .rsplit('/')
+                .next()
+                .expect("peer address has no ID")
+                .to_string();
+            hub.p2p_connect(&[&addr]).expect("connect hub to peer");
+            hub.p2p_replicator_set(&["StormDoc"], &addr)
+                .expect("set hub to peer replicator");
+            peers_sorted_for_stall_selection.push((peer_id, peer));
+        }
+        peers_sorted_for_stall_selection.sort_unstable_by(|left, right| left.0.cmp(&right.0));
 
-    rss_running.store(false, Ordering::Relaxed);
-    rss_thread.join().expect("RSS monitor panicked");
-    finish_symbolized_sample(sample);
+        let mut doc_ids = Vec::with_capacity(config.docs);
+        for doc in 0..config.docs {
+            let mutation = format!(
+                r#"mutation {{ add_StormDoc(input: {{lifecycle_state: "initial-{doc}", status: "initial-{doc}"}}) {{ _docID }} }}"#
+            );
+            let result = hub.query(&mutation).expect("create storm document");
+            doc_ids.push(
+                result["add_StormDoc"][0]["_docID"]
+                    .as_str()
+                    .expect("created document has no ID")
+                    .to_string(),
+            );
+        }
 
-    let status = sync_status(&hub_api).await;
-    let item_quota_deferrals = status["push_backlog"]["rejected_items_total"]
-        .as_u64()
-        .unwrap_or(0)
-        .saturating_sub(baseline_item_quota_deferrals);
-    let byte_quota_deferrals = status["push_backlog"]["rejected_bytes_total"]
-        .as_u64()
-        .unwrap_or(0)
-        .saturating_sub(baseline_byte_quota_deferrals);
-    let deferrals = item_quota_deferrals + byte_quota_deferrals;
-    let logs = log_cursor.scan();
-    let timeout_logs = logs.timeouts.saturating_sub(baseline_logs.timeouts);
-    let connection_unavailable_logs = logs
-        .connection_unavailable
-        .saturating_sub(baseline_logs.connection_unavailable);
-    let deferral_logs = logs.deferrals.saturating_sub(baseline_logs.deferrals);
-    let failed_jobs = status["push_backlog"]["failed_total"]
-        .as_u64()
-        .unwrap_or(0)
-        .saturating_sub(baseline_failed_jobs);
-
-    assert!(
-        timeout_logs > 0
-            || (failed_jobs > 0
-                && (stalled_outcome.stalled_peer_failure_observed
-                    || connection_unavailable_logs > 0)),
-        "the stalled peers produced neither a timeout nor a failed-job outcome"
-    );
-    assert!(deferrals > 0, "the workload produced no backlog deferral");
-
-    let converged_healthy_peers =
-        measure_healthy_convergence(&cluster, &healthy_indices, &doc_ids, config.updates - 1).await;
-
-    let result = serde_json::json!({
-        "vera_pid": hub_pid,
-        "peers": config.peers,
-        "docs": config.docs,
-        "update_cycles": config.updates,
-        "stalled_peers": config.stalled_peers,
-        "healthy_peers": healthy_indices.len(),
-        "converged_healthy_peers": converged_healthy_peers,
-        "idle_cpu_seconds": idle_cpu,
-        "idle_wall_seconds": idle_wall,
-        "idle_cpu_cores": idle_cores,
-        "storm_cpu_seconds": storm_cpu,
-        "storm_wall_seconds": storm_wall,
-        "storm_cpu_cores": storm_cores,
-        "storm_to_idle_cpu_ratio": storm_cpu_ratio,
-        "stall_cpu_seconds": stall_cpu,
-        "stall_wall_seconds": stall_wall,
-        "stall_cpu_cores": stall_cores,
-        "stall_to_idle_cpu_ratio": stall_cpu_ratio,
-        "rss_start_kib": rss_started,
-        "rss_peak_kib": peak_rss.load(Ordering::Relaxed),
-        "pushlog_timeouts": timeout_logs,
-        "pushlog_connection_unavailable": connection_unavailable_logs,
-        "pushlog_failed_jobs": failed_jobs,
-        "stalled_timeout_observed": stalled_outcome.timeout_observed,
-        "stalled_connection_unavailable_observed": stalled_outcome.connection_unavailable_observed,
-        "stalled_peer_failure_observed": stalled_outcome.stalled_peer_failure_observed,
-        "pushlog_deferrals": deferrals,
-        "deferrals_item_quota": item_quota_deferrals,
-        "deferrals_byte_quota": byte_quota_deferrals,
-        "pushlog_deferral_logs": deferral_logs,
-        "stale_head_retirements": optional_counter(&status, &[
-            "/push_backlog/stale_head_retirements_total",
-            "/stale_head_retirements_total",
-        ]),
-        "encode_cache_hits": optional_counter(&status, &[
-            "/push_backlog/encode_cache_hits_total",
-            "/encode_cache_hits_total",
-        ]),
-        "retry_attempts": optional_counter(&status, &[
-            "/push_backlog/retry_attempts_total",
-            "/retry_attempts_total",
-        ]),
-        "receive_single_flight_suppressed": status["single_flight_suppressed"].as_u64(),
-        "receive_already_merged_fast_path": status["already_merged_fast_path"].as_u64(),
-        "receive_pending_dag_capacity_shed": status["pending_dag_capacity_shed"].as_u64(),
-    });
-    println!(
-        "PUSH_STORM_RESULT {}",
-        serde_json::to_string_pretty(&result).unwrap()
-    );
-
-    if config.minimum_cpu_ratio.is_some() || config.maximum_cpu_ratio.is_some() {
-        assert!(
-            idle_cores >= MIN_TRUSTED_IDLE_CORES,
-            "idle CPU {idle_cores:.6} cores is below the trusted ratio floor; increase \
-             DEFRA_PUSH_STORM_IDLE_SECS"
-        );
-    }
-    if let Some(minimum) = config.minimum_cpu_ratio {
-        assert!(
-            storm_cpu_ratio >= minimum,
-            "push-storm CPU ratio {storm_cpu_ratio:.2} was below {minimum:.2}"
-        );
-    }
-    if let Some(maximum) = config.maximum_cpu_ratio {
-        assert!(
-            storm_cpu_ratio <= maximum,
-            "push-storm CPU ratio {storm_cpu_ratio:.2} exceeded {maximum:.2}"
-        );
-    }
-    if std::env::var_os("DEFRA_PUSH_STORM_REQUIRE_CONVERGENCE").is_some() {
+        let hub_api = cluster.api_url(0).to_string();
+        wait_for_backlog_idle(&hub_api).await;
+        let hub_pid = cluster.nodes[0].process.id().expect("hub pid");
+        let hub_log = hub_log(&cluster);
+        let mut log_cursor = LogCursor::open(&hub_log);
+        let baseline_logs = log_cursor.scan();
+        let baseline_status = sync_status(&hub_api).await;
         assert_eq!(
-            converged_healthy_peers,
-            healthy_indices.len(),
-            "not every healthy peer converged to the latest heads"
+            baseline_status["push_backlog"]["worker_count"].as_u64(),
+            Some(8),
+            "the default-concurrency repro contract changed"
         );
-    }
+        let baseline_item_quota_deferrals = baseline_status["push_backlog"]["rejected_items_total"]
+            .as_u64()
+            .unwrap_or(0);
+        let baseline_byte_quota_deferrals = baseline_status["push_backlog"]["rejected_bytes_total"]
+            .as_u64()
+            .unwrap_or(0);
+        let baseline_failed_jobs = baseline_status["push_backlog"]["failed_total"]
+            .as_u64()
+            .unwrap_or(0);
+
+        let stalled_indices: RapidHashSet<usize> = peers_sorted_for_stall_selection
+            .iter()
+            .take(config.stalled_peers)
+            .map(|(_, peer)| *peer)
+            .collect();
+        let stalled_peer_ids: RapidHashSet<String> = peers_sorted_for_stall_selection
+            .iter()
+            .take(config.stalled_peers)
+            .map(|(peer_id, _)| peer_id.clone())
+            .collect();
+        let healthy_indices: Vec<usize> = (1..=config.peers)
+            .filter(|peer| !stalled_indices.contains(peer))
+            .collect();
+        let stalled_pids: Vec<u32> = stalled_indices
+            .iter()
+            .map(|peer| cluster.nodes[*peer].process.id().expect("stalled peer pid"))
+            .collect();
+        for pid in &stalled_pids {
+            require_signal(*pid, "-STOP");
+        }
+        let _stalled = StalledPeers(stalled_pids);
+
+        let idle_started = Instant::now();
+        let idle_cpu_started = process_cpu_seconds(hub_pid).expect("read initial hub CPU time");
+        nuclei::time::sleep(config.idle).await;
+        let idle_cpu = process_cpu_seconds(hub_pid).expect("read idle hub CPU time") - idle_cpu_started;
+        let idle_wall = idle_started.elapsed().as_secs_f64();
+        let idle_cores = idle_cpu / idle_wall;
+
+        let rss_started = process_rss_kib(hub_pid).unwrap_or(0);
+        let (rss_running, peak_rss, rss_thread) = start_rss_monitor(hub_pid);
+        let sample = start_symbolized_sample(hub_pid);
+        let storm_started = Instant::now();
+        let storm_cpu_started = process_cpu_seconds(hub_pid).expect("read storm hub CPU time");
+
+        std::thread::scope(|scope| {
+            for doc_id in doc_ids.iter().cloned() {
+                let client = cluster.client(0);
+                scope.spawn(move || run_update_storm(client, doc_id, config.updates));
+            }
+        });
+        nuclei::time::sleep(config.storm_settle).await;
+        let storm_cpu =
+            process_cpu_seconds(hub_pid).expect("read post-storm hub CPU time") - storm_cpu_started;
+        let storm_wall = storm_started.elapsed().as_secs_f64();
+        let storm_cores = storm_cpu / storm_wall;
+        let storm_cpu_ratio = storm_cores / idle_cores.max(MIN_TRUSTED_IDLE_CORES);
+
+        let stall_started = Instant::now();
+        let stall_cpu_started = process_cpu_seconds(hub_pid).expect("read stalled hub CPU time");
+        wait_for_stalled_push(&hub_api, &stalled_peer_ids).await;
+        let stalled_outcome = wait_for_stalled_outcome(
+            &hub_api,
+            &stalled_peer_ids,
+            &mut log_cursor,
+            baseline_logs,
+            baseline_failed_jobs,
+            config.observe,
+        )
+        .await;
+        let stall_cpu =
+            process_cpu_seconds(hub_pid).expect("read post-stall hub CPU time") - stall_cpu_started;
+        let stall_wall = stall_started.elapsed().as_secs_f64();
+        let stall_cores = stall_cpu / stall_wall;
+        let stall_cpu_ratio = stall_cores / idle_cores.max(MIN_TRUSTED_IDLE_CORES);
+
+        rss_running.store(false, Ordering::Relaxed);
+        rss_thread.join().expect("RSS monitor panicked");
+        finish_symbolized_sample(sample);
+
+        let status = sync_status(&hub_api).await;
+        let item_quota_deferrals = status["push_backlog"]["rejected_items_total"]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(baseline_item_quota_deferrals);
+        let byte_quota_deferrals = status["push_backlog"]["rejected_bytes_total"]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(baseline_byte_quota_deferrals);
+        let deferrals = item_quota_deferrals + byte_quota_deferrals;
+        let logs = log_cursor.scan();
+        let timeout_logs = logs.timeouts.saturating_sub(baseline_logs.timeouts);
+        let connection_unavailable_logs = logs
+            .connection_unavailable
+            .saturating_sub(baseline_logs.connection_unavailable);
+        let deferral_logs = logs.deferrals.saturating_sub(baseline_logs.deferrals);
+        let failed_jobs = status["push_backlog"]["failed_total"]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(baseline_failed_jobs);
+
+        assert!(
+            timeout_logs > 0
+                || (failed_jobs > 0
+                    && (stalled_outcome.stalled_peer_failure_observed
+                        || connection_unavailable_logs > 0)),
+            "the stalled peers produced neither a timeout nor a failed-job outcome"
+        );
+        assert!(deferrals > 0, "the workload produced no backlog deferral");
+
+        let converged_healthy_peers =
+            measure_healthy_convergence(&cluster, &healthy_indices, &doc_ids, config.updates - 1).await;
+
+        let result = serde_json::json!({
+            "vera_pid": hub_pid,
+            "peers": config.peers,
+            "docs": config.docs,
+            "update_cycles": config.updates,
+            "stalled_peers": config.stalled_peers,
+            "healthy_peers": healthy_indices.len(),
+            "converged_healthy_peers": converged_healthy_peers,
+            "idle_cpu_seconds": idle_cpu,
+            "idle_wall_seconds": idle_wall,
+            "idle_cpu_cores": idle_cores,
+            "storm_cpu_seconds": storm_cpu,
+            "storm_wall_seconds": storm_wall,
+            "storm_cpu_cores": storm_cores,
+            "storm_to_idle_cpu_ratio": storm_cpu_ratio,
+            "stall_cpu_seconds": stall_cpu,
+            "stall_wall_seconds": stall_wall,
+            "stall_cpu_cores": stall_cores,
+            "stall_to_idle_cpu_ratio": stall_cpu_ratio,
+            "rss_start_kib": rss_started,
+            "rss_peak_kib": peak_rss.load(Ordering::Relaxed),
+            "pushlog_timeouts": timeout_logs,
+            "pushlog_connection_unavailable": connection_unavailable_logs,
+            "pushlog_failed_jobs": failed_jobs,
+            "stalled_timeout_observed": stalled_outcome.timeout_observed,
+            "stalled_connection_unavailable_observed": stalled_outcome.connection_unavailable_observed,
+            "stalled_peer_failure_observed": stalled_outcome.stalled_peer_failure_observed,
+            "pushlog_deferrals": deferrals,
+            "deferrals_item_quota": item_quota_deferrals,
+            "deferrals_byte_quota": byte_quota_deferrals,
+            "pushlog_deferral_logs": deferral_logs,
+            "stale_head_retirements": optional_counter(&status, &[
+                "/push_backlog/stale_head_retirements_total",
+                "/stale_head_retirements_total",
+            ]),
+            "encode_cache_hits": optional_counter(&status, &[
+                "/push_backlog/encode_cache_hits_total",
+                "/encode_cache_hits_total",
+            ]),
+            "retry_attempts": optional_counter(&status, &[
+                "/push_backlog/retry_attempts_total",
+                "/retry_attempts_total",
+            ]),
+            "receive_single_flight_suppressed": status["single_flight_suppressed"].as_u64(),
+            "receive_already_merged_fast_path": status["already_merged_fast_path"].as_u64(),
+            "receive_pending_dag_capacity_shed": status["pending_dag_capacity_shed"].as_u64(),
+        });
+        println!(
+            "PUSH_STORM_RESULT {}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+
+        if config.minimum_cpu_ratio.is_some() || config.maximum_cpu_ratio.is_some() {
+            assert!(
+                idle_cores >= MIN_TRUSTED_IDLE_CORES,
+                "idle CPU {idle_cores:.6} cores is below the trusted ratio floor; increase \
+             DEFRA_PUSH_STORM_IDLE_SECS"
+            );
+        }
+        if let Some(minimum) = config.minimum_cpu_ratio {
+            assert!(
+                storm_cpu_ratio >= minimum,
+                "push-storm CPU ratio {storm_cpu_ratio:.2} was below {minimum:.2}"
+            );
+        }
+        if let Some(maximum) = config.maximum_cpu_ratio {
+            assert!(
+                storm_cpu_ratio <= maximum,
+                "push-storm CPU ratio {storm_cpu_ratio:.2} exceeded {maximum:.2}"
+            );
+        }
+        if std::env::var_os("DEFRA_PUSH_STORM_REQUIRE_CONVERGENCE").is_some() {
+            assert_eq!(
+                converged_healthy_peers,
+                healthy_indices.len(),
+                "not every healthy peer converged to the latest heads"
+            );
+        }
+    })
+    .await;
 }

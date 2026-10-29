@@ -46,7 +46,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         attempts: 0,
         fetch_failures: 0,
         last_fetch_error: None,
-        next_retry_at: n0_future::time::Instant::now(),
+        next_retry_at: crate::rt::time::Instant::now(),
         dispatches: 0,
         merge_continuation: false,
         storage_blocker: None,
@@ -80,14 +80,14 @@ fn linked_dag_providers_require_positive_missing_cid_evidence() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn storage_release_wakes_only_contended_roots_without_resetting_backoff() {
     use futures::FutureExt;
     let manager = test_manager();
     let root = test_cid(910);
     let other = test_cid(911);
     let blocker = test_cid(912);
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     for cid in [root, other] {
         let mut dag = pending_dag("storage", Instant::now());
         dag.next_retry_at = now;
@@ -110,14 +110,14 @@ async fn storage_release_wakes_only_contended_roots_without_resetting_backoff() 
     assert!(manager.due_pending_dag_retries(now).is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn storage_release_before_registration_does_not_lose_wakeup() {
     use futures::FutureExt;
     let manager = test_manager();
     let root = test_cid(920);
     let blocker = test_cid(921);
     manager.insert_pending_dag(root, pending_dag("storage", Instant::now()));
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     assert!(manager.try_claim_pending_dag_dispatch(&root, now));
     let owner = manager.process_queue.try_acquire_nowait(&blocker).unwrap();
     drop(owner);
@@ -128,7 +128,7 @@ async fn storage_release_before_registration_does_not_lose_wakeup() {
     assert_eq!(manager.due_pending_dag_retries(now)[0].0, root);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn pending_dag_wakeup_requires_registration_and_preserves_backoff() {
     use futures::FutureExt;
 
@@ -144,7 +144,7 @@ async fn pending_dag_wakeup_requires_registration_and_preserves_backoff() {
     manager.mark_pending_dag_recovery_registered(&root, inserted_at);
     assert!(manager.pending_dag_ready().now_or_never().is_some());
     assert!(manager.pending_dag_ready().now_or_never().is_none());
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     assert!(manager.try_claim_pending_dag_dispatch(&root, now));
     manager.mark_pending_dag_recovery_registered(&root, inserted_at);
     assert!(manager.pending_dag_ready().now_or_never().is_some());
@@ -274,7 +274,7 @@ impl crate::sync::pending_store::PendingDagStorage for BlockingRemoveStore {
 /// held, a second removal and a quarantine of the same root run and commit,
 /// and the engine settles them. The store ends with the root quarantined and
 /// no live record, and the view agrees.
-#[tokio::test]
+#[nuclei::test]
 async fn terminal_transitions_of_one_root_run_concurrently_and_settle_in_the_engine() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
@@ -302,13 +302,13 @@ async fn terminal_transitions_of_one_root_run_concurrently_and_settle_in_the_eng
     manager.install_pending_dag_store(store.clone()).await;
     assert_eq!(manager.persisted_pending_count(), 1);
 
-    let first = n0_future::task::spawn({
+    let first = crate::rt::spawn({
         let manager = Arc::clone(&manager);
         async move { manager.remove_persisted_pending(&root).await }
     });
     store.first_remove_entered.notified().await;
 
-    n0_future::time::timeout(Duration::from_secs(5), async {
+    crate::rt::time::timeout(Duration::from_secs(5), async {
         assert!(manager.remove_persisted_pending(&root).await);
         manager
             .quarantine_pending_dag(&root, "deterministic rejection")
@@ -320,7 +320,7 @@ async fn terminal_transitions_of_one_root_run_concurrently_and_settle_in_the_eng
 
     store.release_first_remove.notify_one();
     assert!(
-        !first.await.expect("first terminal task"),
+        !first.join().await.expect("first terminal task"),
         "the record was gone when the held removal ran"
     );
     assert!(store.load_all().await.unwrap().is_empty());
@@ -329,7 +329,7 @@ async fn terminal_transitions_of_one_root_run_concurrently_and_settle_in_the_eng
     assert_eq!(manager.quarantined_pending_count(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn already_merged_reconciliation_retires_live_and_durable_obligation() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
     use blockstore::Blockstore;
@@ -584,7 +584,7 @@ fn concurrent_pending_dag_insert_burst_stays_bounded() {
     assert!(manager.pending_dag_count() <= DEFAULT_MAX_PENDING_DAGS);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn claim_bumps_clock_and_suppresses_duplicates() {
     let manager = test_manager();
     let root = test_cid(1);
@@ -592,18 +592,18 @@ async fn claim_bumps_clock_and_suppresses_duplicates() {
     dag.missing.insert(test_cid(2));
     assert!(manager.insert_pending_dag(root, dag));
 
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     // Fresh entry is due immediately (insert leaves next_retry_at = now).
     assert!(manager.try_claim_pending_dag_dispatch(&root, now));
     // Second claim in the same instant is suppressed.
     assert!(!manager.try_claim_pending_dag_dispatch(&root, now));
     // Becomes due again after the backoff rung reached by the first
     // claim (dispatches=1 -> retry_backoff(1) = 4s).
-    tokio::time::advance(std::time::Duration::from_secs(4)).await;
-    assert!(manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+    nuclei::time::advance(std::time::Duration::from_secs(4)).await;
+    assert!(manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn backoff_doubles_and_caps() {
     use crate::sync::manager::pending::retry_backoff;
     assert_eq!(retry_backoff(0), std::time::Duration::from_secs(2));
@@ -622,7 +622,7 @@ async fn backoff_doubles_and_caps() {
 /// immediate and the fifth lands a full minute later. Anything asserting
 /// convergence sooner than that is asserting something this pacing does not
 /// promise.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_root_that_keeps_failing_is_not_retried_for_a_minute() {
     let manager = test_manager();
     let root = test_cid(1);
@@ -630,17 +630,17 @@ async fn a_root_that_keeps_failing_is_not_retried_for_a_minute() {
     dag.missing.insert(test_cid(2));
     assert!(manager.insert_pending_dag(root, dag));
 
-    let start = n0_future::time::Instant::now();
+    let start = crate::rt::time::Instant::now();
     let mut dispatches = Vec::new();
     // Every dispatch fails to complete the DAG, so the root stays pending and
     // only the rung advances.
     while dispatches.len() < 5 {
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         if manager.try_claim_pending_dag_dispatch(&root, now) {
             dispatches.push(now.duration_since(start).as_secs());
             continue;
         }
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(1)).await;
     }
 
     assert_eq!(
@@ -661,7 +661,7 @@ async fn a_root_that_keeps_failing_is_not_retried_for_a_minute() {
 /// 40s it has been dispatched four times and is still pending, so a caller
 /// polling for a merged value sees nothing and calls it non-convergence. The
 /// fifth dispatch — the one that would have succeeded — is not due until 60s.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_forty_second_deadline_lands_between_the_fourth_and_fifth_retry() {
     let manager = test_manager();
     let root = test_cid(1);
@@ -669,39 +669,39 @@ async fn a_forty_second_deadline_lands_between_the_fourth_and_fifth_retry() {
     dag.missing.insert(test_cid(2));
     assert!(manager.insert_pending_dag(root, dag));
 
-    let start = n0_future::time::Instant::now();
+    let start = crate::rt::time::Instant::now();
 
     // Walk the clock to 40s, claiming every dispatch that comes due.
     let mut within_forty = 0;
-    while n0_future::time::Instant::now()
+    while crate::rt::time::Instant::now()
         .duration_since(start)
         .as_secs()
         < 40
     {
-        if manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()) {
+        if manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()) {
             within_forty += 1;
         }
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(1)).await;
     }
     assert_eq!(
         within_forty, 4,
         "the old deadline expires after the fourth dispatch"
     );
     assert!(
-        !manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()),
+        !manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()),
         "and the fifth is not due yet, so the root is still pending at 40s"
     );
 
     // The budget the conformance suite now allows reaches it.
-    while n0_future::time::Instant::now()
+    while crate::rt::time::Instant::now()
         .duration_since(start)
         .as_secs()
         < 90
     {
-        if manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()) {
+        if manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()) {
             within_forty += 1;
         }
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(1)).await;
     }
     assert!(
         within_forty > 4,
@@ -709,25 +709,25 @@ async fn a_forty_second_deadline_lands_between_the_fourth_and_fifth_retry() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn expedite_makes_entry_due_now_without_resetting_backoff() {
     let manager = test_manager();
     let root = test_cid(1);
     let mut dag = pending_dag("doc", Instant::now());
     dag.missing.insert(test_cid(2));
     assert!(manager.insert_pending_dag(root, dag));
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     assert!(manager.try_claim_pending_dag_dispatch(&root, now)); // dispatches -> 1
     manager.expedite_pending_dag_retry(&root);
     assert!(manager.try_claim_pending_dag_dispatch(&root, now)); // dispatches -> 2
                                                                  // Next due time reflects dispatches=2 rung (8s), not a reset.
-    tokio::time::advance(std::time::Duration::from_secs(4)).await;
-    assert!(!manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
-    tokio::time::advance(std::time::Duration::from_secs(4)).await;
-    assert!(manager.try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+    nuclei::time::advance(std::time::Duration::from_secs(4)).await;
+    assert!(!manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
+    nuclei::time::advance(std::time::Duration::from_secs(4)).await;
+    assert!(manager.try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn claim_due_includes_complete_roots_awaiting_terminal_merge() {
     let manager = test_manager();
     let due = test_cid(1);
@@ -739,13 +739,13 @@ async fn claim_due_includes_complete_roots_awaiting_terminal_merge() {
     // outcome, so the same clock can re-drive a transient merge failure.
     assert!(manager.insert_pending_dag(complete, pending_dag("doc-done", Instant::now())));
 
-    let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+    let claimed = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
     assert_eq!(claimed.len(), 2);
     assert!(claimed.iter().any(|(cid, _)| *cid == due));
     assert!(claimed.iter().any(|(cid, _)| *cid == complete));
     // Claiming consumed due-ness.
     assert!(manager
-        .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+        .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
         .is_empty());
 }
 
@@ -780,7 +780,7 @@ fn composite_node(link_name: &str, link_cid: Cid, priority: u64) -> (Cid, Vec<u8
     (cid, bytes)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn block_arrival_updates_missing_incrementally_without_full_walks() {
     // A dropped event receiver would fail the completing `retry_pending_dag`
     // call with `ChannelSend` before the assertions below run, so keep it
@@ -853,7 +853,7 @@ async fn block_arrival_updates_missing_incrementally_without_full_walks() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn quarantine_pending_dag_moves_live_record_and_clears_in_memory_entry() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
@@ -927,7 +927,7 @@ async fn quarantine_pending_dag_moves_live_record_and_clears_in_memory_entry() {
     assert_eq!(manager.quarantined_pending_count(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn quarantine_pending_dag_dedupes_gauge_on_repeat_rejection() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
@@ -1012,7 +1012,7 @@ async fn quarantine_pending_dag_dedupes_gauge_on_repeat_rejection() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn quarantine_pending_dag_synthesizes_record_when_no_durable_record_exists() {
     let manager = test_manager();
     let root = test_cid(1);
@@ -1036,7 +1036,7 @@ async fn quarantine_pending_dag_synthesizes_record_when_no_durable_record_exists
     assert_eq!(manager.quarantined_pending_count(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn resync_deletes_live_leftover_of_quarantined_root_without_redriving() {
     use crate::sync::pending_store::{
         PendingDagStorage, PendingDagStore, PersistedPendingDag, PersistedQuarantinedDag,
@@ -1119,7 +1119,7 @@ async fn resync_deletes_live_leftover_of_quarantined_root_without_redriving() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
@@ -1165,11 +1165,11 @@ async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
         events.try_recv().is_err(),
         "restart restore must not dispatch outside the receiver clock"
     );
-    let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+    let claimed = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].0, root);
     assert!(manager
-        .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+        .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
         .is_empty());
 
     manager.schedule_pending_merge_continuation(&root);
@@ -1185,7 +1185,7 @@ async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
             Instant::now() - PENDING_DAG_TTL - Duration::from_secs(1);
     });
     assert!(manager
-        .due_pending_dag_retries(n0_future::time::Instant::now())
+        .due_pending_dag_retries(crate::rt::time::Instant::now())
         .is_empty());
     assert!(manager.pending_dag_snapshot(&root).is_none());
     assert_eq!(pending_store.load_all().await.unwrap().len(), 1);
@@ -1221,7 +1221,7 @@ fn manager_at_global_cap() -> SyncManager<DefraBlockstore<RegolithStore>> {
     manager
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn at_global_cap_a_head_covered_by_the_current_scope_head_is_acked() {
     let manager = manager_at_global_cap();
     let (leaf_cid, _) = lww_leaf("name");
@@ -1246,7 +1246,7 @@ async fn at_global_cap_a_head_covered_by_the_current_scope_head_is_acked() {
 /// A descendant no registered root waits on carries no receiver obligation, so
 /// the cap holds: otherwise a peer could push unlimited unrelated non-head
 /// blocks into storage while the registry is full.
-#[tokio::test]
+#[nuclei::test]
 async fn at_global_cap_an_unawaited_descendant_is_shed() {
     let manager = manager_at_global_cap();
     let (leaf_cid, leaf_bytes) = lww_leaf("name");
@@ -1274,7 +1274,7 @@ async fn at_global_cap_an_unawaited_descendant_is_shed() {
 
 /// Malformed DAG-CBOR decodes as a descendant, so a CID-valid block of garbage
 /// would clear block verification. Only the cap keeps it out of storage.
-#[tokio::test]
+#[nuclei::test]
 async fn at_global_cap_a_cid_valid_malformed_block_is_shed() {
     let manager = manager_at_global_cap();
     let garbage = vec![0xff; 4 * 1024 * 1024];
@@ -1301,7 +1301,7 @@ async fn at_global_cap_a_cid_valid_malformed_block_is_shed() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn at_global_cap_a_genuinely_new_head_is_shed() {
     let manager = manager_at_global_cap();
     let (leaf_cid, _) = lww_leaf("name");

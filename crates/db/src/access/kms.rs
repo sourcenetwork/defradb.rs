@@ -5,12 +5,38 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use defra_core::thread_bounds::MaybeSend;
+use std::future::Future;
 use std::sync::{Arc, Weak};
 
 use kms::{
     BlockDocIDResolver, DocCollectionInfo, DocCollectionLookup, EncBlockStore, EncryptionCid,
     NodeAcpRead,
 };
+
+/// Runs `read` on `db`'s worker pool when it has one, so a KMS request the
+/// network serves reads storage on a worker, never on a network thread.
+async fn on_pool<S, T, F, Fut>(db: Arc<crate::DB<S>>, read: F) -> kms::Result<T>
+where
+    S: storage::corekv::Store + Send + Sync + 'static,
+    F: FnOnce(Arc<crate::DB<S>>) -> Fut + MaybeSend + 'static,
+    Fut: Future<Output = kms::Result<T>> + 'static,
+    T: MaybeSend + 'static,
+{
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let pool = db.pool().cloned();
+        workers::run_on(pool.as_ref(), workers::Target::LeastLoaded, move || {
+            read(db)
+        })
+        .await
+        .map_err(|error| kms::Error::Storage(error.report("KMS storage read").to_string()))?
+    }
+    // A browser's one worker is the page's thread: the read runs where it
+    // is asked for.
+    #[cfg(target_arch = "wasm32")]
+    read(db).await
+}
 
 /// Resolves doc_id → collection via the DB headstore (Go's
 /// `RetrieveCollectionFromDocID` port).
@@ -42,16 +68,20 @@ impl<S: storage::corekv::Store + Send + Sync + 'static> DocCollectionLookup
             // DB dropped → node shutting down → treat as "no collection".
             return Ok(None);
         };
-        match crate::resolve_collection_from_doc_id(&db, doc_id).await {
-            Ok(Some(info)) => Ok(Some(DocCollectionInfo {
-                collection_id: info.collection_id,
-                policy_id: info.policy_id,
-                resource_name: info.resource_name,
-                is_branchable: info.is_branchable,
-            })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(kms::Error::Storage(e.to_string())),
-        }
+        let doc_id = doc_id.to_owned();
+        on_pool(db, move |db| async move {
+            match crate::resolve_collection_from_doc_id(&db, &doc_id).await {
+                Ok(Some(info)) => Ok(Some(DocCollectionInfo {
+                    collection_id: info.collection_id,
+                    policy_id: info.policy_id,
+                    resource_name: info.resource_name,
+                    is_branchable: info.is_branchable,
+                })),
+                Ok(None) => Ok(None),
+                Err(e) => Err(kms::Error::Storage(e.to_string())),
+            }
+        })
+        .await
     }
 }
 
@@ -79,16 +109,20 @@ impl<S: storage::corekv::Store + Send + Sync + 'static> BlockDocIDResolver
         let Some(db) = self.db.upgrade() else {
             return Ok(Vec::new());
         };
-        let txn = db
-            .new_txn(true)
-            .await
-            .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        let systemstore = txn
-            .systemstore()
-            .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        crate::docid::map::get_doc_ids_for_block(&systemstore, &cid.to_string())
-            .await
-            .map_err(|e| kms::Error::Storage(e.to_string()))
+        let cid = cid.to_string();
+        on_pool(db, move |db| async move {
+            let txn = db
+                .new_txn(true)
+                .await
+                .map_err(|e| kms::Error::Storage(e.to_string()))?;
+            let systemstore = txn
+                .systemstore()
+                .map_err(|e| kms::Error::Storage(e.to_string()))?;
+            crate::docid::map::get_doc_ids_for_block(&systemstore, &cid)
+                .await
+                .map_err(|e| kms::Error::Storage(e.to_string()))
+        })
+        .await
     }
 }
 
@@ -150,19 +184,21 @@ where
             return Ok(None);
         };
         // Mirror the merge decrypt path: encstore first, then blockstore.
-        let txn = db
-            .new_txn(true)
-            .await
-            .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        let encstore = txn
-            .encstore()
-            .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        let from_encstore = encstore
-            .get(&cid.to_bytes())
-            .await
-            .map_err(|e| kms::Error::Storage(e.to_string()))?;
-        // Read txn carries no writes; dropping it releases the snapshot.
-        drop(txn);
+        let key = cid.to_bytes();
+        let from_encstore = on_pool(db, move |db| async move {
+            let txn = db
+                .new_txn(true)
+                .await
+                .map_err(|e| kms::Error::Storage(e.to_string()))?;
+            let encstore = txn
+                .encstore()
+                .map_err(|e| kms::Error::Storage(e.to_string()))?;
+            encstore
+                .get(&key)
+                .await
+                .map_err(|e| kms::Error::Storage(e.to_string()))
+        })
+        .await?;
         if let Some(bytes) = from_encstore {
             return Ok(Some(bytes));
         }

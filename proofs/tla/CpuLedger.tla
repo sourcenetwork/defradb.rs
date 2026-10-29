@@ -18,6 +18,11 @@
 \* blocking threads and every env placing threads through it are gone; then
 \* the Hold is dropped and each counter it raised goes down by one.
 \*
+\* A network runtime sized from the machine claims whole cores of its own the
+\* same way, alone, with the same cap on lost claims. It never shares: at the
+\* cap it gives up, holding nothing, and its threads run unpinned. It keeps
+\* its Hold until its last thread is gone, like a pool.
+\*
 \* A tiny example, with CPUs 0 and 1. Pool A holds CPU 1 alone (counter 1 is
 \* 1). Pool B asks for both: it moves CPU 0 from 0 to 1, finds CPU 1 at 1,
 \* puts CPU 0 back to 0 and fails. B plans again on CPU 0 alone and wins it.
@@ -38,7 +43,8 @@
 \*      (a leak, or a count stolen from another pool) - INV_CountExact;
 \*   7. every pool is gone and some counter is not back at zero
 \*      - INV_DoneLeavesNothing;
-\*   8. a pool's start never ends - LIVE_StartEnds.
+\*   8. a pool's start never ends, or a network runtime's ends neither
+\*      running nor given up - LIVE_StartEnds.
 \*
 \* What a caller of the ledger must uphold (the Hold's contract), each with
 \* its own RED configuration:
@@ -82,6 +88,12 @@
 \*   | tries             | reserve.rs:47 and :70, `attempt`                            |
 \*   | life              | the pools a process starts one after another: each          |
 \*   |                   | Pool::start (pool/start.rs:51-53) is a new life of a slot   |
+\*   | Edges             | the slots that are network runtimes: EdgeCores::reserve_on  |
+\*   |                   | (placement/edge.rs), called by EdgeCores::reserve from the  |
+\*   |                   | edge runtime's owner thread (crates/edge/src/platform/      |
+\*   |                   | native.rs own); its claim is choose(), always alone         |
+\*   | GiveUp            | the edge's loop runs out of ATTEMPTS, or choose() finds too |
+\*   |                   | few cores: EdgeCores::sized, holding nothing (edge.rs)      |
 \*   | crowded           | history only, to state INV_TakenAlone; nothing in the Rust  |
 \*   | Plan              | reserve.rs:46-63: free, fit, cores_of; a plan that does not |
 \*   |                   | fit goes to shared() (reserve.rs:55-61, 112-142)            |
@@ -114,11 +126,17 @@
 \*   |                   | (RED: claims again forever)                                 |
 \*   | KeepWhileRunning  | Placer::_hold (pool/placer.rs:54), Placer::holding          |
 \*   |                   | (pool/placer.rs:85-90), `.holding(hold)` (pool/start.rs:79) |
-\*   |                   | (RED: the Hold dropped while threads still run)             |
+\*   |                   | (RED: the Hold dropped while threads still run); an edge:   |
+\*   |                   | the Arc<EdgeCores> its runtime's thread hook keeps (crates/ |
+\*   |                   | edge/src/platform/native.rs build), dropped with the last   |
+\*   |                   | runtime thread                                              |
 \*   | ReleaseOnce       | Hold is not Clone, and Drop runs once (ledger.rs:109)       |
 \*   |                   | (RED: the Hold given back twice)                            |
 \*   | RunOnHeld         | cores_of covers every CPU the seats and background use      |
-\*   |                   | (reserve.rs:154-165) (RED: a thread on a CPU outside it)    |
+\*   |                   | (reserve.rs:154-165) (RED: a thread on a CPU outside it);   |
+\*   |                   | an edge: reserve pins its owner thread to the held CPUs,    |
+\*   |                   | nuclei pins each shard to one CPU of that mask, and the     |
+\*   |                   | thread hook pins every later thread to them                 |
 \*   | ReleaseAtEnd      | the Hold dropped with the placer (ledger.rs:109)            |
 \*   |                   | (RED: never given back, a forgotten or leaked placer)       |
 \*
@@ -152,13 +170,13 @@ EXTENDS Integers, FiniteSets
 \* Integers gives numbers that can go below zero (so a RED run can show it);
 \* FiniteSets gives Cardinality, the size of a set.
 
-CONSTANTS NCpu, NPool, Lives, Attempts,
+CONSTANTS NCpu, NPool, Lives, Attempts, Edges,
           AtomicTake, RollBack, InsertAfterWin, ShareCounts, AttemptCap,
           KeepWhileRunning, ReleaseOnce, RunOnHeld, ReleaseAtEnd
 \* NCpu is how many CPUs the machine has; NPool how many pools can be alive at
 \* once; Lives how many pools each of those slots runs, one after another;
 \* Attempts is reserve's ATTEMPTS (16 in the Rust), how many claims alone a
-\* pool makes before it shares. The nine switches are all TRUE in the real
+\* pool makes before it shares; Edges the slots that are network runtimes. The nine switches are all TRUE in the real
 \* design; each RED configuration turns one off.
 
 ASSUME /\ NCpu \in 1..3
@@ -169,6 +187,8 @@ ASSUME /\ NCpu \in 1..3
        \* one to three pools per slot over the run;
        /\ Attempts \in 1..3
        \* one to three claims alone before sharing;
+       /\ Edges \subseteq 1..NPool
+       \* any of the slots may be network runtimes;
        /\ AtomicTake \in BOOLEAN
        \* and every switch is either on or off.
        /\ RollBack \in BOOLEAN
@@ -200,6 +220,9 @@ Claims == (SUBSET CPUs) \ {{}}
 Modes == {"alone", "share"}
 \* The two ways to claim: Ledger::hold (alone) or Ledger::share.
 
+ModesOf(p) == IF p \in Edges THEN {"alone"} ELSE Modes
+\* A network runtime only ever claims alone; a pool claims either way.
+
 PcStates == {"idle", "taking", "looked", "rollback", "failed",
              "sharing", "held", "releasing", "done"}
 \* Where a pool can be:
@@ -211,7 +234,8 @@ PcStates == {"idle", "taking", "looked", "rollback", "failed",
 \*   sharing   - inside Ledger::share, at the next CPU;
 \*   held      - reserve returned and the pool's threads run;
 \*   releasing - the pool is gone and its Hold gives its CPUs back;
-\*   done      - the pool and its Hold are gone.
+\*   done      - the pool and its Hold are gone, or a network runtime gave up
+\*               claiming and holds nothing.
 
 Starting == {"taking", "looked", "rollback", "failed", "sharing"}
 \* The places a pool passes through while it starts (inside reserve).
@@ -366,24 +390,38 @@ Rollback(p) == /\ pc[p] = "rollback"
                \* nothing else changes.
 \* One give-back of the failed claim: Hold::drop's fetch_sub on one CPU.
 
+GiveUp(p) == /\ pc' = [pc EXCEPT ![p] = "done"]
+              \* the network runtime stops claiming: it holds nothing and its
+              \* threads run unpinned, outside the ledger;
+              /\ UNCHANGED <<mode, want, todo>>
+              \* and its last claim is left as it was.
+\* EdgeCores::reserve_on returns EdgeCores::sized after a lost claim.
+
 Retry(p) == /\ pc[p] = "failed"
             \* hold returned None to reserve;
             /\ IF AttemptCap /\ tries[p] + 1 = Attempts
                   \* that was the last claim alone reserve allows:
-                  THEN /\ Begin(p, want[p], "share")
-                       \* it shares the same CPUs, marked oversubscribed,
+                  THEN /\ IF p \in Edges
+                             \* a network runtime
+                             THEN GiveUp(p)
+                             \* gives up,
+                             ELSE Begin(p, want[p], "share")
+                             \* a pool shares the same CPUs, marked oversubscribed,
                        /\ UNCHANGED tries
                        \* and counts no more;
-                  ELSE /\ \E w \in Claims, m \in Modes : Begin(p, w, m)
-                       \* otherwise it plans again: alone on what looks free,
-                       \* or shared when it no longer fits;
+                  ELSE /\ \/ \E w \in Claims, m \in ModesOf(p) : Begin(p, w, m)
+                          \* otherwise it plans again: alone on what looks free,
+                          \* or, a pool, shared when it no longer fits;
+                          \/ p \in Edges /\ GiveUp(p)
+                          \* or a network runtime finds too few free cores and gives up;
                        /\ tries' = IF AttemptCap THEN [tries EXCEPT ![p] = @ + 1] ELSE tries
                        \* and counts the lost claim (RED: never counts);
             /\ taken' = [taken EXCEPT ![p] = {}]
             \* a new claim starts with nothing recorded;
             /\ UNCHANGED <<count, runs, crowded, life>>
             \* nothing else changes.
-\* reserve after a failed claim: attempt += 1, then share or plan again.
+\* reserve after a failed claim: attempt += 1, then share (an edge: give up)
+\* or plan again.
 
 \* ----------------------------------------------------------- a shared claim
 
@@ -467,8 +505,8 @@ Restart(p) == /\ pc[p] = "done"
 
 Plan(p) == /\ pc[p] = "idle"
            \* a pool that has not started,
-           /\ \E w \in Claims, m \in Modes : Begin(p, w, m)
-           \* plans on some CPUs and claims them alone or shared;
+           /\ \E w \in Claims, m \in ModesOf(p) : Begin(p, w, m)
+           \* plans on some CPUs and claims them alone or, a pool, shared;
            /\ UNCHANGED <<count, taken, runs, tries, crowded, life>>
            \* nothing else changes.
 \* reserve begins: free, fit, cores_of, then hold, or shared() when it does not fit.
@@ -552,7 +590,9 @@ INV_DoneLeavesNothing ==
   (\A p \in Pools : pc[p] = "done") => (\A c \in CPUs : count[c] = 0)
 \* Promise: once every pool is gone, every counter is back at zero: no leak.
 
-LIVE_StartEnds == \A p \in Pools : (pc[p] \in Starting) ~> (pc[p] = "held")
-\* Promise: a pool that starts always gets to run, alone or shared.
+LIVE_StartEnds ==
+  \A p \in Pools : (pc[p] \in Starting) ~> (pc[p] = "held" \/ (p \in Edges /\ pc[p] = "done"))
+\* Promise: a pool that starts always gets to run, alone or shared; a network
+\* runtime runs on cores of its own or gives up and holds nothing.
 
 ====

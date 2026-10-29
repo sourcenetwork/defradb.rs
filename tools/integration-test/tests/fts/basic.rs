@@ -6,8 +6,9 @@ const SCHEMA: &str = r#"type Article {
     category: String
 }"#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_basic_search() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -60,10 +61,13 @@ async fn bm25_basic_search() {
             title, score
         );
     }
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_multi_field_search() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -91,10 +95,13 @@ async fn bm25_multi_field_search() {
             "Article should have positive score for 'database' search"
         );
     }
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_no_results_returns_zero_scores() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -113,10 +120,13 @@ async fn bm25_no_results_returns_zero_scores() {
     assert_eq!(articles.len(), 1);
     let score = articles[0]["BM25"].as_f64().unwrap_or(0.0);
     assert_eq!(score, 0.0, "Non-matching query should return zero score");
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_with_alias() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -134,4 +144,6 @@ async fn bm25_with_alias() {
     // Score should be under the alias name
     let score = articles[0]["relevance"].as_f64().unwrap_or(0.0);
     assert!(score > 0.0, "Aliased BM25 score should be positive");
+})
+    .await;
 }

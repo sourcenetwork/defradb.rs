@@ -85,7 +85,7 @@ impl LensAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let config = get_data_from_args(&self.config, &self.file)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -97,7 +97,7 @@ impl LensAddArgs {
 
 impl LensListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -137,7 +137,7 @@ impl LensSetArgs {
             "Lenses": lenses,
         });
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -152,7 +152,7 @@ impl LensSetArgs {
 impl LensReloadArgs {
     /// Execute the lens reload command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

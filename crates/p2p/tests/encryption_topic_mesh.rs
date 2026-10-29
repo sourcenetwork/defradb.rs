@@ -9,9 +9,9 @@
 
 use std::time::Duration;
 
+use nuclei::time::timeout;
 use p2p::testutil::MockBitswapStore;
 use p2p::{DefraTopic, HostEvent, P2PHost, PeerId, ENCRYPTION_TOPIC};
-use tokio::time::timeout;
 
 async fn wait_until_connected(handle: &p2p::P2PHostHandle, peer_id: PeerId) {
     let start = std::time::Instant::now();
@@ -28,22 +28,23 @@ async fn wait_until_connected(handle: &p2p::P2PHostHandle, peer_id: PeerId) {
             start.elapsed() < Duration::from_secs(5),
             "timed out waiting for connection to {peer_id}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
 async fn setup_pair() -> (
     p2p::P2PHostHandle,
     p2p::P2PHostHandle,
-    tokio::sync::mpsc::Receiver<HostEvent>,
+    nuclei::sync::mpsc::Receiver<HostEvent>,
 ) {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _r0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, events1, _r1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _r0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, events1, _r1) = P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     // Both subscribe + register the encryption topic, exactly like
     // PubsubKeyTransport::new does at KMS startup.
@@ -74,15 +75,17 @@ async fn setup_pair() -> (
 /// a key-miss happens), then publish immediately. Mirrors the KMS
 /// `send_request` path that publishes once with no wait. Captures whether
 /// the very first publish targets a peer.
-#[tokio::test]
+#[nuclei::test]
 async fn encryption_topic_late_subscribe_immediate_publish() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _r0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _r1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _r0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _r1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -116,7 +119,7 @@ async fn encryption_topic_late_subscribe_immediate_publish() {
 
 /// The fix shape: poll until the topic has a known subscriber, then publish,
 /// and assert the peer actually receives it as a GossipRawMessage.
-#[tokio::test]
+#[nuclei::test]
 async fn encryption_topic_publish_after_subscriber_known_is_received() {
     let (handle0, handle1, mut events1) = setup_pair().await;
     let peer1 = handle1.local_peer_id_cached();
@@ -135,7 +138,7 @@ async fn encryption_topic_publish_after_subscriber_known_is_received() {
             std::time::Instant::now() < deadline,
             "handle0 never learned peer1's encryption subscription"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        nuclei::time::sleep(Duration::from_millis(100)).await;
     }
 
     let payload = b"fetch-encryption-key-request".to_vec();
@@ -153,7 +156,7 @@ async fn encryption_topic_publish_after_subscriber_known_is_received() {
                     std::time::Instant::now() < pub_deadline,
                     "publish never succeeded after subscriber known: {e}"
                 );
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                nuclei::time::sleep(Duration::from_millis(200)).await;
             }
         }
     }

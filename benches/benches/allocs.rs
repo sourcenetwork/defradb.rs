@@ -74,8 +74,8 @@ fn main() {
     // Single-threaded on purpose: a worker pool allocates on threads this has
     // no way to attribute, and the resulting count would drift with the
     // scheduler rather than with the code.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+    let rt = nuclei::Runtime::builder()
+        .worker_threads(0)
         .build()
         .expect("a runtime");
 

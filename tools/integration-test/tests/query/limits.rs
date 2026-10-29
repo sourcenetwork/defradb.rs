@@ -98,18 +98,24 @@ async fn query_depth_width_limit(cluster: TestCluster) {
         .expect("node should be healthy after rejected queries");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_query_depth_width_limit() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    query_depth_width_limit(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        query_depth_width_limit(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not implement query depth/width limits.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_query_depth_width_limit() {
-    let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
-    query_depth_width_limit(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
+        query_depth_width_limit(cluster).await;
+    })
+    .await;
 }
 
 /// Verify query timeout is enforced: a node started with --query-timeout
@@ -151,26 +157,32 @@ async fn query_timeout_under_load(cluster: TestCluster) {
         .expect("node should be healthy after load");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_query_timeout_under_load() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_query_timeout(5)
-        .build()
-        .await
-        .unwrap();
-    query_timeout_under_load(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_query_timeout(5)
+            .build()
+            .await
+            .unwrap();
+        query_timeout_under_load(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not implement --query-timeout.
-#[tokio::test]
+#[nuclei::test]
 #[ignore = "Go does not implement --query-timeout"]
 async fn go_query_timeout_under_load() {
-    let cluster = TestCluster::builder()
-        .go_nodes(1)
-        .with_query_timeout(5)
-        .build()
-        .await
-        .unwrap();
-    query_timeout_under_load(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(1)
+            .with_query_timeout(5)
+            .build()
+            .await
+            .unwrap();
+        query_timeout_under_load(cluster).await;
+    })
+    .await;
 }

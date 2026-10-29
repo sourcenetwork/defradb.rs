@@ -258,6 +258,6 @@ impl RemoteKeys {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "remote_tests.rs"]
 mod tests;

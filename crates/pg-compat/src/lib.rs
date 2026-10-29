@@ -4,12 +4,14 @@ pub mod error;
 mod handler;
 mod metadata;
 mod types;
+pub mod wire;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use edge::Edge;
+use nuclei::net::TcpListener;
 use query::{CollectionProvider, QueryExecutor};
-use tokio::net::TcpListener;
 use tracing::{error, info};
 
 use handler::{DefraHandlerFactory, DefraQueryHandler};
@@ -23,14 +25,17 @@ pub use handler::SchemaManager;
 pub struct PgServer {
     address: SocketAddr,
     factory: Arc<DefraHandlerFactory>,
+    edge: Edge,
 }
 
 impl PgServer {
+    /// A server whose connections run on `edge`.
     pub fn new(
         address: SocketAddr,
         executor: Arc<dyn QueryExecutor>,
         collections: Arc<dyn CollectionProvider>,
         schema_manager: Option<Arc<dyn SchemaManager>>,
+        edge: Edge,
     ) -> Self {
         let handler = Arc::new(DefraQueryHandler::new(
             executor,
@@ -38,7 +43,11 @@ impl PgServer {
             schema_manager,
         ));
         let factory = Arc::new(DefraHandlerFactory::new(handler, address.to_string()));
-        Self { address, factory }
+        Self {
+            address,
+            factory,
+            edge,
+        }
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -58,11 +67,13 @@ impl PgServer {
             info!("PG connection from {}", peer);
 
             let factory = self.factory.clone();
-            tokio::spawn(async move {
-                if let Err(e) = pgwire::tokio::process_socket(socket, None, factory).await {
-                    error!("PG connection error from {}: {}", peer, e);
-                }
-            });
+            self.edge
+                .spawn_service(async move {
+                    if let Err(e) = wire::serve(socket, peer, factory).await {
+                        error!("PG connection error from {}: {}", peer, e);
+                    }
+                })
+                .detach();
         }
     }
 }

@@ -1,7 +1,7 @@
 use cid::Cid;
 use events::Subscription;
+use nuclei::time::{timeout_at, Instant};
 use rapidhash::RapidHashSet;
-use tokio::time::{timeout_at, Instant};
 
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
 
@@ -30,7 +30,7 @@ pub(super) async fn wait_for_heads<B: blockstore::Blockstore>(
             }
             // Events are wakeups, not proof of completion: ancestor merges may
             // emit no event for this CID, and a full subscriber queue can drop one.
-            tokio::select! {
+            p2p::rt::select! {
                 message = sub.recv() => {
                     if message.is_none() {
                         return Err(P2PError::transport(
@@ -38,7 +38,7 @@ pub(super) async fn wait_for_heads<B: blockstore::Blockstore>(
                         ));
                     }
                 }
-                _ = n0_future::time::sleep(std::time::Duration::from_millis(100)) => {}
+                _ = p2p::rt::time::sleep(std::time::Duration::from_millis(100)) => {}
             }
         }
     })

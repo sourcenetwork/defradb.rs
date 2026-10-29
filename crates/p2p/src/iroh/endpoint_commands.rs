@@ -549,6 +549,7 @@ pub(super) async fn handle_command(
             *next_query_id += 1;
 
             let resources = BlockSyncResources::new(
+                spawned_tasks.edge().clone(),
                 endpoint.clone(),
                 Arc::clone(peer_map),
                 Arc::clone(connection_cache),

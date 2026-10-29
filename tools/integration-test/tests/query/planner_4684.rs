@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use integration_test::TestCluster;
 use kovan::Atom;
+use nuclei::sync::oneshot;
+use nuclei::Task;
 use serde_json::Value;
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 
 fn subscription_timeout() -> Duration {
     std::env::var("DEFRADB_TEST_SUBSCRIPTION_TIMEOUT_MS")
@@ -27,15 +27,15 @@ fn subscription_settle_timeout() -> Duration {
 fn open_subscription(
     api_url: &str,
     query: &str,
-) -> (JoinHandle<()>, oneshot::Receiver<()>, Arc<Atom<Vec<Value>>>) {
+) -> (Task<()>, oneshot::Receiver<()>, Arc<Atom<Vec<Value>>>) {
     let url = format!("{}/api/v0/graphql", api_url);
     let body = serde_json::json!({ "query": query });
     let events: Arc<Atom<Vec<Value>>> = Arc::new(Atom::new(Vec::new()));
     let events_clone = events.clone();
     let (ready_tx, ready_rx) = oneshot::channel();
 
-    let handle = tokio::spawn(async move {
-        let client = reqwest::Client::new();
+    let handle = nuclei::spawn(async move {
+        let client = net::http::Client::new(edge::testing::edge());
         let response = client
             .post(&url)
             .header("Accept", "text/event-stream")
@@ -109,7 +109,7 @@ async fn wait_for_exact_subscription_events(events: &Arc<Atom<Vec<Value>>>, expe
                 "timed out after {timeout:?} waiting for {expected_len} subscription events, got {collected:?}"
             );
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -137,7 +137,7 @@ async fn subscription_with_indexed_filter_test(cluster: TestCluster) {
         }
     "#;
     let (handle, ready, events) = open_subscription(api_url, sub_query);
-    tokio::time::timeout(subscription_timeout(), ready)
+    nuclei::time::timeout(subscription_timeout(), ready)
         .await
         .expect("subscription did not open before timeout")
         .expect("subscription task ended before opening");
@@ -259,14 +259,20 @@ async fn inverted_one_to_many_parent_filter_with_child_order_test(cluster: TestC
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_subscription_with_indexed_filter_receives_matching_update() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    subscription_with_indexed_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        subscription_with_indexed_filter_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_inverted_one_to_many_parent_filter_with_child_order() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    inverted_one_to_many_parent_filter_with_child_order_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        inverted_one_to_many_parent_filter_with_child_order_test(cluster).await;
+    })
+    .await;
 }

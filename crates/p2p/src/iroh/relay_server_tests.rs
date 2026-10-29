@@ -5,7 +5,6 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use iroh::SecretKey;
-use n0_future::task::JoinHandle;
 
 use super::{
     spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig, IrohRelayServer,
@@ -18,7 +17,7 @@ const DENIED_DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct TestNode {
     transport: IrohTransport,
-    task: JoinHandle<()>,
+    task: edge::Task<()>,
 }
 
 impl TestNode {
@@ -30,7 +29,8 @@ impl TestNode {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             ..Default::default()
         };
-        let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+        let (command_tx, _events, _replicators, task) =
+            spawn_endpoint(config, edge::testing::edge()).await.unwrap();
         Self {
             transport: IrohTransport::new(command_tx, secret_key),
             task,
@@ -43,7 +43,7 @@ impl TestNode {
             vec![PeerAddr::new(relay_url.to_string())],
         );
         matches!(
-            n0_future::time::timeout(RELAYED_DIAL_TIMEOUT, dial).await,
+            crate::rt::time::timeout(RELAYED_DIAL_TIMEOUT, dial).await,
             Ok(Ok(()))
         )
     }
@@ -69,43 +69,49 @@ async fn spawn_relay(allowed_endpoints: Vec<String>) -> (IrohRelayServer, String
     (relay, url)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn endpoints_connect_through_hosted_relay_without_direct_addresses() {
-    let (relay, relay_url) = spawn_relay(Vec::new()).await;
-    let dialer = TestNode::spawn(SecretKey::generate(), &relay_url).await;
-    let target = TestNode::spawn(SecretKey::generate(), &relay_url).await;
+    edge::compat(async {
+        let (relay, relay_url) = spawn_relay(Vec::new()).await;
+        let dialer = TestNode::spawn(SecretKey::generate(), &relay_url).await;
+        let target = TestNode::spawn(SecretKey::generate(), &relay_url).await;
 
-    assert!(
-        dialer.dial_via_relay(&target, &relay_url).await,
-        "dial carrying only a relay URL must connect through the hosted relay"
-    );
+        assert!(
+            dialer.dial_via_relay(&target, &relay_url).await,
+            "dial carrying only a relay URL must connect through the hosted relay"
+        );
 
-    dialer.shutdown().await;
-    target.shutdown().await;
-    relay.shutdown().await.unwrap();
+        dialer.shutdown().await;
+        target.shutdown().await;
+        relay.shutdown().await.unwrap();
+    })
+    .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn relay_allowlist_refuses_unlisted_endpoints() {
-    let target_key = SecretKey::generate();
-    let (relay, relay_url) = spawn_relay(vec![target_key.public().to_string()]).await;
-    let outsider = TestNode::spawn(SecretKey::generate(), &relay_url).await;
-    let target = TestNode::spawn(target_key, &relay_url).await;
+    edge::compat(async {
+        let target_key = SecretKey::generate();
+        let (relay, relay_url) = spawn_relay(vec![target_key.public().to_string()]).await;
+        let outsider = TestNode::spawn(SecretKey::generate(), &relay_url).await;
+        let target = TestNode::spawn(target_key, &relay_url).await;
 
-    let dial = outsider.transport.dial(
-        target.transport.local_peer_id(),
-        vec![PeerAddr::new(relay_url.clone())],
-    );
-    let connected = matches!(
-        n0_future::time::timeout(DENIED_DIAL_TIMEOUT, dial).await,
-        Ok(Ok(()))
-    );
-    assert!(
-        !connected,
-        "an endpoint missing from the relay allowlist must not be relayed"
-    );
+        let dial = outsider.transport.dial(
+            target.transport.local_peer_id(),
+            vec![PeerAddr::new(relay_url.clone())],
+        );
+        let connected = matches!(
+            crate::rt::time::timeout(DENIED_DIAL_TIMEOUT, dial).await,
+            Ok(Ok(()))
+        );
+        assert!(
+            !connected,
+            "an endpoint missing from the relay allowlist must not be relayed"
+        );
 
-    outsider.shutdown().await;
-    target.shutdown().await;
-    relay.shutdown().await.unwrap();
+        outsider.shutdown().await;
+        target.shutdown().await;
+        relay.shutdown().await.unwrap();
+    })
+    .await
 }

@@ -21,7 +21,7 @@ async fn echo_matched_path(request: Request, _next: Next) -> Response {
         .into_response()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn parameterized_routes_use_their_registered_permissions() {
     let router = common::router().route_layer(middleware::from_fn(echo_matched_path));
     let cases = [

@@ -12,7 +12,7 @@
 //! Both mirror the SE query correlator ([`crate::se_correlator`]) exactly:
 //! a shared lock-free map + Drop-cleanup guard, keyed by message-ID `String`.
 
-use tokio::sync::oneshot;
+use futures::channel::oneshot;
 use tracing::debug;
 
 use crate::message::{ManageQueryReply, ManageReply};
@@ -50,8 +50,10 @@ pub struct PendingManage {
 impl PendingManage {
     /// Await the reply for this request. Returns `Err` if the slot was
     /// cancelled (sender dropped) before a reply arrived.
-    pub async fn recv(&mut self) -> std::result::Result<ManageReply, oneshot::error::RecvError> {
-        (&mut self.receiver).await
+    pub async fn recv(&mut self) -> crate::Result<ManageReply> {
+        (&mut self.receiver)
+            .await
+            .map_err(|_| crate::Error::ChannelReceive)
     }
 }
 
@@ -138,10 +140,10 @@ pub struct PendingManageQuery {
 impl PendingManageQuery {
     /// Await the reply for this query. Returns `Err` if the slot was cancelled
     /// (sender dropped) before a reply arrived.
-    pub async fn recv(
-        &mut self,
-    ) -> std::result::Result<ManageQueryReply, oneshot::error::RecvError> {
-        (&mut self.receiver).await
+    pub async fn recv(&mut self) -> crate::Result<ManageQueryReply> {
+        (&mut self.receiver)
+            .await
+            .map_err(|_| crate::Error::ChannelReceive)
     }
 }
 

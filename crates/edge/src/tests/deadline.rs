@@ -1,8 +1,9 @@
 use std::future::pending;
 use std::sync::atomic::Ordering;
+use std::task::Poll;
 use std::time::Duration;
 
-use super::{runtime, runtime_with, DropFlag};
+use super::{poll_once, runtime, runtime_with, stuck, DropFlag};
 use crate::{EdgeConfig, EdgeError};
 
 #[test]
@@ -60,4 +61,28 @@ fn a_timeout_gives_the_value_in_time_and_the_deadline_otherwise() {
 
     assert_eq!(in_time, Ok(3));
     assert_eq!(too_late, Err(EdgeError::Deadline(limit)));
+}
+
+#[test]
+fn a_completion_with_no_deadline_waits_for_its_work_until_the_runtime_stops() {
+    let runtime = runtime_with(EdgeConfig {
+        deadline: Duration::from_millis(1),
+        drain: Duration::from_millis(20),
+        ..EdgeConfig::default()
+    });
+    let edge = runtime.edge().clone();
+    let sleeper = edge.clone();
+
+    let slow = edge
+        .spawn(async move {
+            sleeper.sleep(Duration::from_millis(30)).await;
+            5
+        })
+        .within(Duration::MAX);
+    assert_eq!(edge.block_on(slow).unwrap(), Ok(5));
+
+    let (_hold, stuck) = stuck();
+    let task = edge.spawn(stuck).within(Duration::MAX);
+    assert_eq!(runtime.shutdown().unwrap().remaining, 1);
+    assert_eq!(poll_once(task), Poll::Ready(Err(EdgeError::Closed)));
 }

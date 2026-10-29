@@ -12,7 +12,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(200);
 
 async fn get_json(url: String) -> Value {
-    reqwest::get(&url)
+    net::http::get(&url, edge::testing::edge())
         .await
         .unwrap_or_else(|error| panic!("GET {url}: {error}"))
         .json()
@@ -22,7 +22,7 @@ async fn get_json(url: String) -> Value {
 
 async fn connected_peer(cluster: &TestCluster, node: usize) -> String {
     let url = format!("{}/api/v0/p2p/sync/status", cluster.api_url(node));
-    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let deadline = nuclei::time::Instant::now() + TIMEOUT;
     loop {
         let status = get_json(url.clone()).await;
         if let Some(peer) = status["peers"]
@@ -32,10 +32,10 @@ async fn connected_peer(cluster: &TestCluster, node: usize) -> String {
             return peer["peer_id"].as_str().unwrap().to_string();
         }
         assert!(
-            tokio::time::Instant::now() < deadline,
+            nuclei::time::Instant::now() < deadline,
             "node{node} never summarized a connected peer: {status}"
         );
-        tokio::time::sleep(POLL).await;
+        nuclei::time::sleep(POLL).await;
     }
 }
 
@@ -79,17 +79,17 @@ async fn replicated_write_is_visible_per_peer(builder: TestClusterBuilder) {
     let receiver = connected_peer(&cluster, 0).await;
     let sender = connected_peer(&cluster, 1).await;
     let pushed_url = format!("{}/api/v0/p2p/peers/{receiver}", cluster.api_url(0));
-    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let deadline = nuclei::time::Instant::now() + TIMEOUT;
     let pushed = loop {
         let details = get_json(pushed_url.clone()).await;
         if details["heads_pushed"]["succeeded"].as_u64() >= Some(1) {
             break details;
         }
         assert!(
-            tokio::time::Instant::now() < deadline,
+            nuclei::time::Instant::now() < deadline,
             "node0 never recorded an acked head for node1: {details}"
         );
-        tokio::time::sleep(POLL).await;
+        nuclei::time::sleep(POLL).await;
     };
     assert_eq!(pushed["peer_id"], receiver.as_str());
     assert_eq!(pushed["connected"], true);
@@ -128,14 +128,20 @@ async fn replicated_write_is_visible_per_peer(builder: TestClusterBuilder) {
     assert_eq!(received["pending_fetch_count"], 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn libp2p_replicated_write_is_visible_per_peer() {
-    replicated_write_is_visible_per_peer(TestCluster::builder().with_p2p()).await;
+    edge::compat(async {
+        replicated_write_is_visible_per_peer(TestCluster::builder().with_p2p()).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn iroh_replicated_write_is_visible_per_peer() {
-    replicated_write_is_visible_per_peer(TestCluster::builder().with_iroh_transport()).await;
+    edge::compat(async {
+        replicated_write_is_visible_per_peer(TestCluster::builder().with_iroh_transport()).await;
+    })
+    .await;
 }

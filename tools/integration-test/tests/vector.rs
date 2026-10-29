@@ -4,7 +4,7 @@ use integration_test::TestCluster;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-async fn graphql(http: &reqwest::Client, api: &str, query: &str) -> Value {
+async fn graphql(http: &net::http::Client, api: &str, query: &str) -> Value {
     let response = http
         .post(format!("{api}/api/v0/graphql"))
         .json(&json!({"query": query}))
@@ -30,7 +30,7 @@ fn routed_scan(value: &Value) -> Option<&Value> {
     }
 }
 
-async fn assert_page(http: &reqwest::Client, api: &str, first: usize) -> u64 {
+async fn assert_page(http: &net::http::Client, api: &str, first: usize) -> u64 {
     let query = "{ Note(limit: 5, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [0, 1, 0, 0]}) } }";
     let result = graphql(http, api, query).await;
     let titles: Vec<_> = result["Note"]
@@ -82,7 +82,7 @@ async fn lifecycle_with(algorithm: &str, corpus: usize) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let http = reqwest::Client::builder()
+    let http = net::http::Client::builder(edge::testing::edge())
         .timeout(Duration::from_secs(60))
         .build()
         .unwrap();
@@ -134,35 +134,53 @@ async fn lifecycle_with(algorithm: &str, corpus: usize) {
     assert_page(&http, cluster.api_url(0), 2).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_flat_vector_lifecycle() {
-    lifecycle("flat: {metric: EUCLIDEAN}").await;
+    edge::compat(async move {
+        lifecycle("flat: {metric: EUCLIDEAN}").await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_hnsw_vector_lifecycle() {
-    lifecycle("hnsw: {metric: EUCLIDEAN}").await;
+    edge::compat(async move {
+        lifecycle("hnsw: {metric: EUCLIDEAN}").await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_ivfpq_vector_lifecycle() {
-    lifecycle("ivfpq: {metric: COSINE, nlist: 4, nprobe: 4, m: 2}").await;
+    edge::compat(async move {
+        lifecycle("ivfpq: {metric: COSINE, nlist: 4, nprobe: 4, m: 2}").await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_ssg_vector_lifecycle() {
-    lifecycle("ssg: {metric: EUCLIDEAN, R: 4}").await;
+    edge::compat(async move {
+        lifecycle("ssg: {metric: EUCLIDEAN, R: 4}").await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_diskann_vector_lifecycle() {
-    lifecycle("diskann: {metric: COSINE, R: 8, m: 2}").await;
+    edge::compat(async move {
+        lifecycle("diskann: {metric: COSINE, R: 8, m: 2}").await;
+    })
+    .await;
 }
 
 /// Past DiskANN's training threshold, so the creating mutation builds the
 /// graph and every later step (restart, update, delete, restart) runs against
 /// it rather than the exact scan.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_diskann_graph_vector_lifecycle() {
-    lifecycle_with("diskann: {metric: COSINE, R: 8, m: 2}", 1_124).await;
+    edge::compat(async move {
+        lifecycle_with("diskann: {metric: COSINE, R: 8, m: 2}", 1_124).await;
+    })
+    .await;
 }

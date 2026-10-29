@@ -11,7 +11,7 @@ const CONFORMANCE_RUST_LOG: &str = "info";
 
 /// The artifact under test.
 ///
-/// Defaults to `target/debug/defra` — the binary that `cargo test --workspace`
+/// Defaults to `target/debug/defra` - the binary that `cargo test --workspace`
 /// rebuilds fresh for the exact revision under test. We deliberately do NOT
 /// prefer `target/release/defra`: a self-hosted CI runner caches `target/`, so a
 /// release binary left over from an earlier run can be stale and silently
@@ -45,7 +45,7 @@ pub fn indexed_age(node: &DefraClient) -> i64 {
         .unwrap_or(-1)
 }
 
-/// How many `User` docs `node` returns for `age == value` — an INDEX-filtered
+/// How many `User` docs `node` returns for `age == value` - an INDEX-filtered
 /// count (see the `@explain` honesty checks that this exercises the index, not a
 /// full scan).
 pub fn count_by_index(node: &DefraClient, age: i64) -> usize {
@@ -78,8 +78,8 @@ pub fn commit_cids(node: &DefraClient, doc_id: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// Both replicas hold the identical (content-addressed) commit DAG for `doc_id`
-/// — proof each has MERGED the other's deltas, not merely materialized its own
+/// Both replicas hold the identical (content-addressed) commit DAG for `doc_id`:
+/// proof each has MERGED the other's deltas, not merely materialized its own
 /// local write. This is what makes a winner-takes-all LWW assertion meaningful on
 /// the node that locally wrote the winner: without it, that node passes from its
 /// own write alone, never exercising the merge. Returns false on timeout.
@@ -98,7 +98,7 @@ pub async fn poll_dags_converged(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -124,7 +124,7 @@ async fn storm_poll_all(cluster: &TestCluster, nodes: usize, want: f64, timeout:
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -222,7 +222,7 @@ pub async fn run_counter_storm(
 }
 
 /// Mutate process env exactly once. `release_binary()` is called from every
-/// `#[tokio::test]`, which run in parallel; `set_var` from multiple threads is
+/// `#[nuclei::test]`, which run in parallel; `set_var` from multiple threads is
 /// unsound, so the env setup is gated behind a `Once`.
 fn init_harness_env(root: &std::path::Path) {
     static INIT: Once = Once::new();

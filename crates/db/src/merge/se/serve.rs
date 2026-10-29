@@ -8,6 +8,10 @@
 //! Both the standalone CLI and the embedded node route inbound SE events here so
 //! the serve/receive logic lives in one place.
 
+use std::future::Future;
+use std::sync::Arc;
+
+use defra_core::thread_bounds::MaybeSend;
 #[cfg(feature = "p2p")]
 use p2p::message::PushSEArtifactsReply;
 use p2p::message::{QuerySEArtifactsReply, QuerySEArtifactsRequest};
@@ -17,6 +21,35 @@ use p2p::P2PHostHandle;
 use storage::corekv::Store;
 
 use super::receive_and_store;
+
+/// Runs `work` on `pool` when the node has one, so a peer's SE request reads
+/// and writes storage on a worker, never on the network thread that took it.
+async fn on_pool<S, T, F, Fut>(
+    pool: Option<&workers::Pool>,
+    store: &Arc<S>,
+    work: F,
+) -> std::result::Result<T, String>
+where
+    S: Store + 'static,
+    F: FnOnce(Arc<S>) -> Fut + MaybeSend + 'static,
+    Fut: Future<Output = std::result::Result<T, String>> + 'static,
+    T: MaybeSend + 'static,
+{
+    let store = Arc::clone(store);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        workers::run_on(pool, workers::Target::LeastLoaded, move || work(store))
+            .await
+            .map_err(|error| error.report("SE storage call").to_string())?
+    }
+    // A browser's one worker is the page's thread: the call runs where it is
+    // made.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = pool;
+        work(store).await
+    }
+}
 use super::storage::{fetch_doc_ids, FieldQuery};
 
 /// Handle an inbound `QuerySEArtifactsRequest` on the serving (replicator) node.
@@ -26,14 +59,23 @@ use super::storage::{fetch_doc_ids, FieldQuery};
 /// signed error reply is sent so the requester's correlator slot resolves
 /// instead of timing out. The reply goes back on the request's stream when
 /// `token` carries one.
-pub async fn handle_query_request<S: Store, T: P2PTransport>(
-    store: &S,
+pub async fn handle_query_request<S, T>(
+    store: &Arc<S>,
+    pool: Option<&workers::Pool>,
     transport: &T,
     peer_id: PeerId,
     request: QuerySEArtifactsRequest,
     token: Option<T::ResponseToken>,
-) {
-    let reply = match build_reply(store, &request).await {
+) where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    let query = request.clone();
+    let built = on_pool(pool, store, move |store| async move {
+        build_reply(&*store, &query).await
+    })
+    .await;
+    let reply = match built {
         Ok(doc_ids) => QuerySEArtifactsReply::success(&request.message_id, doc_ids),
         Err(error) => {
             tracing::warn!(
@@ -95,11 +137,32 @@ async fn build_reply<S: Store>(
 /// Shared by the CLI and embedded event loops (both forward
 /// `SEArtifactsReceived` here). Returns the stored doc IDs so callers can emit
 /// `se_artifact_received` bus events.
-pub async fn handle_artifacts_received<S: Store>(
-    store: &S,
+pub async fn handle_artifacts_received<S>(
+    store: &Arc<S>,
+    pool: Option<&workers::Pool>,
     peer_id: &str,
     data: &[u8],
-) -> Vec<String> {
+) -> Vec<String>
+where
+    S: Store + 'static,
+{
+    let (peer, data) = (peer_id.to_owned(), data.to_vec());
+    let stored = on_pool(pool, store, move |store| async move {
+        Ok(store_artifacts(&*store, &peer, &data).await)
+    })
+    .await;
+    stored.unwrap_or_else(|error| {
+        tracing::warn!(peer_id = %peer_id, error = %error, "failed to receive SE artifacts");
+        Vec::new()
+    })
+}
+
+/// Receives, validates and stores `data` in one transaction: the stored doc
+/// IDs, or none when it failed, which is logged.
+async fn store_artifacts<S>(store: &S, peer_id: &str, data: &[u8]) -> Vec<String>
+where
+    S: Store,
+{
     let mut txn = match store.new_txn(false).await {
         Ok(txn) => txn,
         Err(error) => {
@@ -151,13 +214,17 @@ fn extract_push_message_id(data: &[u8]) -> Option<String> {
 /// reply, so a Rust replicator MUST acknowledge or the Go owner's write hangs.
 /// Returns the stored doc IDs for bus events.
 #[cfg(feature = "p2p")]
-pub async fn handle_artifacts_push<S: Store>(
-    store: &S,
+pub async fn handle_artifacts_push<S>(
+    store: &Arc<S>,
+    pool: Option<&workers::Pool>,
     handle: &P2PHostHandle,
     peer_id: p2p::PeerId,
     data: &[u8],
-) -> Vec<String> {
-    let doc_ids = handle_artifacts_received(store, &peer_id.to_string(), data).await;
+) -> Vec<String>
+where
+    S: Store + 'static,
+{
+    let doc_ids = handle_artifacts_received(store, pool, &peer_id.to_string(), data).await;
 
     if let Some(message_id) = extract_push_message_id(data) {
         let mut reply = PushSEArtifactsReply::success(&message_id);

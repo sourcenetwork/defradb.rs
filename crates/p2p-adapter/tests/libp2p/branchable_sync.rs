@@ -36,7 +36,7 @@ fn merged(bus: &ChannelBus, collection_id: &str, cid: Cid) {
     }));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn waits_for_all_advertised_heads_despite_idle_gaps() {
     let store = store().await;
     let bus = ChannelBus::default();
@@ -52,7 +52,7 @@ async fn waits_for_all_advertised_heads_despite_idle_gaps() {
     let mut context = Context::from_waker(Waker::noop());
     assert!(wait.as_mut().poll(&mut context).is_pending());
 
-    tokio::time::advance(Duration::from_secs(4)).await;
+    nuclei::time::advance(Duration::from_secs(4)).await;
     assert!(wait.as_mut().poll(&mut context).is_pending());
     merged(&bus, "collection", first);
     assert!(wait.as_mut().poll(&mut context).is_pending());
@@ -61,7 +61,7 @@ async fn waits_for_all_advertised_heads_despite_idle_gaps() {
 
     merged(&bus, "collection", first);
     merged(&bus, "other-collection", second);
-    tokio::time::advance(Duration::from_secs(4)).await;
+    nuclei::time::advance(Duration::from_secs(4)).await;
     assert!(wait.as_mut().poll(&mut context).is_pending());
 
     merged(&bus, "collection", second);
@@ -71,7 +71,7 @@ async fn waits_for_all_advertised_heads_despite_idle_gaps() {
     wait.await.unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn partial_completion_does_not_reset_deadline_or_report_success() {
     let store = store().await;
     let bus = ChannelBus::default();
@@ -88,7 +88,7 @@ async fn partial_completion_does_not_reset_deadline_or_report_success() {
     let mut context = Context::from_waker(Waker::noop());
     assert!(wait.as_mut().poll(&mut context).is_pending());
 
-    tokio::time::advance(Duration::from_secs(29)).await;
+    nuclei::time::advance(Duration::from_secs(29)).await;
     store.mark_as_merged(&first).await.unwrap();
     merged(&bus, "collection", first);
     assert!(wait.as_mut().poll(&mut context).is_pending());
@@ -100,7 +100,7 @@ async fn partial_completion_does_not_reset_deadline_or_report_success() {
     assert_eq!(Instant::now(), deadline);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn closed_event_bus_does_not_report_unmerged_heads_as_complete() {
     let store = store().await;
     let bus = ChannelBus::default();
@@ -119,7 +119,7 @@ async fn closed_event_bus_does_not_report_unmerged_heads_as_complete() {
     assert!(error.to_string().contains("event bus closed"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn already_merged_heads_need_no_events_or_remaining_time() {
     let store = store().await;
     let bus = ChannelBus::default();

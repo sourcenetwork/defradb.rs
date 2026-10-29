@@ -69,7 +69,7 @@ impl BackupExportArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -81,7 +81,7 @@ impl BackupExportArgs {
 
         let data = client.backup_export(collections, self.pretty).await?;
 
-        tokio::fs::write(&self.file, &data)
+        nuclei::fs::write(&self.file, &data)
             .await
             .map_err(|e| Error::WriteConfig {
                 path: self.file.clone(),
@@ -98,14 +98,14 @@ impl BackupImportArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         require_development(ctx)?;
 
-        let data = tokio::fs::read_to_string(&self.file)
+        let data = nuclei::fs::read_to_string(&self.file)
             .await
             .map_err(|e| Error::ReadFile {
                 path: self.file.clone(),
                 source: e,
             })?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -136,6 +136,7 @@ mod tests {
             tx_id: None,
             development,
             verbose: false,
+            edge: edge::testing::edge(),
         }
     }
 
@@ -170,7 +171,7 @@ mod tests {
         assert_eq!(args.file, PathBuf::from("backup.json"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn export_requires_development_mode() {
         let args = BackupExportArgs {
             file: PathBuf::from("backup.json"),
@@ -182,7 +183,7 @@ mod tests {
         assert!(matches!(err, Error::OperationRequiresDeveloperMode));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn import_requires_development_mode() {
         let args = BackupImportArgs {
             file: PathBuf::from("missing.json"),

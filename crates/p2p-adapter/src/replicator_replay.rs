@@ -6,6 +6,7 @@ use crate::{ReplicatorInstall, TransportDocPusher};
 pub(crate) struct ReplayOwner {
     pusher: Arc<dyn TransportDocPusher>,
     bus: Option<Arc<dyn events::Bus>>,
+    network: p2p::network::Network,
     pub(crate) plan: Option<ReplicatorInstall>,
 }
 
@@ -14,10 +15,12 @@ impl ReplayOwner {
         pusher: Arc<dyn TransportDocPusher>,
         plan: ReplicatorInstall,
         bus: Option<Arc<dyn events::Bus>>,
+        network: p2p::network::Network,
     ) -> Self {
         Self {
             pusher,
             bus,
+            network,
             plan: Some(plan),
         }
     }
@@ -41,7 +44,7 @@ impl Drop for ReplayOwner {
         if let Some(plan) = self.plan.take() {
             let pusher = Arc::clone(&self.pusher);
             let bus = self.bus.clone();
-            n0_future::task::spawn(async move {
+            self.network.spawn(async move {
                 if let Err(error) = pusher
                     .finish_replicator_install(
                         &plan,

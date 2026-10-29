@@ -50,7 +50,7 @@ async fn open_stream(
         Body::Whole => send.write_all(&vec![0; len as usize]).await.ok()?,
         Body::Trickle(every) => {
             for _ in 1..len {
-                tokio::time::sleep(every).await;
+                crate::rt::time::sleep(every).await;
                 if send.write_all(&[0]).await.is_err() {
                     break;
                 }
@@ -82,7 +82,7 @@ async fn stop_code_after(
     let bare_addr = *bare.addr().ip_addrs().next().expect("listener address");
 
     let tag = tag.to_vec();
-    let opener = n0_future::task::spawn({
+    let opener = crate::rt::spawn(edge::compat({
         let bare = bare.clone();
         async move {
             let connection = bare.accept().await?.await.ok()?;
@@ -95,7 +95,7 @@ async fn stop_code_after(
             let (mut send, _recv) = connection.open_bi().await.ok()?;
             open_stream(&mut send, &tag, len, Body::Nothing).await
         }
-    });
+    }));
 
     let (transport, endpoint_task) = spawn_transport().await;
     transport
@@ -106,11 +106,12 @@ async fn stop_code_after(
         let request = crate::message::QuerySEArtifactsRequest::new("collection", vec![]);
         let transport = transport.clone();
         let bare_id = bare_id.clone();
-        n0_future::task::spawn(async move {
+        crate::rt::spawn(edge::compat(async move {
             let _ = transport.send_se_query_request(&bare_id, request).await;
-        });
+        }))
+        .detach();
     }
-    let code = n0_future::time::timeout(wait, opener)
+    let code = crate::rt::time::timeout(wait, opener.join())
         .await
         .ok()
         .and_then(|opened| opened.expect("opener task"));
@@ -146,7 +147,7 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
 
     let tag = tag.to_vec();
     let listener_addr = listener.addr();
-    let opened = n0_future::task::spawn(async move {
+    let opened = crate::rt::spawn(edge::compat(async move {
         let connection = opener
             .connect(listener_addr, protocols::ALPN_MUX)
             .await
@@ -154,7 +155,7 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
         let (mut send, _recv) = connection.open_bi().await.expect("open stream");
         let code = open_stream(&mut send, &tag, len, body).await;
         (code, connection, opener)
-    });
+    }));
 
     let connection = listener
         .accept()
@@ -181,7 +182,7 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
     let stop_code = if lease.is_some() {
         None
     } else {
-        n0_future::time::timeout(STOPPED, opened)
+        crate::rt::time::timeout(STOPPED, opened.join())
             .await
             .expect("opener sees the stop")
             .expect("opener task")
@@ -194,79 +195,97 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_unknown_tag_is_stopped() {
-    assert_eq!(
-        stop_code_for(b"/defra-iroh/nope/0.1", 1, STOPPED).await,
-        Some(2)
-    );
+    edge::compat(async {
+        assert_eq!(
+            stop_code_for(b"/defra-iroh/nope/0.1", 1, STOPPED).await,
+            Some(2)
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_oversized_message_is_stopped_before_its_body_is_read() {
-    let too_large = protocols::MAX_MESSAGE_SIZE as u32 + 1;
-    assert_eq!(
-        stop_code_for(protocols::STREAM_PUSHLOG, too_large, STOPPED).await,
-        Some(3)
-    );
+    edge::compat(async {
+        let too_large = protocols::MAX_MESSAGE_SIZE as u32 + 1;
+        assert_eq!(
+            stop_code_for(protocols::STREAM_PUSHLOG, too_large, STOPPED).await,
+            Some(3)
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_reply_nobody_asked_for_is_stopped_before_its_length_is_read() {
-    assert_eq!(
-        stop_code_for(protocols::STREAM_SE_QUERY_RESP, 1, STOPPED).await,
-        Some(6)
-    );
+    edge::compat(async {
+        assert_eq!(
+            stop_code_for(protocols::STREAM_SE_QUERY_RESP, 1, STOPPED).await,
+            Some(6)
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_older_peers_reply_to_our_request_is_admitted() {
-    // Admitted, the node waits for a body that never comes instead of stopping.
-    assert_eq!(
-        stop_code_after(
-            protocols::STREAM_SE_QUERY_RESP,
-            1,
-            Duration::from_secs(1),
-            true,
-            protocols::ALPN_MUX_V1,
-        )
-        .await,
-        None
-    );
+    edge::compat(async {
+        // Admitted, the node waits for a body that never comes instead of stopping.
+        assert_eq!(
+            stop_code_after(
+                protocols::STREAM_SE_QUERY_RESP,
+                1,
+                Duration::from_secs(1),
+                true,
+                protocols::ALPN_MUX_V1,
+            )
+            .await,
+            None
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn on_mux_0_2_a_reply_stream_is_stopped_even_after_our_request() {
-    // A 0.2 peer replies on the request's stream, so this stream answers nothing.
-    assert_eq!(
-        stop_code_after(
-            protocols::STREAM_SE_QUERY_RESP,
-            1,
-            STOPPED,
-            true,
-            protocols::ALPN_MUX,
-        )
-        .await,
-        Some(6)
-    );
+    edge::compat(async {
+        // A 0.2 peer replies on the request's stream, so this stream answers nothing.
+        assert_eq!(
+            stop_code_after(
+                protocols::STREAM_SE_QUERY_RESP,
+                1,
+                STOPPED,
+                true,
+                protocols::ALPN_MUX,
+            )
+            .await,
+            Some(6)
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_admitted_bulk_body_holds_its_room_until_the_lease_drops() {
-    let len = protocols::MAX_MESSAGE_SIZE as u32;
-    let mut admitted = admit_one(
-        protocols::STREAM_CAR,
-        len,
-        Body::Whole,
-        InboundDeadlines::default(),
-    )
-    .await;
-    let (payload, lease) = admitted.lease.take().expect("the body is admitted");
-    assert_eq!(payload.len(), len as usize);
-    assert_eq!(admitted.class(Priority::Bulk).held_bytes, len as usize);
+    edge::compat(async {
+        let len = protocols::MAX_MESSAGE_SIZE as u32;
+        let mut admitted = admit_one(
+            protocols::STREAM_CAR,
+            len,
+            Body::Whole,
+            InboundDeadlines::default(),
+        )
+        .await;
+        let (payload, lease) = admitted.lease.take().expect("the body is admitted");
+        assert_eq!(payload.len(), len as usize);
+        assert_eq!(admitted.class(Priority::Bulk).held_bytes, len as usize);
 
-    drop(lease);
-    assert_eq!(admitted.class(Priority::Bulk).held_bytes, 0);
+        drop(lease);
+        assert_eq!(admitted.class(Priority::Bulk).held_bytes, 0);
+    })
+    .await
 }
 
 /// Deadlines short enough that a test can wait them out.
@@ -279,116 +298,129 @@ fn short_deadlines() -> InboundDeadlines {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_car_reply_on_a_stream_of_its_own_is_an_unknown_tag() {
-    // Every peer sends CAR blocks back on the request's stream.
-    assert_eq!(
-        stop_code_for(b"/defra-iroh/car/0.1/resp", u32::MAX, STOPPED).await,
-        Some(2)
-    );
+    edge::compat(async {
+        // Every peer sends CAR blocks back on the request's stream.
+        assert_eq!(
+            stop_code_for(b"/defra-iroh/car/0.1/resp", u32::MAX, STOPPED).await,
+            Some(2)
+        );
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_body_that_never_arrives_is_stopped_and_frees_its_room() {
-    let len = 1000;
-    let admitted = admit_one(
-        protocols::STREAM_IDENTITY,
-        len,
-        Body::Nothing,
-        short_deadlines(),
-    )
-    .await;
+    edge::compat(async {
+        let len = 1000;
+        let admitted = admit_one(
+            protocols::STREAM_IDENTITY,
+            len,
+            Body::Nothing,
+            short_deadlines(),
+        )
+        .await;
 
-    assert!(admitted.lease.is_none());
-    assert_eq!(admitted.stop_code, Some(5));
-    let control = admitted.class(Priority::Control);
-    assert_eq!(
-        control.held_bytes_high_water, len as usize,
-        "the body was admitted"
-    );
-    assert_eq!(control.held_bytes, 0, "its room was given back");
+        assert!(admitted.lease.is_none());
+        assert_eq!(admitted.stop_code, Some(5));
+        let control = admitted.class(Priority::Control);
+        assert_eq!(
+            control.held_bytes_high_water, len as usize,
+            "the body was admitted"
+        );
+        assert_eq!(control.held_bytes, 0, "its room was given back");
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_body_that_trickles_in_is_stopped_and_frees_its_room() {
-    let deadlines = short_deadlines();
-    let len = 1000;
-    // Often enough that the idle deadline never fires, far too slow for the
-    // total one.
-    let every = deadlines.idle / 3;
-    assert!(every * len > deadlines.body(len as usize));
+    edge::compat(async {
+        let deadlines = short_deadlines();
+        let len = 1000;
+        // Often enough that the idle deadline never fires, far too slow for the
+        // total one.
+        let every = deadlines.idle / 3;
+        assert!(every * len > deadlines.body(len as usize));
 
-    let admitted = admit_one(
-        protocols::STREAM_IDENTITY,
-        len,
-        Body::Trickle(every),
-        deadlines,
-    )
-    .await;
+        let admitted = admit_one(
+            protocols::STREAM_IDENTITY,
+            len,
+            Body::Trickle(every),
+            deadlines,
+        )
+        .await;
 
-    assert!(admitted.lease.is_none());
-    assert_eq!(admitted.stop_code, Some(5));
-    let control = admitted.class(Priority::Control);
-    assert_eq!(
-        control.held_bytes_high_water, len as usize,
-        "the body was admitted"
-    );
-    assert_eq!(control.held_bytes, 0, "its room was given back");
+        assert!(admitted.lease.is_none());
+        assert_eq!(admitted.stop_code, Some(5));
+        let control = admitted.class(Priority::Control);
+        assert_eq!(
+            control.held_bytes_high_water, len as usize,
+            "the body was admitted"
+        );
+        assert_eq!(control.held_bytes, 0, "its room was given back");
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_oversized_manage_reply_on_its_request_stream_is_stopped() {
-    let bare = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-        .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![protocols::ALPN_MUX.to_vec()])
-        .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
-        .expect("bind addr")
-        .bind()
-        .await
-        .expect("bind endpoint");
-    let bare_id = PeerId::new(bare.id().to_string());
-    let bare_addr = *bare.addr().ip_addrs().next().expect("listener address");
+    edge::compat(async {
+        let bare = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .relay_mode(iroh::RelayMode::Disabled)
+            .alpns(vec![protocols::ALPN_MUX.to_vec()])
+            .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+            .expect("bind addr")
+            .bind()
+            .await
+            .expect("bind endpoint");
+        let bare_id = PeerId::new(bare.id().to_string());
+        let bare_addr = *bare.addr().ip_addrs().next().expect("listener address");
 
-    let replier = n0_future::task::spawn({
-        let bare = bare.clone();
-        async move {
-            let connection = bare.accept().await?.await.ok()?;
-            loop {
-                let (mut send, mut recv) = connection.accept_bi().await.ok()?;
-                if protocols::read_stream_tag(&mut recv).await.ok()? != protocols::STREAM_MANAGE_REQ
-                {
-                    continue;
+        let replier = crate::rt::spawn(edge::compat({
+            let bare = bare.clone();
+            async move {
+                let connection = bare.accept().await?.await.ok()?;
+                loop {
+                    let (mut send, mut recv) = connection.accept_bi().await.ok()?;
+                    if protocols::read_stream_tag(&mut recv).await.ok()?
+                        != protocols::STREAM_MANAGE_REQ
+                    {
+                        continue;
+                    }
+                    let too_large = protocols::MAX_MANAGE_MSG_SIZE as u32 + 1;
+                    send.write_all(&too_large.to_be_bytes()).await.ok()?;
+                    let code = send.stopped().await.ok()??;
+                    return Some(u32::try_from(code.into_inner()).expect("small stop code"));
                 }
-                let too_large = protocols::MAX_MANAGE_MSG_SIZE as u32 + 1;
-                send.write_all(&too_large.to_be_bytes()).await.ok()?;
-                let code = send.stopped().await.ok()??;
-                return Some(u32::try_from(code.into_inner()).expect("small stop code"));
             }
-        }
-    });
+        }));
 
-    let (transport, endpoint_task) = spawn_transport().await;
-    transport
-        .dial(&bare_id, vec![PeerAddr::new(bare_addr.to_string())])
-        .await
-        .expect("dial bare peer");
-    let request = crate::message::ManageRequest::new(
-        crate::message::ManageMutateOp::ReplicatorDelete {
-            addresses: Vec::new(),
-            collection_ids: Vec::new(),
-        },
-        Vec::new(),
-    );
-    transport
-        .send_manage_request(&bare_id, request)
-        .await
-        .expect("manage request");
-    let code = n0_future::time::timeout(STOPPED, replier)
-        .await
-        .ok()
-        .and_then(|replied| replied.expect("replier task"));
+        let (transport, endpoint_task) = spawn_transport().await;
+        transport
+            .dial(&bare_id, vec![PeerAddr::new(bare_addr.to_string())])
+            .await
+            .expect("dial bare peer");
+        let request = crate::message::ManageRequest::new(
+            crate::message::ManageMutateOp::ReplicatorDelete {
+                addresses: Vec::new(),
+                collection_ids: Vec::new(),
+            },
+            Vec::new(),
+        );
+        transport
+            .send_manage_request(&bare_id, request)
+            .await
+            .expect("manage request");
+        let code = crate::rt::time::timeout(STOPPED, replier.join())
+            .await
+            .ok()
+            .and_then(|replied| replied.expect("replier task"));
 
-    transport.shutdown().await.unwrap();
-    endpoint_task.await.unwrap();
-    assert_eq!(code, Some(3));
+        transport.shutdown().await.unwrap();
+        endpoint_task.await.unwrap();
+        assert_eq!(code, Some(3));
+    })
+    .await
 }

@@ -237,7 +237,8 @@ pub struct ReplayPushGate {
 }
 
 impl ReplayPushGate {
-    pub fn new(config: ReplayPushConfig) -> Self {
+    /// Paces and times its sends on `network`'s clock.
+    pub fn new(config: ReplayPushConfig, network: p2p::network::Network) -> Self {
         let rate = if config.per_peer_rate_limit_rate.is_finite()
             && config.per_peer_rate_limit_rate > 0.0
         {
@@ -255,14 +256,8 @@ impl ReplayPushGate {
             )),
             peer_pacer: ReplayPeerPacer::new(config.per_peer_rate_limit_burst.max(1), rate),
             send_timeout: config.send_timeout.max(Duration::from_millis(1)),
-            network: p2p::network::Network::default(),
+            network,
         }
-    }
-
-    /// Paces and times its sends on `network`'s clock.
-    pub fn on(mut self, network: p2p::network::Network) -> Self {
-        self.network = network;
-        self
     }
 
     pub(crate) async fn acquire_document_task(

@@ -6,10 +6,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use n0_future::task::JoinHandle;
-use n0_future::time::Instant;
-
 use crate::error::EdgeError;
+use crate::platform::{Instant, JoinHandle};
 use crate::shared::Shared;
 use crate::timer::Timer;
 
@@ -33,7 +31,9 @@ pub struct Task<T> {
 
 struct Running<T> {
     join: JoinHandle<Result<T, EdgeError>>,
-    timer: Timer,
+    shared: Arc<Shared>,
+    /// Armed on the first poll: detached work never pays for a timer.
+    timer: Option<Timer>,
     submitted: Instant,
     limit: Duration,
 }
@@ -44,22 +44,23 @@ impl<T> Task<T> {
     }
 
     pub(crate) fn running(shared: &Arc<Shared>, join: JoinHandle<Result<T, EdgeError>>) -> Self {
-        let submitted = Instant::now();
         Self {
             running: Some(Running {
                 join,
-                timer: Timer::after(shared, submitted, shared.deadline),
-                submitted,
+                shared: Arc::clone(shared),
+                timer: None,
+                submitted: Instant::now(),
                 limit: shared.deadline,
             }),
         }
     }
 
-    /// Sets the deadline to `limit` after the work was submitted.
+    /// Sets the deadline to `limit` after the work was submitted;
+    /// `Duration::MAX` is none.
     pub fn within(mut self, limit: Duration) -> Self {
         if let Some(running) = &mut self.running {
             running.limit = limit;
-            running.timer.reset(running.submitted, limit);
+            running.timer = None;
         }
         self
     }
@@ -88,15 +89,16 @@ impl<T> Future for Task<T> {
             return Poll::Ready(Err(EdgeError::Closed));
         };
         if let Poll::Ready(joined) = Pin::new(&mut running.join).poll(cx) {
-            return Poll::Ready(joined.unwrap_or_else(|error| {
-                Err(if error.is_panic() {
-                    EdgeError::Panicked(error.to_string())
-                } else {
-                    EdgeError::Cancelled
-                })
-            }));
+            return Poll::Ready(joined.and_then(|outcome| outcome));
         }
-        running.timer.poll_limit(cx, running.limit).map(|error| {
+        if running.limit == Duration::MAX && !running.shared.is_stopped() {
+            return Poll::Pending;
+        }
+        let (shared, submitted, limit) = (&running.shared, running.submitted, running.limit);
+        let timer = running
+            .timer
+            .get_or_insert_with(|| Timer::after(shared, submitted, limit));
+        timer.poll_limit(cx, limit).map(|error| {
             running.join.abort();
             Err(error)
         })

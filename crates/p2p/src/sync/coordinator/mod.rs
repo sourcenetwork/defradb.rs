@@ -72,19 +72,24 @@ use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::Notify;
 use acp::DocumentACP;
 use blockstore::Blockstore;
 use cid::Cid;
 use defra_core::thread_bounds::MaybeSend;
+use futures::channel::{mpsc, oneshot};
+use futures::future::Shared;
+use futures::FutureExt;
 use kovan::{Atom, AtomOption};
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
-use tokio::sync::{watch, Notify, OwnedSemaphorePermit, Semaphore};
+use regolith::sync::{Event, OwnedSemaphorePermit, Semaphore};
 
 use crate::bitswap::{AccessMode, ReplicatorRegistry};
 use crate::replicator::ReplicationFilterMatcher;
 use crate::tracked_task::{TrackedAbort, TrackedTask};
 use crate::transport::{P2PTransport, PeerId};
+use edge::EdgeError;
 
 use super::broadcaster::Broadcaster;
 use super::head_provider::DocumentHeadProvider;
@@ -100,7 +105,7 @@ pub(crate) use super::manager::{
 
 /// Where a coordinator's push failures arrive
 /// ([`SyncCoordinator::attach_failure_channel`]).
-pub type PushFailureReceiver = tokio::sync::mpsc::Receiver<PushFailure>;
+pub type PushFailureReceiver = mpsc::Receiver<PushFailure>;
 
 /// A durable retry update emitted by outbound PushLog admission/workers.
 ///
@@ -129,7 +134,7 @@ pub struct PushFailure {
     /// Durable generation installed before this push was admitted.
     pub marker_generation: Option<u64>,
     /// Register-before-send handshake with the durable recorder.
-    pub durable_tx: Option<tokio::sync::oneshot::Sender<Option<u64>>>,
+    pub durable_tx: Option<oneshot::Sender<Option<u64>>>,
 }
 
 /// Stable diagnostic snapshot of P2P-owned sync resources (#1099).
@@ -219,10 +224,10 @@ struct SyncShutdownState {
     /// remains the single source of truth and stays a plain atomic because it
     /// is read on hot paths.
     shutdown_notify: Notify,
-    shutdown_complete: watch::Receiver<bool>,
+    shutdown_complete: Shared<oneshot::Receiver<()>>,
     /// Popped by value by the shutdown winner, so a cancelled or panicking
     /// drain still closes the channel by dropping the sender.
-    shutdown_complete_tx: SegQueue<watch::Sender<bool>>,
+    shutdown_complete_tx: SegQueue<oneshot::Sender<()>>,
     /// Every retained handle, pending-DAG fetches included; the registry
     /// below keeps only their reservations and abort handles.
     background_tasks: SegQueue<TrackedTask>,
@@ -237,9 +242,8 @@ struct SyncShutdownState {
     /// hidden pre-semaphore task queue (#1159).
     pending_dag_fetch_task_limit: usize,
     pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
-    /// Where the coordinator's network work runs, set once by the node that
-    /// owns it (`SyncCoordinator::use_network`).
-    network: regolith::sync::OnceCell<crate::network::Network>,
+    /// Where the coordinator's network work runs.
+    network: crate::network::Network,
 }
 
 #[derive(Clone)]
@@ -273,6 +277,8 @@ const NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT: usize = 32;
 pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
     per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
+    /// Set at shutdown: every waiting and later acquire gives up.
+    closed: Arc<Event>,
     peer_limit: usize,
     /// Roots a reply-driven fetch is running for, with the trust it merges under.
     roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
@@ -309,6 +315,7 @@ impl DagFetchLimiter {
             per_peer: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
+            closed: Arc::default(),
             peer_limit: global_limit.saturating_sub(1).max(1),
             roots: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
@@ -346,24 +353,22 @@ impl DagFetchLimiter {
                 .get_or_insert(peer_key, Arc::new(Semaphore::new(self.peer_limit))),
         };
 
-        let Ok(peer_permit) = peer_semaphore.acquire_owned().await else {
-            return None;
+        let permits = async {
+            let peer_permit = peer_semaphore.acquire_owned(1).await;
+            let global_permit = self.global.acquire_owned(1).await;
+            DagFetchPermits {
+                _global: global_permit,
+                _peer: peer_permit,
+            }
         };
-        let Ok(global_permit) = self.global.clone().acquire_owned().await else {
-            return None;
-        };
-
-        Some(DagFetchPermits {
-            _global: global_permit,
-            _peer: peer_permit,
-        })
+        futures::select_biased! {
+            () = self.closed.wait().fuse() => None,
+            permits = permits.fuse() => Some(permits),
+        }
     }
 
     fn close(&self) {
-        self.global.close();
-        for semaphore in self.per_peer.values() {
-            semaphore.close();
-        }
+        self.closed.set();
     }
 }
 
@@ -374,15 +379,15 @@ pub struct SyncShutdownHandle {
 }
 
 impl SyncShutdownHandle {
-    fn new(pending_dag_fetch_task_limit: usize) -> Self {
-        let (sender, shutdown_complete) = watch::channel(false);
+    fn new(pending_dag_fetch_task_limit: usize, network: crate::network::Network) -> Self {
+        let (sender, shutdown_complete) = oneshot::channel();
         let shutdown_complete_tx = SegQueue::new();
         shutdown_complete_tx.push(sender);
         Self {
             inner: Arc::new(SyncShutdownState {
                 is_shutting_down: AtomicBool::new(false),
                 shutdown_notify: Notify::new(),
-                shutdown_complete,
+                shutdown_complete: shutdown_complete.shared(),
                 shutdown_complete_tx,
                 background_tasks: SegQueue::new(),
                 pruning: AtomicUsize::new(0),
@@ -393,7 +398,7 @@ impl SyncShutdownHandle {
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
                 pending_dag_fetch_tasks: Atom::new(RapidHashMap::new()),
-                network: regolith::sync::OnceCell::new(),
+                network,
             }),
         }
     }
@@ -425,8 +430,6 @@ impl SyncShutdownHandle {
         // reflected in the flag we are about to read. Checking first would
         // leave a window where neither happens and the caller parks forever.
         let notified = self.inner.shutdown_notify.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
 
         if self.is_shutting_down() {
             return;
@@ -438,31 +441,35 @@ impl SyncShutdownHandle {
     /// Wait for registered tasks within the graceful and cancellation budgets.
     /// Concurrent callers share teardown; cancelling a caller does not stop it.
     pub async fn shutdown(&self) {
-        let mut complete = self.inner.shutdown_complete.clone();
+        let complete = self.inner.shutdown_complete.clone();
         if self.begin_shutdown() {
             let shutdown = self.clone();
             // The drain owns the only sender, so cancellation or panic closes
             // the channel instead of leaving other shutdown callers parked.
             // It runs on the coordinator's network edge: the caller may be a
-            // plain thread with no runtime.
+            // plain thread with no runtime. A closed edge refuses it, and the
+            // tracked tasks hold the coordinator alive, so the caller runs it.
             let sender = self.inner.shutdown_complete_tx.pop();
-            self.network().spawn(async move {
+            let drain = async move {
                 shutdown
                     .drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT)
                     .await;
                 if let Some(sender) = sender {
-                    sender.send_replace(true);
+                    let _ = sender.send(());
                 }
-            });
+            };
+            if let Err(drain) = self.network().try_spawn(drain) {
+                drain.await;
+            }
         }
-        if complete.wait_for(|complete| *complete).await.is_err() {
+        if complete.await.is_err() {
             tracing::warn!("Coordinator shutdown drain stopped before completing");
         }
     }
 
     /// Where the coordinator's network work runs.
     pub fn network(&self) -> crate::network::Network {
-        self.inner.network.get().cloned().unwrap_or_default()
+        self.inner.network.clone()
     }
 
     fn spawn_task<F>(&self, future: F) -> bool
@@ -482,13 +489,6 @@ impl SyncShutdownHandle {
             }));
             return true;
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        if workers::on_worker() {
-            tracing::error!(
-                "network work was submitted from a pool worker of a node with no network edge; it did not run"
-            );
-            return false;
-        }
         self.spawn_here(future)
     }
 
@@ -499,7 +499,7 @@ impl SyncShutdownHandle {
         // Retire completed handles on every registration so retained handles
         // track live tasks instead of total spawn count (#1099).
         self.prune_finished_tasks();
-        self.register_task(TrackedTask::spawn(future))
+        self.register_task(TrackedTask::spawn(self.network().edge(), future))
     }
 
     /// Publish the handle, then re-read the shutdown flag behind a full fence.
@@ -519,6 +519,10 @@ impl SyncShutdownHandle {
     fn prune_finished_tasks(&self) {
         let inner = &self.inner;
         inner.pruning.fetch_add(1, Ordering::SeqCst);
+        if inner.is_shutting_down.load(Ordering::SeqCst) {
+            inner.pruning.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
         for _ in 0..inner.background_tasks.len() {
             let Some(task) = inner.background_tasks.pop() else {
                 break;
@@ -531,16 +535,20 @@ impl SyncShutdownHandle {
     }
 
     fn try_acquire_non_authoritative_broadcast_slot(&self) -> Option<OwnedSemaphorePermit> {
-        let permit =
-            match Arc::clone(&self.inner.non_authoritative_broadcast_slots).try_acquire_owned() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    self.inner
-                        .non_authoritative_broadcast_rejected
-                        .fetch_add(1, Ordering::Relaxed);
-                    return None;
-                }
-            };
+        let permit = match self
+            .inner
+            .non_authoritative_broadcast_slots
+            .acquire_owned(1)
+            .now_or_never()
+        {
+            Some(permit) => permit,
+            None => {
+                self.inner
+                    .non_authoritative_broadcast_rejected
+                    .fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
         let current = NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT.saturating_sub(
             self.inner
                 .non_authoritative_broadcast_slots
@@ -677,10 +685,10 @@ impl SyncShutdownHandle {
         }
 
         let shutdown = self.clone();
-        let task = TrackedTask::spawn(async move {
-            tokio::select! {
-                _ = shutdown.cancelled() => {}
-                _ = future => {}
+        let task = TrackedTask::spawn(self.network().edge(), async move {
+            futures::select! {
+                _ = shutdown.cancelled().fuse() => {}
+                _ = future.fuse() => {}
             }
         });
         let abort = task.abort_handle();
@@ -712,27 +720,29 @@ impl SyncShutdownHandle {
             .store(RapidHashMap::new());
         fence(Ordering::SeqCst);
         while self.inner.pruning.load(Ordering::SeqCst) != 0 {
-            tokio::task::yield_now().await;
+            crate::rt::yield_now().await;
         }
         let mut handles = Vec::new();
         while let Some(task) = self.inner.background_tasks.pop() {
             handles.push(task);
         }
 
-        let deadline = n0_future::time::Instant::now() + timeout;
+        let network = self.network();
+        let deadline = crate::rt::time::Instant::now() + timeout;
         let mut handles = handles
             .into_iter()
-            .map(TrackedTask::into_join_handle)
+            .map(|task| (task.abort_handle(), Box::pin(task)))
             .collect::<Vec<_>>()
             .into_iter();
-        while let Some(mut handle) = handles.next() {
-            let result = n0_future::time::timeout(
-                deadline.saturating_duration_since(n0_future::time::Instant::now()),
-                &mut handle,
-            )
-            .await;
+        while let Some((abort, mut handle)) = handles.next() {
+            let result = network
+                .timeout(
+                    deadline.saturating_duration_since(crate::rt::time::Instant::now()),
+                    &mut handle,
+                )
+                .await;
             if let Ok(Err(error)) = &result {
-                if error.is_panic() {
+                if matches!(error, EdgeError::Panicked(_)) {
                     tracing::warn!(%error, "Coordinator background task panicked");
                 }
             }
@@ -741,21 +751,22 @@ impl SyncShutdownHandle {
                     timeout_ms = timeout.as_millis() as u64,
                     "Coordinator background task exceeded shutdown drain window; aborting remaining tasks"
                 );
-                handle.abort();
-                for pending in handles.as_slice() {
+                abort.abort();
+                for (pending, _) in handles.as_slice() {
                     pending.abort();
                 }
                 let remaining = handles.len() + 1;
                 let join = async move {
-                    for pending in std::iter::once(handle).chain(handles) {
+                    for (_, pending) in std::iter::once((abort, handle)).chain(handles) {
                         if let Err(error) = pending.await {
-                            if error.is_panic() {
+                            if matches!(error, EdgeError::Panicked(_)) {
                                 tracing::warn!(%error, "Coordinator background task panicked");
                             }
                         }
                     }
                 };
-                if n0_future::time::timeout(BACKGROUND_TASK_ABORT_TIMEOUT, join)
+                if network
+                    .timeout(BACKGROUND_TASK_ABORT_TIMEOUT, join)
                     .await
                     .is_err()
                 {
@@ -778,7 +789,7 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
     /// Channel for reporting durable retry updates to the host runtime.
     /// Behind a shared slot so the fixed push workers observe a channel that
     /// is installed after construction (`set_failure_channel`).
-    pub(super) failure_tx: Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
+    pub(super) failure_tx: Arc<AtomOption<mpsc::Sender<PushFailure>>>,
 
     /// Limiter for concurrent DAG fetch tasks (configurable via SyncConfig).
     pub(super) dag_fetch_limiter: DagFetchLimiter,
@@ -909,6 +920,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     {
         crate::sync::event_dispatcher::run_event_dispatcher(
             events,
+            self.network().edge().clone(),
             Arc::clone(&self.runtime.dispatch_diagnostics),
             handler,
         )
@@ -1010,13 +1022,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             if self.runtime.shutdown.is_shutting_down() {
                 return;
             }
-            tokio::select! {
-                _ = self.runtime.shutdown.cancelled() => return,
-                _ = self.manager.resync_persisted_pending_dags() => {}
+            futures::select! {
+                _ = self.runtime.shutdown.cancelled().fuse() => return,
+                _ = self.manager.resync_persisted_pending_dags().fuse() => {}
             }
-            tokio::select! {
-                _ = n0_future::time::sleep(interval) => {}
-                _ = self.runtime.shutdown.cancelled() => return,
+            futures::select! {
+                _ = crate::rt::time::sleep(interval).fuse() => {}
+                _ = self.runtime.shutdown.cancelled().fuse() => return,
             }
         }
     }
@@ -1036,24 +1048,30 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 "pending-DAG retry interval must be greater than zero".into(),
             ));
         }
-        let mut retry_tick = n0_future::time::interval(interval);
-        retry_tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
+        let mut retry_tick = crate::rt::time::interval(interval);
+        retry_tick.set_missed_tick_behavior(crate::rt::time::MissedTickBehavior::Skip);
+        // One sender for the clock's whole life, so its readiness carries
+        // over from one dispatch to the next.
+        let mut event_tx = self.manager.event_sender();
         loop {
             if self.runtime.shutdown.is_shutting_down() {
                 return Ok(());
             }
-            tokio::select! {
-                _ = retry_tick.tick() => {}
-                _ = self.manager.pending_dag_ready() => {}
-                _ = self.runtime.shutdown.cancelled() => return Ok(()),
+            futures::select! {
+                _ = retry_tick.tick().fuse() => {}
+                _ = self.manager.pending_dag_ready().fuse() => {}
+                _ = self.runtime.shutdown.cancelled().fuse() => return Ok(()),
             }
-            self.dispatch_due_pending_dag_fetches(n0_future::time::Instant::now());
+            self.dispatch_due_pending_dag_fetches(&mut event_tx, crate::rt::time::Instant::now());
         }
     }
 
-    fn dispatch_due_pending_dag_fetches(&self, now: n0_future::time::Instant) -> usize {
+    fn dispatch_due_pending_dag_fetches(
+        &self,
+        event_tx: &mut mpsc::Sender<crate::sync::SyncEvent>,
+        now: crate::rt::time::Instant,
+    ) -> usize {
         let due = self.manager.due_pending_dag_retries(now);
-        let event_tx = self.manager.event_sender();
         let mut available = self.runtime.shutdown.available_pending_dag_fetch_slots();
         let mut count = 0;
         for (root_cid, dag) in due {
@@ -1065,7 +1083,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             available -= 1;
 
-            let Ok(event_permit) = event_tx.try_reserve() else {
+            let ready = futures::future::poll_fn(|cx| event_tx.poll_ready(cx)).now_or_never();
+            let Some(Ok(())) = ready else {
                 self.runtime
                     .shutdown
                     .release_pending_dag_fetch_reservation(&root_cid);
@@ -1079,7 +1098,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 continue;
             }
 
-            self.dispatch_pending_dag_fetch(root_cid, &dag, event_permit);
+            self.dispatch_pending_dag_fetch(root_cid, &dag, event_tx);
             count += 1;
         }
         count
@@ -1088,9 +1107,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     #[cfg(test)]
     pub(crate) fn dispatch_due_pending_dag_fetches_for_test(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> usize {
-        self.dispatch_due_pending_dag_fetches(now)
+        self.dispatch_due_pending_dag_fetches(&mut self.manager.event_sender(), now)
     }
 
     /// Build the provider list for a fetch dispatch from positive per-CID
@@ -1101,10 +1120,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         &self,
         root_cid: Cid,
         dag: &PendingDag,
-        event_permit: tokio::sync::mpsc::Permit<'_, crate::sync::SyncEvent>,
+        event_tx: &mut mpsc::Sender<crate::sync::SyncEvent>,
     ) {
+        // The caller saw `event_tx` ready, so only a receiver gone since can
+        // refuse these sends, and then the event has nowhere to go.
         if dag.merge_continuation {
-            event_permit.send(crate::sync::SyncEvent::DagReady {
+            let _ = event_tx.start_send(crate::sync::SyncEvent::DagReady {
                 root_cid,
                 doc_id: dag.doc_id.clone(),
                 collection_id: dag.collection_id.clone(),
@@ -1137,7 +1158,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             fetch_failures = dag.fetch_failures,
             "Dispatching pending DAG fetch"
         );
-        event_permit.send(crate::sync::SyncEvent::DagNeedsFetch {
+        let _ = event_tx.start_send(crate::sync::SyncEvent::DagNeedsFetch {
             root_cid,
             missing,
             providers,
@@ -1152,11 +1173,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     #[cfg(test)]
     fn dispatch_pending_dag_fetch_for_test(&self, root_cid: Cid, dag: &PendingDag) {
-        let event_tx = self.manager.event_sender();
-        let event_permit = event_tx
-            .try_reserve()
-            .expect("test event receiver must have capacity");
-        self.dispatch_pending_dag_fetch(root_cid, dag, event_permit);
+        let mut event_tx = self.manager.event_sender();
+        futures::future::poll_fn(|cx| event_tx.poll_ready(cx))
+            .now_or_never()
+            .expect("test event receiver must have capacity")
+            .expect("test event receiver must be open");
+        self.dispatch_pending_dag_fetch(root_cid, dag, &mut event_tx);
     }
 
     pub fn shutdown_handle(&self) -> SyncShutdownHandle {
@@ -1178,13 +1200,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.runtime.dag_fetch_limiter.close();
         self.runtime.push_backlog.close();
         self.runtime.shutdown.shutdown().await;
-    }
-
-    /// Runs the coordinator's network work (its background tasks, the
-    /// broadcasts writes hand it, retry sleeps) on `network`. Set once, by the
-    /// node that owns the coordinator; later calls change nothing.
-    pub fn use_network(&self, network: crate::network::Network) {
-        let _ = self.runtime.shutdown.inner.network.set(network);
     }
 
     /// Where the coordinator's network work runs.
@@ -1403,7 +1418,7 @@ mod dag_fetch_limiter_tests {
         assert!(limiter.claim_root(root, trusted()).is_some());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn single_peer_cannot_hold_every_global_permit() {
         let limiter = DagFetchLimiter::new(4);
         let flooder = PeerId::new("flooder".to_string());
@@ -1415,20 +1430,44 @@ mod dag_fetch_limiter_tests {
         }
 
         assert!(
-            n0_future::time::timeout(Duration::from_millis(20), limiter.acquire(&flooder))
+            crate::rt::time::timeout(Duration::from_millis(20), limiter.acquire(&flooder))
                 .await
                 .is_err(),
             "one peer should be capped below the global limit"
         );
 
         let legitimate_permit =
-            n0_future::time::timeout(Duration::from_millis(20), limiter.acquire(&legitimate))
+            crate::rt::time::timeout(Duration::from_millis(20), limiter.acquire(&legitimate))
                 .await
                 .expect("legitimate peer should get reserved capacity")
                 .expect("limiter open");
 
         drop(legitimate_permit);
         drop(flooder_permits);
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn closing_ends_waiting_and_later_acquires() {
+        let limiter = DagFetchLimiter::new(1);
+        let peer = PeerId::new("peer".to_string());
+        let held = limiter.acquire(&peer).await.expect("first permit");
+        let waiting = {
+            let limiter = limiter.clone();
+            let peer = peer.clone();
+            crate::rt::spawn(async move { limiter.acquire(&peer).await.is_none() })
+        };
+        crate::rt::yield_now().await;
+
+        limiter.close();
+        assert!(
+            waiting.join().await.unwrap(),
+            "a waiting acquire ends at close"
+        );
+        drop(held);
+        assert!(
+            limiter.acquire(&peer).await.is_none(),
+            "an acquire after close fails even with permits free"
+        );
     }
 }
 
@@ -1443,7 +1482,9 @@ mod shutdown_tests {
         SyncCoordinator, SyncShutdownHandle, BACKGROUND_TASK_SHUTDOWN_TIMEOUT,
         NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
     };
+    use crate::network::test_network;
     use cid::Cid;
+    use futures::FutureExt;
     use multihash_codetable::{Code, MultihashDigest};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1451,14 +1492,14 @@ mod shutdown_tests {
 
     struct BlockingResyncStore {
         load_calls: std::sync::atomic::AtomicUsize,
-        resync_entered: tokio::sync::Notify,
+        resync_entered: crate::rt::Notify,
     }
 
     impl BlockingResyncStore {
         fn new() -> Self {
             Self {
                 load_calls: std::sync::atomic::AtomicUsize::new(0),
-                resync_entered: tokio::sync::Notify::new(),
+                resync_entered: crate::rt::Notify::new(),
             }
         }
     }
@@ -1533,14 +1574,14 @@ mod shutdown_tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn shutdown_waits_for_in_flight_background_task_completion() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         let completed = Arc::new(AtomicBool::new(false));
         let completed_for_task = Arc::clone(&completed);
 
         shutdown.spawn_task(async move {
-            n0_future::time::sleep(Duration::from_millis(50)).await;
+            crate::rt::time::sleep(Duration::from_millis(50)).await;
             completed_for_task.store(true, Ordering::SeqCst);
         });
 
@@ -1554,7 +1595,7 @@ mod shutdown_tests {
 
     #[test]
     fn non_authoritative_broadcast_slots_are_bounded_and_observable() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         let mut permits = Vec::new();
         for _ in 0..NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT {
             permits.push(
@@ -1582,9 +1623,9 @@ mod shutdown_tests {
     }
 
     /// #1099: completed handles must not accumulate for the process lifetime.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn spawn_task_prunes_finished_handles() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for _ in 0..50 {
             let completed = Arc::clone(&completed);
@@ -1593,14 +1634,14 @@ mod shutdown_tests {
             });
         }
 
-        let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
+        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
         while completed.load(Ordering::SeqCst) < 50 {
-            assert!(n0_future::time::Instant::now() < deadline);
-            n0_future::time::sleep(Duration::from_millis(5)).await;
+            assert!(crate::rt::time::Instant::now() < deadline);
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
         }
 
         shutdown.spawn_task(async {
-            n0_future::time::sleep(Duration::from_secs(5)).await;
+            crate::rt::time::sleep(Duration::from_secs(5)).await;
         });
 
         assert!(
@@ -1613,11 +1654,11 @@ mod shutdown_tests {
 
     /// A retry-clock tick must not retain another multi-minute poll fetch for
     /// a root whose previous fetch is still alive (#1159 production soak).
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn pending_dag_fetches_are_single_flight_per_root() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"pending-root"));
-        let first_release = Arc::new(tokio::sync::Notify::new());
+        let first_release = Arc::new(crate::rt::Notify::new());
         let first_release_for_task = Arc::clone(&first_release);
 
         assert!(shutdown.spawn_pending_dag_fetch(root, async move {
@@ -1630,10 +1671,10 @@ mod shutdown_tests {
         assert_eq!(shutdown.retained_task_count(), 1);
 
         first_release.notify_one();
-        let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
+        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
         while shutdown.retained_task_count() != 0 {
-            assert!(n0_future::time::Instant::now() < deadline);
-            tokio::task::yield_now().await;
+            assert!(crate::rt::time::Instant::now() < deadline);
+            crate::rt::yield_now().await;
         }
 
         assert!(
@@ -1643,13 +1684,13 @@ mod shutdown_tests {
         shutdown.shutdown().await;
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn scheduled_and_running_pending_fetches_share_one_bound() {
-        let shutdown = SyncShutdownHandle::new(2);
+        let shutdown = SyncShutdownHandle::new(2, test_network());
         let first = Cid::new_v1(0x55, Code::Sha2_256.digest(b"first"));
         let second = Cid::new_v1(0x55, Code::Sha2_256.digest(b"second"));
         let third = Cid::new_v1(0x55, Code::Sha2_256.digest(b"third"));
-        let release = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(crate::rt::Notify::new());
         let task_release = Arc::clone(&release);
 
         assert!(shutdown.reserve_pending_dag_fetch(first));
@@ -1670,14 +1711,14 @@ mod shutdown_tests {
         shutdown.shutdown().await;
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn shutdown_signals_pending_fetches_before_the_drain_timeout() {
-        let shutdown = SyncShutdownHandle::new(1);
+        let shutdown = SyncShutdownHandle::new(1, test_network());
         let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"pending-root"));
         assert!(shutdown.spawn_pending_dag_fetch(root, std::future::pending()));
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
 
-        let started = n0_future::time::Instant::now();
+        let started = crate::rt::time::Instant::now();
         shutdown.shutdown().await;
 
         assert!(
@@ -1686,21 +1727,23 @@ mod shutdown_tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn shutdown_uses_single_global_budget_for_background_tasks() {
-        let shutdown = SyncShutdownHandle::new(4);
+    #[test]
+    fn shutdown_uses_single_global_budget_for_background_tasks() {
+        edge::testing::paused(|edge| async move {
+            let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge));
 
-        for _ in 0..3 {
-            shutdown.spawn_task(async move {
-                n0_future::time::sleep(Duration::from_secs(10)).await;
-            });
-        }
+            for _ in 0..3 {
+                shutdown.spawn_task(async move {
+                    crate::rt::time::sleep(Duration::from_secs(10)).await;
+                });
+            }
 
-        let started = n0_future::time::Instant::now();
-        shutdown.shutdown().await;
-        let elapsed = started.elapsed();
+            let started = crate::rt::time::Instant::now();
+            shutdown.shutdown().await;
+            let elapsed = started.elapsed();
 
-        assert_eq!(elapsed, BACKGROUND_TASK_SHUTDOWN_TIMEOUT);
+            assert_eq!(elapsed, BACKGROUND_TASK_SHUTDOWN_TIMEOUT);
+        })
     }
 
     /// #1309: a periodic loop must exit on the shutdown signal, not at the end
@@ -1710,21 +1753,21 @@ mod shutdown_tests {
     ///
     /// The interval here is an hour on purpose. Without the cancellation arm
     /// this test cannot pass by waiting; it can only pass by being woken.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn periodic_loop_exits_on_the_signal_not_the_interval() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         let exited = Arc::new(AtomicBool::new(false));
 
         let loop_shutdown = shutdown.clone();
         let loop_exited = Arc::clone(&exited);
-        let task = n0_future::task::spawn(async move {
+        let task = crate::rt::spawn(async move {
             loop {
                 if loop_shutdown.is_shutting_down() {
                     break;
                 }
-                tokio::select! {
-                    _ = n0_future::time::sleep(Duration::from_secs(3600)) => {}
-                    _ = loop_shutdown.cancelled() => break,
+                futures::select! {
+                    _ = crate::rt::time::sleep(Duration::from_secs(3600)).fuse() => {}
+                    _ = loop_shutdown.cancelled().fuse() => break,
                 }
             }
             loop_exited.store(true, Ordering::SeqCst);
@@ -1732,7 +1775,7 @@ mod shutdown_tests {
 
         // Let the loop reach its sleep so the wakeup, not the entry check, is
         // what ends it.
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
         assert!(
             !exited.load(Ordering::SeqCst),
             "loop must still be parked before shutdown is signalled"
@@ -1740,14 +1783,14 @@ mod shutdown_tests {
 
         shutdown.shutdown().await;
 
-        n0_future::time::timeout(Duration::from_secs(5), task)
+        crate::rt::time::timeout(Duration::from_secs(5), task.join())
             .await
             .expect("loop must wake on the signal, not wait out its interval")
             .expect("loop task should not panic");
         assert!(exited.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn shutdown_cancels_an_in_flight_pending_resync() {
         let blockstore = Arc::new(blockstore::DefraBlockstore::new(
             Arc::new(storage::RegolithStore::in_memory().expect("in-memory store")),
@@ -1756,6 +1799,7 @@ mod shutdown_tests {
         let (coordinator, _events) = SyncCoordinator::new(
             TestTransport::new(Vec::new()),
             blockstore,
+            crate::network::test_network(),
             crate::sync::SyncConfig::default(),
         )
         .await
@@ -1766,7 +1810,7 @@ mod shutdown_tests {
             .await;
         let coordinator = Arc::new(coordinator);
 
-        let resync_task = n0_future::task::spawn({
+        let resync_task = crate::rt::spawn({
             let coordinator = Arc::clone(&coordinator);
             async move {
                 coordinator
@@ -1774,7 +1818,7 @@ mod shutdown_tests {
                     .await;
             }
         });
-        n0_future::time::timeout(
+        crate::rt::time::timeout(
             Duration::from_secs(5),
             pending_store.resync_entered.notified(),
         )
@@ -1783,19 +1827,19 @@ mod shutdown_tests {
         assert!(coordinator.manager().pending_resync_in_flight());
 
         coordinator.shutdown().await;
-        n0_future::time::timeout(Duration::from_secs(5), resync_task)
+        crate::rt::time::timeout(Duration::from_secs(5), resync_task.join())
             .await
             .expect("resync did not stop on shutdown")
             .expect("resync task should not panic");
         assert!(!coordinator.manager().pending_resync_in_flight());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn cancelled_returns_immediately_when_shutdown_already_began() {
-        let shutdown = SyncShutdownHandle::new(4);
+        let shutdown = SyncShutdownHandle::new(4, test_network());
         shutdown.shutdown().await;
 
-        n0_future::time::timeout(Duration::from_secs(5), shutdown.cancelled())
+        crate::rt::time::timeout(Duration::from_secs(5), shutdown.cancelled())
             .await
             .expect("cancelled() must not park once shutdown has begun");
     }
@@ -1803,20 +1847,20 @@ mod shutdown_tests {
     /// The register-then-check ordering in `cancelled()` is what makes this
     /// pass: a waiter that observed the flag as false must still be woken by
     /// the `notify_waiters` that follows the flag store.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn cancelled_does_not_miss_a_shutdown_racing_its_registration() {
         for _ in 0..256 {
-            let shutdown = SyncShutdownHandle::new(4);
+            let shutdown = SyncShutdownHandle::new(4, test_network());
             let waiter_shutdown = shutdown.clone();
-            let waiter = n0_future::task::spawn(async move { waiter_shutdown.cancelled().await });
+            let waiter = crate::rt::spawn(async move { waiter_shutdown.cancelled().await });
 
-            let signaller = n0_future::task::spawn(async move { shutdown.shutdown().await });
+            let signaller = crate::rt::spawn(async move { shutdown.shutdown().await });
 
-            n0_future::time::timeout(Duration::from_secs(5), waiter)
+            crate::rt::time::timeout(Duration::from_secs(5), waiter.join())
                 .await
                 .expect("cancelled() lost the wakeup and parked forever")
                 .expect("waiter should not panic");
-            signaller.await.expect("signaller should not panic");
+            signaller.join().await.expect("signaller should not panic");
         }
     }
 }

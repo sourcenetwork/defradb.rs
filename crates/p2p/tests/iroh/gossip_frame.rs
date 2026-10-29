@@ -1,8 +1,8 @@
 //! Frames read back as written, and a frame over the limit is refused from
 //! its length alone, as `proofs/lean/GossipFrame/Framing.lean` proves.
 
+use crate::rt::time::GossipInstant as Instant;
 use iroh_gossip::proto::{self, Command, InEvent, OutEvent, PeerData, TopicId};
-use n0_future::time::Instant;
 use rand::SeedableRng;
 
 use super::*;
@@ -43,12 +43,12 @@ async fn uni_stream() -> (SendStream, RecvStream, [iroh::Endpoint; 2]) {
     };
     let server = bind().await;
     let client = bind().await;
-    let accept = n0_future::task::spawn({
+    let accept = nuclei::spawn(edge::compat({
         let server = server.clone();
         async move { server.accept().await.unwrap().await.unwrap() }
-    });
+    }));
     let connection = client.connect(server.addr(), ALPN).await.expect("connect");
-    let far_side = accept.await.unwrap();
+    let far_side = accept.join().await.unwrap();
     let mut send = connection.open_uni().await.expect("open uni");
     // A stream is announced to the far side only once it carries data.
     send.write_all(&[0]).await.unwrap();
@@ -58,33 +58,39 @@ async fn uni_stream() -> (SendStream, RecvStream, [iroh::Endpoint; 2]) {
     (send, recv, [server, client])
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn frames_read_back_as_written_until_the_stream_ends() {
-    let (mut send, mut recv, _endpoints) = uni_stream().await;
-    let message = join_message();
-    for _ in 0..2 {
-        write_gossip_frame(&mut send, &message, 4096).await.unwrap();
-    }
-    send.finish().unwrap();
+    edge::compat(async {
+        let (mut send, mut recv, _endpoints) = uni_stream().await;
+        let message = join_message();
+        for _ in 0..2 {
+            write_gossip_frame(&mut send, &message, 4096).await.unwrap();
+        }
+        send.finish().unwrap();
 
-    let expected = postcard::to_stdvec(&message).unwrap();
-    for _ in 0..2 {
-        let read = read_gossip_frame(&mut recv, 4096).await.unwrap().unwrap();
-        assert_eq!(postcard::to_stdvec(&read).unwrap(), expected);
-    }
-    assert!(read_gossip_frame(&mut recv, 4096).await.unwrap().is_none());
+        let expected = postcard::to_stdvec(&message).unwrap();
+        for _ in 0..2 {
+            let read = read_gossip_frame(&mut recv, 4096).await.unwrap().unwrap();
+            assert_eq!(postcard::to_stdvec(&read).unwrap(), expected);
+        }
+        assert!(read_gossip_frame(&mut recv, 4096).await.unwrap().is_none());
+    })
+    .await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_frame_over_the_limit_is_refused_before_its_body_arrives() {
-    let (mut send, mut recv, _endpoints) = uni_stream().await;
-    // Only the length is sent: refusing must not wait for a body.
-    send.write_all(&4097u32.to_be_bytes()).await.unwrap();
-    assert!(read_gossip_frame(&mut recv, 4096).await.is_err());
+    edge::compat(async {
+        let (mut send, mut recv, _endpoints) = uni_stream().await;
+        // Only the length is sent: refusing must not wait for a body.
+        send.write_all(&4097u32.to_be_bytes()).await.unwrap();
+        assert!(read_gossip_frame(&mut recv, 4096).await.is_err());
 
-    let message = join_message();
-    let len = postcard::to_stdvec(&message).unwrap().len();
-    assert!(write_gossip_frame(&mut send, &message, len - 1)
-        .await
-        .is_err());
+        let message = join_message();
+        let len = postcard::to_stdvec(&message).unwrap().len();
+        assert!(write_gossip_frame(&mut send, &message, len - 1)
+            .await
+            .is_err());
+    })
+    .await
 }

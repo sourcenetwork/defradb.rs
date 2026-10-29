@@ -113,7 +113,7 @@ fn next_seq() -> usize {
 /// browser harness in `crates/wasm/tests/perf.rs` reproduces exactly, which is
 /// what puts a browser column beside the Linux and macOS ones on the dashboard
 /// instead of three tables that do not line up.
-fn report(rt: &tokio::runtime::Runtime) {
+fn report(rt: &common::Runtime) {
     const OPS: usize = 200;
     const REPS: usize = 5;
 

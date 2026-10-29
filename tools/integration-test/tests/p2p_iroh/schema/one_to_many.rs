@@ -37,9 +37,10 @@ type Book {
 /// This tests that when an Author document is created, then a Book is created
 /// and linked to that Author, the relationship replicates correctly even if
 /// the Book collection isn't being directly synced.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn create_update_link_synced_to_unsynced() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_iroh_transport()
@@ -139,13 +140,16 @@ async fn create_update_link_synced_to_unsynced() {
     assert!(!authors.is_empty(), "Author should have replicated");
     assert_eq!(authors[0]["name"].as_str(), Some("John"));
     assert_eq!(authors[0]["age"].as_i64(), Some(30));
+})
+    .await;
 }
 
 /// Port: TestP2POneToManyReplicator
 /// One-to-many relationship replication via replicator, syncing both collections.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn one_to_many_replicator() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_iroh_transport()
@@ -270,4 +274,6 @@ async fn one_to_many_replicator() {
             .await;
         }
     }
+})
+    .await;
 }

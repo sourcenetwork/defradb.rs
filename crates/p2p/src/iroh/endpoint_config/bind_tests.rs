@@ -130,7 +130,7 @@ fn native_bindings_match_executed_model() {
     let cases = model_cases(&inputs);
     let count = cases.len();
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             for case in cases {
                 let address = case.input["addr"]["ip"]
                     .as_str()
@@ -180,7 +180,7 @@ fn native_bindings_match_executed_model() {
                 }
                 endpoint.close().await;
             }
-        })
+        }))
         .expect("native endpoint model binding");
     tracing::info!(
         cases = count,
@@ -195,7 +195,7 @@ fn native_bindings_match_executed_model() {
 #[ignore = "requires native UDP sockets and the owned-process lsof observation"]
 fn loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
                 .relay_mode(iroh::RelayMode::Disabled);
             let endpoint =
@@ -205,15 +205,16 @@ fn loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners() {
                     .await
                     .unwrap();
             let pid = std::process::id().to_string();
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            let deadline = crate::rt::time::Instant::now() + std::time::Duration::from_secs(2);
             let mut observations = 0;
             loop {
                 let process = pid.clone();
-                let output = tokio::task::spawn_blocking(move || {
+                let output = nuclei::spawn_blocking(move || {
                     Command::new("/usr/sbin/lsof")
                         .args(["-a", "-p", &process, "-iUDP", "-nP", "-Ftn"])
                         .output()
                 })
+                .join()
                 .await
                 .unwrap()
                 .unwrap();
@@ -235,13 +236,13 @@ fn loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners() {
                     "unscoped gateway listener: {wildcard:?}"
                 );
                 observations += 1;
-                if tokio::time::Instant::now() >= deadline {
+                if crate::rt::time::Instant::now() >= deadline {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                crate::rt::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             endpoint.close().await;
             assert!(observations > 1);
-        })
+        }))
         .expect("native loopback gateway scope");
 }

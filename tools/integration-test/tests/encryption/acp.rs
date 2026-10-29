@@ -158,8 +158,9 @@ for_each_runtime!(encrypted_acp, encrypted_acp_test, .with_acp_local().with_encr
 /// An encrypted document in a `@branchable` collection must merge on a peer
 /// whose node identity holds `reader` on the collection object. No replicator:
 /// the peer pulls through the ACP read gate, exactly as the oracle does.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_encrypted_branchable_collection_grant_merges_on_peer() {
+    edge::compat(async move {
     if std::env::var_os("DEFRA_RUST_BINARY").is_none() {
         RustNode::build().expect("build rust binary");
     }
@@ -272,5 +273,7 @@ async fn rust_encrypted_branchable_collection_grant_merges_on_peer() {
         Duration::from_millis(500),
         "encrypted branchable doc did not merge on the granted peer",
     )
+    .await;
+})
     .await;
 }

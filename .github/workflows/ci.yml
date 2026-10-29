@@ -91,6 +91,12 @@ jobs:
           -p storage -p datastore -p blockstore -p crdt -p defra-core -p query -p db
           -p acp -p zanzibar -p lens -p kms -p events
           -- -A clippy::all -D clippy::disallowed_methods
+      - name: Network edge confinement
+        env:
+          CLIPPY_CONF_DIR: .github/clippy/edge
+        run: >-
+          cargo clippy --lib --no-deps --workspace --exclude edge
+          -- -A clippy::all -D clippy::disallowed_methods
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
@@ -235,9 +241,23 @@ jobs:
         with:
           shared-key: integration-binaries
           save-if: false
+      - name: Dump a test's stacks when it hangs
+        env:
+          WATCH_TESTS: '1'
+        run: |
+          uname -a
+          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
       - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
+      - name: Upload test stacks
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-tests-stacks
+          path: target/e2e/**/logs/*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   wasm-check:
     name: WASM Build Check
@@ -333,7 +353,14 @@ jobs:
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: Conformance
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'Conformance', suffix: '', backend: '', recv: '' }
+          - { name: 'Conformance (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'Conformance (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
@@ -343,6 +370,9 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
+      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -360,13 +390,17 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - name: Dump node stacks when a client command hangs
+        run: |
+          uname -a
+          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-e2e-logs
+          name: conformance-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
@@ -408,6 +442,10 @@ jobs:
         run: |
           chmod +x target/ci/defra target/ci/defra-iroh
           target/ci/defra version --format json
+      - name: Dump node stacks when a client command hangs
+        run: |
+          uname -a
+          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
@@ -552,7 +590,14 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: P2P Integration (Linux)
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'P2P Integration (Linux)', suffix: '', backend: '', recv: '' }
+          - { name: 'P2P Integration (Linux) (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'P2P Integration (Linux) (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
@@ -563,6 +608,9 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
+      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -580,6 +628,10 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - name: Dump node stacks when a client command hangs
+        run: |
+          uname -a
+          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
@@ -595,7 +647,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-linux-e2e-logs
+          name: p2p-linux-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore

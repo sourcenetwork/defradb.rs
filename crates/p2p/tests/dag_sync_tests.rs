@@ -25,7 +25,7 @@ fn random_peer_str() -> String {
     format!("test-peer-{}", NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_lifecycle() {
     let state = DagSyncState::new();
     let cid = test_cid();
@@ -51,7 +51,7 @@ async fn test_sync_state_lifecycle() {
     assert!(!state.start_sync(cid).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_cancel() {
     let state = DagSyncState::new();
     let cid = test_cid();
@@ -67,7 +67,7 @@ async fn test_sync_state_cancel() {
     assert!(state.start_sync(cid).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_no_missing_links() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let dag_sync = DagSync::new(peer_state);
@@ -87,7 +87,7 @@ async fn test_dag_sync_no_missing_links() {
     assert!(dag_sync.state.is_synced(&root).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_with_missing_links() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let peer = random_peer_str();
@@ -121,7 +121,7 @@ async fn test_dag_sync_with_missing_links() {
     assert!(dag_sync.state.is_syncing(&root).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_already_syncing() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let dag_sync = DagSync::new(peer_state);
@@ -141,7 +141,7 @@ async fn test_dag_sync_already_syncing() {
     assert!(matches!(plan, SyncPlan::AlreadySyncing));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_already_synced() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let dag_sync = DagSync::new(peer_state);
@@ -161,7 +161,7 @@ async fn test_dag_sync_already_synced() {
     assert!(matches!(plan, SyncPlan::AlreadySynced));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_handle_complete() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let dag_sync = DagSync::new(peer_state);
@@ -188,7 +188,7 @@ async fn test_dag_sync_handle_complete() {
     assert!(!dag_sync.state.is_syncing(&root2).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_plan_accessors() {
     let plan = SyncPlan::needs_fetch_new(test_cid(), vec![test_cid2()], vec![random_peer_str()])
         .expect("missing is non-empty");
@@ -221,7 +221,7 @@ fn test_needs_fetch_data_non_empty_missing_returns_some() {
     assert!(data.providers().is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_uses_peer_state_for_providers() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let peer1 = random_peer_str();
@@ -253,7 +253,7 @@ async fn test_dag_sync_uses_peer_state_for_providers() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_state_concurrent_operations() {
     // Test that concurrent start_sync operations are handled atomically
     let state = Arc::new(DagSyncState::new());
@@ -263,7 +263,7 @@ async fn test_dag_sync_state_concurrent_operations() {
     let mut handles = Vec::new();
     for _ in 0..10 {
         let state_clone = Arc::clone(&state);
-        handles.push(tokio::spawn(
+        handles.push(nuclei::spawn(
             async move { state_clone.start_sync(cid).await },
         ));
     }
@@ -272,7 +272,7 @@ async fn test_dag_sync_state_concurrent_operations() {
     let mut successes = 0;
     let mut failures = 0;
     for handle in handles {
-        if handle.await.unwrap() {
+        if handle.join().await.unwrap() {
             successes += 1;
         } else {
             failures += 1;
@@ -291,7 +291,7 @@ async fn test_dag_sync_state_concurrent_operations() {
     assert!(!state.is_synced(&cid).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_dag_sync_state_concurrent_complete() {
     let state = Arc::new(DagSyncState::new());
     let cid = test_cid();
@@ -303,14 +303,14 @@ async fn test_dag_sync_state_concurrent_complete() {
     let mut handles = Vec::new();
     for _ in 0..10 {
         let state_clone = Arc::clone(&state);
-        handles.push(tokio::spawn(async move {
+        handles.push(nuclei::spawn(async move {
             state_clone.complete_sync(cid).await;
         }));
     }
 
     // Wait for all to complete
     for handle in handles {
-        handle.await.unwrap();
+        handle.join().await.unwrap();
     }
 
     // CID should be synced (not syncing)
@@ -365,7 +365,7 @@ fn test_dag_sync_config_builder() {
     assert_eq!(config.block_fetch_timeout(), Duration::from_secs(60));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_eviction() {
     // Create state with very small max to test eviction
     let state = DagSyncState::with_max_synced(3);
@@ -406,7 +406,7 @@ async fn test_sync_state_eviction() {
     assert!(state.start_sync(cids[0]).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_is_synced_is_recent_memory_hint() {
     let state = DagSyncState::with_max_synced(1);
     let first = test_cid();
@@ -423,7 +423,7 @@ async fn test_sync_state_is_synced_is_recent_memory_hint() {
     assert!(state.start_sync(first).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_eviction_no_duplicates() {
     // Completing sync for the same CID twice should not cause issues
     let state = DagSyncState::with_max_synced(2);
@@ -439,7 +439,7 @@ async fn test_sync_state_eviction_no_duplicates() {
     assert!(state.is_synced(&cid).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_sync_state_synced_count() {
     let state = DagSyncState::new();
     let cid1 = test_cid();

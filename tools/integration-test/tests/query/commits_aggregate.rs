@@ -104,8 +104,11 @@ async fn commits_aggregate_test(cluster: TestCluster) {
     assert_aggregate_row(&window_rows[0], 2, 50, 25.0, 20, 30);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_commits_aggregate() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    commits_aggregate_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        commits_aggregate_test(cluster).await;
+    })
+    .await;
 }

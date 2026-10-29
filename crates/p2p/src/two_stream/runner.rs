@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
+use crate::rt::{mpsc, Semaphore};
 use futures::AsyncReadExt as _;
 use futures::StreamExt;
 use libp2p_stream as stream;
-use tokio::sync::{mpsc, Semaphore};
 
 use super::event::TwoStreamEvent;
 use super::handler::{PendingResponses, TwoStreamHandler};
@@ -59,6 +59,8 @@ pub struct TwoStreamRunner {
     max_car_size: u64,
     /// Stream read timeout.
     stream_read_timeout: std::time::Duration,
+    /// Where each stream's handler task runs.
+    edge: edge::Edge,
 }
 
 impl TwoStreamRunner {
@@ -86,6 +88,7 @@ impl TwoStreamRunner {
         max_car_size: u64,
         stream_timeout_secs: u64,
         max_concurrent_tasks: usize,
+        edge: edge::Edge,
     ) -> Self {
         Self {
             pending,
@@ -112,6 +115,7 @@ impl TwoStreamRunner {
             max_msg_size,
             max_car_size,
             stream_read_timeout: std::time::Duration::from_secs(stream_timeout_secs),
+            edge,
         }
     }
 
@@ -124,7 +128,7 @@ impl TwoStreamRunner {
         );
 
         loop {
-            tokio::select! {
+            crate::rt::select! {
                 // Handle incoming request streams
                 Some((peer_id, stream, retry_after)) = self.request_streams.next() => {
                     tracing::info!(
@@ -135,7 +139,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(mut event) => {
@@ -166,7 +170,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming response streams
                 Some((peer_id, stream)) = self.response_streams.next() => {
@@ -179,7 +183,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_response_stream(&pending, peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(Some(event)) => {
@@ -205,7 +209,7 @@ impl TwoStreamRunner {
                                 );
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming SE request streams (deserialize and forward for storage)
                 Some((peer_id, mut stream)) = self.se_request_streams.next() => {
@@ -213,10 +217,10 @@ impl TwoStreamRunner {
                     let event_tx = self.event_tx.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         let mut buf = Vec::new();
-                        let read_result = tokio::time::timeout(
+                        let read_result = crate::rt::time::timeout(
                             stream_read_timeout,
                             (&mut stream).take(max_msg_size).read_to_end(&mut buf),
                         ).await;
@@ -252,17 +256,17 @@ impl TwoStreamRunner {
                                 }
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming SE response streams (replies to our SE pushes)
                 Some((peer_id, mut stream)) = self.se_response_streams.next() => {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         let mut buf = Vec::new();
-                        let read_result = tokio::time::timeout(
+                        let read_result = crate::rt::time::timeout(
                             stream_read_timeout,
                             (&mut stream).take(max_msg_size).read_to_end(&mut buf),
                         ).await;
@@ -281,7 +285,7 @@ impl TwoStreamRunner {
                                 );
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming SE query request streams
                 Some((peer_id, stream)) = self.se_query_request_streams.next() => {
@@ -289,7 +293,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_se_query_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -309,7 +313,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming SE query response streams
                 Some((peer_id, stream)) = self.se_query_response_streams.next() => {
@@ -317,7 +321,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_se_query_response_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -337,7 +341,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming manage request streams
                 Some((peer_id, stream)) = self.manage_request_streams.next() => {
@@ -345,7 +349,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_manage_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -365,7 +369,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming manage response streams
                 Some((peer_id, stream)) = self.manage_response_streams.next() => {
@@ -373,7 +377,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_manage_response_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -393,7 +397,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming manage query request streams
                 Some((peer_id, stream)) = self.manage_query_request_streams.next() => {
@@ -401,7 +405,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_manage_query_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -421,7 +425,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming manage query response streams
                 Some((peer_id, stream)) = self.manage_query_response_streams.next() => {
@@ -429,7 +433,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_manage_query_response_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -449,14 +453,14 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 Some((peer_id, stream)) = self.identity_request_streams.next() => {
                     let event_tx = self.event_tx.clone();
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -471,7 +475,7 @@ impl TwoStreamRunner {
                                 }).await;
                             }
                         }
-                    });
+                    }));
                 }
                 Some((peer_id, stream)) = self.identity_response_streams.next() => {
                     let pending = self.pending.clone();
@@ -479,7 +483,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_msg_size = self.max_msg_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_response_stream(&pending, peer_id, stream, max_msg_size, stream_read_timeout).await {
                             Ok(Some(event)) => {
@@ -492,7 +496,7 @@ impl TwoStreamRunner {
                                 tracing::warn!(peer_id = %peer_id, error = %e, "Failed to handle identity response stream");
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming CAR request streams
                 Some((peer_id, stream)) = self.car_request_streams.next() => {
@@ -500,7 +504,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_car_size = self.max_car_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_car_request_stream(peer_id, stream, max_car_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -512,7 +516,7 @@ impl TwoStreamRunner {
                                 tracing::warn!(peer_id = %peer_id, error = %e, "Failed to handle CAR request stream");
                             }
                         }
-                    });
+                    }));
                 }
                 // Handle incoming CAR response streams
                 Some((peer_id, stream)) = self.car_response_streams.next() => {
@@ -520,7 +524,7 @@ impl TwoStreamRunner {
                     let sem = self.semaphore.clone();
                     let max_car_size = self.max_car_size;
                     let stream_read_timeout = self.stream_read_timeout;
-                    tokio::spawn(async move {
+                    drop(self.edge.spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_car_response_stream(peer_id, stream, max_car_size, stream_read_timeout).await {
                             Ok(event) => {
@@ -532,7 +536,7 @@ impl TwoStreamRunner {
                                 tracing::warn!(peer_id = %peer_id, error = %e, "Failed to handle CAR response stream");
                             }
                         }
-                    });
+                    }));
                 }
                 else => {
                     tracing::info!("Two-stream runner shutting down");

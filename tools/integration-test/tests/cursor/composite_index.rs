@@ -23,8 +23,9 @@ async fn seed_composite_users(node: &integration_test::DefraClient, users: &[(&s
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_composite_index_full_field_order_succeeds() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let node = cluster.client(0);
     node.schema_add(USER_COMPOSITE_SCHEMA)
@@ -52,60 +53,69 @@ async fn rust_composite_index_full_field_order_succeeds() {
     assert_eq!(users.len(), 2, "expected 2 users in first page");
     assert_eq!(users[0]["name"], "alice");
     assert_eq!(users[1]["name"], "bob");
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_non_unique_composite_prefix_only_errors() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let node = cluster.client(0);
-    node.schema_add(USER_COMPOSITE_SCHEMA)
-        .expect("add User schema");
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let node = cluster.client(0);
+        node.schema_add(USER_COMPOSITE_SCHEMA)
+            .expect("add User schema");
 
-    // Non-unique composite index on (age, score).
-    node.index_create("User", &["age", "score"], Some("idx_age_score"), false)
-        .expect("create composite index");
+        // Non-unique composite index on (age, score).
+        node.index_create("User", &["age", "score"], Some("idx_age_score"), false)
+            .expect("create composite index");
 
-    seed_composite_users(&node, &[("alice", 20, 90)]).await;
+        seed_composite_users(&node, &[("alice", 20, 90)]).await;
 
-    // Order only by `age` — partial coverage of a non-unique composite index.
-    // Go's rule: !index.Unique && len(ordering) < len(index.Fields) → no supporting index.
-    let err = node
-        .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
-        .unwrap_err()
-        .to_string();
+        // Order only by `age` - partial coverage of a non-unique composite index.
+        // Go's rule: !index.Unique && len(ordering) < len(index.Fields) → no supporting index.
+        let err = node
+            .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
+            .unwrap_err()
+            .to_string();
 
-    assert!(
-        err.contains("no supporting index"),
-        "expected no-supporting-index error for non-unique composite prefix, got: {err}"
-    );
+        assert!(
+            err.contains("no supporting index"),
+            "expected no-supporting-index error for non-unique composite prefix, got: {err}"
+        );
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_unique_composite_prefix_succeeds() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let node = cluster.client(0);
-    node.schema_add(USER_COMPOSITE_SCHEMA)
-        .expect("add User schema");
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let node = cluster.client(0);
+        node.schema_add(USER_COMPOSITE_SCHEMA)
+            .expect("add User schema");
 
-    // Unique composite index on (age, score).
-    node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
-        .expect("create unique composite index");
+        // Unique composite index on (age, score).
+        node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
+            .expect("create unique composite index");
 
-    seed_composite_users(&node, &[("alice", 20, 90), ("bob", 30, 80)]).await;
+        seed_composite_users(&node, &[("alice", 20, 90), ("bob", 30, 80)]).await;
 
-    // Order only by `age` — partial coverage is allowed for UNIQUE composite indexes.
-    let result: Value = node
-        .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
-        .expect("unique composite prefix cursor query");
+        // Order only by `age` - partial coverage is allowed for UNIQUE composite indexes.
+        let result: Value = node
+            .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
+            .expect("unique composite prefix cursor query");
 
-    let users = result["_cursor"]["User"]
-        .as_array()
-        .expect("_cursor.User is an array");
-    assert_eq!(users.len(), 2, "expected 2 users");
+        let users = result["_cursor"]["User"]
+            .as_array()
+            .expect("_cursor.User is an array");
+        assert_eq!(users.len(), 2, "expected 2 users");
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_cursor_paginates_through_duplicate_index_keys() {
+    edge::compat(async move {
     // Regression test for P1.2: when multiple documents share the same indexed field
     // value, the cursor seek key must include the doc_id suffix for non-unique indexes.
     // Without the suffix, a forward-exclusive seek at [prefix][age=30] rejects ALL rows
@@ -188,74 +198,79 @@ async fn rust_cursor_paginates_through_duplicate_index_keys() {
         vec!["alice", "bob", "carol", "dave"],
         "pages 1 and 2 must cover all 4 users with no duplicates or missing entries"
     );
+})
+    .await;
 }
 
 /// Regression: `before` cursor must be EXCLUSIVE on the fast path (index seek active).
 ///
 /// Before PR#961 round-2 Fix 2, `inclusive: matches!(direction, CursorDirection::Backward)`
 /// made the `before` boundary inclusive — the boundary row appeared in the result.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_backward_before_excludes_boundary() {
-    let cluster = integration_test::TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .unwrap();
-    let node = cluster.client(0);
+    edge::compat(async move {
+        let cluster = integration_test::TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .unwrap();
+        let node = cluster.client(0);
 
-    node.schema_add(super::common::USER_SCHEMA)
-        .expect("add schema");
-    node.index_create("User", &["age"], Some("idx_age"), false)
-        .expect("create age index");
+        node.schema_add(super::common::USER_SCHEMA)
+            .expect("add schema");
+        node.index_create("User", &["age"], Some("idx_age"), false)
+            .expect("create age index");
 
-    for (name, age) in [("a", 20), ("b", 30), ("c", 40), ("d", 50)] {
-        let mutation = format!(
-            r#"mutation {{ add_User(input: {{ name: "{name}", age: {age} }}) {{ _docID }} }}"#
-        );
-        node.query(&mutation).expect("seed");
-    }
+        for (name, age) in [("a", 20), ("b", 30), ("c", 40), ("d", 50)] {
+            let mutation = format!(
+                r#"mutation {{ add_User(input: {{ name: "{name}", age: {age} }}) {{ _docID }} }}"#
+            );
+            node.query(&mutation).expect("seed");
+        }
 
-    // Get the cursor for "c" (age=40) — the last row of a first:3 page.
-    let page1: serde_json::Value = node
-        .query(
-            r#"{ _cursor {
+        // Get the cursor for "c" (age=40) - the last row of a first:3 page.
+        let page1: serde_json::Value = node
+            .query(
+                r#"{ _cursor {
             User(first: 3, order: [{age: ASC}]) { name age }
             _pageInfo { endCursor }
         } }"#,
-        )
-        .expect("page 1");
-    let c_cursor = page1["_cursor"]["_pageInfo"]["endCursor"]
-        .as_str()
-        .expect("endCursor")
-        .to_string();
+            )
+            .expect("page 1");
+        let c_cursor = page1["_cursor"]["_pageInfo"]["endCursor"]
+            .as_str()
+            .expect("endCursor")
+            .to_string();
 
-    // last:2, before:<cursor for c (age=40)> — must return [a(20), b(30)].
-    // The boundary c MUST NOT appear in the result.
-    let result: serde_json::Value = node
-        .query(&format!(
-            r#"{{ _cursor {{
+        // last:2, before:<cursor for c (age=40)> - must return [a(20), b(30)].
+        // The boundary c MUST NOT appear in the result.
+        let result: serde_json::Value = node
+            .query(&format!(
+                r#"{{ _cursor {{
             User(last: 2, before: "{c_cursor}", order: [{{age: ASC}}]) {{ name age }}
         }} }}"#
-        ))
-        .expect("backward before query");
+            ))
+            .expect("backward before query");
 
-    let users = result["_cursor"]["User"]
-        .as_array()
-        .expect("_cursor.User is an array");
-    let names: Vec<&str> = users
-        .iter()
-        .map(|u| u["name"].as_str().expect("name"))
-        .collect();
-    assert!(
-        !names.contains(&"c"),
-        "boundary row 'c' (age=40) must be excluded by `before` cursor; got {:?}",
-        names
-    );
-    assert_eq!(
-        names,
-        vec!["a", "b"],
-        "expected [a, b] before the cursor at c(40)"
-    );
+        let users = result["_cursor"]["User"]
+            .as_array()
+            .expect("_cursor.User is an array");
+        let names: Vec<&str> = users
+            .iter()
+            .map(|u| u["name"].as_str().expect("name"))
+            .collect();
+        assert!(
+            !names.contains(&"c"),
+            "boundary row 'c' (age=40) must be excluded by `before` cursor; got {:?}",
+            names
+        );
+        assert_eq!(
+            names,
+            vec!["a", "b"],
+            "expected [a, b] before the cursor at c(40)"
+        );
+    })
+    .await;
 }
 
 /// Regression: unique composite prefix cursor must fall back to slow path, not corrupt results.
@@ -265,46 +280,49 @@ async fn rust_backward_before_excludes_boundary() {
 /// which is ambiguous for unique indexes (doc_id is in the value, not the key). The fix makes
 /// the planner fall back to the slow path, which uses doc_id comparison and works correctly
 /// when ordering is docID/empty (no `after`/`before` token with non-empty keys).
-#[tokio::test]
+#[nuclei::test]
 async fn rust_unique_composite_prefix_falls_back_to_slow_path() {
-    let cluster = integration_test::TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .unwrap();
-    let node = cluster.client(0);
+    edge::compat(async move {
+        let cluster = integration_test::TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .unwrap();
+        let node = cluster.client(0);
 
-    node.schema_add(USER_COMPOSITE_SCHEMA)
-        .expect("add composite schema");
-    // Unique composite index on (age, name).
-    node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
-        .expect("create unique composite index");
+        node.schema_add(USER_COMPOSITE_SCHEMA)
+            .expect("add composite schema");
+        // Unique composite index on (age, name).
+        node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
+            .expect("create unique composite index");
 
-    seed_composite_users(
-        &node,
-        &[("alice", 20, 90), ("bob", 30, 80), ("carol", 40, 70)],
-    )
+        seed_composite_users(
+            &node,
+            &[("alice", 20, 90), ("bob", 30, 80), ("carol", 40, 70)],
+        )
+        .await;
+
+        // ORDER BY age only (prefix of unique composite index). Page 1 works without a cursor token.
+        let result: serde_json::Value = node
+            .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
+            .expect("unique composite prefix first page");
+
+        let users = result["_cursor"]["User"]
+            .as_array()
+            .expect("_cursor.User is an array");
+        assert_eq!(users.len(), 2, "expected 2 users on page 1");
+        // Alice and bob have the two lowest ages.
+        let names: Vec<&str> = users
+            .iter()
+            .map(|u| u["name"].as_str().expect("name"))
+            .collect();
+        assert!(
+            names.contains(&"alice") && names.contains(&"bob"),
+            "expected alice and bob on page 1, got {:?}",
+            names
+        );
+    })
     .await;
-
-    // ORDER BY age only (prefix of unique composite index). Page 1 works without a cursor token.
-    let result: serde_json::Value = node
-        .query(r#"{ _cursor { User(first: 2, order: [{age: ASC}]) { name } } }"#)
-        .expect("unique composite prefix first page");
-
-    let users = result["_cursor"]["User"]
-        .as_array()
-        .expect("_cursor.User is an array");
-    assert_eq!(users.len(), 2, "expected 2 users on page 1");
-    // Alice and bob have the two lowest ages.
-    let names: Vec<&str> = users
-        .iter()
-        .map(|u| u["name"].as_str().expect("name"))
-        .collect();
-    assert!(
-        names.contains(&"alice") && names.contains(&"bob"),
-        "expected alice and bob on page 1, got {:?}",
-        names
-    );
 }
 
 /// Regression: page 2 of a unique composite-prefix cursor query falls back to the slow path.
@@ -313,60 +331,63 @@ async fn rust_unique_composite_prefix_falls_back_to_slow_path() {
 /// `_docID`/empty — because the slow path can only compare doc_ids, not arbitrary field tuples.
 /// This test closes the gap flagged in PR#961 round-3: the previous test only exercised page 1
 /// (no cursor token) and never reached the fallback branch.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_unique_composite_prefix_after_paginates_via_slow_path() {
-    let cluster = integration_test::TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .unwrap();
-    let node = cluster.client(0);
-    node.schema_add(USER_COMPOSITE_SCHEMA)
-        .expect("add composite schema");
-    node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
-        .expect("create unique composite index");
+    edge::compat(async move {
+        let cluster = integration_test::TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .unwrap();
+        let node = cluster.client(0);
+        node.schema_add(USER_COMPOSITE_SCHEMA)
+            .expect("add composite schema");
+        node.index_create("User", &["age", "score"], Some("idx_age_score"), true)
+            .expect("create unique composite index");
 
-    seed_composite_users(
-        &node,
-        &[("alice", 20, 90), ("bob", 30, 80), ("carol", 40, 70)],
-    )
-    .await;
+        seed_composite_users(
+            &node,
+            &[("alice", 20, 90), ("bob", 30, 80), ("carol", 40, 70)],
+        )
+        .await;
 
-    // Page 1 — no cursor token, returns the first row in age order.
-    let p1: Value = node
-        .query(
-            r#"{ _cursor {
+        // Page 1 - no cursor token, returns the first row in age order.
+        let p1: Value = node
+            .query(
+                r#"{ _cursor {
             User(first: 1, order: [{age: ASC}]) { name age }
             _pageInfo { endCursor }
         } }"#,
-        )
-        .expect("page 1 unique composite prefix");
-    assert_eq!(
-        p1["_cursor"]["User"][0]["name"],
-        Value::String("alice".into())
-    );
-    let end_cursor = p1["_cursor"]["_pageInfo"]["endCursor"]
-        .as_str()
-        .expect("endCursor present")
-        .to_string();
+            )
+            .expect("page 1 unique composite prefix");
+        assert_eq!(
+            p1["_cursor"]["User"][0]["name"],
+            Value::String("alice".into())
+        );
+        let end_cursor = p1["_cursor"]["_pageInfo"]["endCursor"]
+            .as_str()
+            .expect("endCursor present")
+            .to_string();
 
-    // Page 2 with `after`: the unique-composite-prefix cursor uses the slow path
-    // (seek not applicable for a partial index prefix). The slow path locates the
-    // boundary by exact docID equality and relies on the order node's ordering —
-    // matching Go's drain fallback — so it returns the NEXT row, not an error.
-    let p2: Value = node
-        .query(&format!(
-            r#"{{ _cursor {{
+        // Page 2 with `after`: the unique-composite-prefix cursor uses the slow path
+        // (seek not applicable for a partial index prefix). The slow path locates the
+        // boundary by exact docID equality and relies on the order node's ordering -
+        // matching Go's drain fallback - so it returns the NEXT row, not an error.
+        let p2: Value = node
+            .query(&format!(
+                r#"{{ _cursor {{
             User(first: 1, after: "{end_cursor}", order: [{{age: ASC}}]) {{ name age }}
         }} }}"#
-        ))
-        .expect("page 2 unique composite prefix slow-path pagination");
-    assert_eq!(
-        p2["_cursor"]["User"][0]["name"],
-        Value::String("bob".into()),
-        "page 2 must continue past alice to bob, got: {}",
-        p2["_cursor"]["User"]
-    );
+            ))
+            .expect("page 2 unique composite prefix slow-path pagination");
+        assert_eq!(
+            p2["_cursor"]["User"][0]["name"],
+            Value::String("bob".into()),
+            "page 2 must continue past alice to bob, got: {}",
+            p2["_cursor"]["User"]
+        );
+    })
+    .await;
 }
 
 /// Regression test for PR#961 round-4 P1.1: cursor seek applied to wrong index.
@@ -381,8 +402,9 @@ async fn rust_unique_composite_prefix_after_paginates_via_slow_path() {
 /// because an `after` token is present. Keeping the same filter-first scan lets
 /// `OrderByNode` provide a stable order on every page, while cursor slow-path
 /// skipping advances past the boundary docID.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_cursor_with_filter_and_order_keeps_filter_index_consistent() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let node = cluster.client(0);
     node.schema_add(USER_COMPOSITE_SCHEMA)
@@ -458,6 +480,8 @@ async fn rust_cursor_with_filter_and_order_keeps_filter_index_consistent() {
     for row in p2["_cursor"]["User"].as_array().unwrap() {
         assert_eq!(row["score"], Value::Number(90.into()));
     }
+})
+    .await;
 }
 
 /// Regression: filtered cursor pagination must not change tie ordering between
@@ -467,8 +491,9 @@ async fn rust_cursor_with_filter_and_order_keeps_filter_index_consistent() {
 /// the order index on page 2+. For non-unique order fields, page 1 ties followed
 /// filter-scan input order while later pages followed order-index docID order,
 /// which could drop or duplicate rows at the page boundary.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_filtered_cursor_order_ties_keep_page_boundary_stable() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let node = cluster.client(0);
     node.schema_add(USER_COMPOSITE_SCHEMA)
@@ -543,4 +568,6 @@ async fn rust_filtered_cursor_order_ties_keep_page_boundary_stable() {
         paged, expected,
         "paginated tie order must match the no-token filtered order"
     );
+})
+    .await;
 }

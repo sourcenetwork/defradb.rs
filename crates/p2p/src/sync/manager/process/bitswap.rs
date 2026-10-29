@@ -18,9 +18,9 @@ use super::SyncManager;
 
 /// A completion sender parked in a queue so whoever resolves the query can
 /// take ownership of it.
-type CompletionSlot = Arc<SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>>;
+type CompletionSlot = Arc<SegQueue<futures::channel::oneshot::Sender<FetchCompletion>>>;
 
-fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
+fn completion_slot(sender: futures::channel::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
     let slot = SegQueue::new();
     slot.push(sender);
     Arc::new(slot)
@@ -152,7 +152,7 @@ impl std::fmt::Debug for RootedCarCompletionTracker {
 
 struct RootedCarWaiter {
     peer: crate::transport::PeerId,
-    completion: SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>,
+    completion: SegQueue<futures::channel::oneshot::Sender<FetchCompletion>>,
 }
 
 impl RootedCarCompletionTracker {
@@ -160,8 +160,8 @@ impl RootedCarCompletionTracker {
         &self,
         root_cid: Cid,
         peer_id: crate::transport::PeerId,
-    ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    ) -> futures::channel::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = futures::channel::oneshot::channel();
         let completion = SegQueue::new();
         completion.push(tx);
         self.waiters.insert(
@@ -243,8 +243,8 @@ impl BlockSyncCompletionTracker {
     pub(crate) fn register(
         &self,
         query_id: QueryId,
-    ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    ) -> futures::channel::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = futures::channel::oneshot::channel();
         let slot = completion_slot(tx);
         let early = self.update(|state| {
             let early = state.remove_early(query_id);
@@ -418,7 +418,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 mod completion_tracker_tests {
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn poll_owner_observes_transport_completion_exactly_once() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(42);
@@ -432,7 +432,7 @@ mod completion_tracker_tests {
         assert!(!tracker.complete(query_id, true));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn completion_before_waiter_registration_is_latched() {
         let tracker = BlockSyncCompletionTracker::with_capacity(1);
         let query_id = QueryId(44);
@@ -447,7 +447,7 @@ mod completion_tracker_tests {
         assert!(tracker.take_early(query_id).is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn unclaimed_completion_latch_is_bounded() {
         let tracker = BlockSyncCompletionTracker::with_capacity(1);
         let first = QueryId(45);
@@ -460,7 +460,7 @@ mod completion_tracker_tests {
         assert_eq!(tracker.take_early(second), Some(FetchCompletion::Success));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn cancelled_poll_owner_does_not_retain_a_completion_waiter() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(43);
@@ -471,7 +471,7 @@ mod completion_tracker_tests {
         assert!(!tracker.complete(query_id, false));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn contended_ingest_has_a_distinct_deferred_completion() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(47);

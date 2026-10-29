@@ -13,8 +13,7 @@ use crate::network::Network;
 #[test]
 fn a_task_spawned_from_a_pool_worker_runs_on_the_edge() {
     let edge = edge::testing::edge();
-    let shutdown = SyncShutdownHandle::new(1);
-    let _ = shutdown.inner.network.set(Network::on(edge.clone()));
+    let shutdown = SyncShutdownHandle::new(1, Network::on(edge));
     let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
 
     let ran = Arc::new(Event::new());
@@ -30,14 +29,5 @@ fn a_task_spawned_from_a_pool_worker_runs_on_the_edge() {
         .unwrap();
     assert!(spawned);
     workers::block_on_timeout(ran.wait(), Duration::from_secs(60)).unwrap();
-
-    // A node with no edge refuses it out loud instead of panicking a worker.
-    let bare = SyncShutdownHandle::new(1);
-    let refused = pool
-        .submit_and_wait(workers::Target::Worker(0), move || async move {
-            bare.spawn_task(async {})
-        })
-        .unwrap();
-    assert!(!refused);
     pool.shutdown_blocking().unwrap();
 }

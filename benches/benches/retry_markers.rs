@@ -16,13 +16,6 @@ mod common;
 const DOCUMENT_COUNTS: [usize; 3] = [1, 10, 100];
 const REPLICATOR_COUNTS: [usize; 2] = [1, 4];
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-}
-
 async fn fixture(replicators: usize) -> Peerstore<RegolithStore> {
     let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
     for peer in 0..replicators {
@@ -35,7 +28,7 @@ async fn fixture(replicators: usize) -> Peerstore<RegolithStore> {
 }
 
 fn bench_retry_markers(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = common::runtime(0);
     let mut group = c.benchmark_group("sender_marker_registration");
 
     for documents in DOCUMENT_COUNTS {

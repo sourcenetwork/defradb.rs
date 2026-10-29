@@ -108,7 +108,7 @@ impl VeraProvider for CountingProvider {
         _: &str,
     ) -> Result<bool, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        tokio::time::sleep(LATENCY).await;
+        nuclei::time::sleep(LATENCY).await;
         Ok(true)
     }
     fn decision_state(&self) -> Option<String> {
@@ -116,16 +116,16 @@ impl VeraProvider for CountingProvider {
     }
 }
 
-/// Round trips as tasks of the test's tokio runtime, whose time it pauses.
+/// Round trips as tasks of the test's nuclei runtime, whose time it pauses.
 struct TestNetwork;
 
 impl inputs::Network for TestNetwork {
     fn spawn(&self, work: defra_core::thread_bounds::MaybeBoxFuture<'static, ()>) {
-        drop(tokio::spawn(work));
+        nuclei::spawn(work).detach();
     }
 
     fn sleep(&self, duration: Duration) -> defra_core::thread_bounds::MaybeBoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(duration))
+        Box::pin(nuclei::time::sleep(duration))
     }
 }
 
@@ -154,7 +154,7 @@ fn key(object: &str, state: Option<String>) -> DecisionKey {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn concurrent_checks_of_one_tuple_make_one_call() {
     let provider = CountingProvider::new(None);
     let decisions = service(&provider);
@@ -165,11 +165,11 @@ async fn concurrent_checks_of_one_tuple_make_one_call() {
     assert_eq!(provider.calls(), 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_page_of_checks_runs_at_once() {
     let provider = CountingProvider::new(None);
     let decisions = service(&provider);
-    let started = tokio::time::Instant::now();
+    let started = nuclei::time::Instant::now();
     let answers = decisions
         .get_many(
             (0..16)
@@ -186,7 +186,7 @@ async fn a_page_of_checks_runs_at_once() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn only_a_decision_at_a_verified_state_is_cached_and_a_new_state_asks_again() {
     let provider = CountingProvider::new(None);
     let decisions = service(&provider);

@@ -27,7 +27,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_listen(
         &mut self,
         addr: Multiaddr,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let result = self
             .swarm
@@ -43,7 +43,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         addrs: Vec<Multiaddr>,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let result = self.dial_peer(peer_id, addrs);
         if response.send(result).is_err() {
@@ -54,7 +54,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_disconnect(
         &mut self,
         peer_id: PeerId,
-        response: tokio::sync::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         self.peer_addrs.remove(&peer_id);
         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
@@ -69,7 +69,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_peer_connection(
         &self,
         peer_id: PeerId,
-        response: tokio::sync::oneshot::Sender<Option<crate::transport::PeerConnectionInfo>>,
+        response: crate::rt::oneshot::Sender<Option<crate::transport::PeerConnectionInfo>>,
     ) {
         let open = self.connection_manager.peer_connections(&peer_id);
         let info =
@@ -90,10 +90,7 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
-    pub(super) fn handle_peer_addresses(
-        &self,
-        response: tokio::sync::oneshot::Sender<Vec<String>>,
-    ) {
+    pub(super) fn handle_peer_addresses(&self, response: crate::rt::oneshot::Sender<Vec<String>>) {
         // Build full multiaddrs for connected peers (matches Go's ActivePeers).
         let connected: RapidHashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
         let addrs: Vec<String> = connected

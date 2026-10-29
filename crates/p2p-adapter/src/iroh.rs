@@ -35,6 +35,7 @@ pub struct IrohP2PAdapter<B: Blockstore + 'static> {
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
+    network: p2p::network::Network,
 }
 
 impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
@@ -102,6 +103,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         version_syncer: Option<Arc<dyn TransportVersionSyncer>>,
         nac_checker: Arc<dyn db::NodeAccessChecker>,
     ) -> Self {
+        let network = coordinator.network();
         Self {
             transport,
             sync_coordinator: Some(coordinator),
@@ -112,6 +114,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
+            network,
         }
     }
 
@@ -211,6 +214,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         }
     }
 
@@ -275,6 +279,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 .nac_checker
                 .as_ref()
                 .map(|checker| db::bound_node_access_checker(Arc::clone(checker), context.clone())),
+            network: self.network.clone(),
         }))
     }
 
@@ -428,7 +433,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             std::time::Duration::from_secs(5)
         };
 
-        n0_future::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
+        p2p::rt::time::timeout(dial_timeout, self.transport.dial(&peer_id, direct_addrs))
             .await
             .map_err(|_| {
                 P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
@@ -658,6 +663,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 Arc::clone(pusher),
                 plan,
                 self.event_bus.clone(),
+                self.network.clone(),
             ))
         } else {
             None
@@ -746,7 +752,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                n0_future::task::spawn(async move {
+                self.network.spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
@@ -1037,6 +1043,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         crate::doc_sync::sync::sync_documents(
             Arc::new(self.transport.clone()),
             event_bus.as_ref(),
+            &self.network,
             doc_ids,
             timeout.unwrap_or(crate::doc_sync::DEFAULT_DOC_SYNC_TIMEOUT),
             DOC_SYNC_DISPATCH_PARALLELISM,
@@ -1067,7 +1074,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             let request_clone = request.clone();
             let transport = self.transport.clone();
             let peer = peer.clone();
-            n0_future::task::spawn(async move {
+            self.network.spawn(async move {
                 if let Err(error) = transport
                     .send_branchable_sync_request(&peer, request_clone)
                     .await
@@ -1101,7 +1108,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .as_ref()
             .ok_or_else(|| P2PError::unsupported("version syncer required"))?
             .clone();
-        n0_future::task::spawn(async move {
+        self.network.spawn(async move {
             if let Err(error) = syncer.sync_versions(version_ids, connected_peers).await {
                 tracing::warn!(error = %error, "version sync failed");
             }
@@ -1225,16 +1232,16 @@ mod tests {
     /// and failed; post-fix, the live connection short-circuits the dial. The
     /// base32 spelling exercises the canonical-form comparison
     /// (`canonical_peer_id`) rather than raw string equality.
-    #[tokio::test]
+    #[nuclei::test]
     async fn connect_peer_is_noop_when_already_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1261,11 +1268,11 @@ mod tests {
 
     /// Negative control: the already-connected check must not blanket-accept.
     /// With no connection to the target, an undialable address still fails.
-    #[tokio::test]
+    #[nuclei::test]
     async fn connect_peer_still_dials_when_not_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1286,12 +1293,12 @@ mod tests {
     /// canonical peer id and delegate to the transport. Regression for the
     /// runtime-authorization path: `IrohTransport::allow_peer` is unreachable
     /// from anything above the transport unless the adapter passes it through.
-    #[tokio::test]
+    #[nuclei::test]
     async fn allow_peer_authorizes_a_peer_refused_by_the_allowlist() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
 
@@ -1299,7 +1306,9 @@ mod tests {
         let mut config_b = test_endpoint_config(key_b.clone());
         config_b.allowlist = IrohAllowlistConfig::Explicit(Default::default());
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(config_b).await.expect("endpoint b");
+            spawn_endpoint(config_b, edge::testing::edge())
+                .await
+                .expect("endpoint b");
 
         let transport_a = IrohTransport::new(command_tx_a, key_a);
         let transport_b = IrohTransport::new(command_tx_b, key_b);
@@ -1322,7 +1331,7 @@ mod tests {
                 connected.is_empty(),
                 "a peer refused by the allowlist must never appear connected"
             );
-            tokio::task::yield_now().await;
+            p2p::rt::yield_now().await;
         }
 
         // Clear a's stale local view of the refused attempt before redialing,
@@ -1357,16 +1366,16 @@ mod tests {
     /// already-live connection must not redial. The undialable address proves
     /// the internal `transport.dial` is skipped; registration still succeeds
     /// and the replicator is listed.
-    #[tokio::test]
+    #[nuclei::test]
     async fn add_replicator_skips_dial_when_already_connected() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, _events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1416,16 +1425,16 @@ mod tests {
     /// This fails if iroh's send ever becomes fire-and-forget like libp2p's: a
     /// one-way send ignores what the peer does with the stream and returns
     /// `Ok`, which would turn this sync into a silent success.
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_with_unresponsive_peer_errors() {
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =
-            spawn_endpoint(test_endpoint_config(key_a.clone()))
+            spawn_endpoint(test_endpoint_config(key_a.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint a");
         let (command_tx_b, mut events_b, _replicators_b, _task_b) =
-            spawn_endpoint(test_endpoint_config(key_b.clone()))
+            spawn_endpoint(test_endpoint_config(key_b.clone()), edge::testing::edge())
                 .await
                 .expect("endpoint b");
         let transport_a = IrohTransport::new(command_tx_a, key_a);
@@ -1441,18 +1450,18 @@ mod tests {
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
+            network: p2p::network::Network::on(edge::testing::edge()),
         };
 
         // Endpoint B has no coordinator behind it, so it accepts the doc-sync
         // request at the transport layer and never produces a reply or a merge.
         // Dropping each event drops the reply token with it.
-        let drain_b =
-            n0_future::task::spawn(async move { while events_b.recv().await.is_some() {} });
+        let drain_b = p2p::rt::spawn(async move { while events_b.recv().await.is_some() {} });
 
         let dial_addr = dialable_ticket(&transport_b).await;
         adapter.connect_peer(&dial_addr).await.expect("dial b");
 
-        let result = n0_future::time::timeout(
+        let result = p2p::rt::time::timeout(
             std::time::Duration::from_secs(10),
             adapter.sync_documents("Users", vec!["bae-does-not-matter".to_string()], None),
         )

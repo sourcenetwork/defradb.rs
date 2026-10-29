@@ -7,7 +7,7 @@ use futures::StreamExt;
 use serde_json::json;
 use tower::ServiceExt;
 
-#[tokio::test]
+#[nuclei::test]
 async fn replay_outcomes_reach_the_event_stream() {
     let bus = Arc::new(ChannelBus::new());
     let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
@@ -33,7 +33,7 @@ async fn replay_outcomes_reach_the_event_stream() {
                 error: error.map(str::to_owned),
             },
         ));
-        let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        let frame = nuclei::time::timeout(Duration::from_secs(5), stream.next())
             .await
             .unwrap()
             .unwrap()
@@ -53,7 +53,7 @@ async fn replay_outcomes_reach_the_event_stream() {
         );
     }
     bus.publish(Message::replicator_completed());
-    let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())
+    let frame = nuclei::time::timeout(Duration::from_secs(5), stream.next())
         .await
         .unwrap()
         .unwrap()

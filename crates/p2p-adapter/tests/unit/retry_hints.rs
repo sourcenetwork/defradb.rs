@@ -16,6 +16,7 @@ enum PushPath {
 
 async fn assert_hint_prevents_resend(path: PushPath) {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
+    db.set_network(edge::testing::edge());
     db.create_collection(
         schema::CollectionVersion::new(
             "Users",
@@ -57,6 +58,7 @@ async fn assert_hint_prevents_resend(path: PushPath) {
     let (coordinator, _events) = p2p::sync::SyncCoordinator::new(
         transport.clone(),
         blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
         p2p::sync::SyncConfig::default(),
     )
     .await
@@ -113,17 +115,17 @@ async fn assert_hint_prevents_resend(path: PushPath) {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn initial_replay_persists_hint_and_reconnect_cannot_bypass_it() {
     assert_hint_prevents_resend(PushPath::Replay).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn document_retry_persists_hint_and_reconnect_cannot_bypass_it() {
     assert_hint_prevents_resend(PushPath::Document).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_retry_persists_hint_and_reconnect_cannot_bypass_it() {
     assert_hint_prevents_resend(PushPath::Collection).await;
 }

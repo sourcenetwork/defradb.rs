@@ -127,7 +127,7 @@ impl IndexNewArgs {
             validate_identifier(name)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -153,7 +153,7 @@ impl IndexListArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -169,7 +169,7 @@ impl IndexDeleteArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.name)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

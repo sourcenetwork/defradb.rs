@@ -12,7 +12,7 @@ use bitswap::{BitswapCodec, BitswapMessage, ProtocolConfig, ProtocolId, WantType
 use futures::io::{AsyncRead, AsyncWrite};
 use futures::{poll, StreamExt};
 use libp2p::swarm::{ConnectionHandler, ConnectionHandlerEvent};
-use tokio::sync::oneshot;
+use nuclei::sync::oneshot;
 use unsigned_varint::codec::UviBytes;
 
 mod common;
@@ -73,7 +73,7 @@ fn message() -> BitswapMessage {
     message
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_flush_failure_is_reported_as_a_send_error() {
     let (response, outcome) = oneshot::channel();
     let mut events = pin!(outbound_substream(
@@ -89,7 +89,7 @@ async fn a_flush_failure_is_reported_as_a_send_error() {
     assert!(matches!(outcome.await.unwrap(), Err(SendError::Other(_))));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_send_is_reported_only_after_the_frame_is_flushed() {
     let open = Arc::new(AtomicBool::new(false));
     let (response, mut outcome) = oneshot::channel();

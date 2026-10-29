@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! - `IrohTransport`: Thin `Clone + Send + Sync` facade implementing `P2PTransport`
-//! - `IrohEndpoint`: Background tokio task owning all iroh state
+//! - `IrohEndpoint`: Background task owning all iroh state
 //! - Communication via `IrohCommand` enum over mpsc channel
 
 mod addr;

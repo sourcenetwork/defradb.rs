@@ -92,7 +92,7 @@ impl P2pReplicatorArgs {
 impl P2pReplicatorListArgs {
     /// Execute the replicator list command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -109,7 +109,7 @@ impl P2pReplicatorAddArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -266,7 +266,7 @@ impl P2pReplicatorDeleteArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -284,7 +284,7 @@ impl P2pReplicatorDeleteArgs {
 impl P2pReplicatorForgetArgs {
     /// Execute the replicator forget command.
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

@@ -35,12 +35,9 @@ fn make_data_block() -> cid::Cid {
     defra_core::block::generate_cid_from_bytes(&bytes).unwrap()
 }
 
-// The test counts the tasks of the runtime it runs on.
-#[allow(clippy::disallowed_methods)]
+// The test counts the tasks alive on the runtime's shards.
 fn live_tasks() -> usize {
-    tokio::runtime::Handle::current()
-        .metrics()
-        .num_alive_tasks()
+    nuclei::stats().shards.iter().map(|shard| shard.tasks).sum()
 }
 
 /// Waits for the task census to hold still for `hold`, and returns it.
@@ -53,7 +50,7 @@ async fn settled_live_tasks(hold: Duration) -> usize {
             std::time::Instant::now() < deadline,
             "task census never settled"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
         let now = live_tasks();
         if now != last {
             last = now;
@@ -67,18 +64,20 @@ async fn settled_live_tasks(hold: Duration) -> usize {
 /// cancels it.
 async fn cancelled_fetch(handle: &P2PHostHandle, cid: cid::Cid) {
     let query = handle.bitswap_sync(cid, vec![], vec![cid]).await.unwrap();
-    tokio::time::sleep(REACH_BLOCK).await;
+    nuclei::time::sleep(REACH_BLOCK).await;
     assert!(
         handle.bitswap_cancel(query).await.unwrap(),
         "a fetch still in flight must be cancellable"
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn a_cancelled_bitswap_fetch_leaves_no_tasks_behind() {
     let cid = make_data_block();
-    let (host, handle, _events, _) = P2PHost::new(MockBitswapStore::new()).await.unwrap();
-    tokio::spawn(host.run());
+    let (host, handle, _events, _) = P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+        .await
+        .unwrap();
+    nuclei::spawn(host.run()).detach();
 
     BITSWAP_FETCH_BLOCK_MS.store(BLOCK.as_millis() as u64, Ordering::Relaxed);
 

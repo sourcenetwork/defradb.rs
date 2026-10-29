@@ -32,7 +32,11 @@ async fn build_and_stop(config: EmbeddedNodeConfig) -> Result<()> {
 /// The network runtime the node's database runs its network work on.
 async fn database_edge(config: EmbeddedNodeConfig) -> Result<Option<edge::Edge>> {
     let node = embedded::build_with_store(Arc::new(memory_store()?), config).await?;
-    let edge = node.database.network().edge().cloned();
+    let edge = node
+        .database
+        .network()
+        .ok()
+        .map(|network| network.edge().clone());
     node.shutdown().await;
     Ok(edge)
 }

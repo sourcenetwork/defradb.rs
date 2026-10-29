@@ -45,7 +45,7 @@ async fn definition(
     cid
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn fetched_patch_registers_predecessors_on_a_fresh_receiver() {
     for placeholder in [false, true] {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -110,7 +110,7 @@ async fn fetched_patch_registers_predecessors_on_a_fresh_receiver() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn missing_predecessor_is_reported_and_can_be_retried_after_delivery() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
@@ -131,7 +131,7 @@ async fn missing_predecessor_is_reported_and_can_be_retried_after_delivery() {
     assert_eq!(db.get_all_collection_versions().await.unwrap().len(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_unapplied_definition_is_not_reported_as_success() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());

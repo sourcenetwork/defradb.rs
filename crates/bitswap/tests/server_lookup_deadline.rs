@@ -69,7 +69,7 @@ fn hanging_filter(hung: Cid) -> ServerConfig {
 }
 
 async fn past_deadline() {
-    tokio::time::sleep(Duration::from_secs(11)).await;
+    nuclei::time::sleep(Duration::from_secs(11)).await;
 }
 
 fn count_blocks(messages: &[BitswapMessage], cid: &Cid) -> usize {
@@ -99,103 +99,117 @@ fn the_default_lookup_timeout_is_ten_seconds() {
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_hung_size_lookup_answers_dont_have_and_does_not_stall_the_stage() {
-    let good = block_v1(b"good");
-    let hung = block_v1(b"hung");
-    let store = HangStore::new(&[good.clone(), hung.clone()], Some(hung.cid));
-    let mut h = start_with(store, ServerConfig::default());
+#[test]
+fn a_hung_size_lookup_answers_dont_have_and_does_not_stall_the_stage() {
+    edge::testing::paused(|edge| async move {
+        let good = block_v1(b"good");
+        let hung = block_v1(b"hung");
+        let store = HangStore::new(&[good.clone(), hung.clone()], Some(hung.cid));
+        let mut h = start_with(store, ServerConfig::default(), &edge);
 
-    h.send(want(hung.cid, WantType::Block, true));
-    past_deadline().await;
-    let out = h.drain().await;
-    assert!(has_dont_have(&out, &hung.cid));
-    assert!(!has_block(&out, &hung.cid));
+        h.send(want(hung.cid, WantType::Block, true));
+        past_deadline().await;
+        let out = h.drain().await;
+        assert!(has_dont_have(&out, &hung.cid));
+        assert!(!has_block(&out, &hung.cid));
 
-    still_serves(&mut h, &good).await;
+        still_serves(&mut h, &good).await;
+    })
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_hung_filter_denies_and_does_not_stall_the_stage() {
-    let good = block_v1(b"good");
-    let hung = block_v1(b"hung");
-    let mut h = start(&[good.clone(), hung.clone()], hanging_filter(hung.cid));
+#[test]
+fn a_hung_filter_denies_and_does_not_stall_the_stage() {
+    edge::testing::paused(|edge| async move {
+        let good = block_v1(b"good");
+        let hung = block_v1(b"hung");
+        let mut h = start(
+            &[good.clone(), hung.clone()],
+            hanging_filter(hung.cid),
+            &edge,
+        );
 
-    h.send(want(hung.cid, WantType::Block, true));
-    past_deadline().await;
-    let out = h.drain().await;
-    assert!(has_dont_have(&out, &hung.cid));
-    assert!(!has_block(&out, &hung.cid));
+        h.send(want(hung.cid, WantType::Block, true));
+        past_deadline().await;
+        let out = h.drain().await;
+        assert!(has_dont_have(&out, &hung.cid));
+        assert!(!has_block(&out, &hung.cid));
 
-    h.send(want(hung.cid, WantType::Block, false));
-    past_deadline().await;
-    let out = h.drain().await;
-    assert!(!has_dont_have(&out, &hung.cid));
-    assert!(!has_block(&out, &hung.cid));
+        h.send(want(hung.cid, WantType::Block, false));
+        past_deadline().await;
+        let out = h.drain().await;
+        assert!(!has_dont_have(&out, &hung.cid));
+        assert!(!has_block(&out, &hung.cid));
 
-    still_serves(&mut h, &good).await;
+        still_serves(&mut h, &good).await;
+    })
 }
 
-#[tokio::test(start_paused = true)]
-async fn the_deadline_is_per_message_and_skips_remaining_lookups() {
-    let blocks: Vec<Block> = (0..3u8).map(|i| block_v1(&[i])).collect();
-    let store = HangStore::new(&blocks, None);
-    store.hang_all.store(true, Ordering::SeqCst);
-    let calls = store.calls.clone();
-    let hang_all = store.hang_all.clone();
-    let mut h = start_with(store, ServerConfig::default());
+#[test]
+fn the_deadline_is_per_message_and_skips_remaining_lookups() {
+    edge::testing::paused(|edge| async move {
+        let blocks: Vec<Block> = (0..3u8).map(|i| block_v1(&[i])).collect();
+        let store = HangStore::new(&blocks, None);
+        store.hang_all.store(true, Ordering::SeqCst);
+        let calls = store.calls.clone();
+        let hang_all = store.hang_all.clone();
+        let mut h = start_with(store, ServerConfig::default(), &edge);
 
-    let mut message = BitswapMessage::new(false);
-    for block in &blocks {
-        message.add_entry(block.cid, 1, WantType::Block, true);
-    }
-    h.send(message);
-    past_deadline().await;
-    let out = h.drain().await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(blocks.iter().all(|b| has_dont_have(&out, &b.cid)));
+        let mut message = BitswapMessage::new(false);
+        for block in &blocks {
+            message.add_entry(block.cid, 1, WantType::Block, true);
+        }
+        h.send(message);
+        past_deadline().await;
+        let out = h.drain().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(blocks.iter().all(|b| has_dont_have(&out, &b.cid)));
 
-    hang_all.store(false, Ordering::SeqCst);
-    h.send(want(blocks[0].cid, WantType::Block, false));
-    let out = h.drain().await;
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert!(has_block(&out, &blocks[0].cid));
+        hang_all.store(false, Ordering::SeqCst);
+        h.send(want(blocks[0].cid, WantType::Block, false));
+        let out = h.drain().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(has_block(&out, &blocks[0].cid));
+    })
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_cancel_is_applied_when_the_message_lookups_hang() {
-    let held = [cid_v1(b"held-1"), cid_v1(b"held-2")];
-    let hung = block_v1(b"hung");
-    let store = HangStore::new(std::slice::from_ref(&hung), None);
-    let hang_all = store.hang_all.clone();
-    let mut h = start_with(store, ServerConfig::default());
+#[test]
+fn a_cancel_is_applied_when_the_message_lookups_hang() {
+    edge::testing::paused(|edge| async move {
+        let held = [cid_v1(b"held-1"), cid_v1(b"held-2")];
+        let hung = block_v1(b"hung");
+        let store = HangStore::new(std::slice::from_ref(&hung), None);
+        let hang_all = store.hang_all.clone();
+        let mut h = start_with(store, ServerConfig::default(), &edge);
 
-    for cid in held {
-        h.send(want(cid, WantType::Block, false));
-    }
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(h.server.ledger_wants(h.peer).await, Some(2));
+        for cid in held {
+            h.send(want(cid, WantType::Block, false));
+        }
+        nuclei::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(h.server.ledger_wants(h.peer).await, Some(2));
 
-    hang_all.store(true, Ordering::SeqCst);
-    let mut message = BitswapMessage::new(false);
-    for cid in held {
-        message.cancel(cid);
-    }
-    message.add_entry(hung.cid, 1, WantType::Block, false);
-    h.send(message);
-    past_deadline().await;
-    assert_eq!(h.server.ledger_wants(h.peer).await, Some(1));
+        hang_all.store(true, Ordering::SeqCst);
+        let mut message = BitswapMessage::new(false);
+        for cid in held {
+            message.cancel(cid);
+        }
+        message.add_entry(hung.cid, 1, WantType::Block, false);
+        h.send(message);
+        past_deadline().await;
+        assert_eq!(h.server.ledger_wants(h.peer).await, Some(1));
+    })
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_unrepresentable_lookup_timeout_means_no_deadline() {
-    let good = block_v1(b"good");
-    let store = HangStore::new(std::slice::from_ref(&good), None);
-    let config = ServerConfig {
-        message_lookup_timeout: std::time::Duration::MAX,
-        ..ServerConfig::default()
-    };
-    let mut h = start_with(store, config);
+#[test]
+fn an_unrepresentable_lookup_timeout_means_no_deadline() {
+    edge::testing::paused(|edge| async move {
+        let good = block_v1(b"good");
+        let store = HangStore::new(std::slice::from_ref(&good), None);
+        let config = ServerConfig {
+            message_lookup_timeout: std::time::Duration::MAX,
+            ..ServerConfig::default()
+        };
+        let mut h = start_with(store, config, &edge);
 
-    still_serves(&mut h, &good).await;
+        still_serves(&mut h, &good).await;
+    })
 }

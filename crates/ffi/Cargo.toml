@@ -98,7 +98,7 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 defra-core = { path = "../defra-core", features = ["ambient"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+futures-lite.workspace = true
 tempfile = "3.17"
 
 [lints]

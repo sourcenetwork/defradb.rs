@@ -3,7 +3,7 @@
 ## Purpose
 In-process pub/sub event bus for DefraDB subscriptions. A `Bus` trait
 (`publish`/`subscribe`/`unsubscribe`/`close`/`is_closed`) with three impls:
-`ChannelBus` (tokio mpsc fan-out, the real one), `NoOpBus`, and a wasm stub
+`ChannelBus` (mpsc fan-out, the real one), `NoOpBus`, and a wasm stub
 `Subscription`. Publishers emit `Message`s (Update / Merge / MergeComplete /
 ReplicatorCompleted / TopicPeerEvent / SEArtifactReceived / Acp* ); subscribers
 filter by `EventName` (with `WildCard`). HTTP GraphQL SSE and FFI subscriptions
@@ -42,7 +42,7 @@ and **commits** slices already cover. The bus itself only guarantees the drop is
 ## Verdict
 **Plumbing.** `model_worthy: false`. The crate is an in-process fan-out over bounded
 mpsc channels with a one-way closed flag and a drop-counter. No concurrency hazard
-beyond a lock and atomics already exercised by in-crate tokio tests, and no
+beyond a lock and atomics already exercised by in-crate unit tests, and no
 distributed/algebraic law that needs proof. The properties that matter for
 subscriptions (does a subscriber eventually converge after drops, does ACP gate
 which events a peer sees) are owned by other crates and already modeled

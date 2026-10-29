@@ -22,10 +22,10 @@ pub(crate) use pending_dag::PendingDagLease;
 
 use crate::QueryId;
 use cid::Cid;
+use futures::channel::mpsc;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use blockstore::Blockstore;
 

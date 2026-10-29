@@ -10,24 +10,30 @@
 //! and aborts.
 
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
-use n0_future::task::{AbortHandle, JoinHandle};
+use edge::{Edge, EdgeError};
+use futures::future::select;
+use regolith::sync::Event;
 
-/// A spawned task and the flag that says it is done.
-#[derive(Debug)]
+/// A spawned task and the flag that says it is done. Dropping it stops the
+/// task; awaiting it gives how the task ended.
 pub struct TrackedTask {
     finished: Arc<AtomicBool>,
-    handle: JoinHandle<()>,
+    stop: Arc<Event>,
+    handle: edge::Task<()>,
 }
 
 /// Abort access to a [`TrackedTask`] that does not own its join handle.
 #[derive(Debug, Clone)]
 pub struct TrackedAbort {
     finished: Arc<AtomicBool>,
-    abort: AbortHandle,
+    stop: Arc<Event>,
 }
 
 struct MarkFinished(Arc<AtomicBool>);
@@ -39,14 +45,22 @@ impl Drop for MarkFinished {
 }
 
 impl TrackedTask {
-    pub fn spawn(future: impl Future<Output = ()> + MaybeSend + 'static) -> Self {
+    pub fn spawn(edge: &Edge, future: impl Future<Output = ()> + MaybeSend + 'static) -> Self {
         let finished = Arc::new(AtomicBool::new(false));
         let marker = MarkFinished(Arc::clone(&finished));
-        let handle = n0_future::task::spawn(async move {
-            let _marker = marker;
-            future.await;
-        });
-        Self { finished, handle }
+        let stop = Arc::new(Event::new());
+        let stopped = Arc::clone(&stop);
+        let handle = edge
+            .spawn(async move {
+                let _marker = marker;
+                let _ = select(std::pin::pin!(future), std::pin::pin!(stopped.wait())).await;
+            })
+            .within(Duration::MAX);
+        Self {
+            finished,
+            stop,
+            handle,
+        }
     }
 
     pub fn is_finished(&self) -> bool {
@@ -54,18 +68,28 @@ impl TrackedTask {
     }
 
     pub fn abort(&self) {
-        self.handle.abort();
+        self.stop.set();
     }
 
     pub fn abort_handle(&self) -> TrackedAbort {
         TrackedAbort {
             finished: Arc::clone(&self.finished),
-            abort: self.handle.abort_handle(),
+            stop: Arc::clone(&self.stop),
         }
     }
+}
 
-    pub fn into_join_handle(self) -> JoinHandle<()> {
-        self.handle
+impl Future for TrackedTask {
+    type Output = Result<(), EdgeError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.handle).poll(cx)
+    }
+}
+
+impl Drop for TrackedTask {
+    fn drop(&mut self) {
+        self.stop.set();
     }
 }
 
@@ -75,17 +99,25 @@ impl TrackedAbort {
     }
 
     pub fn abort(&self) {
-        self.abort.abort();
+        self.stop.set();
     }
 }
 
 /// Tasks aborted together when the set is dropped, like a `JoinSet`.
-#[derive(Debug, Default)]
 pub struct TrackedTaskSet {
+    edge: Edge,
     tasks: Vec<TrackedTask>,
 }
 
 impl TrackedTaskSet {
+    /// An empty set whose tasks run on `edge`.
+    pub fn new(edge: Edge) -> Self {
+        Self {
+            edge,
+            tasks: Vec::new(),
+        }
+    }
+
     /// Spawn into the set, first dropping handles of tasks that have finished
     /// so the set tracks live work rather than every task ever spawned.
     pub fn spawn(
@@ -93,7 +125,7 @@ impl TrackedTaskSet {
         future: impl Future<Output = ()> + MaybeSend + 'static,
     ) -> TrackedAbort {
         self.tasks.retain(|task| !task.is_finished());
-        let task = TrackedTask::spawn(future);
+        let task = TrackedTask::spawn(&self.edge, future);
         let abort = task.abort_handle();
         self.tasks.push(task);
         abort
@@ -108,22 +140,12 @@ impl TrackedTaskSet {
     }
 
     /// Abort every task and hand back their join handles to await.
-    pub fn abort_all(&mut self) -> Vec<JoinHandle<()>> {
-        std::mem::take(&mut self.tasks)
-            .into_iter()
-            .map(|task| {
-                task.abort();
-                task.into_join_handle()
-            })
-            .collect()
-    }
-}
-
-impl Drop for TrackedTaskSet {
-    fn drop(&mut self) {
-        for task in &self.tasks {
+    pub fn abort_all(&mut self) -> Vec<TrackedTask> {
+        let tasks = std::mem::take(&mut self.tasks);
+        for task in &tasks {
             task.abort();
         }
+        tasks
     }
 }
 
@@ -131,52 +153,52 @@ impl Drop for TrackedTaskSet {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn completion_is_visible_from_inside_later_tracked_work() {
-        let (release, released) = tokio::sync::oneshot::channel::<()>();
-        let task = TrackedTask::spawn(async move {
+        let (release, released) = futures::channel::oneshot::channel::<()>();
+        let task = TrackedTask::spawn(&edge::testing::edge(), async move {
             let _ = released.await;
         });
         assert!(!task.is_finished());
 
         release.send(()).unwrap();
         let abort = task.abort_handle();
-        task.into_join_handle().await.unwrap();
+        task.await.unwrap();
         assert!(abort.is_finished());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn an_aborted_task_counts_as_finished() {
-        let task = TrackedTask::spawn(std::future::pending());
+        let task = TrackedTask::spawn(&edge::testing::edge(), std::future::pending());
         let abort = task.abort_handle();
         abort.abort();
 
-        assert!(task.into_join_handle().await.unwrap_err().is_cancelled());
+        task.await.unwrap();
         assert!(abort.is_finished());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn the_set_prunes_finished_tasks_on_spawn() {
-        let mut set = TrackedTaskSet::default();
+        let mut set = TrackedTaskSet::new(edge::testing::edge());
         set.spawn(async {});
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
         let first = set.tasks[0].abort_handle();
         while !first.is_finished() {
-            tokio::task::yield_now().await;
+            crate::rt::yield_now().await;
         }
 
         set.spawn(std::future::pending());
         assert_eq!(set.len(), 1);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn dropping_the_set_aborts_its_tasks() {
-        let mut set = TrackedTaskSet::default();
+        let mut set = TrackedTaskSet::new(edge::testing::edge());
         let abort = set.spawn(std::future::pending());
         drop(set);
 
         while !abort.is_finished() {
-            tokio::task::yield_now().await;
+            crate::rt::yield_now().await;
         }
     }
 }

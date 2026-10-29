@@ -349,86 +349,128 @@ async fn relation_group_by_doc_id_no_leak_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_on_single_field() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    on_single_field_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        on_single_field_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_on_multiple_fields() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    on_multiple_fields_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        on_multiple_fields_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_all_same_group_value() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    all_same_group_value_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        all_same_group_value_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_group_by_and_filter() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    group_by_and_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        group_by_and_filter_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_relation_all_same_name() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_all_same_name_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_all_same_name_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_relation_counting_distinct_names() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_counting_distinct_names_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_counting_distinct_names_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_on_empty_collection() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    on_empty_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        on_empty_collection_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_relation_counting_zero() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_counting_zero_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_counting_zero_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_grouped_count_plain_first() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    grouped_count_plain_first_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        grouped_count_plain_first_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_grouped_count_grouped_first() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    grouped_count_grouped_first_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        grouped_count_grouped_first_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_top_level_group_by_relation_field() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    top_level_group_by_relation_field_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        top_level_group_by_relation_field_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_top_level_group_by_array_relation() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    top_level_group_by_array_relation_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        top_level_group_by_array_relation_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_relation_group_by_doc_id() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_group_by_doc_id_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_group_by_doc_id_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_aggregate_groupby_1595_relation_group_by_doc_id_no_leak() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_group_by_doc_id_no_leak_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_group_by_doc_id_no_leak_test(cluster).await;
+    })
+    .await;
 }

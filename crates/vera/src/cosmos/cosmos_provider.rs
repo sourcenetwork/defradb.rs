@@ -24,13 +24,14 @@ pub struct CosmosProvider {
 
 impl CosmosProvider {
     /// Construct a provider for deployments that expose REST and gRPC on the
-    /// same address.
+    /// same address, its connections on `edge`.
     pub fn new(
         lcd_address: String,
         comet_address: String,
         signer_key: &[u8],
         chain_id: &str,
         tuning: &AcpTuning,
+        edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         Self::new_with_grpc(
             lcd_address.clone(),
@@ -39,11 +40,12 @@ impl CosmosProvider {
             signer_key,
             chain_id,
             tuning,
+            edge,
         )
     }
 
     /// Construct a provider with distinct Vera LCD, gRPC, and CometBFT
-    /// endpoints.
+    /// endpoints, its connections on `edge`.
     pub fn new_with_grpc(
         lcd_address: String,
         grpc_address: String,
@@ -51,12 +53,14 @@ impl CosmosProvider {
         signer_key: &[u8],
         chain_id: &str,
         tuning: &AcpTuning,
+        edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         let client = VeraClient::new(
             lcd_address,
             grpc_address,
             comet_address,
             tuning.request_timeout,
+            edge,
         )
         .map_err(|e| ProviderError::Config(format!("Vera client: {}", e)))?;
         let signer = TxSigner::from_secp256k1_bytes(signer_key, chain_id)

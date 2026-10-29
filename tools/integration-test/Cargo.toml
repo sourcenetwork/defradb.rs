@@ -115,21 +115,16 @@ vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a61
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
 document = { path = "../../crates/document" }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "stream",
-    "charset",
-    "http2",
-    "system-proxy",
-    "rustls-tls-native-roots",
-] }
+edge = { path = "../../crates/edge", features = ["testing"] }
+nuclei.workspace = true
+net = { path = "../../crates/net" }
 serde_json = "1.0"
-futures = "0.3"
+futures.workspace = true
 paste = "1.0"
 ctor = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 kovan.workspace = true
+thiserror.workspace = true
 regolith.workspace = true
 
 [dev-dependencies]

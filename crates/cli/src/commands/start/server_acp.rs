@@ -72,6 +72,7 @@ impl Node {
                     signer_key_bytes,
                     &config.acp.vera_chain_id,
                     &tuning,
+                    edge,
                 )
                 .map_err(|e| Error::InvalidConfig(format!("Vera provider: {}", e)))?,
             );
@@ -93,7 +94,7 @@ impl Node {
 
             info!("Document ACP configured (Vera)");
             return Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(document_acp, store),
+                document_acp: gate_external_acp(document_acp, store, edge),
                 http_adapter: Some(http_adapter),
             });
         }
@@ -136,17 +137,18 @@ impl Node {
                 )
             })?;
             let worker_config = config.clone();
-            let worker = tokio::task::spawn_blocking(move || {
-                let keyring = crate::commands::open_keyring(&worker_config)?;
-                vera::vera_rs::NativeWorker::open(
-                    &worker_config.rootdir.join("vera-worker"),
-                    keyring.as_ref(),
-                    deployment,
-                )
-                .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
-            })
-            .await
-            .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
+            let worker = edge
+                .spawn_blocking(move || {
+                    let keyring = crate::commands::open_keyring(&worker_config)?;
+                    vera::vera_rs::NativeWorker::open(
+                        &worker_config.rootdir.join("vera-worker"),
+                        keyring.as_ref(),
+                        deployment,
+                    )
+                    .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
+                })
+                .await
+                .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
                 vera::VeraRsProvider::new(
                     config.acp.vera_rs_address.clone(),
@@ -155,6 +157,7 @@ impl Node {
                     worker,
                     &tuning,
                     Some(event_bus),
+                    edge,
                 )
                 .await
                 .map_err(|e| Error::InvalidConfig(format!("vera.rs provider: {}", e)))?,
@@ -169,7 +172,7 @@ impl Node {
 
             info!("Document ACP configured (vera.rs)");
             return Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(document_acp, store),
+                document_acp: gate_external_acp(document_acp, store, edge),
                 http_adapter: Some(http_adapter),
             });
         }
@@ -219,10 +222,11 @@ impl Node {
 fn gate_external_acp(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<storage::DynStore>,
+    edge: &edge::Edge,
 ) -> Arc<dyn acp::DocumentACP> {
     let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
     let redrive = Arc::clone(&gate);
-    tokio::spawn(async move {
+    drop(edge.spawn(async move {
         match redrive.redrive_owed().await {
             Ok(report) if report.settled > 0 => info!(
                 settled = report.settled,
@@ -235,6 +239,6 @@ fn gate_external_acp(
                 "Could not read owed ACP registrations; their documents stay readable only by their creators"
             ),
         }
-    });
+    }));
     gate
 }

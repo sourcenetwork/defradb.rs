@@ -30,11 +30,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use n0_future::time::Instant;
+use crate::rt::time::Instant;
 
 use bytes::Bytes;
 use cid::Cid;
-use tokio::sync::oneshot;
+use futures::channel::oneshot;
+use futures::FutureExt;
 
 use crate::transport::PeerId;
 
@@ -392,6 +393,7 @@ impl PushBacklog {
         byte_capacity: usize,
         per_peer_active_cap: usize,
         worker_count: usize,
+        edge: edge::Edge,
     ) -> Arc<Self> {
         let worker_count = worker_count.max(1);
         let limits = Limits {
@@ -409,7 +411,9 @@ impl PushBacklog {
             limits,
             counters: Arc::clone(&counters),
         };
-        n0_future::task::spawn(owner.run(requests));
+        // It serves the backlog for as long as one is held, or until its edge
+        // stops accepting.
+        edge.spawn_service(owner.run(requests)).detach();
         Arc::new(Self {
             commands,
             limits,
@@ -563,9 +567,9 @@ impl BacklogOwner {
     async fn run(mut self, commands: kovan_channel::unbounded::Receiver<Command>) {
         loop {
             let command = match self.serve_waiters() {
-                Some(wake_at) => tokio::select! {
-                    command = commands.recv_async() => command,
-                    _ = n0_future::time::sleep_until(wake_at) => continue,
+                Some(wake_at) => futures::select! {
+                    command = commands.recv_async().fuse() => command,
+                    _ = crate::rt::time::sleep_until(wake_at).fuse() => continue,
                 },
                 None => commands.recv_async().await,
             };
@@ -622,7 +626,11 @@ impl BacklogOwner {
             return None;
         }
         loop {
-            while self.waiters.front().is_some_and(|reply| reply.is_closed()) {
+            while self
+                .waiters
+                .front()
+                .is_some_and(|reply| reply.is_canceled())
+            {
                 self.waiters.pop_front();
             }
             if self.waiters.is_empty() {
@@ -1064,28 +1072,33 @@ mod tests {
             .cooldown_remaining_ms
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn retry_after_parks_live_queue_without_blocking_other_peers() {
-        let backlog = PushBacklog::new(100, usize::MAX, 1, 2);
-        let peer = PeerId::new("limited".into());
-        backlog.park_peer_with_retry_after(&peer, Some(Duration::from_secs(45)));
-        backlog.try_enqueue(job("limited", b"a")).await;
-        backlog.try_enqueue(job("healthy", b"b")).await;
-        let healthy = backlog.next_job().await.unwrap();
-        assert_eq!(healthy.peer_id.as_str(), "healthy");
-        backlog.job_done(&healthy, JobCompletion::Succeeded).await;
-        tokio::time::advance(Duration::from_secs(44)).await;
-        backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
-        assert_eq!(cooldown_remaining_ms(&backlog, "limited").await, 1000);
-        let waiting = tokio::spawn({
-            let backlog = backlog.clone();
-            async move { backlog.next_job().await }
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiting.is_finished());
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert_eq!(waiting.await.unwrap().unwrap().peer_id.as_str(), "limited");
-        backlog.close();
+    #[test]
+    fn retry_after_parks_live_queue_without_blocking_other_peers() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(100, usize::MAX, 1, 2, edge);
+            let peer = PeerId::new("limited".into());
+            backlog.park_peer_with_retry_after(&peer, Some(Duration::from_secs(45)));
+            backlog.try_enqueue(job("limited", b"a")).await;
+            backlog.try_enqueue(job("healthy", b"b")).await;
+            let healthy = backlog.next_job().await.unwrap();
+            assert_eq!(healthy.peer_id.as_str(), "healthy");
+            backlog.job_done(&healthy, JobCompletion::Succeeded).await;
+            nuclei::time::advance(Duration::from_secs(44)).await;
+            backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
+            assert_eq!(cooldown_remaining_ms(&backlog, "limited").await, 1000);
+            let waiting = crate::rt::spawn({
+                let backlog = backlog.clone();
+                async move { backlog.next_job().await }
+            });
+            crate::rt::yield_now().await;
+            assert!(!waiting.is_finished());
+            nuclei::time::advance(Duration::from_secs(1)).await;
+            assert_eq!(
+                waiting.join().await.unwrap().unwrap().peer_id.as_str(),
+                "limited"
+            );
+            backlog.close();
+        })
     }
 
     /// defradb#1112: a saturated receiver parks the WHOLE peer, not just the CID
@@ -1095,9 +1108,9 @@ mod tests {
     /// condition — it cannot accept any new root until it drains. The per-CID
     /// cooldown gave every other CID for that peer a fresh burst, which is why
     /// bounding the receiver did not stop the storm.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn peer_at_capacity_parks_every_cid_for_that_peer() {
-        let backlog = PushBacklog::new(64, 1 << 20, 2, 2);
+        let backlog = PushBacklog::new(64, 1 << 20, 2, 2, edge::testing::edge());
         let peer = PeerId::new("peer".to_string());
         let other = PeerId::new("other".to_string());
 
@@ -1116,7 +1129,7 @@ mod tests {
         let drained = backlog.next_job().await.expect("healthy peer must drain");
         assert_eq!(drained.peer_id.to_string(), "other");
 
-        let parked = n0_future::time::timeout(Duration::from_millis(150), backlog.next_job()).await;
+        let parked = crate::rt::time::timeout(Duration::from_millis(150), backlog.next_job()).await;
         assert!(
             parked.is_err(),
             "a saturated peer must not hand out more work while parked"
@@ -1128,9 +1141,9 @@ mod tests {
 
     /// The park escalates while the peer keeps rejecting, so a receiver that
     /// stays full is backed off further rather than re-probed at a fixed rate.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn repeated_capacity_parks_escalate() {
-        let backlog = PushBacklog::new(64, 1 << 20, 2, 2);
+        let backlog = PushBacklog::new(64, 1 << 20, 2, 2, edge::testing::edge());
         let peer = PeerId::new("peer".to_string());
         assert_eq!(
             backlog.try_enqueue(job("peer", b"a")).await,
@@ -1149,9 +1162,9 @@ mod tests {
         assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 2);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn enqueue_respects_item_capacity() {
-        let backlog = PushBacklog::new(2, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(2, usize::MAX, 4, 4, edge::testing::edge());
         assert_eq!(
             backlog.try_enqueue(job("a", b"1")).await,
             EnqueueOutcome::Enqueued
@@ -1171,10 +1184,10 @@ mod tests {
         assert_eq!(snap.rejected_items_total, 1);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn enqueue_respects_byte_capacity() {
         let cost = job("a", b"1").resident_bytes();
-        let backlog = PushBacklog::new(1024, cost + cost / 2, 4, 4);
+        let backlog = PushBacklog::new(1024, cost + cost / 2, 4, 4, edge::testing::edge());
         assert_eq!(
             backlog.try_enqueue(job("a", b"1")).await,
             EnqueueOutcome::Enqueued
@@ -1190,9 +1203,9 @@ mod tests {
         assert!(snap.queued_bytes <= snap.queue_byte_capacity);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn oversized_job_admitted_only_when_queue_is_empty() {
-        let backlog = PushBacklog::new(1024, 1, 4, 4);
+        let backlog = PushBacklog::new(1024, 1, 4, 4, edge::testing::edge());
         assert_eq!(
             backlog.try_enqueue(job("a", b"1")).await,
             EnqueueOutcome::Enqueued
@@ -1203,9 +1216,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn coalesce_retires_older_head_for_same_document_peer() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         let old = versioned_job("a", "doc", 1);
         assert_eq!(
             backlog.try_enqueue(old.clone()).await,
@@ -1241,9 +1254,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn undecodable_head_cannot_be_retired_by_document_version_order() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 2, 2);
+        let backlog = PushBacklog::new(1024, usize::MAX, 2, 2, edge::testing::edge());
         assert_eq!(
             backlog.try_enqueue(versioned_job("a", "doc", 100)).await,
             EnqueueOutcome::Enqueued
@@ -1263,9 +1276,9 @@ mod tests {
         assert_eq!(backlog.snapshot().await.queued_items, 2);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn collection_commit_does_not_compete_with_its_document_head() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         let document = versioned_job("a", "doc", 2);
         let mut collection = versioned_job("a", "doc", 1);
         collection.doc_id.clear();
@@ -1294,9 +1307,9 @@ mod tests {
         assert!(backlog.next_job().await.is_some());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn next_job_round_robins_across_peers() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         backlog.try_enqueue(job("a", b"1")).await;
         backlog.try_enqueue(job("a", b"2")).await;
         backlog.try_enqueue(job("b", b"3")).await;
@@ -1309,9 +1322,9 @@ mod tests {
         assert_eq!(third.peer_id.to_string(), "a");
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn per_peer_active_cap_holds_back_saturated_peer() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 1, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 1, 4, edge::testing::edge());
         backlog.try_enqueue(job("slow", b"1")).await;
         backlog.try_enqueue(job("slow", b"2")).await;
         backlog.try_enqueue(job("healthy", b"3")).await;
@@ -1324,28 +1337,28 @@ mod tests {
         assert_eq!(healthy_job.peer_id.to_string(), "healthy");
 
         // Nothing else is eligible until a slow slot frees.
-        let parked = n0_future::time::timeout(Duration::from_millis(50), backlog.next_job()).await;
+        let parked = crate::rt::time::timeout(Duration::from_millis(50), backlog.next_job()).await;
         assert!(parked.is_err(), "slow peer above cap must not be served");
 
         backlog.job_done(&slow_job, JobCompletion::Succeeded).await;
-        let released = n0_future::time::timeout(Duration::from_millis(200), backlog.next_job())
+        let released = crate::rt::time::timeout(Duration::from_millis(200), backlog.next_job())
             .await
             .expect("released slot must unblock the queued job")
             .unwrap();
         assert_eq!(released.peer_id.to_string(), "slow");
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn close_wakes_workers_and_rejects_enqueue() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         let waiter = {
             let backlog = Arc::clone(&backlog);
-            n0_future::task::spawn(async move { backlog.next_job().await })
+            crate::rt::spawn(async move { backlog.next_job().await })
         };
-        n0_future::time::sleep(Duration::from_millis(20)).await;
+        crate::rt::time::sleep(Duration::from_millis(20)).await;
         backlog.close();
 
-        let parked_result = n0_future::time::timeout(Duration::from_millis(200), waiter)
+        let parked_result = crate::rt::time::timeout(Duration::from_millis(200), waiter.join())
             .await
             .expect("close must wake parked workers")
             .unwrap();
@@ -1357,9 +1370,9 @@ mod tests {
         assert_eq!(backlog.snapshot().await.queued_items, 0);
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn snapshot_tracks_active_and_completion_counters() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         backlog.try_enqueue(job("a", b"1")).await;
         backlog.try_enqueue(job("b", b"2")).await;
 
@@ -1380,9 +1393,9 @@ mod tests {
 
     /// Amy canary req 1 (source-inc/gents#630): one peer's backlog must not squat
     /// the whole global item budget.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn one_peer_cannot_fill_the_whole_queue() {
-        let backlog = PushBacklog::new(8, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(8, usize::MAX, 4, 4, edge::testing::edge());
         let mut dead_enqueued = 0;
         for index in 0..8u8 {
             if backlog.try_enqueue(job("dead", &[index])).await == EnqueueOutcome::Enqueued {
@@ -1399,13 +1412,13 @@ mod tests {
 
     /// A `job_done` with no matching active job (caller bug) must not desync
     /// the accounting.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     #[cfg_attr(
         debug_assertions,
         should_panic(expected = "job_done without an active job")
     )]
     async fn spurious_job_done_is_ignored() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         backlog.try_enqueue(job("a", b"1")).await;
         let popped = backlog.next_job().await.unwrap();
         backlog.job_done(&popped, JobCompletion::Succeeded).await;
@@ -1421,9 +1434,9 @@ mod tests {
         assert!(!snap.per_peer.iter().any(|entry| entry.peer_id == "a"));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn snapshot_reports_per_peer_backlog_occupancy() {
-        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4);
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
         backlog.try_enqueue(job("a", b"1")).await;
         backlog.try_enqueue(job("a", b"2")).await;
         backlog.try_enqueue(job("b", b"3")).await;
@@ -1446,9 +1459,9 @@ mod tests {
         backlog.job_done(&active, JobCompletion::Succeeded).await;
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn caps_are_normalized_to_sane_minimums() {
-        let backlog = PushBacklog::new(0, 0, 0, 0);
+        let backlog = PushBacklog::new(0, 0, 0, 0, edge::testing::edge());
         let snap = backlog.snapshot().await;
         assert_eq!(snap.queue_item_capacity, 1);
         assert_eq!(snap.queue_byte_capacity, 1);

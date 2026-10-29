@@ -155,7 +155,7 @@ mod tests {
         Arc::new(db::DB::new(store).unwrap())
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_lens_adapter_invalid_config() {
         let adapter = LensAdapter {
             database: test_db(),
@@ -165,7 +165,7 @@ mod tests {
         assert!(result.unwrap_err().contains("failed to parse lens config"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_lens_adapter_reload() {
         let adapter = LensAdapter {
             database: test_db(),

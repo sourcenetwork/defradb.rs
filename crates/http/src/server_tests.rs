@@ -50,7 +50,7 @@ async fn post(config: ServerConfig, uri: &str, body_len: usize) -> StatusCode {
         .status()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn trailing_slashes_are_normalized_at_every_mount() {
     for path in [
         "/health-check",
@@ -65,7 +65,7 @@ async fn trailing_slashes_are_normalized_at_every_mount() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn trailing_slash_normalization_preserves_the_method() {
     let canonical = get(ServerConfig::default(), "/api/v0/schema").await;
     let trailing = get(ServerConfig::default(), "/api/v0/schema/").await;
@@ -114,7 +114,7 @@ async fn trailing_collection_status(granted: NodePermission) -> StatusCode {
         .status()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn normalized_parameterized_routes_keep_their_matched_permission() {
     assert_ne!(
         trailing_collection_status(NodePermission::CollectionGet).await,
@@ -140,7 +140,7 @@ fn backup_limited() -> ServerConfig {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn schema_add_rejects_oversized_body() {
     assert_eq!(
         post(schema_limited(), "/api/v1/collections", OVERSIZED).await,
@@ -148,7 +148,7 @@ async fn schema_add_rejects_oversized_body() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn schema_add_accepts_body_within_limit() {
     let status = post(schema_limited(), "/api/v1/collections", LIMIT as usize).await;
     assert_ne!(
@@ -160,7 +160,7 @@ async fn schema_add_accepts_body_within_limit() {
 
 /// `/collections` carries get/patch/delete alongside the schema POST. The cap
 /// is merged onto the POST alone, so patching a collection stays uncapped.
-#[tokio::test]
+#[nuclei::test]
 async fn collection_patch_is_not_bound_by_the_schema_limit() {
     let router = server(schema_limited()).router().expect("router builds");
     let status = router
@@ -182,7 +182,7 @@ async fn collection_patch_is_not_bound_by_the_schema_limit() {
 /// A view is defined by an SDL block that Go runs through the same
 /// `ParseSDL` as a schema add (`internal/db/view.go:47` vs
 /// `internal/db/collection.go:276`), so it is a schema request body.
-#[tokio::test]
+#[nuclei::test]
 async fn view_add_rejects_oversized_body() {
     assert_eq!(
         post(schema_limited(), "/api/v1/view", OVERSIZED).await,
@@ -190,7 +190,7 @@ async fn view_add_rejects_oversized_body() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn backup_import_rejects_oversized_body() {
     assert_eq!(
         post(backup_limited(), "/api/v1/backup/import", OVERSIZED).await,
@@ -198,7 +198,7 @@ async fn backup_import_rejects_oversized_body() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn backup_export_is_not_bound_by_the_import_limit() {
     let status = post(backup_limited(), "/api/v1/backup/export", OVERSIZED).await;
     assert_ne!(
@@ -212,7 +212,7 @@ async fn backup_export_is_not_bound_by_the_import_limit() {
 /// whether or not `0` actually means unlimited.
 const ABOVE_AXUM_DEFAULT: usize = 3 * 1024 * 1024;
 
-#[tokio::test]
+#[nuclei::test]
 async fn zero_means_unlimited() {
     let config = ServerConfig {
         max_schema_size: 0,
@@ -260,7 +260,7 @@ fn explicit_zero_disables_the_backup_cap() {
 }
 
 /// The flag must be able to raise the cap, not only lower it.
-#[tokio::test]
+#[nuclei::test]
 async fn backup_import_accepts_a_body_above_the_old_hardcoded_check() {
     let config = ServerConfig {
         max_backup_size: 0,
@@ -273,7 +273,7 @@ async fn backup_import_accepts_a_body_above_the_old_hardcoded_check() {
 /// The interaction that could have made this whole fix inert: when
 /// `max_body_size` is 0, `server.rs` applies `DefaultBodyLimit::disable()` to
 /// the entire router, outside the per-route layers.
-#[tokio::test]
+#[nuclei::test]
 async fn route_limit_survives_the_disabled_global_limit() {
     let config = ServerConfig {
         max_schema_size: LIMIT,
@@ -287,7 +287,7 @@ async fn route_limit_survives_the_disabled_global_limit() {
 }
 
 /// A per-route limit must never raise the effective cap above the global one.
-#[tokio::test]
+#[nuclei::test]
 async fn route_limit_never_exceeds_the_global_limit() {
     let config = ServerConfig {
         max_schema_size: 1024,
@@ -343,7 +343,7 @@ fn signing_stays_off_without_a_node_identity() {
     assert!(!server.app_state().signing_enabled);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn router_construction_includes_extra_routes_without_a_transform() {
     let router = server(ServerConfig::default())
         .with_extra_routes(axum::Router::new().route(

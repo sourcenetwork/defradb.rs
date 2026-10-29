@@ -3,9 +3,10 @@
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
+use futures::channel::oneshot;
+use futures::FutureExt;
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
-use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
@@ -170,7 +171,7 @@ async fn connect_once(
     endpoint_id: iroh::EndpointId,
     direct_addr: Option<std::net::SocketAddr>,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
-    n0_future::time::timeout(
+    crate::rt::time::timeout(
         CONNECT_TIMEOUT,
         connect_mux(endpoint, endpoint_addr(endpoint_id, direct_addr)),
     )
@@ -204,7 +205,7 @@ async fn open_tagged_stream(
     peer_id: &PeerId,
     tag: &[u8],
 ) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
-    let (mut send, recv) = n0_future::time::timeout(OPEN_STREAM_TIMEOUT, connection.open_bi())
+    let (mut send, recv) = crate::rt::time::timeout(OPEN_STREAM_TIMEOUT, connection.open_bi())
         .await
         .map_err(|_| {
             crate::error::Error::Transport(format!(
@@ -472,7 +473,7 @@ where
         return Err(error);
     }
 
-    let response: Resp = n0_future::time::timeout(
+    let response: Resp = crate::rt::time::timeout(
         REQUEST_RESPONSE_TIMEOUT,
         protocols::read_message(&mut recv, protocols::MAX_MESSAGE_SIZE),
     )
@@ -531,15 +532,14 @@ pub(super) async fn handle_two_stream_request(
     // heads do not wait behind dead requests occupying every per-peer sender
     // slot.
     let wait_for_reply_or_disconnect = async {
-        tokio::select! {
-            biased;
-            reply = wait_for_reply => reply,
-            reason = connection.closed() => Err(crate::error::Error::Transport(
+        futures::select_biased! {
+            reply = wait_for_reply.fuse() => reply,
+            reason = connection.closed().fuse() => Err(crate::error::Error::Transport(
                 format!("PushLog connection closed before acknowledgement: {reason}")
             )),
         }
     };
-    n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, wait_for_reply_or_disconnect)
+    crate::rt::time::timeout(REQUEST_RESPONSE_TIMEOUT, wait_for_reply_or_disconnect)
         .await
         .map_err(|_| {
             warn!(
@@ -608,7 +608,7 @@ async fn send_one_way_message<T: serde::Serialize>(
     // Wait for peer to close their side of the stream (via RESET_STREAM or FIN).
     // This ensures the connection stays open long enough for the peer's accept_bi()
     // to run and read the message before CONNECTION_CLOSE is sent.
-    let _ = n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
+    let _ = crate::rt::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
 
     Ok(())
 }
@@ -658,14 +658,14 @@ pub(super) async fn handle_reply_on_stream<Req, Reply, ToEvent>(
     };
     if connection.alpn() != protocols::ALPN_MUX {
         let _ =
-            n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
+            crate::rt::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
         return;
     }
 
     let max_message = services::lookup(reply_tag)
         .expect("every reply tag is a service")
         .max_message;
-    let reply = n0_future::time::timeout(
+    let reply = crate::rt::time::timeout(
         REQUEST_RESPONSE_TIMEOUT,
         read_reply::<Reply>(&mut recv, max_message),
     )
@@ -697,7 +697,7 @@ pub(super) async fn reply_on_stream(
     payload: &[u8],
     deadline: std::time::Duration,
 ) -> crate::error::Result<()> {
-    let written = n0_future::time::timeout(
+    let written = crate::rt::time::timeout(
         deadline,
         protocols::write_payload(&mut send_stream, payload),
     )
@@ -819,7 +819,7 @@ async fn request_car_response(
     let response = protocols::read_to_end_observed(&mut recv, protocols::MAX_CAR_SIZE, |len| {
         timer.received(len)
     });
-    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    let read = crate::rt::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
     timer.saw_rtt(selected_path_rtt(&connection));
     let car_data = match read {
         Ok(Ok(car_data)) => car_data,
@@ -969,7 +969,7 @@ async fn try_fetch_from_provider(
 
     let response =
         protocols::read_to_end_observed(&mut recv, 64 * 1024 * 1024, |len| timer.received(len));
-    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    let read = crate::rt::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
     timer.saw_rtt(selected_path_rtt(&connection));
     let car_data = match read {
         Ok(Ok(data)) => data,
@@ -1076,6 +1076,7 @@ async fn try_fetch_from_provider(
 
 #[derive(Clone)]
 pub(super) struct BlockSyncResources {
+    edge: edge::Edge,
     endpoint: Endpoint,
     peer_map: Arc<SharedPeerMap>,
     connection_cache: ConnectionCache,
@@ -1086,6 +1087,7 @@ pub(super) struct BlockSyncResources {
 
 impl BlockSyncResources {
     pub(super) fn new(
+        edge: edge::Edge,
         endpoint: Endpoint,
         peer_map: Arc<SharedPeerMap>,
         connection_cache: ConnectionCache,
@@ -1094,6 +1096,7 @@ impl BlockSyncResources {
         fetch_stats: Arc<FetchStats>,
     ) -> Self {
         Self {
+            edge,
             endpoint,
             peer_map,
             connection_cache,
@@ -1117,7 +1120,7 @@ pub(super) async fn handle_block_sync(
     providers: Vec<PeerId>,
     missing: Vec<cid::Cid>,
 ) {
-    use n0_future::task::JoinSet;
+    use edge::TaskSet;
 
     if !missing.is_empty() {
         debug!(
@@ -1128,8 +1131,6 @@ pub(super) async fn handle_block_sync(
         );
     }
 
-    let mut tasks: JoinSet<CarFetchAttempt> = JoinSet::new();
-
     let request = if missing.is_empty() {
         CarFetchRequest::full_dag(root)
     } else {
@@ -1137,6 +1138,7 @@ pub(super) async fn handle_block_sync(
     };
 
     let BlockSyncResources {
+        edge,
         endpoint,
         peer_map,
         connection_cache,
@@ -1144,6 +1146,8 @@ pub(super) async fn handle_block_sync(
         admission,
         fetch_stats,
     } = resources;
+
+    let mut tasks: TaskSet<CarFetchAttempt> = TaskSet::new(edge);
 
     for provider in &providers {
         let endpoint = endpoint.clone();
@@ -1154,7 +1158,7 @@ pub(super) async fn handle_block_sync(
         let provider = provider.clone();
         let request = request.clone();
         let mut timer = fetch_stats.start(&provider);
-        tasks.spawn(async move {
+        tasks.spawn(crate::rt::compat(async move {
             let direct_addr = super::endpoint::peer_direct_addr(&peer_map, &provider);
             let attempt = try_fetch_from_provider(
                 &endpoint,
@@ -1170,7 +1174,7 @@ pub(super) async fn handle_block_sync(
             .await;
             timer.finish(attempt.outcome.fetch_outcome());
             attempt
-        });
+        }));
     }
 
     let mut any_success = false;
@@ -1183,8 +1187,7 @@ pub(super) async fn handle_block_sync(
         "selective"
     };
 
-    // The browser JoinSet has no join_next; poll_join_next exists on both.
-    while let Some(task) = std::future::poll_fn(|cx| tasks.poll_join_next(cx)).await {
+    while let Some(task) = tasks.join_next().await {
         match task {
             Ok(attempt) if attempt.outcome.is_success() => {
                 any_success = true;
@@ -1309,42 +1312,46 @@ mod tests {
         assert!(summary.contains("+1 more"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_reply_the_requester_never_reads_is_reset_at_its_deadline() {
-        let requester = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
-        let replier = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
-        let replier_addr = replier.addr();
-        let accepted = n0_future::task::spawn({
-            let replier = replier.clone();
-            async move {
-                let connection = replier.accept().await.unwrap().await.unwrap();
-                let (send, mut recv) = connection.accept_bi().await.unwrap();
-                recv.read_exact(&mut [0u8]).await.unwrap();
-                (connection, send)
-            }
-        });
-        let connection = requester
-            .connect(replier_addr, protocols::ALPN_MUX)
-            .await
-            .unwrap();
-        let (mut request, mut reply) = connection.open_bi().await.unwrap();
-        request.write_all(&[0]).await.unwrap();
-        let (_replier_connection, send) = accepted.await.unwrap();
-
-        // Larger than any stream window, so the write waits on the requester.
-        let payload = vec![0u8; 2 * protocols::MAX_MESSAGE_SIZE];
-        let result = reply_on_stream(send, &payload, std::time::Duration::from_millis(200)).await;
-
-        assert!(matches!(result, Err(crate::error::Error::ResponseTimeout)));
-        let code =
-            n0_future::time::timeout(std::time::Duration::from_secs(5), reply.received_reset())
+        edge::compat(async {
+            let requester = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let replier = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let replier_addr = replier.addr();
+            let accepted = crate::rt::spawn(edge::compat({
+                let replier = replier.clone();
+                async move {
+                    let connection = replier.accept().await.unwrap().await.unwrap();
+                    let (send, mut recv) = connection.accept_bi().await.unwrap();
+                    recv.read_exact(&mut [0u8]).await.unwrap();
+                    (connection, send)
+                }
+            }));
+            let connection = requester
+                .connect(replier_addr, protocols::ALPN_MUX)
                 .await
-                .expect("reset reaches the requester")
                 .unwrap();
-        assert_eq!(
-            code.map(|code| code.into_inner()),
-            Some(u64::from(super::super::endpoint_streams::RESET_STALLED))
-        );
+            let (mut request, mut reply) = connection.open_bi().await.unwrap();
+            request.write_all(&[0]).await.unwrap();
+            let (_replier_connection, send) = accepted.join().await.unwrap();
+
+            // Larger than any stream window, so the write waits on the requester.
+            let payload = vec![0u8; 2 * protocols::MAX_MESSAGE_SIZE];
+            let result =
+                reply_on_stream(send, &payload, std::time::Duration::from_millis(200)).await;
+
+            assert!(matches!(result, Err(crate::error::Error::ResponseTimeout)));
+            let code =
+                crate::rt::time::timeout(std::time::Duration::from_secs(5), reply.received_reset())
+                    .await
+                    .expect("reset reaches the requester")
+                    .unwrap();
+            assert_eq!(
+                code.map(|code| code.into_inner()),
+                Some(u64::from(super::super::endpoint_streams::RESET_STALLED))
+            );
+        })
+        .await
     }
 
     pub(super) async fn localhost_endpoint(alpns: Vec<Vec<u8>>) -> iroh::Endpoint {
@@ -1367,43 +1374,46 @@ mod tests {
     /// the cache, so without the admission check `connect_with_cache` returns
     /// it happily and the caller sends RPC over a revoked peer's live
     /// connection. That is the path the check actually has to cover.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_revoked_peer_is_not_served_from_the_connection_cache() {
-        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
-        let dial_ep = localhost_endpoint(vec![]).await;
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
 
-        let accept_task = n0_future::task::spawn({
-            let ep = accept_ep.clone();
-            async move {
-                let mut held = Vec::new();
-                while let Some(incoming) = ep.accept().await {
-                    if let Ok(conn) = incoming.await {
-                        held.push(conn);
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = ep.accept().await {
+                        if let Ok(conn) = incoming.await {
+                            held.push(conn);
+                        }
                     }
                 }
-            }
-        });
+            }));
 
-        let connection = dial_ep
-            .connect(accept_ep.addr(), protocols::ALPN_MUX)
-            .await
-            .expect("connect");
-        let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
+            let connection = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+            remember_connection(&cache, &peer, &connection).expect("cache connection");
 
-        let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
-        admission.revoke(accept_ep.id());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            admission.revoke(accept_ep.id());
 
-        let refused = connect_with_cache(&dial_ep, &peer, None, &cache, &admission)
-            .await
-            .expect_err("a revoked peer must not be served from the cache");
-        assert!(
-            refused.to_string().contains("revoked"),
-            "the refusal must name the revocation; got: {refused}"
-        );
+            let refused = connect_with_cache(&dial_ep, &peer, None, &cache, &admission)
+                .await
+                .expect_err("a revoked peer must not be served from the cache");
+            assert!(
+                refused.to_string().contains("revoked"),
+                "the refusal must name the revocation; got: {refused}"
+            );
 
-        accept_task.abort();
+            accept_task.abort();
+        })
+        .await
     }
 
     /// Regression (#1092 review): a peer can hold several live connections —
@@ -1411,192 +1421,205 @@ mod tests {
     /// retained handle — closing only the most recent one leaves the others
     /// alive, the connection count never reaches zero, and `PeerDisconnected`
     /// never fires.
-    #[tokio::test]
+    #[nuclei::test]
     async fn close_peer_connections_closes_every_retained_handle() {
-        let accept_ep = localhost_endpoint(vec![b"test/a".to_vec(), b"test/b".to_vec()]).await;
-        let dial_ep = localhost_endpoint(vec![]).await;
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![b"test/a".to_vec(), b"test/b".to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
 
-        let accept_task = n0_future::task::spawn({
-            let ep = accept_ep.clone();
-            async move {
-                let mut held = Vec::new();
-                while let Some(incoming) = ep.accept().await {
-                    if let Ok(conn) = incoming.await {
-                        held.push(conn);
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = ep.accept().await {
+                        if let Ok(conn) = incoming.await {
+                            held.push(conn);
+                        }
                     }
                 }
-            }
-        });
+            }));
 
-        let addr = accept_ep.addr();
-        let conn_a = dial_ep
-            .connect(addr.clone(), b"test/a")
-            .await
-            .expect("connect a");
-        let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
-
-        let peer_map = Arc::new(SharedPeerMap::new());
-        let cache = new_connection_cache(GossipHandle::new());
-        let id = accept_ep.id();
-        peer_map.increment_connections(id, None, conn_a.clone());
-        peer_map.increment_connections(id, None, conn_b.clone());
-
-        close_peer_connections(&peer_map, &cache, &id);
-
-        assert!(
-            conn_a.close_reason().is_some(),
-            "first retained handle must be closed"
-        );
-        assert!(
-            conn_b.close_reason().is_some(),
-            "second retained handle must be closed"
-        );
-
-        accept_task.abort();
-    }
-
-    #[tokio::test]
-    async fn response_timeout_closes_and_evicts_the_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/timeout".to_vec()]).await;
-        let dial_ep = localhost_endpoint(vec![]).await;
-        let accept_task = n0_future::task::spawn({
-            let ep = accept_ep.clone();
-            async move {
-                let mut held = Vec::new();
-                while let Some(incoming) = ep.accept().await {
-                    if let Ok(connection) = incoming.await {
-                        held.push(connection);
-                    }
-                }
-            }
-        });
-
-        let connection = dial_ep
-            .connect(accept_ep.addr(), b"test/timeout")
-            .await
-            .expect("connect");
-        let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
-
-        retire_timed_out_connection(&cache, &peer, &connection);
-
-        assert!(
-            connection.close_reason().is_some(),
-            "a transport-open connection that missed its response deadline must close"
-        );
-        assert!(
-            cached_connection(&cache, &peer)
-                .expect("read cache")
-                .is_none(),
-            "the next request must dial a fresh connection"
-        );
-
-        accept_task.abort();
-    }
-
-    #[tokio::test]
-    async fn late_timeout_does_not_evict_a_newer_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/old".to_vec(), b"test/new".to_vec()]).await;
-        let dial_ep = localhost_endpoint(vec![]).await;
-        let accept_task = n0_future::task::spawn({
-            let ep = accept_ep.clone();
-            async move {
-                let mut held = Vec::new();
-                while let Some(incoming) = ep.accept().await {
-                    if let Ok(connection) = incoming.await {
-                        held.push(connection);
-                    }
-                }
-            }
-        });
-
-        let old = dial_ep
-            .connect(accept_ep.addr(), b"test/old")
-            .await
-            .expect("connect old");
-        let newer = dial_ep
-            .connect(accept_ep.addr(), b"test/new")
-            .await
-            .expect("connect new");
-        let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &old).expect("cache old");
-        remember_connection(&cache, &peer, &newer).expect("cache new");
-
-        retire_timed_out_connection(&cache, &peer, &old);
-
-        let cached = cached_connection(&cache, &peer)
-            .expect("read cache")
-            .expect("newer connection remains cached");
-        assert_eq!(cached.stable_id(), newer.stable_id());
-        assert!(newer.close_reason().is_none());
-        assert!(old.close_reason().is_some());
-
-        accept_task.abort();
-    }
-
-    #[tokio::test]
-    async fn concurrent_requests_share_one_connection_dial() {
-        const CALLERS: usize = 16;
-
-        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
-        let dial_ep = localhost_endpoint(vec![]).await;
-        let direct_addr = accept_ep
-            .addr()
-            .ip_addrs()
-            .next()
-            .copied()
-            .expect("listener direct address");
-        let peer_id = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
-        let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
-        let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let accept_task = n0_future::task::spawn({
-            let endpoint = accept_ep.clone();
-            async move {
-                let mut held = Vec::new();
-                while let Some(incoming) = endpoint.accept().await {
-                    if let Ok(connection) = incoming.await {
-                        held.push(connection);
-                        let _ = accepted_tx.send(());
-                    }
-                }
-            }
-        });
-
-        let mut callers = tokio::task::JoinSet::new();
-        for _ in 0..CALLERS {
-            let endpoint = dial_ep.clone();
-            let peer_id = peer_id.clone();
-            let cache = Arc::clone(&cache);
-            let admission = Arc::clone(&admission);
-            let barrier = Arc::clone(&barrier);
-            callers.spawn(async move {
-                barrier.wait().await;
-                connect_with_cache(&endpoint, &peer_id, Some(direct_addr), &cache, &admission)
-                    .await
-                    .expect("shared connection")
-            });
-        }
-
-        while let Some(result) = callers.join_next().await {
-            result.expect("dial task");
-        }
-
-        n0_future::time::timeout(std::time::Duration::from_secs(1), accepted_rx.recv())
-            .await
-            .expect("receiver accepted the connection")
-            .expect("accept observer remained open");
-        assert!(
-            n0_future::time::timeout(std::time::Duration::from_millis(100), accepted_rx.recv())
+            let addr = accept_ep.addr();
+            let conn_a = dial_ep
+                .connect(addr.clone(), b"test/a")
                 .await
-                .is_err(),
-            "one peer/ALPN key must establish only one transport connection"
-        );
+                .expect("connect a");
+            let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
 
-        accept_task.abort();
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let cache = new_connection_cache(GossipHandle::new());
+            let id = accept_ep.id();
+            peer_map.increment_connections(id, None, conn_a.clone());
+            peer_map.increment_connections(id, None, conn_b.clone());
+
+            close_peer_connections(&peer_map, &cache, &id);
+
+            assert!(
+                conn_a.close_reason().is_some(),
+                "first retained handle must be closed"
+            );
+            assert!(
+                conn_b.close_reason().is_some(),
+                "second retained handle must be closed"
+            );
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
+    async fn response_timeout_closes_and_evicts_the_cached_connection() {
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![b"test/timeout".to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = ep.accept().await {
+                        if let Ok(connection) = incoming.await {
+                            held.push(connection);
+                        }
+                    }
+                }
+            }));
+
+            let connection = dial_ep
+                .connect(accept_ep.addr(), b"test/timeout")
+                .await
+                .expect("connect");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+            remember_connection(&cache, &peer, &connection).expect("cache connection");
+
+            retire_timed_out_connection(&cache, &peer, &connection);
+
+            assert!(
+                connection.close_reason().is_some(),
+                "a transport-open connection that missed its response deadline must close"
+            );
+            assert!(
+                cached_connection(&cache, &peer)
+                    .expect("read cache")
+                    .is_none(),
+                "the next request must dial a fresh connection"
+            );
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
+    async fn late_timeout_does_not_evict_a_newer_cached_connection() {
+        edge::compat(async {
+            let accept_ep =
+                localhost_endpoint(vec![b"test/old".to_vec(), b"test/new".to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = ep.accept().await {
+                        if let Ok(connection) = incoming.await {
+                            held.push(connection);
+                        }
+                    }
+                }
+            }));
+
+            let old = dial_ep
+                .connect(accept_ep.addr(), b"test/old")
+                .await
+                .expect("connect old");
+            let newer = dial_ep
+                .connect(accept_ep.addr(), b"test/new")
+                .await
+                .expect("connect new");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+            remember_connection(&cache, &peer, &old).expect("cache old");
+            remember_connection(&cache, &peer, &newer).expect("cache new");
+
+            retire_timed_out_connection(&cache, &peer, &old);
+
+            let cached = cached_connection(&cache, &peer)
+                .expect("read cache")
+                .expect("newer connection remains cached");
+            assert_eq!(cached.stable_id(), newer.stable_id());
+            assert!(newer.close_reason().is_none());
+            assert!(old.close_reason().is_some());
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
+    async fn concurrent_requests_share_one_connection_dial() {
+        edge::compat(async {
+            const CALLERS: usize = 16;
+
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let direct_addr = accept_ep
+                .addr()
+                .ip_addrs()
+                .next()
+                .copied()
+                .expect("listener direct address");
+            let peer_id = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
+            let (accepted_tx, mut accepted_rx) = futures::channel::mpsc::unbounded();
+
+            let accept_task = crate::rt::spawn(edge::compat({
+                let endpoint = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = endpoint.accept().await {
+                        if let Ok(connection) = incoming.await {
+                            held.push(connection);
+                            let _ = accepted_tx.unbounded_send(());
+                        }
+                    }
+                }
+            }));
+
+            let mut callers = crate::rt::JoinSet::new();
+            for _ in 0..CALLERS {
+                let endpoint = dial_ep.clone();
+                let peer_id = peer_id.clone();
+                let cache = Arc::clone(&cache);
+                let admission = Arc::clone(&admission);
+                let barrier = Arc::clone(&barrier);
+                callers.spawn(edge::compat(async move {
+                    barrier.wait().await;
+                    connect_with_cache(&endpoint, &peer_id, Some(direct_addr), &cache, &admission)
+                        .await
+                        .expect("shared connection")
+                }));
+            }
+
+            while let Some(result) = callers.join_next().await {
+                result.expect("dial task");
+            }
+
+            crate::rt::time::timeout(std::time::Duration::from_secs(1), accepted_rx.recv())
+                .await
+                .expect("receiver accepted the connection")
+                .expect("accept observer remained open");
+            assert!(
+                crate::rt::time::timeout(std::time::Duration::from_millis(100), accepted_rx.recv())
+                    .await
+                    .is_err(),
+                "one peer/ALPN key must establish only one transport connection"
+            );
+
+            accept_task.abort();
+        })
+        .await
     }
 }

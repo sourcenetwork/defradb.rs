@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use kovan_channel::bounded;
 use libp2p::PeerId;
+use nuclei::sync::oneshot;
 use thiserror::Error;
-use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::message::BitswapMessage;
@@ -195,7 +195,7 @@ impl Network {
         backoff: Duration,
     ) -> Result<(), NetworkError> {
         trace!(%peer, "send start: {:?}", message);
-        tokio::time::timeout(timeout, async {
+        nuclei::time::timeout(timeout, async {
             let mut errors = Vec::new();
             for attempt in 1..=retries {
                 debug!(%peer, attempt, retries, "send attempt");
@@ -218,7 +218,7 @@ impl Network {
                         debug!(%peer, attempt, retries, error = %other, "send attempt failed");
                         errors.push(other);
                         if attempt < retries {
-                            tokio::time::sleep(backoff).await;
+                            nuclei::time::sleep(backoff).await;
                         }
                     }
                 }
@@ -237,7 +237,7 @@ impl Network {
     ) -> Result<Option<ProtocolId>, NetworkError> {
         let id = self.dial_id.fetch_add(1, Ordering::Relaxed);
         debug!(id, %peer, "dial");
-        tokio::time::timeout(timeout, async {
+        nuclei::time::timeout(timeout, async {
             let (response, outcome) = oneshot::channel();
             self.sender
                 .send_async(OutEvent::Dial { peer, response, id })

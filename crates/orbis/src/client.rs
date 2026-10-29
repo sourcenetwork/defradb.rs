@@ -10,7 +10,9 @@ use defra_core::thread_bounds::MaybeBoxFuture;
 use edge::Edge;
 use identity::{FullIdentity, Identity};
 use sha2::{Digest, Sha256};
-use tonic::transport::Channel;
+
+/// The gRPC channel to Orbis, on nuclei sockets.
+type Channel = net::grpc::Channel<tonic::body::Body>;
 
 use crate::proto::{sign_service_client::SignServiceClient, StartSignRequest};
 
@@ -63,7 +65,7 @@ impl OrbisClient {
         let public_key = crypto::BlsPublicKey::from_bytes(&public_key_bytes).map_err(error)?;
         let signer_did = public_key.did().map_err(error)?;
         let public_key_hex = hex::encode(public_key.raw());
-        let endpoint = Channel::from_shared(endpoint)
+        let endpoint = net::grpc::Endpoint::from_shared(endpoint, edge.clone())
             .map_err(error)?
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(60));

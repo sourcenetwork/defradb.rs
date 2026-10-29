@@ -78,7 +78,7 @@ impl Blockstore for ReadCountingBlockstore {
 /// An ungranted peer asking for a known oversized block must not be able to
 /// price a full disk read and hash into the denial (#1729). The small root's
 /// one bounded read stays: it is the same read every legitimate request pays.
-#[tokio::test]
+#[nuclei::test]
 async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
     let peer = random_peer_id();
     let transport = NoopTransport::new();
@@ -96,6 +96,7 @@ async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         Arc::new(ReplicatorRegistry::new()),
@@ -132,7 +133,7 @@ async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
 
 /// A replicator's per-block authority survives the metadata-only path: the
 /// oversized notice is served without ever reading the oversized payload.
-#[tokio::test]
+#[nuclei::test]
 async fn indexed_metadata_serves_a_replicators_oversized_notice_without_payload_reads() {
     let peer = random_peer_id();
     let transport = NoopTransport::new();
@@ -152,6 +153,7 @@ async fn indexed_metadata_serves_a_replicators_oversized_notice_without_payload_
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         replicators,
@@ -185,7 +187,7 @@ async fn indexed_metadata_serves_a_replicators_oversized_notice_without_payload_
 
 /// Without durable metadata the oversized notice fails closed even when a
 /// payload read would have authorized it.
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_notice_fails_closed_without_indexed_metadata() {
     let peer = random_peer_id();
     let transport = NoopTransport::new();
@@ -205,6 +207,7 @@ async fn oversized_notice_fails_closed_without_indexed_metadata() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         replicators,
@@ -231,7 +234,7 @@ async fn oversized_notice_fails_closed_without_indexed_metadata() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn filtered_root_grant_covers_payloads_and_only_related_size_notices() {
     let peer = random_peer_id();
     let transport = NoopTransport::new();
@@ -257,6 +260,7 @@ async fn filtered_root_grant_covers_payloads_and_only_related_size_notices() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         filtered_replicator_registry(&peer, "collection1"),
@@ -298,7 +302,7 @@ async fn filtered_root_grant_covers_payloads_and_only_related_size_notices() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_car_block_keeps_sibling_and_accurate_presence_counts() {
     for allowed in [false, true] {
         let peer = random_peer_id();
@@ -320,6 +324,7 @@ async fn oversized_car_block_keeps_sibling_and_accurate_presence_counts() {
         let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
             transport.clone(),
             blockstore,
+            crate::network::test_network(),
             SyncConfig::default(),
             AccessMode::Controlled,
             replicators,
@@ -366,7 +371,7 @@ async fn oversized_car_block_keeps_sibling_and_accurate_presence_counts() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
     use crate::sync::manager::FetchCompletion;
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
@@ -377,6 +382,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
     let (coordinator, _events) = SyncCoordinator::new(
         NoopTransport::new(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
     )
     .await
@@ -450,10 +456,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        completion.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ));
+    assert!(matches!(completion.try_recv(), Ok(None)));
 }
 
 /// A small root the doc index cannot attribute (a doc-less collection
@@ -461,7 +464,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
 /// ownership) keeps its restart-safe authority through the one bounded
 /// payload read. A filtered replicator has no per-block fallback, so the
 /// rooted grant is the only path that serves them anything.
-#[tokio::test]
+#[nuclei::test]
 async fn unattributable_small_root_keeps_authority_through_its_payload() {
     let peer = random_peer_id();
     let transport = NoopTransport::new();
@@ -479,6 +482,7 @@ async fn unattributable_small_root_keeps_authority_through_its_payload() {
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport.clone(),
         blockstore.clone(),
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         filtered_replicator_registry(&peer, "collection1"),
@@ -513,7 +517,7 @@ async fn unattributable_small_root_keeps_authority_through_its_payload() {
 /// The ACP leg of the oversized-notice decision: indexed metadata reaches
 /// may_read, which serves the notice to an identity holding read access and
 /// drops it for everyone else.
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_notice_follows_the_acp_read_gate() {
     let reader =
         identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
@@ -542,6 +546,7 @@ async fn oversized_notice_follows_the_acp_read_gate() {
         let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
             transport.clone(),
             blockstore,
+            crate::network::test_network(),
             SyncConfig::default(),
             AccessMode::Controlled,
             Arc::new(ReplicatorRegistry::new()),

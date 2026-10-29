@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use super::{Shared, TopicChange};
 use crate::transport::P2PTransport;
+use futures::FutureExt;
 
 const RECONCILE_RETRY_MIN: Duration = Duration::from_millis(100);
 const RECONCILE_RETRY_MAX: Duration = Duration::from_secs(5);
@@ -52,9 +53,9 @@ where
     async fn run(self: Arc<Self>, collection_id: String) {
         let mut delay = RECONCILE_RETRY_MIN;
         loop {
-            tokio::select! {
-                _ = self.shutdown.cancelled() => break,
-                _ = n0_future::time::sleep(delay) => {}
+            futures::select! {
+                _ = self.shutdown.cancelled().fuse() => break,
+                _ = crate::rt::time::sleep(delay).fuse() => {}
             }
             match self.pass(&collection_id).await {
                 Pass::Converged => {

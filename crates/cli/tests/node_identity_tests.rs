@@ -8,7 +8,7 @@ use serde_json::Value;
 struct RunningNode {
     child: Child,
     url: String,
-    client: reqwest::Client,
+    client: net::http::Client,
 }
 
 impl Drop for RunningNode {
@@ -46,13 +46,13 @@ impl RunningNode {
         let mut node = Self {
             child,
             url: format!("http://{address}"),
-            client: reqwest::Client::builder()
+            client: net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
         };
-        tokio::time::timeout(Duration::from_secs(15), async {
+        nuclei::time::timeout(Duration::from_secs(15), async {
             loop {
                 assert!(
                     node.child.try_wait().unwrap().is_none(),
@@ -69,7 +69,7 @@ impl RunningNode {
                         break;
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                nuclei::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
@@ -108,7 +108,7 @@ impl RunningNode {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn development_node_uses_the_requested_identity_key_type_without_p2p() {
     for (name, expected) in [
         ("ed25519", KeyType::Ed25519),
@@ -124,7 +124,7 @@ async fn development_node_uses_the_requested_identity_key_type_without_p2p() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn persisted_node_identity_survives_a_default_key_type_change() {
     let root = tempfile::tempdir().unwrap();
     let node = RunningNode::start(root.path(), "secp256r1", &[]).await;
@@ -137,7 +137,7 @@ async fn persisted_node_identity_survives_a_default_key_type_change() {
     assert_eq!(restarted.identity().await["DID"], before["DID"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn generated_identity_signs_commits_unless_signing_is_disabled() {
     for no_signing in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -199,7 +199,7 @@ async fn generated_identity_signs_commits_unless_signing_is_disabled() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn generated_identity_does_not_authenticate_http_requests() {
     let root = tempfile::tempdir().unwrap();
     let node =
@@ -213,7 +213,7 @@ async fn generated_identity_does_not_authenticate_http_requests() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), net::http::StatusCode::BAD_REQUEST);
     assert!(response
         .text()
         .await
@@ -221,7 +221,7 @@ async fn generated_identity_does_not_authenticate_http_requests() {
         .contains("policy creator can not be empty"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn explicit_identity_overrides_the_generation_default() {
     use crypto::Key;
     use identity::Identity;
@@ -242,7 +242,7 @@ async fn explicit_identity_overrides_the_generation_default() {
     assert_eq!(node.identity().await["DID"], expected.as_str());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn production_without_keyring_or_explicit_identity_stays_anonymous() {
     let root = tempfile::tempdir().unwrap();
     let node = RunningNode::start(root.path(), "ed25519", &["--no-keyring"]).await;

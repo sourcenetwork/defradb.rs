@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::Task;
 use iroh::SecretKey;
 use kovan_queue::seg_queue::SegQueue;
-use n0_future::task::JoinHandle;
 
 use super::protocols;
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
@@ -26,7 +26,7 @@ use crate::transport::{P2PTransport, PeerAddr, PeerId};
 struct ObservedLog {
     connections: AtomicUsize,
     tags: SegQueue<Vec<u8>>,
-    tag_read: tokio::sync::Notify,
+    tag_read: crate::rt::Notify,
 }
 
 /// The log drained once for assertions.
@@ -52,7 +52,7 @@ struct BarePeer {
     peer_id: PeerId,
     addr: SocketAddr,
     observed: Arc<ObservedLog>,
-    accept_task: JoinHandle<()>,
+    accept_task: Task<()>,
 }
 
 impl BarePeer {
@@ -65,7 +65,7 @@ impl BarePeer {
             if read >= count {
                 return;
             }
-            n0_future::time::timeout(Duration::from_secs(5), tag_read)
+            crate::rt::time::timeout(Duration::from_secs(5), tag_read)
                 .await
                 .unwrap_or_else(|_| panic!("bare peer read {read} of {count} streams"));
         }
@@ -104,7 +104,7 @@ async fn spawn_bare_peer() -> BarePeer {
         .expect("listener direct address");
 
     let observed = Arc::new(ObservedLog::default());
-    let accept_task = n0_future::task::spawn({
+    let accept_task = crate::rt::spawn(edge::compat({
         let endpoint = endpoint.clone();
         let observed = Arc::clone(&observed);
         async move {
@@ -116,7 +116,7 @@ async fn spawn_bare_peer() -> BarePeer {
                 };
                 observed.connections.fetch_add(1, Ordering::Relaxed);
                 let observed = Arc::clone(&observed);
-                n0_future::task::spawn(async move {
+                crate::rt::spawn(edge::compat(async move {
                     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                         match protocols::read_stream_tag(&mut recv).await {
                             // The node asks every new peer for its service
@@ -128,12 +128,16 @@ async fn spawn_bare_peer() -> BarePeer {
                             }
                             Err(_) => break,
                         }
+                        // Read to the end, as a real peer does, so dropping
+                        // the stream cannot stop a send still being written.
+                        let _ = recv.read_to_end(1 << 20).await;
                         let _ = send.finish();
                     }
-                });
+                }))
+                .detach();
             }
         }
-    });
+    }));
 
     BarePeer {
         peer_id,
@@ -143,7 +147,7 @@ async fn spawn_bare_peer() -> BarePeer {
     }
 }
 
-pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
+pub(super) async fn spawn_transport() -> (IrohTransport, edge::Task<()>) {
     let secret_key = SecretKey::generate();
     let config = IrohEndpointConfig {
         secret_key: secret_key.clone(),
@@ -155,7 +159,8 @@ pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
         max_concurrent_multipath_paths: None,
         allowlist: Default::default(),
     };
-    let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
+    let (command_tx, _events, _replicators, task) =
+        spawn_endpoint(config, edge::testing::edge()).await.unwrap();
     (IrohTransport::new(command_tx, secret_key), task)
 }
 
@@ -208,117 +213,126 @@ async fn drive_six_protocols(transport: &IrohTransport, peer: &PeerId) {
 }
 
 /// The point of the mux ALPN: six protocols, one connection.
-#[tokio::test]
+#[nuclei::test]
 async fn six_protocols_share_one_connection() {
-    let peer = spawn_bare_peer().await;
-    let (transport, endpoint_task) = spawn_transport().await;
+    edge::compat(async {
+        let peer = spawn_bare_peer().await;
+        let (transport, endpoint_task) = spawn_transport().await;
 
-    transport
-        .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
-        .await
-        .expect("dial bare peer");
+        transport
+            .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
+            .await
+            .expect("dial bare peer");
 
-    drive_six_protocols(&transport, &peer.peer_id).await;
-    peer.wait_for_streams(6).await;
+        drive_six_protocols(&transport, &peer.peer_id).await;
+        peer.wait_for_streams(6).await;
 
-    let observed = peer.observed();
-    assert_eq!(
-        observed.distinct_tags().len(),
-        6,
-        "expected six protocols, saw {:?}",
-        observed.distinct_tags()
-    );
-    assert_eq!(
-        observed.connections,
-        1,
-        "six protocols must share one connection, saw {} (tags: {:?})",
-        observed.connections,
-        observed.distinct_tags()
-    );
+        let observed = peer.observed();
+        assert_eq!(
+            observed.distinct_tags().len(),
+            6,
+            "expected six protocols, saw {:?}",
+            observed.distinct_tags()
+        );
+        assert_eq!(
+            observed.connections,
+            1,
+            "six protocols must share one connection, saw {} (tags: {:?})",
+            observed.connections,
+            observed.distinct_tags()
+        );
 
-    peer.accept_task.abort();
-    transport.shutdown().await.unwrap();
-    endpoint_task.await.unwrap();
+        peer.accept_task.abort();
+        transport.shutdown().await.unwrap();
+        endpoint_task.await.unwrap();
+    })
+    .await
 }
 
 /// Repeating a protocol reuses the connection rather than redialling.
-#[tokio::test]
+#[nuclei::test]
 async fn repeated_sends_do_not_redial() {
-    let peer = spawn_bare_peer().await;
-    let (transport, endpoint_task) = spawn_transport().await;
+    edge::compat(async {
+        let peer = spawn_bare_peer().await;
+        let (transport, endpoint_task) = spawn_transport().await;
 
-    transport
-        .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
-        .await
-        .expect("dial bare peer");
+        transport
+            .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
+            .await
+            .expect("dial bare peer");
 
-    for _ in 0..5 {
+        for _ in 0..5 {
+            transport
+                .send_se_artifacts(
+                    &peer.peer_id,
+                    PushSEArtifactsRequest::new("collection1", Vec::new()),
+                )
+                .await
+                .expect("se artifacts");
+        }
+
+        let observed = peer.observed();
+        assert_eq!(observed.tags.len(), 5, "every send must reach the peer");
+        assert_eq!(
+            observed.connections, 1,
+            "repeated sends must reuse the dialled connection"
+        );
+
+        peer.accept_task.abort();
+        transport.shutdown().await.unwrap();
+        endpoint_task.await.unwrap();
+    })
+    .await
+}
+
+/// A stream-level failure must not evict the connection every other protocol is
+/// using.
+#[nuclei::test]
+async fn a_failed_stream_does_not_tear_down_the_connection() {
+    edge::compat(async {
+        let peer = spawn_bare_peer().await;
+        let (transport, endpoint_task) = spawn_transport().await;
+
+        transport
+            .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
+            .await
+            .expect("dial bare peer");
+
         transport
             .send_se_artifacts(
                 &peer.peer_id,
                 PushSEArtifactsRequest::new("collection1", Vec::new()),
             )
             .await
-            .expect("se artifacts");
-    }
+            .expect("se artifacts before");
 
-    let observed = peer.observed();
-    assert_eq!(observed.tags.len(), 5, "every send must reach the peer");
-    assert_eq!(
-        observed.connections, 1,
-        "repeated sends must reuse the dialled connection"
-    );
-
-    peer.accept_task.abort();
-    transport.shutdown().await.unwrap();
-    endpoint_task.await.unwrap();
-}
-
-/// A stream-level failure must not evict the connection every other protocol is
-/// using.
-#[tokio::test]
-async fn a_failed_stream_does_not_tear_down_the_connection() {
-    let peer = spawn_bare_peer().await;
-    let (transport, endpoint_task) = spawn_transport().await;
-
-    transport
-        .dial(&peer.peer_id, vec![PeerAddr::new(peer.addr.to_string())])
-        .await
-        .expect("dial bare peer");
-
-    transport
-        .send_se_artifacts(
-            &peer.peer_id,
-            PushSEArtifactsRequest::new("collection1", Vec::new()),
+        // A CAR *request* expects bytes back; the bare peer never sends any, so this
+        // stream fails on read. The connection itself stays healthy.
+        let _ = crate::rt::time::timeout(
+            Duration::from_secs(2),
+            transport.send_car_request(&peer.peer_id, cid_for_test()),
         )
-        .await
-        .expect("se artifacts before");
+        .await;
 
-    // A CAR *request* expects bytes back; the bare peer never sends any, so this
-    // stream fails on read. The connection itself stays healthy.
-    let _ = n0_future::time::timeout(
-        Duration::from_secs(2),
-        transport.send_car_request(&peer.peer_id, cid_for_test()),
-    )
-    .await;
+        transport
+            .send_se_artifacts(
+                &peer.peer_id,
+                PushSEArtifactsRequest::new("collection1", Vec::new()),
+            )
+            .await
+            .expect("se artifacts after");
 
-    transport
-        .send_se_artifacts(
-            &peer.peer_id,
-            PushSEArtifactsRequest::new("collection1", Vec::new()),
-        )
-        .await
-        .expect("se artifacts after");
+        let observed = peer.observed();
+        assert_eq!(
+            observed.connections, 1,
+            "a failed stream must not force a redial"
+        );
 
-    let observed = peer.observed();
-    assert_eq!(
-        observed.connections, 1,
-        "a failed stream must not force a redial"
-    );
-
-    peer.accept_task.abort();
-    transport.shutdown().await.unwrap();
-    endpoint_task.await.unwrap();
+        peer.accept_task.abort();
+        transport.shutdown().await.unwrap();
+        endpoint_task.await.unwrap();
+    })
+    .await
 }
 
 fn cid_for_test() -> cid::Cid {

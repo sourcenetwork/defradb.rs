@@ -288,6 +288,8 @@ RUNS=(
   "MC_CpuLedger_Red_RunOutsideHold.cfg CpuLedger.tla RED" # caller runs a thread on a CPU its hold does not cover (INV_AloneRunsAlone)
   "MC_CpuLedger_Red_DoubleRelease.cfg CpuLedger.tla RED" # caller gives its hold back twice: a counter drops below its holders (INV_CountExact)
   "MC_CpuLedger_Red_ForgetHold.cfg CpuLedger.tla RED" # caller never gives its hold back: CPUs stay held after every pool is gone (INV_DoneLeavesNothing)
+  "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
+  "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns
   "MC_DefaultPool_Red_NoClosingCheck.cfg DefaultPool.tla RED" # running() keeps only the upgrade: a closing registered pool is handed out (INV_NeverHandsOutClosing)
   "MC_DefaultPool_Red_RegisterOverwrites.cfg DefaultPool.tla RED" # make_default swaps without looking: a running default is replaced (INV_FirstRunningWins)
@@ -450,6 +452,44 @@ RUNS=(
   "MC_EmbeddedStartup_Red_NacUnowned.cfg EmbeddedStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
   "MC_EmbeddedStartup_Red_DialBeforeNac.cfg EmbeddedStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
   "MC_EmbeddedStartup_Red_BootstrapFatal.cfg EmbeddedStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
+  "MC_PgWire_Green_Startup.cfg PgWire.tla GREEN" # pg wire opening and startup: one deadline from the start, startup errors close, nothing read after the end, every connection ends
+  "MC_PgWire_Green_Protocol.cfg PgWire.tla GREEN" # pg wire after startup: an extended error skips until Sync, the Sync resumes, a simple or extended copy ends on CopyDone, CopyFail or an error
+  "MC_PgWire_Red_PeekNoDeadline.cfg PgWire.tla RED" # the reviewed bug, deadline read after the peek: a silent client stays forever (INV_StartupWithinDeadline)
+  "MC_PgWire_Red_SslNoDeadline.cfg PgWire.tla RED" # SSL refusals outside the deadline: a client silent after its SSL request stays (INV_StartupWithinDeadline)
+  "MC_PgWire_Red_StartupNoDeadline.cfg PgWire.tla RED" # startup reads with no deadline: a DID user that never sends its token stays (INV_StartupWithinDeadline)
+  "MC_PgWire_Red_FreshDeadline.cfg PgWire.tla RED" # a new limit per wait: a trickling client runs past the limit from the start (INV_StartupWithinDeadline)
+  "MC_PgWire_Red_DeadlineAfterStartup.cfg PgWire.tla RED" # the deadline covers reads after the startup: an idle started client is cut off (INV_StartedNeverTimedOut)
+  "MC_PgWire_Red_NoAwaitingSync.cfg PgWire.tla RED" # report never enters AwaitingSync: the next extended message is handled before the Sync (INV_SkipUntilSync)
+  "MC_PgWire_Red_HandleWhileSkipping.cfg PgWire.tla RED" # AwaitingSync handles every message: an extended message runs during the skip (INV_SkipUntilSync)
+  "MC_PgWire_Red_SyncKeepsSkipping.cfg PgWire.tla RED" # the answered Sync leaves the state AwaitingSync (INV_SyncResumes)
+  "MC_PgWire_Red_CopyFlagFromMessage.cfg PgWire.tla RED" # wait_for_sync from the message, not the copy: an Execute copy's error skips no Sync (INV_SkipUntilSync)
+  "MC_PgWire_Red_CopyDoneStays.cfg PgWire.tla RED" # a simple copy's CopyDone leaves the state in the copy (INV_CopyEnds)
+  "MC_PgWire_Red_ExtendedCopyDoneStays.cfg PgWire.tla RED" # an Execute copy's successful CopyDone stays in the copy and drops the Sync (INV_CopyEnds)
+  "MC_PgWire_Red_LoopAfterClose.cfg PgWire.tla RED" # the CI bug, no is_closed check: the loop reads after a fatal error (INV_NothingAfterEnd)
+  "MC_PgWire_Red_LoopAfterCloseRuns.cfg PgWire.tla RED" # the CI bug: a query sent after a wrong token runs with nobody logged in (INV_NoQueryBeforeStartup)
+  "MC_PgWire_Red_LoopAfterCloseHangs.cfg PgWire.tla RED" # the CI bug: after a fatal error the loop waits for a client that waits for the close (LIVE_Ends)
+  "MC_PgWire_Red_FatalStaysOpen.cfg PgWire.tla RED" # a fatal error or a cancel closes nothing: the loop reads on (INV_NothingAfterEnd)
+  "MC_PgWire_Red_StartupErrorNotFatal.cfg PgWire.tla RED" # contract broken, a plain startup ERROR: the connection is ready with nobody logged in (INV_NoQueryBeforeStartup)
+  "MC_ConnectFallback_Green.cfg ConnectFallback.tla GREEN" # two families under a connect timeout: one socket, the fallback after the delay or a failure, the last error, within the limit, every connect ends
+  "MC_ConnectFallback_Green_NoTimeout.cfg ConnectFallback.tla GREEN" # no connect timeout: the OS ends every attempt, and the connect ends with one socket or the last error
+  "MC_ConnectFallback_Green_Single.cfg ConnectFallback.tla GREEN" # one family: its attempt alone, under the connect timeout
+  "MC_ConnectFallback_Red_NoDelay.cfg ConnectFallback.tla RED" # both families started at once (INV_FallbackWaits)
+  "MC_ConnectFallback_Red_WaitAfterFailure.cfg ConnectFallback.tla RED" # an early failure waits the delay out with nothing under way (INV_NeverIdle)
+  "MC_ConnectFallback_Red_FirstErrorWins.cfg ConnectFallback.tla RED" # the first failure is the answer while the other still runs (INV_ErrorOnlyWhenAllFail)
+  "MC_ConnectFallback_Red_KeepFirstError.cfg ConnectFallback.tla RED" # both fail and the earlier error is answered (INV_LastError)
+  "MC_ConnectFallback_Red_KeepLoser.cfg ConnectFallback.tla RED" # the loser left running: its socket stays open after the answer (INV_OneSocket)
+  "MC_ConnectFallback_Red_TimeoutMissesRace.cfg ConnectFallback.tla RED" # the connect timeout covers only the lookup: a hanging race runs past it (INV_WithinLimit)
+  "MC_ConnectFallback_Red_TimeoutMissesRaceHangs.cfg ConnectFallback.tla RED" # the same, with both attempts hanging: the connect never ends (LIVE_Ends)
+  "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
+  "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
+  "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)
+  "MC_CoordinatorShutdown_Red_CheckThenSpawn.cfg CoordinatorShutdown.tla RED" # is_closed() then spawn: the edge closes in between and the drain is dropped (INV_NoLeak)
+  "MC_CoordinatorShutdown_Red_NoAbort.cfg CoordinatorShutdown.tla RED" # no abort after the deadline: a task that never ends keeps every caller waiting (LIVE_CallersReturn)
+  "MC_CoordinatorShutdown_Red_SenderOutsideDrain.cfg CoordinatorShutdown.tla RED" # the sender survives a cancelled drain: callers park forever (LIVE_CallersReturn)
+  "MC_CoordinatorShutdown_Red_TwoWinners.cfg CoordinatorShutdown.tla RED" # the flag read then set: two callers both build a drain (INV_OneDrain)
+  "MC_CoordinatorShutdown_Red_NoPrunerWait.cfg CoordinatorShutdown.tla RED" # the drain does not wait for pruners: a handle out with a pruner comes back after the drain (INV_NoLeak)
+  "MC_CoordinatorShutdown_Red_PrunerIgnoresFlag.cfg CoordinatorShutdown.tla RED" # the code as it stands, the pruner never reads the flag: a pruner that starts after the drain's check puts a live handle back (INV_NoLeak)
+  "MC_CoordinatorShutdown_Red_NoRecheck.cfg CoordinatorShutdown.tla RED" # register_task never reads the flag again: a handle pushed after the drain runs on (INV_NoLeak)
 )
 
 parallelism="${TLA_JOBS:-4}"

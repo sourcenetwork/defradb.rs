@@ -262,13 +262,13 @@ mod tests {
             .is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn iroh_identity_resolution_is_single_flight_per_peer() {
         let state = IrohPeerIdentityState::new();
         let peer = PeerId::new("peer-a".to_string());
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let barrier = std::sync::Arc::new(regolith::sync::Barrier::new(17));
-        let mut tasks = tokio::task::JoinSet::new();
+        let mut tasks = crate::rt::JoinSet::new();
 
         for _ in 0..16 {
             let state = state.clone();
@@ -281,7 +281,7 @@ mod tests {
                     .resolve_with(&peer, || {
                         calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         async {
-                            tokio::task::yield_now().await;
+                            crate::rt::yield_now().await;
                             Some(did("single-flight"))
                         }
                     })

@@ -124,21 +124,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
 
         let wait = timeout.unwrap_or(DEFAULT_PUBSUB_SYNC_TIMEOUT);
-        let deadline = n0_future::time::Instant::now()
+        let deadline = crate::rt::time::Instant::now()
             .checked_add(wait)
-            .unwrap_or_else(|| n0_future::time::Instant::now() + Duration::from_secs(86_400 * 365));
+            .unwrap_or_else(|| crate::rt::time::Instant::now() + Duration::from_secs(86_400 * 365));
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {
                 break;
             }
 
-            let Some(remaining) = deadline.checked_duration_since(n0_future::time::Instant::now())
+            let Some(remaining) = deadline.checked_duration_since(crate::rt::time::Instant::now())
             else {
                 break;
             };
 
-            let Ok(Some(resp)) = n0_future::time::timeout(remaining, prep.responses.recv()).await
+            let Ok(Some(resp)) = crate::rt::time::timeout(remaining, prep.responses.recv()).await
             else {
                 break;
             };
@@ -243,19 +243,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
 
         let wait = timeout.unwrap_or(DEFAULT_PUBSUB_SYNC_TIMEOUT);
-        let deadline = n0_future::time::Instant::now() + wait;
+        let deadline = crate::rt::time::Instant::now() + wait;
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {
                 break;
             }
 
-            let Some(remaining) = deadline.checked_duration_since(n0_future::time::Instant::now())
+            let Some(remaining) = deadline.checked_duration_since(crate::rt::time::Instant::now())
             else {
                 break;
             };
 
-            let Ok(Some(resp)) = n0_future::time::timeout(remaining, prep.responses.recv()).await
+            let Ok(Some(resp)) = crate::rt::time::timeout(remaining, prep.responses.recv()).await
             else {
                 break;
             };
@@ -592,17 +592,21 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn start_pubsub_services_returns_error_and_stays_unready_on_partial_subscribe() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = RawSubscribeFailTransport::new(2);
         let registered_topics = transport.registered_topics.clone();
         let subscribe_calls = transport.subscribe_calls.clone();
-        let (coordinator, _events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator should construct");
+        let (coordinator, _events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator should construct");
 
         let error = coordinator
             .start_pubsub_services()

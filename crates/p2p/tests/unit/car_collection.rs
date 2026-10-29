@@ -18,7 +18,7 @@ async fn put(store: &impl Blockstore, data: &[u8]) -> Cid {
     cid
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_block_does_not_hide_later_requested_blocks() {
     let store = blockstore();
     let oversized = put(&store, &vec![0; CAR_MAX_BYTES + 1]).await;
@@ -44,7 +44,7 @@ async fn oversized_block_does_not_hide_later_requested_blocks() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn aggregate_byte_limit_does_not_hide_smaller_blocks() {
     let store = blockstore();
     let large = put(&store, &vec![0; CAR_MAX_BYTES - 5]).await;
@@ -77,7 +77,7 @@ async fn aggregate_byte_limit_does_not_hide_smaller_blocks() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn single_block_at_byte_limit_is_served() {
     let store = blockstore();
     for size in [CAR_MAX_BYTES - 1, CAR_MAX_BYTES] {
@@ -97,7 +97,7 @@ async fn single_block_at_byte_limit_is_served() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn missing_blocks_count_toward_work_limit_but_duplicates_do_not() {
     let store = blockstore();
     let last = put(&store, b"last").await;
@@ -129,7 +129,7 @@ async fn missing_blocks_count_toward_work_limit_but_duplicates_do_not() {
     assert!(!outcome.truncated());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn recursive_collection_keeps_sibling_and_its_descendants() {
     let store = blockstore();
     let oversized = put(&store, &vec![0; CAR_MAX_BYTES + 1]).await;
@@ -206,7 +206,7 @@ impl Blockstore for SizeOnlyBlockstore {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn size_preflight_skips_payload_reads_outside_the_budget() {
     let cid = Cid::new_v1(0x71, Code::Sha2_256.digest(b"large"));
     let store = SizeOnlyBlockstore(usize::MAX);

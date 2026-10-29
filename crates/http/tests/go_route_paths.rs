@@ -15,7 +15,7 @@ use common::*;
 /// The constants the router, the CLI and Go's client all have to agree on must
 /// actually resolve, under every API version the server mounts. Without this
 /// the shared constant is just a fourth copy of the string.
-#[tokio::test]
+#[nuclei::test]
 async fn every_declared_go_path_resolves_under_every_api_version() {
     for prefix in defra_http::go_paths::API_PREFIXES {
         for path in defra_http::go_paths::ALL {
@@ -33,7 +33,7 @@ async fn every_declared_go_path_resolves_under_every_api_version() {
 }
 
 /// Go's client posts to `acp/document/policy`. Rust 404'd there.
-#[tokio::test]
+#[nuclei::test]
 async fn gos_policy_path_resolves() {
     for version in ["v0", "v1"] {
         let (status, body) = Call::post(&format!("/api/{version}/acp/document/policy"))
@@ -46,7 +46,7 @@ async fn gos_policy_path_resolves() {
 }
 
 /// Go's client posts views to `view`, not `views`.
-#[tokio::test]
+#[nuclei::test]
 async fn gos_view_paths_resolve() {
     for version in ["v0", "v1"] {
         for (path, body) in [
@@ -67,7 +67,7 @@ async fn gos_view_paths_resolve() {
 }
 
 /// Rust-only routes keep their paths.
-#[tokio::test]
+#[nuclei::test]
 async fn the_rust_only_paths_still_resolve() {
     let calls = [
         Call::post("/api/v0/views/gc").json("{}"),
@@ -82,7 +82,7 @@ async fn the_rust_only_paths_still_resolve() {
 }
 
 /// Paths that only aliased a Go route are gone.
-#[tokio::test]
+#[nuclei::test]
 async fn the_removed_aliases_are_not_served() {
     let calls = [
         Call::post("/api/v0/acp/policy")
@@ -119,7 +119,7 @@ async fn the_removed_aliases_are_not_served() {
 
 /// `/gc` is Rust's own route. Go has no `/view/gc`, and the Go mount must not
 /// acquire Rust extras just because it shares a handler set.
-#[tokio::test]
+#[nuclei::test]
 async fn the_go_view_mount_has_no_gc_route() {
     let (status, _) = Call::post("/api/v0/view/gc").json("{}").send().await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -128,13 +128,13 @@ async fn the_go_view_mount_has_no_gc_route() {
 /// axum panics at construction on overlapping routes, and this change mounts
 /// one router at two prefixes and one handler at two paths. Every other test
 /// builds a router, but only this one says that is the thing being checked.
-#[tokio::test]
+#[nuclei::test]
 async fn the_router_builds() {
     let _ = router();
 }
 
 /// A method Go does not register answers 405.
-#[tokio::test]
+#[nuclei::test]
 async fn a_method_mismatch_answers_405() {
     for path in ["/api/v0/acp/document/policy", "/api/v0/view/refresh"] {
         let (status, _) = Call::post(path).method(Method::PUT).send().await;
@@ -153,7 +153,7 @@ const GO_PATHS: &[(&str, NodePermission)] = &[
     ("/api/v0/view/refresh", NodePermission::ViewRefresh),
 ];
 
-#[tokio::test]
+#[nuclei::test]
 async fn every_new_path_carries_its_own_permission() {
     for (go_path, expected) in GO_PATHS {
         assert_eq!(
@@ -167,7 +167,7 @@ async fn every_new_path_carries_its_own_permission() {
 /// The guard for the trap this change could have shipped: a route registered
 /// without a permission entry falls to `Required(DocumentRead)`, which would
 /// let a read-only actor register a DAC policy.
-#[tokio::test]
+#[nuclei::test]
 async fn no_new_path_falls_to_the_safe_default() {
     for (go_path, _) in GO_PATHS {
         assert_ne!(
@@ -180,7 +180,7 @@ async fn no_new_path_falls_to_the_safe_default() {
 
 /// Go's client talks to `/api/v1`, so the v1 form has to resolve to the same
 /// permission as the v0 form it is normalized onto.
-#[tokio::test]
+#[nuclei::test]
 async fn both_api_versions_resolve_the_same_permission() {
     for (go_path, _) in GO_PATHS {
         let v1_path = go_path.replacen("/api/v0/", "/api/v1/", 1);

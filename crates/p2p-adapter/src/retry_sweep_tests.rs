@@ -40,7 +40,7 @@ enum Outcome {
     Delivered,
     Failed(&'static str),
     RateLimited(u64),
-    WaitForAck(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
+    WaitForAck(Arc<p2p::rt::Notify>, Arc<p2p::rt::Notify>),
     Hangs,
 }
 
@@ -415,7 +415,7 @@ impl Sweep {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn document_failures_do_not_abandon_the_remaining_due_markers() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c", "d", "e", "f"],
@@ -443,7 +443,7 @@ async fn document_failures_do_not_abandon_the_remaining_due_markers() {
 /// the set would buy one `REPLAY_TIMEOUT` each for the same answer. The markers
 /// are kept and the durable cursor moves past the silent one, so the next pass
 /// resumes on the tail rather than re-hanging on the head.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_replay_timeout_stops_the_peer_pass_and_resumes_past_the_hung_marker() {
     let sweep = Sweep::with_markers(&["a", "b", "c"], &[("a", Outcome::Hangs)]).await;
 
@@ -468,7 +468,7 @@ async fn a_replay_timeout_stops_the_peer_pass_and_resumes_past_the_hung_marker()
 
 /// One peer's pass is capped, and the durable dispatch cursor makes the next
 /// pass pick up the tail instead of re-walking the head of the set.
-#[tokio::test]
+#[nuclei::test]
 async fn a_peer_pass_is_bounded_and_the_next_pass_resumes_where_it_stopped() {
     let bound = crate::retry::MAX_MARKERS_PER_PEER_PASS;
     let docs: Vec<String> = (0..bound * 2).map(|i| format!("doc-{i:03}")).collect();
@@ -500,7 +500,7 @@ async fn a_peer_pass_is_bounded_and_the_next_pass_resumes_where_it_stopped() {
 /// before the bound a black-holed peer holding the measured 3,488 markers could
 /// hold one pass for `3_488 * 15 s` — about 14.5 hours — and no later peer was
 /// visited at all.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     let hung: Vec<String> = (0..40).map(|i| format!("a-{i:02}")).collect();
     let healthy: Vec<String> = (0..3).map(|i| format!("b-{i}")).collect();
@@ -514,7 +514,7 @@ async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     )
     .await;
 
-    let started = tokio::time::Instant::now();
+    let started = p2p::rt::time::Instant::now();
     sweep.run().await;
     let elapsed = started.elapsed();
 
@@ -536,7 +536,7 @@ async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_rate_limited_reply_is_backpressure_not_a_ladder_failure() {
     let sweep = Sweep::with_markers(&["a"], &[("a", Outcome::Failed(RATE_LIMITED))]).await;
     let rung_before = sweep.retry_info().await.num_retries;
@@ -555,7 +555,7 @@ async fn a_rate_limited_reply_is_backpressure_not_a_ladder_failure() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn retry_after_survives_reconnect_and_forced_sweep() {
     let sweep = Sweep::with_markers(&["a", "b"], &[("a", Outcome::RateLimited(45_000))]).await;
     let rung = sweep.retry_info().await.num_retries;
@@ -575,10 +575,10 @@ async fn retry_after_survives_reconnect_and_forced_sweep() {
     assert_eq!(sweep.markers_for(PEER).await.len(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn retry_after_arriving_during_ack_blocks_next_marker() {
-    let started = Arc::new(tokio::sync::Notify::new());
-    let finish = Arc::new(tokio::sync::Notify::new());
+    let started = Arc::new(p2p::rt::Notify::new());
+    let finish = Arc::new(p2p::rt::Notify::new());
     let sweep = Arc::new(
         Sweep::with_markers(
             &["a", "b"],
@@ -587,7 +587,7 @@ async fn retry_after_arriving_during_ack_blocks_next_marker() {
         .await,
     );
     let runner = sweep.clone();
-    let task = tokio::spawn(async move { runner.run().await });
+    let task = p2p::rt::spawn(async move { runner.run().await });
     started.notified().await;
     sweep
         .peerstore
@@ -595,13 +595,13 @@ async fn retry_after_arriving_during_ack_blocks_next_marker() {
         .await
         .unwrap();
     finish.notify_one();
-    task.await.unwrap();
+    task.join().await.unwrap();
     assert_eq!(sweep.pusher.attempted(), vec!["a"]);
     assert_eq!(sweep.markers_for(PEER).await.len(), 1);
     assert!(!sweep.retry_info().await.is_backpressure_elapsed());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn one_pass_advances_the_ladder_by_at_most_one_rung() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c"],
@@ -623,7 +623,7 @@ async fn one_pass_advances_the_ladder_by_at_most_one_rung() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_pass_that_delivered_documents_returns_the_peer_to_the_first_rung() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c"],

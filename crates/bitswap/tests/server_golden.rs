@@ -105,7 +105,7 @@ async fn replay(name: &str) {
 
 macro_rules! scenarios {
     ($($test:ident => $name:literal),* $(,)?) => {$(
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[nuclei::test(threads = 4)]
         async fn $test() {
             replay($name).await;
         }

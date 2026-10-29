@@ -31,8 +31,22 @@ The model proves:
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
+| `HttpClient.credentials_stay_with_their_origin` / `at_most_limit_plus_one_exchanges` / `endless_redirects_fail` / `same_origin_redirect_keeps_credentials` / `cross_origin_redirect_strips_credentials` | Across any chain of redirects, a credential from the request or the client's defaults is sent only to the request's own origin (scheme, host and port), a proxy credential only on its own hop; a request makes at most eleven exchanges. The witnesses `per_hop_defaults_leak`, `host_only_downgrade_leaks`, `host_only_port_leaks` and `unlimited_runs_past_the_limit` show each guard is needed. | `crates/net/src/http/client.rs` |
+| `HttpClient.BodyDeadline.ends_after_timeout` / `at_most_one_timeout` / `deadline_wins_over_a_ready_piece` / `never_waits_past_the_deadline` / `no_timeout_before_the_deadline` / `no_limit_no_timeout` | A body stream gives one timeout once the limit passes, even with a piece ready, then only its end; `old_reads_after_timeout` and `late_reads_past_the_deadline` are the code before each fix. | `crates/net/src/http/response.rs` |
 
 `#print axioms` status checked with Lean 4.18:
+
+HTTP client redirects (`HttpClient.Redirect`):
+
+- `HttpClient.credentials_stay_with_their_origin`, `at_most_limit_plus_one_exchanges`, `shipped_limit`, `same_origin_redirect_keeps_credentials`, `cross_origin_redirect_strips_credentials`: `[propext]`
+- `HttpClient.endless_redirects_fail`: `[propext, Quot.sound]`
+- `HttpClient.per_hop_defaults_leak`, `shipped_defaults_stay_home`, `host_only_downgrade_leaks`, `host_only_port_leaks`, `shipped_strips_downgrade_and_port`, `unlimited_runs_past_the_limit`, `shipped_stops_at_the_limit`: *(no axioms)*
+
+HTTP body deadline (`HttpClient.BodyDeadline`):
+
+- `HttpClient.BodyDeadline.ends_after_timeout`, `at_most_one_timeout`: `[propext, Quot.sound]`
+- `HttpClient.BodyDeadline.deadline_wins_over_a_ready_piece`, `never_waits_past_the_deadline`, `no_timeout_before_the_deadline`, `no_limit_no_timeout`: `[propext]`
+- `HttpClient.BodyDeadline.old_reads_after_timeout`, `keep_times_out_twice`, `late_reads_past_the_deadline`, `shipped_times_out_once`: *(no axioms)*
 
 Retry ladder (`RetrySchedule.Ladder`):
 

@@ -275,7 +275,8 @@ where
     }
 }
 
-impl<E> DispatchSource<E> for tokio::sync::mpsc::Receiver<E>
+#[cfg(not(target_arch = "wasm32"))]
+impl<E> DispatchSource<E> for nuclei::sync::mpsc::Receiver<E>
 where
     E: MaybeSend,
 {
@@ -305,7 +306,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn a_closed_completion_lane_does_not_hide_requests() {
         let (tx, mut rx) = dispatch_queue(4);
         tx.send(TestEvent::Completion(0)).await.unwrap();
@@ -314,7 +315,7 @@ mod tests {
         let queued = rx.next(false).await.unwrap();
         assert_eq!(queued.event, TestEvent::Request(1));
         assert!(
-            n0_future::time::timeout(Duration::from_millis(50), rx.next(false))
+            crate::rt::time::timeout(Duration::from_millis(50), rx.next(false))
                 .await
                 .is_err(),
             "a gated completion must wait, not end the stream"
@@ -322,13 +323,13 @@ mod tests {
         assert_eq!(rx.next(true).await.unwrap().event, TestEvent::Completion(0));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn a_full_lane_waits_only_for_its_own_class() {
         let (tx, mut rx) = dispatch_queue(1);
         tx.send(TestEvent::Completion(0)).await.unwrap();
         assert!(rx.is_full(DispatchClass::Completion));
 
-        n0_future::time::timeout(Duration::from_secs(1), tx.send(TestEvent::Request(1)))
+        crate::rt::time::timeout(Duration::from_secs(1), tx.send(TestEvent::Request(1)))
             .await
             .expect("a full completion lane must not hold up a request")
             .unwrap();
@@ -336,25 +337,25 @@ mod tests {
         assert_eq!(rx.recv().await, Some(TestEvent::Request(1)));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn dropping_the_receiver_fails_waiting_and_later_sends() {
         let (tx, rx) = dispatch_queue(1);
         tx.send(TestEvent::Request(0)).await.unwrap();
         let waiting = {
             let tx = tx.clone();
-            n0_future::task::spawn(async move { tx.send(TestEvent::Request(1)).await })
+            crate::rt::spawn(async move { tx.send(TestEvent::Request(1)).await })
         };
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
         drop(rx);
 
-        assert_eq!(waiting.await.unwrap(), Err(TestEvent::Request(1)));
+        assert_eq!(waiting.join().await.unwrap(), Err(TestEvent::Request(1)));
         assert_eq!(
             tx.send(TestEvent::Request(2)).await,
             Err(TestEvent::Request(2))
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn open_lanes_keep_send_order() {
         let (tx, mut rx) = dispatch_queue(4);
         tx.send(TestEvent::Completion(0)).await.unwrap();
@@ -388,7 +389,7 @@ mod tests {
         assert_eq!(heads[completion], Some(1));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn the_receiver_ends_once_every_sender_is_gone_and_lanes_are_empty() {
         let (tx, mut rx) = dispatch_queue(4);
         tx.send(TestEvent::Completion(0)).await.unwrap();

@@ -1,5 +1,6 @@
 //! Pending DAG registration and retry logic.
 
+use futures::SinkExt;
 use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
@@ -148,7 +149,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// complete DAG awaiting a terminal merge outcome. `None` means no live
     /// receiver obligation is registered.
     pub fn next_pending_retry_in_ms(&self) -> Option<u64> {
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         self.pending_dags.read(|pending| {
             pending
                 .values()
@@ -448,7 +449,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     pub fn try_claim_pending_dag_dispatch(
         &self,
         root_cid: &Cid,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> bool {
         let eligible = self.pending_dags.read(|pending| {
             pending.get(root_cid).is_some_and(|dag| {
@@ -497,7 +498,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         root_cid: &Cid,
         metadata: Option<&crate::sync::merge::BlockMetadata<'_>>,
     ) -> bool {
-        let next = n0_future::time::Instant::now()
+        let next = crate::rt::time::Instant::now()
             + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
         let scheduled = self.pending_dags.update(|pending| {
             if !pending.contains_key(root_cid) {
@@ -572,7 +573,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Make a root promptly due (e.g. a provider just connected) without
     /// resetting its backoff rung. The retry clock performs the dispatch.
     pub fn expedite_pending_dag_retry(&self, root_cid: &Cid) {
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         let registered = self.pending_dags.update(|pending| {
             pending.get_mut(root_cid).map(|dag| {
                 dag.next_retry_at = dag.next_retry_at.min(now);
@@ -590,7 +591,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// behind the limiter.
     pub(crate) fn due_pending_dag_retries(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
         self.evict_expired();
         let released: Vec<Cid> = self.pending_dags.read(|pending| {
@@ -637,7 +638,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     #[cfg(test)]
     pub fn claim_due_pending_dag_retries(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
         self.due_pending_dag_retries(now)
             .into_iter()
@@ -789,6 +790,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Emit event that DAG is ready for merge
         if self
             .event_tx
+            .clone()
             .send(SyncEvent::DagReady {
                 root_cid: *root_cid,
                 doc_id: info.doc_id.clone(),
@@ -986,7 +988,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 attempts: 0,
                 fetch_failures: 0,
                 last_fetch_error: None,
-                next_retry_at: n0_future::time::Instant::now(),
+                next_retry_at: crate::rt::time::Instant::now(),
                 dispatches: 0,
                 merge_continuation: false,
                 storage_blocker: None,

@@ -32,11 +32,11 @@ fn the_recorder_and_peer_activation_write_on_the_pool() {
     .unwrap();
     let before = stats.snapshot().off_pool_calls;
 
-    let (failures, received) = tokio::sync::mpsc::channel(1);
+    let (mut failures, received) = futures::channel::mpsc::channel(1);
     let recorder = spawn_failure_recorder(peerstore.clone(), received);
-    let (registered, generation) = tokio::sync::oneshot::channel();
+    let (registered, generation) = futures::channel::oneshot::channel();
     failures
-        .blocking_send(p2p::sync::PushFailure {
+        .try_send(p2p::sync::PushFailure {
             peer_id: "peer-a".to_string(),
             doc_id: "doc-a".to_string(),
             collection_id: "collection-a".to_string(),
@@ -52,7 +52,7 @@ fn the_recorder_and_peer_activation_write_on_the_pool() {
         })
         .unwrap();
     assert!(
-        generation.blocking_recv().unwrap().is_some(),
+        workers::block_on(generation).unwrap().unwrap().is_some(),
         "the head was registered"
     );
     drop(failures);

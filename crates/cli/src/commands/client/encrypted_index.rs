@@ -72,7 +72,7 @@ impl EncryptedIndexNewArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.field)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -90,7 +90,7 @@ impl EncryptedIndexDeleteArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.field)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -110,7 +110,7 @@ impl EncryptedIndexListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         validate_identifier(&self.collection)?;
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

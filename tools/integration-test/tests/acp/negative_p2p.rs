@@ -195,47 +195,56 @@ async fn p2p_merge_denial_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_p2p_merge_denial() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_merge_denial_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_merge_denial_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so merge-denial
 /// cannot work for Go-originated documents yet.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_p2p_merge_denial() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_merge_denial_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_merge_denial_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so merge-denial
 /// cannot work for Go-originated documents yet.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_p2p_merge_denial() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_merge_denial_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_merge_denial_test(cluster).await;
+    })
+    .await;
 }
 
 /// A policy-dependent skip on the gossip path must remain retryable.
@@ -315,7 +324,7 @@ async fn retryable_skip_is_replayed_by_replicator_test(cluster: TestCluster) {
             owner_count, 0,
             "node1 must not store the protected document before explicit replicator push"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 
     let commits_before_replicator = node1
@@ -432,17 +441,20 @@ async fn retryable_skip_is_replayed_by_replicator_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_retryable_skip_is_replayed_by_replicator() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .with_encryption()
-        .build()
-        .await
-        .unwrap();
-    retryable_skip_is_replayed_by_replicator_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .with_encryption()
+            .build()
+            .await
+            .unwrap();
+        retryable_skip_is_replayed_by_replicator_test(cluster).await;
+    })
+    .await;
 }
 
 async fn wrong_identity_explicit_replay_capability_is_ignored_test(cluster: TestCluster) {
@@ -536,7 +548,7 @@ async fn wrong_identity_explicit_replay_capability_is_ignored_test(cluster: Test
             "wrong-identity explicit replay capability must not expose commits"
         );
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 
     node0
@@ -577,17 +589,20 @@ async fn wrong_identity_explicit_replay_capability_is_ignored_test(cluster: Test
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_wrong_identity_explicit_replay_capability_is_ignored() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .with_encryption()
-        .build()
-        .await
-        .unwrap();
-    wrong_identity_explicit_replay_capability_is_ignored_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .with_encryption()
+            .build()
+            .await
+            .unwrap();
+        wrong_identity_explicit_replay_capability_is_ignored_test(cluster).await;
+    })
+    .await;
 }
 
 /// 02-28: Policy transition guard — revoking access before a schema policy change

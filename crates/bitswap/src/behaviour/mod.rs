@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use edge::Edge;
 use libp2p::core::transport::PortUse;
 use libp2p::core::Endpoint;
 use libp2p::swarm::{
@@ -84,13 +85,13 @@ pub struct Bitswap<S: Store> {
 }
 
 impl<S: Store> Bitswap<S> {
-    /// Builds the behaviour and spawns the server tasks on the current tokio runtime, which must exist.
-    pub fn new(self_id: PeerId, store: S, config: Config) -> Self {
+    /// Builds the behaviour and spawns the server's and the client's tasks on `edge`.
+    pub fn new(self_id: PeerId, store: S, config: Config, edge: Edge) -> Self {
         let (network, out_events) = Network::new(self_id);
-        let driver = Driver::new(network.clone());
+        let driver = Driver::new(network.clone(), edge.clone());
         let server = config
             .server
-            .map(|server_config| Server::new(network.clone(), store, server_config));
+            .map(|server_config| Server::new(network.clone(), store, server_config, edge));
 
         Bitswap {
             network,

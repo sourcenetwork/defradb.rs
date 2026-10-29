@@ -240,7 +240,7 @@ impl DocSyncDispatch for SlowDispatch {
         _peer: &Self::Peer,
         _request: DocSyncRequest,
     ) -> P2PResult<()> {
-        n0_future::time::sleep(self.delay).await;
+        p2p::rt::time::sleep(self.delay).await;
         Ok(())
     }
 }

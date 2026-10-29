@@ -153,7 +153,7 @@ mod tests {
         assert!(!json.contains("DID"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn node_options_returns_configured_sanitized_object() {
         let options = serde_json::from_value(json!({
             "DisableP2P": true,
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(body["Store"]["Path"], "<redacted>");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn node_options_returns_not_found_when_host_does_not_supply_them() {
         let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
             .router()

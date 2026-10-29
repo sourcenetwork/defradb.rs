@@ -97,7 +97,7 @@ fn assert_shutting_down((status, body): (StatusCode, String)) {
     assert!(body.contains("shutting down"), "{body}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_graphql_read_that_panics_on_the_pool_is_an_internal_error() {
     let pool = pool();
     assert_internal(read().send_to(graphql_on(&pool)).await);
@@ -105,21 +105,21 @@ async fn a_graphql_read_that_panics_on_the_pool_is_an_internal_error() {
     pool.shutdown_blocking().unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_graphql_request_to_a_stopped_pool_asks_for_a_retry() {
     let pool = pool();
     pool.shutdown_blocking().unwrap();
     assert_shutting_down(read().send_to(graphql_on(&pool)).await);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_pooled_route_that_panics_is_an_internal_error() {
     let pool = pool();
     assert_internal(collections().send_to(route_on(&pool)).await);
     pool.shutdown_blocking().unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_pooled_route_to_a_stopped_pool_asks_for_a_retry() {
     let pool = pool();
     pool.shutdown_blocking().unwrap();

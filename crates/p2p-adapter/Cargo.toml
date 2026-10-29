@@ -43,7 +43,7 @@ kovan.workspace = true
 regolith.workspace = true
 kovan-map.workspace = true
 kovan-queue.workspace = true
-n0-future.workspace = true
+futures-lite.workspace = true
 libp2p = { workspace = true, optional = true }
 rapidhash.workspace = true
 serde.workspace = true
@@ -51,17 +51,22 @@ serde_bytes.workspace = true
 serde_ipld_dagcbor.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing.workspace = true
 web-time.workspace = true
 zeroize = "1"
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["test-util"] }
 crypto = { path = "../crypto" }
 data-encoding = "2"
+futures.workspace = true
 iroh.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nuclei.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+n0-future.workspace = true
 
 [features]
 default = ["native", "wasmtime-runtime", "iroh", "libp2p"]

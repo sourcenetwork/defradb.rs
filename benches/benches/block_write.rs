@@ -28,12 +28,6 @@ static COLLECTION: regolith::sync::Lazy<CollectionVersion> = regolith::sync::Laz
 const FIELD_COUNTS: [usize; 3] = [2, 8, 32];
 const VALUE_SIZES: [usize; 2] = [16, 1024];
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-}
-
 fn wide_collection(width: usize) -> schema::CollectionVersion {
     let fields = (0..width)
         .map(|index| {
@@ -78,7 +72,7 @@ async fn new_stores() -> (NamespaceView, NamespaceView) {
 }
 
 fn bench_write_create(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = common::runtime(0);
     let mut group = c.benchmark_group("block_write_create");
 
     for field_count in FIELD_COUNTS {
@@ -119,7 +113,7 @@ fn bench_write_create(c: &mut Criterion) {
 }
 
 fn bench_write_update(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = common::runtime(0);
     let mut group = c.benchmark_group("block_write_update");
 
     for field_count in FIELD_COUNTS {

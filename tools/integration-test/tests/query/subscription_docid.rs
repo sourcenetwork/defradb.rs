@@ -4,20 +4,20 @@ use std::time::Duration;
 
 use integration_test::{for_each_runtime, TestCluster};
 use kovan::Atom;
+use nuclei::Task;
 use serde_json::Value;
-use tokio::task::JoinHandle;
 
 /// Open an SSE subscription against the node's GraphQL endpoint.
 ///
 /// Returns a background task handle and a shared vec that collects SSE `next` event payloads.
-fn open_subscription(api_url: &str, query: &str) -> (JoinHandle<()>, Arc<Atom<Vec<Value>>>) {
+fn open_subscription(api_url: &str, query: &str) -> (Task<()>, Arc<Atom<Vec<Value>>>) {
     let url = format!("{}/api/v0/graphql", api_url);
     let body = serde_json::json!({ "query": query });
     let events: Arc<Atom<Vec<Value>>> = Arc::new(Atom::new(Vec::new()));
     let events_clone = events.clone();
 
-    let handle = tokio::spawn(async move {
-        let client = reqwest::Client::new();
+    let handle = nuclei::spawn(async move {
+        let client = net::http::Client::new(edge::testing::edge());
         let resp = client
             .post(&url)
             .header("Accept", "text/event-stream")
@@ -111,7 +111,7 @@ async fn subscription_docid_filter_test(cluster: TestCluster) {
     );
     let (handle, events) = open_subscription(api_url, &sub_query);
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
 
     // Mutate Bob (should be filtered out)
     client
@@ -128,7 +128,7 @@ async fn subscription_docid_filter_test(cluster: TestCluster) {
         .query(r#"mutation { update_User(filter: {name: {_eq: "Bob"}}, input: {age: 27}) { _docID } }"#)
         .expect("update Bob again");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
     let collected = events.load_clone();
@@ -184,7 +184,7 @@ async fn commit_subscription_docid_filter_test(cluster: TestCluster) {
     );
     let (handle, events) = open_subscription(api_url, &sub_query);
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
 
     // Mutate the non-target (should be filtered)
     client
@@ -196,7 +196,7 @@ async fn commit_subscription_docid_filter_test(cluster: TestCluster) {
         .query(r#"mutation { update_User(filter: {name: {_eq: "Target"}}, input: {age: 41}) { _docID } }"#)
         .expect("update target");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
     let collected = events.load_clone();
@@ -219,16 +219,22 @@ async fn commit_subscription_docid_filter_test(cluster: TestCluster) {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_commit_subscription_docid_filter() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    commit_subscription_docid_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        commit_subscription_docid_filter_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_commit_subscription_docid_filter() {
-    let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
-    commit_subscription_docid_filter_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().go_nodes(1).build().await.unwrap();
+        commit_subscription_docid_filter_test(cluster).await;
+    })
+    .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +267,7 @@ async fn subscription_no_filter_test(cluster: TestCluster) {
 
     let (handle, events) = open_subscription(api_url, "subscription { User { _docID name } }");
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
 
     client
         .query(r#"mutation { update_User(filter: {name: {_eq: "Alice"}}, input: {age: 31}) { _docID } }"#)
@@ -271,7 +277,7 @@ async fn subscription_no_filter_test(cluster: TestCluster) {
         .query(r#"mutation { update_User(filter: {name: {_eq: "Bob"}}, input: {age: 26}) { _docID } }"#)
         .expect("update Bob");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
     let collected = events.load_clone();
@@ -321,7 +327,7 @@ async fn subscription_delete_event_scoped_by_cid_test(cluster: TestCluster) {
     let (handle, events) =
         open_subscription(api_url, "subscription { User { _docID _deleted name } }");
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    nuclei::time::sleep(Duration::from_millis(500)).await;
 
     client
         .query(&format!(
@@ -329,7 +335,7 @@ async fn subscription_delete_event_scoped_by_cid_test(cluster: TestCluster) {
         ))
         .expect("delete user");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
     let collected = events.load_clone();
@@ -347,8 +353,11 @@ async fn subscription_delete_event_scoped_by_cid_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_subscription_delete_event_scoped_by_cid() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    subscription_delete_event_scoped_by_cid_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        subscription_delete_event_scoped_by_cid_test(cluster).await;
+    })
+    .await;
 }

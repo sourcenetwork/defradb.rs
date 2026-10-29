@@ -120,26 +120,38 @@ async fn relation_render_order_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_join_order_1596_sum_with_alias_order() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    sum_with_alias_order_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        sum_with_alias_order_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_join_order_1596_sum_with_limit() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    sum_with_limit_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        sum_with_limit_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_join_order_1596_sum_with_offset_limit() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    sum_with_offset_limit_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        sum_with_offset_limit_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_join_order_1596_relation_render_order() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    relation_render_order_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        relation_render_order_test(cluster).await;
+    })
+    .await;
 }

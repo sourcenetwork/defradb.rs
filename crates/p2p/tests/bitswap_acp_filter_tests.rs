@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use defra_core::{Block as DefraBlock, CompositeDeltaPayload, CrdtDelta};
+use nuclei::time::timeout;
 use p2p::testutil::MockBitswapStore;
 use p2p::{bitswap::AccessMode, HostEvent, P2PHost, P2PHostConfig};
-use tokio::time::timeout;
 
 const COLLECTION_USERS: &str = "bafyusers";
 const COLLECTION_POSTS: &str = "bafyposts";
@@ -44,7 +44,7 @@ async fn wait_connected(handle: &p2p::P2PHostHandle, target: libp2p::PeerId) {
             start.elapsed() < Duration::from_secs(5),
             "timed out waiting to connect to {target}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -92,7 +92,7 @@ async fn controlled_host_with_synthetic_classifier(
 ) -> (
     P2PHost<MockBitswapStore>,
     p2p::P2PHostHandle,
-    tokio::sync::mpsc::Receiver<HostEvent>,
+    nuclei::sync::mpsc::Receiver<HostEvent>,
     Arc<p2p::bitswap::ReplicatorRegistry>,
 ) {
     P2PHost::with_keypair_and_config_and_identity_and_serve_gate(
@@ -102,13 +102,14 @@ async fn controlled_host_with_synthetic_classifier(
         None,
         Arc::new(SyntheticBlockClassifier),
         Arc::new(p2p::bitswap::LateBoundServeAcp::new()),
+        edge::testing::edge(),
     )
     .await
     .unwrap()
 }
 
 async fn drain_until_complete(
-    events: &mut tokio::sync::mpsc::Receiver<HostEvent>,
+    events: &mut nuclei::sync::mpsc::Receiver<HostEvent>,
     query: p2p::QueryId,
     wait: Duration,
 ) -> (bool, bool) {
@@ -135,7 +136,7 @@ async fn drain_until_complete(
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn controlled_mode_denies_unregistered_bitswap_peer() {
     let (cid, bytes) = make_data_block(COLLECTION_USERS);
 
@@ -145,15 +146,15 @@ async fn controlled_mode_denies_unregistered_bitswap_peer() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
 
-    tokio::spawn(producer.run());
-    tokio::spawn(consumer.run());
+    nuclei::spawn(producer.run()).detach();
+    nuclei::spawn(consumer.run()).detach();
 
     producer_handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -194,7 +195,7 @@ async fn controlled_mode_denies_unregistered_bitswap_peer() {
     producer_handle.shutdown().await.ok();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn controlled_mode_serves_registered_replicator() {
     let (cid, bytes) = make_data_block(COLLECTION_USERS);
 
@@ -204,15 +205,15 @@ async fn controlled_mode_serves_registered_replicator() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
 
-    tokio::spawn(producer.run());
-    tokio::spawn(consumer.run());
+    nuclei::spawn(producer.run()).detach();
+    nuclei::spawn(consumer.run()).detach();
 
     producer_handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -246,7 +247,7 @@ async fn controlled_mode_serves_registered_replicator() {
     producer_handle.shutdown().await.ok();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn controlled_mode_denies_replicator_for_other_collection() {
     let (cid, bytes) = make_data_block(COLLECTION_USERS);
 
@@ -256,15 +257,15 @@ async fn controlled_mode_denies_replicator_for_other_collection() {
     let (producer, producer_handle, _producer_events, producer_replicators) =
         controlled_host_with_synthetic_classifier(producer_store).await;
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, controlled_config())
+        P2PHost::with_config(consumer_store, controlled_config(), edge::testing::edge())
             .await
             .unwrap();
 
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
 
-    tokio::spawn(producer.run());
-    tokio::spawn(consumer.run());
+    nuclei::spawn(producer.run()).detach();
+    nuclei::spawn(consumer.run()).detach();
 
     producer_handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -325,7 +326,7 @@ async fn controlled_mode_denies_replicator_for_other_collection() {
 /// Expected: Go rejects the Bitswap WANT (no block received in 5s) because
 /// our Rust peer is not registered as a replicator for the owning
 /// collection — the same deny behavior this PR now implements in Rust.
-#[tokio::test]
+#[nuclei::test]
 #[ignore = "requires a pre-running Go defradb with DEFRADB_GO_PEER / DEFRADB_GO_BLOCK_CID set"]
 async fn bitswap_unauthorized_against_go_defradb() {
     let peer_addr = std::env::var("DEFRADB_GO_PEER")
@@ -335,10 +336,10 @@ async fn bitswap_unauthorized_against_go_defradb() {
 
     let store = MockBitswapStore::new();
     let (host, handle, mut events, _replicators) =
-        P2PHost::with_config(store, P2PHostConfig::default())
+        P2PHost::with_config(store, P2PHostConfig::default(), edge::testing::edge())
             .await
             .unwrap();
-    tokio::spawn(host.run());
+    nuclei::spawn(host.run()).detach();
 
     handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -379,7 +380,7 @@ async fn bitswap_unauthorized_against_go_defradb() {
     handle.shutdown().await.ok();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn open_mode_serves_all_peers() {
     let (cid, bytes) = make_data_block(COLLECTION_USERS);
 
@@ -389,19 +390,27 @@ async fn open_mode_serves_all_peers() {
     // Producer in Open mode should serve the block regardless of registry
     // state. Matches the pre-#830 default / AccessMode::Open contract.
     let (producer, producer_handle, _producer_events, _producer_replicators) =
-        P2PHost::with_config(producer_store, P2PHostConfig::default())
-            .await
-            .unwrap();
+        P2PHost::with_config(
+            producer_store,
+            P2PHostConfig::default(),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
     let (consumer, consumer_handle, mut consumer_events, _consumer_replicators) =
-        P2PHost::with_config(consumer_store, P2PHostConfig::default())
-            .await
-            .unwrap();
+        P2PHost::with_config(
+            consumer_store,
+            P2PHostConfig::default(),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
 
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
 
-    tokio::spawn(producer.run());
-    tokio::spawn(consumer.run());
+    nuclei::spawn(producer.run()).detach();
+    nuclei::spawn(consumer.run()).detach();
 
     producer_handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())

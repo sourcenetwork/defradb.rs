@@ -24,12 +24,15 @@ fn signal(pid: u32, signal: &str) {
 }
 
 async fn sync_status(api_url: &str) -> serde_json::Value {
-    reqwest::get(format!("{api_url}/api/v0/p2p/sync/status"))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
+    net::http::get(
+        format!("{api_url}/api/v0/p2p/sync/status"),
+        edge::testing::edge(),
+    )
+    .await
+    .expect("sync status request")
+    .json()
+    .await
+    .expect("sync status json")
 }
 
 /// One pusher replicates a write burst far beyond every cap to one healthy
@@ -43,190 +46,193 @@ async fn sync_status(api_url: &str) -> serde_json::Value {
 /// - after SIGCONT, the deferred pushes drain through the persisted retry
 ///   ladder so the previously dead target converges too (durable overflow
 ///   outcome — nothing was silently dropped).
-#[tokio::test]
+#[nuclei::test]
 async fn outbound_backlog_bounded_under_fanout_with_dead_peer() {
-    std::env::set_var("DEFRA_P2P_PUSH_QUEUE_CAPACITY", QUEUE_CAPACITY.to_string());
-    std::env::set_var(
-        "DEFRA_P2P_PUSH_QUEUE_BYTES",
-        QUEUE_BYTE_CAPACITY.to_string(),
-    );
-    std::env::set_var("DEFRA_P2P_MAX_ACTIVE_PUSHES_PER_PEER", "2");
+    edge::compat(async {
+        std::env::set_var("DEFRA_P2P_PUSH_QUEUE_CAPACITY", QUEUE_CAPACITY.to_string());
+        std::env::set_var(
+            "DEFRA_P2P_PUSH_QUEUE_BYTES",
+            QUEUE_BYTE_CAPACITY.to_string(),
+        );
+        std::env::set_var("DEFRA_P2P_MAX_ACTIVE_PUSHES_PER_PEER", "2");
 
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .build()
-        .await
-        .expect("cluster start");
-
-    let startup_timeout = Duration::from_secs(30);
-    for node in 0..3 {
-        cluster
-            .wait_for_log(node, "p2p_listening", startup_timeout)
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .build()
             .await
-            .unwrap_or_else(|e| panic!("node{node} P2P listener did not start: {e}"));
-    }
+            .expect("cluster start");
 
-    let pusher = cluster.client(0);
-    pusher.schema_add(SCHEMA).expect("pusher schema");
+        let startup_timeout = Duration::from_secs(30);
+        for node in 0..3 {
+            cluster
+                .wait_for_log(node, "p2p_listening", startup_timeout)
+                .await
+                .unwrap_or_else(|e| panic!("node{node} P2P listener did not start: {e}"));
+        }
 
-    let mut target_addrs = Vec::new();
-    for target in 1..3 {
-        let client = cluster.client(target);
-        client.schema_add(SCHEMA).expect("target schema");
-        let info = client.p2p_info().expect("target p2p info");
-        let addr = info
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .expect("target has no P2P address")
-            .to_string();
-        pusher.p2p_connect(&[&addr]).expect("connect to target");
-        pusher
-            .p2p_replicator_set(&["User"], &addr)
-            .expect("replicator pusher -> target");
-        target_addrs.push(addr);
-    }
+        let pusher = cluster.client(0);
+        pusher.schema_add(SCHEMA).expect("pusher schema");
 
-    // Freeze target 2: a live TCP peer whose process never responds — the
-    // deterministic nonresponsive peer.
-    let dead_pid = cluster.nodes[2].process.id().expect("target 2 pid");
-    signal(dead_pid, "-STOP");
+        let mut target_addrs = Vec::new();
+        for target in 1..3 {
+            let client = cluster.client(target);
+            client.schema_add(SCHEMA).expect("target schema");
+            let info = client.p2p_info().expect("target p2p info");
+            let addr = info
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_str())
+                .expect("target has no P2P address")
+                .to_string();
+            pusher.p2p_connect(&[&addr]).expect("connect to target");
+            pusher
+                .p2p_replicator_set(&["User"], &addr)
+                .expect("replicator pusher -> target");
+            target_addrs.push(addr);
+        }
 
-    let pusher_api = cluster.api_url(0).to_string();
-    let baseline_retained = sync_status(&pusher_api).await["retained_background_tasks"]
-        .as_u64()
-        .expect("retained task baseline");
+        // Freeze target 2: a live TCP peer whose process never responds - the
+        // deterministic nonresponsive peer.
+        let dead_pid = cluster.nodes[2].process.id().expect("target 2 pid");
+        signal(dead_pid, "-STOP");
 
-    // Sustained write burst far beyond the queue cap, sampling the resource
-    // snapshot throughout.
-    let mut expected_doc_ids = Vec::with_capacity(DOCS);
-    let mut saw_rejection = false;
-    for doc in 0..DOCS {
-        let mutation = format!(
-            r#"mutation {{ add_User(input: {{name: "doc-{doc}", age: {doc}}}) {{ _docID }} }}"#
-        );
-        let data = pusher.query(&mutation).expect("create doc on pusher");
-        expected_doc_ids.push(
-            data["add_User"][0]["_docID"]
-                .as_str()
-                .expect("missing _docID")
-                .to_string(),
-        );
+        let pusher_api = cluster.api_url(0).to_string();
+        let baseline_retained = sync_status(&pusher_api).await["retained_background_tasks"]
+            .as_u64()
+            .expect("retained task baseline");
 
-        if doc % 10 == 0 {
+        // Sustained write burst far beyond the queue cap, sampling the resource
+        // snapshot throughout.
+        let mut expected_doc_ids = Vec::with_capacity(DOCS);
+        let mut saw_rejection = false;
+        for doc in 0..DOCS {
+            let mutation = format!(
+                r#"mutation {{ add_User(input: {{name: "doc-{doc}", age: {doc}}}) {{ _docID }} }}"#
+            );
+            let data = pusher.query(&mutation).expect("create doc on pusher");
+            expected_doc_ids.push(
+                data["add_User"][0]["_docID"]
+                    .as_str()
+                    .expect("missing _docID")
+                    .to_string(),
+            );
+
+            if doc % 10 == 0 {
+                let status = sync_status(&pusher_api).await;
+                let backlog = &status["push_backlog"];
+                let queued_items = backlog["queued_items"].as_u64().unwrap();
+                let queued_bytes = backlog["queued_bytes"].as_u64().unwrap();
+                let active_jobs = backlog["active_jobs"].as_u64().unwrap();
+                let worker_count = backlog["worker_count"].as_u64().unwrap();
+                let retained = status["retained_background_tasks"].as_u64().unwrap();
+                assert!(
+                    queued_items <= QUEUE_CAPACITY,
+                    "queued_items {queued_items} exceeded cap {QUEUE_CAPACITY}"
+                );
+                assert!(
+                    queued_bytes <= QUEUE_BYTE_CAPACITY,
+                    "queued_bytes {queued_bytes} exceeded cap {QUEUE_BYTE_CAPACITY}"
+                );
+                assert!(
+                    active_jobs <= worker_count,
+                    "active_jobs {active_jobs} exceeded workers {worker_count}"
+                );
+                // The baseline includes fixed workers and coordinator clocks.
+                // Only bounded transient fetch/replay tasks may be added during
+                // the burst; comparing with `worker_count` alone misclassifies
+                // those fixed non-worker tasks as retained growth.
+                assert!(
+                    retained <= baseline_retained + 32,
+                    "retained task handles grew unbounded: baseline={baseline_retained}, current={retained}"
+                );
+                saw_rejection |= backlog["rejected_items_total"].as_u64().unwrap() > 0
+                    || backlog["rejected_bytes_total"].as_u64().unwrap() > 0;
+            }
+        }
+
+        // Anti-vacuity: the burst must actually have overflowed admission, and
+        // overflow must be observable in the counters.
+        let overload_deadline = Instant::now() + Duration::from_secs(60);
+        while !saw_rejection {
             let status = sync_status(&pusher_api).await;
             let backlog = &status["push_backlog"];
-            let queued_items = backlog["queued_items"].as_u64().unwrap();
-            let queued_bytes = backlog["queued_bytes"].as_u64().unwrap();
-            let active_jobs = backlog["active_jobs"].as_u64().unwrap();
-            let worker_count = backlog["worker_count"].as_u64().unwrap();
-            let retained = status["retained_background_tasks"].as_u64().unwrap();
-            assert!(
-                queued_items <= QUEUE_CAPACITY,
-                "queued_items {queued_items} exceeded cap {QUEUE_CAPACITY}"
-            );
-            assert!(
-                queued_bytes <= QUEUE_BYTE_CAPACITY,
-                "queued_bytes {queued_bytes} exceeded cap {QUEUE_BYTE_CAPACITY}"
-            );
-            assert!(
-                active_jobs <= worker_count,
-                "active_jobs {active_jobs} exceeded workers {worker_count}"
-            );
-            // The baseline includes fixed workers and coordinator clocks.
-            // Only bounded transient fetch/replay tasks may be added during
-            // the burst; comparing with `worker_count` alone misclassifies
-            // those fixed non-worker tasks as retained growth.
-            assert!(
-                retained <= baseline_retained + 32,
-                "retained task handles grew unbounded: baseline={baseline_retained}, current={retained}"
-            );
-            saw_rejection |= backlog["rejected_items_total"].as_u64().unwrap() > 0
+            saw_rejection = backlog["rejected_items_total"].as_u64().unwrap() > 0
                 || backlog["rejected_bytes_total"].as_u64().unwrap() > 0;
+            assert!(
+                Instant::now() < overload_deadline,
+                "burst never overflowed the push backlog; caps were not stressed"
+            );
+            nuclei::time::sleep(Duration::from_millis(250)).await;
         }
-    }
 
-    // Anti-vacuity: the burst must actually have overflowed admission, and
-    // overflow must be observable in the counters.
-    let overload_deadline = Instant::now() + Duration::from_secs(60);
-    while !saw_rejection {
-        let status = sync_status(&pusher_api).await;
-        let backlog = &status["push_backlog"];
-        saw_rejection = backlog["rejected_items_total"].as_u64().unwrap() > 0
-            || backlog["rejected_bytes_total"].as_u64().unwrap() > 0;
-        assert!(
-            Instant::now() < overload_deadline,
-            "burst never overflowed the push backlog; caps were not stressed"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-
-    // The dead peer's stall must become visible in the per-peer snapshot
-    // (source-inc/gents#630: slot starvation was invisible to diagnostics).
-    let visibility_deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let status = sync_status(&pusher_api).await;
-        let starving_peer_visible = status["push_backlog"]["per_peer"]
-            .as_array()
-            .map(|peers| {
-                peers.iter().any(|peer| {
-                    peer["consecutive_failures"].as_u64().unwrap_or(0) > 0
-                        || peer["active_jobs"].as_u64().unwrap_or(0) > 0
-                        || peer["queued_items"].as_u64().unwrap_or(0) > 0
+        // The dead peer's stall must become visible in the per-peer snapshot
+        // (source-inc/gents#630: slot starvation was invisible to diagnostics).
+        let visibility_deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let status = sync_status(&pusher_api).await;
+            let starving_peer_visible = status["push_backlog"]["per_peer"]
+                .as_array()
+                .map(|peers| {
+                    peers.iter().any(|peer| {
+                        peer["consecutive_failures"].as_u64().unwrap_or(0) > 0
+                            || peer["active_jobs"].as_u64().unwrap_or(0) > 0
+                            || peer["queued_items"].as_u64().unwrap_or(0) > 0
+                    })
                 })
-            })
-            .unwrap_or(false);
-        if starving_peer_visible {
-            break;
+                .unwrap_or(false);
+            if starving_peer_visible {
+                break;
+            }
+            assert!(
+                Instant::now() < visibility_deadline,
+                "nonresponsive peer never appeared in per-peer diagnostics"
+            );
+            nuclei::time::sleep(Duration::from_millis(500)).await;
         }
-        assert!(
-            Instant::now() < visibility_deadline,
-            "nonresponsive peer never appeared in per-peer diagnostics"
-        );
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
 
-    // Fairness: the healthy target converges while the dead peer is stopped.
-    let healthy = cluster.client(1);
-    wait_for_docs(
-        &healthy,
-        &expected_doc_ids,
-        Duration::from_secs(120),
-        "healthy target",
-    )
-    .await;
+        // Fairness: the healthy target converges while the dead peer is stopped.
+        let healthy = cluster.client(1);
+        wait_for_docs(
+            &healthy,
+            &expected_doc_ids,
+            Duration::from_secs(120),
+            "healthy target",
+        )
+        .await;
 
-    // Resume the dead target: every deferred/rejected push must drain through
-    // the persisted retry ladder — the explicit overload outcome is durable.
-    signal(dead_pid, "-CONT");
-    let revived = cluster.client(2);
-    wait_for_docs(
-        &revived,
-        &expected_doc_ids,
-        Duration::from_secs(300),
-        "revived target",
-    )
-    .await;
+        // Resume the dead target: every deferred/rejected push must drain through
+        // the persisted retry ladder - the explicit overload outcome is durable.
+        signal(dead_pid, "-CONT");
+        let revived = cluster.client(2);
+        wait_for_docs(
+            &revived,
+            &expected_doc_ids,
+            Duration::from_secs(300),
+            "revived target",
+        )
+        .await;
 
-    // Quiescence must retire every per-update handle. Fixed coordinator tasks
-    // remain, so the correct terminal invariant is return to the measured
-    // pre-burst baseline rather than return to zero.
-    let quiescence_deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let retained = sync_status(&pusher_api).await["retained_background_tasks"]
-            .as_u64()
-            .expect("retained task count");
-        if retained <= baseline_retained {
-            break;
-        }
-        assert!(
-            Instant::now() < quiescence_deadline,
-            "retained task handles did not return to baseline after quiescence: \
+        // Quiescence must retire every per-update handle. Fixed coordinator tasks
+        // remain, so the correct terminal invariant is return to the measured
+        // pre-burst baseline rather than return to zero.
+        let quiescence_deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let retained = sync_status(&pusher_api).await["retained_background_tasks"]
+                .as_u64()
+                .expect("retained task count");
+            if retained <= baseline_retained {
+                break;
+            }
+            assert!(
+                Instant::now() < quiescence_deadline,
+                "retained task handles did not return to baseline after quiescence: \
              baseline={baseline_retained}, current={retained}"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+            );
+            nuclei::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await;
 }
 
 async fn wait_for_docs(
@@ -261,6 +267,6 @@ async fn wait_for_docs(
             "{label}: {missing} of {} documents never replicated",
             expected_doc_ids.len()
         );
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        nuclei::time::sleep(Duration::from_millis(500)).await;
     }
 }

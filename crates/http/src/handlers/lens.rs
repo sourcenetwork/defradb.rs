@@ -194,7 +194,7 @@ mod tests {
         assert!(json.contains("lens-123"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn set_migration_uses_tx_header_without_global_lens_ops() {
         let state = AppStateBuilder::new(
             Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,

@@ -205,7 +205,7 @@ fn legacy_pending_record_decodes_with_no_alternate_providers() {
     assert!(decoded.alternate_providers.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn pending_store_retries_a_commit_conflict_once_then_persists_value() {
     let (root, attempts) = conflict_injecting_store(1);
     let store = PendingDagStore::new(root);
@@ -218,7 +218,7 @@ async fn pending_store_retries_a_commit_conflict_once_then_persists_value() {
     assert_eq!(loaded, vec![(root_cid, record("doc-a"))]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn pending_store_conflicts_run_under_the_configured_retry_budget() {
     let (root, attempts) = conflict_injecting_store(2);
     let store = PendingDagStore::new(Arc::clone(&root)).with_max_txn_retries(1);
@@ -245,7 +245,7 @@ async fn pending_store_conflicts_run_under_the_configured_retry_budget() {
 
 /// A record written with its slot still reads as a registration, so a build
 /// that predates slots reads it too.
-#[tokio::test]
+#[nuclei::test]
 async fn a_registered_record_reads_as_the_registration_alone() {
     let inner = Arc::new(RegolithStore::in_memory().unwrap());
     let store = PendingDagStore::new(Arc::clone(&inner));
@@ -271,7 +271,7 @@ async fn a_registered_record_reads_as_the_registration_alone() {
 
 /// The cap is hard: with every slot held a new root is refused and nothing
 /// is written; a discharge frees its slot for the next root.
-#[tokio::test]
+#[nuclei::test]
 async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
     let store = memory_store();
     let view = view();
@@ -314,7 +314,7 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
 /// Concurrent registrations of new roots never hold more slots than the cap:
 /// each slot read is validated, so two that claim one slot do not both
 /// commit.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn concurrent_registrations_never_exceed_the_cap() {
     let store = Arc::new(memory_store().with_max_txn_retries(64));
     let view = view();
@@ -322,7 +322,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     for index in 0..16u32 {
         let store = Arc::clone(&store);
         let view = Arc::clone(&view);
-        tasks.push(tokio::spawn(async move {
+        tasks.push(crate::rt::spawn(async move {
             let root = cid(&index.to_be_bytes());
             let record = record(&format!("doc-{index}"));
             store
@@ -340,7 +340,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     }
     let mut registered = 0;
     for task in tasks {
-        match task.await.unwrap() {
+        match task.join().await.unwrap() {
             Admission::Registered => registered += 1,
             Admission::AtCapacity => {}
             Admission::Covered => panic!("no root belongs to a scope"),
@@ -353,7 +353,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
 
 /// Within a sender scope the newer head retires the older one, takes over
 /// its slot even at the cap, and an older head that comes later is covered.
-#[tokio::test]
+#[nuclei::test]
 async fn a_newer_head_retires_the_older_one_and_takes_its_slot() {
     let store = memory_store();
     let view = view();
@@ -386,7 +386,7 @@ async fn a_newer_head_retires_the_older_one_and_takes_its_slot() {
 /// Concurrent heads of one sender scope settle to the newest: the scope's
 /// durable head is read and written by every registration of the scope, so
 /// the engine orders them and the store never keeps an older head beside it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
     let store = Arc::new(memory_store().with_max_txn_retries(64));
     let view = view();
@@ -398,7 +398,7 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
     for priority in 2..10u64 {
         let store = Arc::clone(&store);
         let view = Arc::clone(&view);
-        tasks.push(tokio::spawn(async move {
+        tasks.push(crate::rt::spawn(async move {
             let root = cid(format!("head-{priority}").as_bytes());
             let record = head(priority);
             store
@@ -415,7 +415,7 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
         }));
     }
     for task in tasks {
-        assert_ne!(task.await.unwrap(), Admission::AtCapacity);
+        assert_ne!(task.join().await.unwrap(), Admission::AtCapacity);
     }
     let newest = cid(b"head-9");
     assert_eq!(store.load_all().await.unwrap(), vec![(newest, head(9))]);
@@ -424,7 +424,7 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
 
 /// A quarantine moves the root out of the live keyspace in one transaction,
 /// frees its slot, and counts once however often it is repeated.
-#[tokio::test]
+#[nuclei::test]
 async fn quarantine_moves_the_root_and_counts_it_once() {
     let store = memory_store();
     let view = view();
@@ -451,7 +451,7 @@ async fn quarantine_moves_the_root_and_counts_it_once() {
 
 /// A sweep rebuilds the view from the records it read: a record the view
 /// never saw appears, and a root the view kept without a record goes.
-#[tokio::test]
+#[nuclei::test]
 async fn a_sweep_makes_the_view_the_records() {
     let store = memory_store();
     let view = view();
@@ -474,7 +474,7 @@ async fn a_sweep_makes_the_view_the_records() {
     assert_eq!(view.len(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn put_load_remove_roundtrip() {
     let store = memory_store();
     let view = view();
@@ -499,7 +499,7 @@ async fn put_load_remove_roundtrip() {
     assert!(!store.remove(&root_a, &view).await.unwrap());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn put_overwrites_existing_record() {
     let store = memory_store();
     let root = cid(b"a");
@@ -519,7 +519,7 @@ fn quarantined(doc: &str, reason: &str) -> PersistedQuarantinedDag {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn quarantine_load_remove_roundtrip() {
     let store = memory_store();
     let root = cid(b"a");
@@ -547,7 +547,7 @@ async fn quarantine_load_remove_roundtrip() {
 /// The quarantine keyspace is deliberately outside `/p2p/pending_dag/`:
 /// the live resync sweep's prefix scan must never observe a quarantined root,
 /// or it would re-drive a merge known to fail every time.
-#[tokio::test]
+#[nuclei::test]
 async fn quarantined_root_is_absent_from_live_load_all() {
     let store = memory_store();
     let live_root = cid(b"live");

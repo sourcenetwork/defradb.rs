@@ -327,8 +327,8 @@ mod tests {
         body::{to_bytes, Body},
         http::{Method, Request, StatusCode},
     };
+    use regolith::sync::Notify;
     use std::time::Duration;
-    use tokio::sync::Notify;
     use tower::ServiceExt;
 
     struct BlockingAddCollectionsP2P {
@@ -461,7 +461,7 @@ mod tests {
             .status()
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn version_route_resolves_under_v0_and_v1() {
         assert_eq!(
             status_for("/api/v0/version").await,
@@ -473,7 +473,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn v0_and_v1_resolve_same_route_set() {
         for path in [
             "/graphql",
@@ -492,7 +492,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collection_doc_ids_route_is_available_with_rest() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let rest = Arc::new(MockRestOperations::new()) as Arc<dyn RestOperations>;
@@ -514,7 +514,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_peer_details_route_returns_one_peer() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let p2p =
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_collection_add_does_not_ack_when_operation_fails() {
         let status =
             status_for_p2p_request(Method::POST, "/api/v0/p2p/collections", r#"["Users"]"#).await;
@@ -553,7 +553,7 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_disconnect_removes_connected_peer() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let p2p = Arc::new(MockP2POperations::new().with_peer("12D3KooWtest"));
@@ -580,7 +580,7 @@ mod tests {
         assert!(p2p.connected_peers().await.unwrap().is_empty());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn document_acp_decide_route_returns_decision() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let doc_acp = Arc::new(MockDocumentAcpOperations::with_allowed(false))
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(&body[..], br#"{"allowed":false}"#);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_collection_add_waits_for_operation_before_ack() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let started = Arc::new(Notify::new());
@@ -631,7 +631,7 @@ mod tests {
             .build();
         let router = create_router_with_state(state);
 
-        let response_task = tokio::spawn(
+        let response_task = nuclei::spawn(
             router.oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -642,7 +642,7 @@ mod tests {
             ),
         );
 
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        nuclei::time::timeout(Duration::from_secs(1), started.notified())
             .await
             .expect("P2P operation should start");
         assert!(
@@ -652,6 +652,7 @@ mod tests {
 
         release.notify_one();
         let response = response_task
+            .join()
             .await
             .expect("router task should join")
             .expect("router should respond");
@@ -697,7 +698,7 @@ mod tests {
             .status()
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_manage_returns_service_unavailable_when_unset() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let state = AppStateBuilder::new(executor, edge::testing::edge()).build();
@@ -708,7 +709,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_manage_maps_unauthorized_to_forbidden() {
         let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
         let manage = Arc::new(DenyingManageRequester) as Arc<dyn ManageRequester>;
@@ -722,7 +723,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_replicator_add_does_not_ack_when_operation_fails() {
         let status = status_for_p2p_request(
             Method::POST,
@@ -734,7 +735,7 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_replicator_forget_reaches_backend_without_collections() {
         let status = status_for_p2p_request(
             Method::DELETE,
@@ -746,7 +747,7 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_replicator_forget_rejects_collections() {
         let status = status_for_p2p_request(
             Method::DELETE,
@@ -758,7 +759,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_replicator_forget_requires_nonempty_id() {
         for body in [r#"{"Forget":true}"#, r#"{"ID":"  ","Forget":true}"#] {
             let status =
@@ -768,7 +769,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn p2p_replicator_delete_without_collections_is_not_forget() {
         let status = status_for_p2p_request(
             Method::DELETE,

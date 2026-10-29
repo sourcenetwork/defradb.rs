@@ -168,6 +168,7 @@ where
             database.node_identity(),
             classifier.clone(),
             serve_acp.clone(),
+            edge.clone(),
         )
         .await
         .map_err(Error::HostCreate)?;
@@ -192,8 +193,11 @@ where
         }
     }
 
-    let collection_store: Arc<dyn p2p::sync::P2PCollectionStorage> = Arc::new(
-        p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+    let collection_store = p2p::sync::pooled_collection_store(
+        Arc::new(
+            p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+        ),
+        database.pool(),
     );
     let head_provider: Arc<dyn DocumentHeadProvider> =
         Arc::new(db::merge::create_head_provider(database.clone()));
@@ -201,6 +205,7 @@ where
         match p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
             p2p::Libp2pTransport::new(handle.clone()),
             blockstore.clone(),
+            p2p::network::Network::on(edge.clone()),
             sync_config,
             p2p::bitswap::AccessMode::Controlled,
             replicator_registry,
@@ -221,9 +226,6 @@ where
 
     let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
     let coordinator = Arc::new(coordinator);
-    // Its network work runs on the edge, also when a write on a pool worker
-    // hands it a broadcast.
-    coordinator.use_network(p2p::network::Network::on(edge.clone()));
     // Its durable registrations change on the database's worker pool.
     coordinator
         .install_pending_dag_store(p2p::sync::pooled_pending_store(
@@ -360,7 +362,8 @@ where
         replication.merge_handler_inner.clone(),
         database.clone(),
     ));
-    let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> = replication.broadcast_mutator.clone();
+    let se_repusher =
+        db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
     replication
         .merge_handler_inner
         .set_se_repusher(se_repusher.clone());
@@ -591,8 +594,8 @@ where
 
     let retry_transport = peer.transport.clone();
     let retry_doc_pusher: Arc<dyn TransportDocPusher> = Arc::clone(&peer.doc_pusher);
-    let retry_se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
-        peer.replication.broadcast_mutator.clone();
+    let retry_se_repusher =
+        db::merge::pooled_se_repusher(peer.replication.broadcast_mutator.clone(), database.pool());
     let retry_peers = Peerstore::new(store.clone())
         .with_max_txn_retries(max_txn_retries)
         .with_retry_schedule(retry_schedule)

@@ -121,7 +121,7 @@ enum WorktreeCommands {
     },
 }
 
-#[tokio::main]
+#[nuclei::main]
 async fn main() {
     let Cli { go_path, command } = Cli::parse();
 

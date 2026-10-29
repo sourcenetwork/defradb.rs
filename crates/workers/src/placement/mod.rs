@@ -8,16 +8,22 @@
 //! SMT siblings. No two workers share a CPU unless more workers than allowed
 //! CPUs were asked for, which the plan flags. CPUs no worker sits on (whole
 //! spare cores first, spare siblings otherwise) are the background set the
-//! edge, compaction and blocking threads run on.
+//! compaction and blocking threads run on, and network threads placed
+//! through the pool; a network runtime sized from the machine holds whole
+//! cores of its own instead ([`EdgeCores`]).
 //!
 //! A pool that starts plans on the CPUs no other placed pool holds
 //! ([`reserve`]), so pools never share a core.
 
 #[cfg(not(target_family = "wasm"))]
+mod edge;
+#[cfg(not(target_family = "wasm"))]
 mod reserve;
 #[cfg(test)]
 mod tests;
 
+#[cfg(not(target_family = "wasm"))]
+pub use edge::{edge_cores, EdgeCores};
 #[cfg(not(target_family = "wasm"))]
 pub(crate) use reserve::{reserve, Reserved};
 
@@ -93,13 +99,28 @@ fn auto_count(topology: &Topology, config: &Config) -> usize {
 }
 
 /// The cores a pool keeps for its own threads besides the workers: the
-/// network edge's (one per node, at least two, unless configured) and
-/// compaction's. [`Workers::Auto`] leaves them out of its count.
+/// network edge's (unless configured, none while a network runtime holds
+/// cores of its own, else one per node, at least two) and compaction's.
+/// [`Workers::Auto`] leaves them out of its count.
 fn set_aside(topology: &Topology, config: &Config) -> usize {
-    let edge = config
-        .edge_threads
-        .unwrap_or_else(|| topology.nodes.len().max(2));
+    let edge = config.edge_threads.unwrap_or_else(|| {
+        if edge_holds_cores() {
+            0
+        } else {
+            topology.nodes.len().max(2)
+        }
+    });
     edge + config.compaction_threads
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn edge_holds_cores() -> bool {
+    edge::holding()
+}
+
+#[cfg(target_family = "wasm")]
+fn edge_holds_cores() -> bool {
+    false
 }
 
 /// Every worker's place on `topology` under `config`.

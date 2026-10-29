@@ -4,14 +4,14 @@ use std::time::Duration;
 use bitswap::network::{Network, NetworkError, OutEvent, SendError};
 use bitswap::BitswapMessage;
 use libp2p::PeerId;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
+use nuclei::sync::mpsc;
+use nuclei::time::Instant;
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn backoff_sleeps_between_every_pair_of_attempts() {
     let (network, mut events) = Network::new(PeerId::random());
     let (attempts, mut seen) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         loop {
             if let OutEvent::SendMessage { response, .. } = poll_fn(|cx| events.poll_next(cx)).await
             {
@@ -19,7 +19,8 @@ async fn backoff_sleeps_between_every_pair_of_attempts() {
                 let _ = response.send(Err(SendError::Other("refused".into())));
             }
         }
-    });
+    })
+    .detach();
 
     let backoff = Duration::from_secs(1);
     let outcome = network

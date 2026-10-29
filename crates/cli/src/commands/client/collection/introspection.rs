@@ -46,7 +46,7 @@ fn is_builtin_field(name: &str) -> bool {
 impl CollectionListArgs {
     /// Execute the collection list command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client
@@ -95,7 +95,7 @@ impl CollectionDescribeArgs {
             name = collection_name
         );
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;
@@ -170,7 +170,7 @@ pub(crate) async fn get_collection_fields(
 "#
     );
 
-    let client = HttpClient::new(&ctx.url)?
+    let client = HttpClient::new(&ctx.url, &ctx.edge)?
         .with_auth_token(ctx.auth_token.clone())
         .with_verbose(ctx.verbose);
     let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;

@@ -53,9 +53,10 @@ async fn setup_crdt_cluster(schema: &str) -> (TestCluster, String) {
 
 /// Port: TestP2PUpdate_WithPCounter_NoError
 /// PCounter CRDT: update accumulates (10 initial + 10 update = 20).
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_with_pcounter() {
+    edge::compat(async move {
     let pcounter_schema = "type Users { name: String  points: Int @crdt(type: pcounter) }";
     let (cluster, _) = setup_crdt_cluster(pcounter_schema).await;
     let node0 = cluster.client(0);
@@ -123,129 +124,135 @@ async fn update_with_pcounter() {
         .as_i64()
         .expect("missing points");
     assert_eq!(points, 20, "PCounter on node0 should be 20");
+})
+    .await;
 }
 
 /// Port: TestP2PUpdate_WithPCounterSimultaneousUpdate_NoError
 /// Simultaneous PCounter updates on both nodes converge to sum (0 + 45 + 45 = 90).
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_with_pcounter_simultaneous() {
-    let pcounter_schema = "type Users { name: String  age: Int @crdt(type: pcounter) }";
+    edge::compat(async move {
+        let pcounter_schema = "type Users { name: String  age: Int @crdt(type: pcounter) }";
 
-    // Need bidirectional replication for this test
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_iroh_transport()
-        .build()
-        .await
-        .unwrap();
+        // Need bidirectional replication for this test
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_iroh_transport()
+            .build()
+            .await
+            .unwrap();
 
-    cluster
-        .wait_for_log(0, "p2p_listening", P2P_TIMEOUT)
-        .await
-        .expect("node0 P2P listener did not start");
-    cluster
-        .wait_for_log(1, "p2p_listening", P2P_TIMEOUT)
-        .await
-        .expect("node1 P2P listener did not start");
+        cluster
+            .wait_for_log(0, "p2p_listening", P2P_TIMEOUT)
+            .await
+            .expect("node0 P2P listener did not start");
+        cluster
+            .wait_for_log(1, "p2p_listening", P2P_TIMEOUT)
+            .await
+            .expect("node1 P2P listener did not start");
 
-    let node0 = cluster.client(0);
-    let node1 = cluster.client(1);
+        let node0 = cluster.client(0);
+        let node1 = cluster.client(1);
 
-    node0.schema_add(pcounter_schema).expect("schema add node0");
-    node1.schema_add(pcounter_schema).expect("schema add node1");
+        node0.schema_add(pcounter_schema).expect("schema add node0");
+        node1.schema_add(pcounter_schema).expect("schema add node1");
 
-    let addr0 = extract_p2p_addr(&cluster, 0);
-    let addr1 = extract_p2p_addr(&cluster, 1);
+        let addr0 = extract_p2p_addr(&cluster, 0);
+        let addr1 = extract_p2p_addr(&cluster, 1);
 
-    node0.p2p_connect(&[&addr1]).expect("connect 0→1");
-    node0
-        .p2p_collection_add(&["Users"])
-        .expect("collection add node0");
-    node1
-        .p2p_collection_add(&["Users"])
-        .expect("collection add node1");
+        node0.p2p_connect(&[&addr1]).expect("connect 0→1");
+        node0
+            .p2p_collection_add(&["Users"])
+            .expect("collection add node0");
+        node1
+            .p2p_collection_add(&["Users"])
+            .expect("collection add node1");
 
-    // Bidirectional replicators
-    node0
-        .p2p_replicator_set(&["Users"], &addr1)
-        .expect("replicator 0→1");
-    node1
-        .p2p_replicator_set(&["Users"], &addr0)
-        .expect("replicator 1→0");
+        // Bidirectional replicators
+        node0
+            .p2p_replicator_set(&["Users"], &addr1)
+            .expect("replicator 0→1");
+        node1
+            .p2p_replicator_set(&["Users"], &addr0)
+            .expect("replicator 1→0");
 
-    // Create doc with age=0 on node0
-    let result = node0
-        .query(r#"mutation { add_Users(input: {name: "John", age: 0}) { _docID } }"#)
-        .expect("create user");
-    let doc_id = result["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID")
-        .to_string();
+        // Create doc with age=0 on node0
+        let result = node0
+            .query(r#"mutation { add_Users(input: {name: "John", age: 0}) { _docID } }"#)
+            .expect("create user");
+        let doc_id = result["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID")
+            .to_string();
 
-    // Wait for initial replication to node1
-    let node1_ref = &node1;
-    poll_until(
-        || {
-            let result = node1_ref
-                .query("query { Users { _docID } }")
-                .unwrap_or_default();
-            result["Users"]
-                .as_array()
-                .map(|arr| !arr.is_empty())
-                .unwrap_or(false)
-        },
-        Duration::from_secs(15),
-        Duration::from_millis(300),
-        "initial doc did not replicate to node1",
-    )
+        // Wait for initial replication to node1
+        let node1_ref = &node1;
+        poll_until(
+            || {
+                let result = node1_ref
+                    .query("query { Users { _docID } }")
+                    .unwrap_or_default();
+                result["Users"]
+                    .as_array()
+                    .map(|arr| !arr.is_empty())
+                    .unwrap_or(false)
+            },
+            Duration::from_secs(15),
+            Duration::from_millis(300),
+            "initial doc did not replicate to node1",
+        )
+        .await;
+
+        // Simultaneous updates: both nodes add 45
+        node0
+            .query(&format!(
+                r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
+                doc_id
+            ))
+            .expect("update age on node0");
+        node1
+            .query(&format!(
+                r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
+                doc_id
+            ))
+            .expect("update age on node1");
+
+        // Wait for sync
+        nuclei::time::sleep(Duration::from_secs(5)).await;
+
+        // Both nodes must converge to the SUM, 90 (0 + 45 + 45). The previous
+        // `>= 45` leniency masked a real two-store counter bug: local increments
+        // updated only the document blob, not the CRDT accumulation store, so the
+        // node that received the doc by replication first dropped its own increment.
+        let r0 = node0.query("query { Users { age } }").unwrap_or_default();
+        let r1 = node1_ref
+            .query("query { Users { age } }")
+            .unwrap_or_default();
+        let age0 = r0["Users"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|u| u["age"].as_i64())
+            .unwrap_or(0);
+        let age1 = r1["Users"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|u| u["age"].as_i64())
+            .unwrap_or(0);
+
+        assert_eq!(age0, 90, "PCounter node0 must converge to sum 90");
+        assert_eq!(age1, 90, "PCounter node1 must converge to sum 90");
+    })
     .await;
-
-    // Simultaneous updates: both nodes add 45
-    node0
-        .query(&format!(
-            r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
-            doc_id
-        ))
-        .expect("update age on node0");
-    node1
-        .query(&format!(
-            r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
-            doc_id
-        ))
-        .expect("update age on node1");
-
-    // Wait for sync
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    // Both nodes must converge to the SUM, 90 (0 + 45 + 45). The previous
-    // `>= 45` leniency masked a real two-store counter bug: local increments
-    // updated only the document blob, not the CRDT accumulation store, so the
-    // node that received the doc by replication first dropped its own increment.
-    let r0 = node0.query("query { Users { age } }").unwrap_or_default();
-    let r1 = node1_ref
-        .query("query { Users { age } }")
-        .unwrap_or_default();
-    let age0 = r0["Users"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|u| u["age"].as_i64())
-        .unwrap_or(0);
-    let age1 = r1["Users"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|u| u["age"].as_i64())
-        .unwrap_or(0);
-
-    assert_eq!(age0, 90, "PCounter node0 must converge to sum 90");
-    assert_eq!(age1, 90, "PCounter node1 must converge to sum 90");
 }
 
 /// Port: TestP2PUpdate_WithPNCounter_NoError
 /// PNCounter CRDT: update accumulates (10 + 10 = 20).
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_with_pncounter() {
+    edge::compat(async move {
     let pncounter_schema = "type Users { name: String  points: Int @crdt(type: pncounter) }";
     let (cluster, _) = setup_crdt_cluster(pncounter_schema).await;
     let node0 = cluster.client(0);
@@ -312,120 +319,125 @@ async fn update_with_pncounter() {
         .as_i64()
         .expect("missing points");
     assert_eq!(points, 20, "PNCounter on node0 should be 20");
+})
+    .await;
 }
 
 /// Port: TestP2PUpdate_WithPNCounterSimultaneousUpdate_NoError
 /// Simultaneous PNCounter updates converge to sum (0 + 45 + 45 = 90).
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn update_with_pncounter_simultaneous() {
-    let pncounter_schema = "type Users { name: String  age: Int @crdt(type: pncounter) }";
+    edge::compat(async move {
+        let pncounter_schema = "type Users { name: String  age: Int @crdt(type: pncounter) }";
 
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_iroh_transport()
-        .build()
-        .await
-        .unwrap();
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_iroh_transport()
+            .build()
+            .await
+            .unwrap();
 
-    cluster
-        .wait_for_log(0, "p2p_listening", P2P_TIMEOUT)
-        .await
-        .expect("node0 P2P listener did not start");
-    cluster
-        .wait_for_log(1, "p2p_listening", P2P_TIMEOUT)
-        .await
-        .expect("node1 P2P listener did not start");
+        cluster
+            .wait_for_log(0, "p2p_listening", P2P_TIMEOUT)
+            .await
+            .expect("node0 P2P listener did not start");
+        cluster
+            .wait_for_log(1, "p2p_listening", P2P_TIMEOUT)
+            .await
+            .expect("node1 P2P listener did not start");
 
-    let node0 = cluster.client(0);
-    let node1 = cluster.client(1);
+        let node0 = cluster.client(0);
+        let node1 = cluster.client(1);
 
-    node0
-        .schema_add(pncounter_schema)
-        .expect("schema add node0");
-    node1
-        .schema_add(pncounter_schema)
-        .expect("schema add node1");
+        node0
+            .schema_add(pncounter_schema)
+            .expect("schema add node0");
+        node1
+            .schema_add(pncounter_schema)
+            .expect("schema add node1");
 
-    let addr0 = extract_p2p_addr(&cluster, 0);
-    let addr1 = extract_p2p_addr(&cluster, 1);
+        let addr0 = extract_p2p_addr(&cluster, 0);
+        let addr1 = extract_p2p_addr(&cluster, 1);
 
-    node0.p2p_connect(&[&addr1]).expect("connect 0→1");
-    node0
-        .p2p_collection_add(&["Users"])
-        .expect("collection add node0");
-    node1
-        .p2p_collection_add(&["Users"])
-        .expect("collection add node1");
+        node0.p2p_connect(&[&addr1]).expect("connect 0→1");
+        node0
+            .p2p_collection_add(&["Users"])
+            .expect("collection add node0");
+        node1
+            .p2p_collection_add(&["Users"])
+            .expect("collection add node1");
 
-    // Bidirectional replicators
-    node0
-        .p2p_replicator_set(&["Users"], &addr1)
-        .expect("replicator 0→1");
-    node1
-        .p2p_replicator_set(&["Users"], &addr0)
-        .expect("replicator 1→0");
+        // Bidirectional replicators
+        node0
+            .p2p_replicator_set(&["Users"], &addr1)
+            .expect("replicator 0→1");
+        node1
+            .p2p_replicator_set(&["Users"], &addr0)
+            .expect("replicator 1→0");
 
-    // Create doc with age=0
-    let result = node0
-        .query(r#"mutation { add_Users(input: {name: "John", age: 0}) { _docID } }"#)
-        .expect("create user");
-    let doc_id = result["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID")
-        .to_string();
+        // Create doc with age=0
+        let result = node0
+            .query(r#"mutation { add_Users(input: {name: "John", age: 0}) { _docID } }"#)
+            .expect("create user");
+        let doc_id = result["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID")
+            .to_string();
 
-    // Wait for replication
-    let node1_ref = &node1;
-    poll_until(
-        || {
-            let result = node1_ref
-                .query("query { Users { _docID } }")
-                .unwrap_or_default();
-            result["Users"]
-                .as_array()
-                .map(|arr| !arr.is_empty())
-                .unwrap_or(false)
-        },
-        Duration::from_secs(15),
-        Duration::from_millis(300),
-        "initial doc did not replicate",
-    )
+        // Wait for replication
+        let node1_ref = &node1;
+        poll_until(
+            || {
+                let result = node1_ref
+                    .query("query { Users { _docID } }")
+                    .unwrap_or_default();
+                result["Users"]
+                    .as_array()
+                    .map(|arr| !arr.is_empty())
+                    .unwrap_or(false)
+            },
+            Duration::from_secs(15),
+            Duration::from_millis(300),
+            "initial doc did not replicate",
+        )
+        .await;
+
+        // Simultaneous updates: both add 45
+        node0
+            .query(&format!(
+                r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
+                doc_id
+            ))
+            .expect("update age on node0");
+        node1
+            .query(&format!(
+                r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
+                doc_id
+            ))
+            .expect("update age on node1");
+
+        // Wait for sync
+        nuclei::time::sleep(Duration::from_secs(5)).await;
+
+        // Both should converge to 90 (0 + 45 + 45)
+        let r0 = node0.query("query { Users { age } }").unwrap_or_default();
+        let r1 = node1_ref
+            .query("query { Users { age } }")
+            .unwrap_or_default();
+        let age0 = r0["Users"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|u| u["age"].as_i64())
+            .unwrap_or(0);
+        let age1 = r1["Users"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|u| u["age"].as_i64())
+            .unwrap_or(0);
+
+        assert_eq!(age0, 90, "PNCounter node0 must converge to sum 90");
+        assert_eq!(age1, 90, "PNCounter node1 must converge to sum 90");
+    })
     .await;
-
-    // Simultaneous updates: both add 45
-    node0
-        .query(&format!(
-            r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
-            doc_id
-        ))
-        .expect("update age on node0");
-    node1
-        .query(&format!(
-            r#"mutation {{ update_Users(docID: "{}", input: {{age: 45}}) {{ _docID age }} }}"#,
-            doc_id
-        ))
-        .expect("update age on node1");
-
-    // Wait for sync
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    // Both should converge to 90 (0 + 45 + 45)
-    let r0 = node0.query("query { Users { age } }").unwrap_or_default();
-    let r1 = node1_ref
-        .query("query { Users { age } }")
-        .unwrap_or_default();
-    let age0 = r0["Users"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|u| u["age"].as_i64())
-        .unwrap_or(0);
-    let age1 = r1["Users"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|u| u["age"].as_i64())
-        .unwrap_or(0);
-
-    assert_eq!(age0, 90, "PNCounter node0 must converge to sum 90");
-    assert_eq!(age1, 90, "PNCounter node1 must converge to sum 90");
 }

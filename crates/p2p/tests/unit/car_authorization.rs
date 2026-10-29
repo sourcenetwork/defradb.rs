@@ -21,7 +21,7 @@ impl Blockstore for CountingReads {
         self.reading.notify_one();
         self.block_read.acquire(1).await.forget();
         if !self.delay.is_zero() {
-            tokio::time::sleep(self.delay).await;
+            nuclei::time::sleep(self.delay).await;
         }
         self.inner.get(cid).await
     }
@@ -34,7 +34,7 @@ impl Blockstore for CountingReads {
             return Err(blockstore::Error::Internal("injected size failure".into()));
         }
         if !self.delay.is_zero() {
-            tokio::time::sleep(self.delay).await;
+            nuclei::time::sleep(self.delay).await;
         }
         self.inner.get_size(cid).await
     }
@@ -126,7 +126,7 @@ fn ipld_block(value: u64) -> (Cid, Vec<u8>) {
     (cid, data)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn root_authority_excludes_unrelated_and_encryption_blocks() {
     use defra_core::{Block, CrdtDelta, DAGLink, LwwDeltaPayload};
 
@@ -159,7 +159,7 @@ async fn root_authority_excludes_unrelated_and_encryption_blocks() {
     assert_eq!(authorized, RapidHashSet::from_iter([cids[0]]));
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn exhausted_budget_is_retryable_not_partial_authorization() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, leaf_data) = ipld_block(0);
@@ -190,7 +190,7 @@ async fn exhausted_budget_is_retryable_not_partial_authorization() {
 }
 
 /// Shared children and duplicate links are expanded once.
-#[tokio::test]
+#[nuclei::test]
 async fn duplicate_frontier_links_expand_each_block_once() {
     let store = CountingReads::new(1000);
     let count = 16usize;
@@ -244,7 +244,7 @@ async fn duplicate_frontier_links_expand_each_block_once() {
 }
 
 /// The node gate preserves the next CID for a later pass.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn node_budget_preserves_the_unexpanded_frontier() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, leaf_data) = ipld_block(0);
@@ -280,7 +280,7 @@ async fn node_budget_preserves_the_unexpanded_frontier() {
 
 /// A second request with a different want-list does not inherit the first
 /// walk's `seen`: its CIDs are re-walked from the root.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_different_want_list_starts_a_fresh_walk() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (right, right_data) = ipld_block(20);
@@ -329,7 +329,7 @@ async fn a_different_want_list_starts_a_fresh_walk() {
 }
 
 /// An empty want-list authorizes nothing and leaves retained state intact.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn an_empty_want_list_does_not_disturb_retained_progress() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, leaf_data) = ipld_block(0);
@@ -371,7 +371,7 @@ async fn an_empty_want_list_does_not_disturb_retained_progress() {
 
 /// An oversized walk node is authorized when requested but never read for
 /// links: its descendants stay ungranted, failing closed.
-#[tokio::test]
+#[nuclei::test]
 async fn oversized_walk_node_is_authorized_but_not_traversed() {
     let store = CountingReads::new(100);
     let (leaf, leaf_data) = ipld_block(0);
@@ -399,7 +399,7 @@ async fn oversized_walk_node_is_authorized_but_not_traversed() {
     assert_eq!(store.reads.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn interleaved_want_lists_keep_independent_progress() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, data) = ipld_block(77);
@@ -438,7 +438,7 @@ async fn interleaved_want_lists_keep_independent_progress() {
     assert!(finished, "another want-list must not reset the long walk");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_missing_intermediate_is_revisited_after_delivery() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, leaf_data) = ipld_block(88);
@@ -464,7 +464,7 @@ async fn a_missing_intermediate_is_revisited_after_delivery() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn storage_errors_preserve_the_interrupted_node() {
     for fail_size in [false, true] {
         let store = CountingReads::new(2);
@@ -495,7 +495,7 @@ async fn storage_errors_preserve_the_interrupted_node() {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancellation_during_a_payload_read_keeps_the_cursor() {
     let store = CountingReads::new(0);
     let (leaf, data) = ipld_block(99);
@@ -505,7 +505,7 @@ async fn cancellation_during_a_payload_read_keeps_the_cursor() {
     store.put(&root, &data).await.unwrap();
     let progress = limits::progress_with_budget(3);
     let mut request = Box::pin(progress.walk(&store, root, RapidHashSet::from_iter([leaf])));
-    tokio::select! {
+    nuclei::select! {
         _ = store.reading.notified() => {},
         result = &mut request => panic!("read must be gated: {result:?}"),
     }
@@ -531,7 +531,7 @@ async fn cancellation_during_a_payload_read_keeps_the_cursor() {
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn missing_unrequested_branch_does_not_block_a_complete_grant() {
     let store = CountingReads::new(10);
     let (leaf, data) = ipld_block(200);
@@ -549,7 +549,7 @@ async fn missing_unrequested_branch_does_not_block_a_complete_grant() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn concurrent_requests_share_the_same_cursor() {
     let store = CountingReads::new(0);
     let (leaf, data) = ipld_block(101);
@@ -575,7 +575,7 @@ async fn concurrent_requests_share_the_same_cursor() {
 
 /// Unreachable requested CIDs end the walk deterministically on the node
 /// budget instead of exploring forever or relying on wall-clock timing.
-#[tokio::test]
+#[nuclei::test]
 async fn unreachable_requested_cids_end_on_the_node_budget() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let (leaf, leaf_data) = ipld_block(0);
@@ -606,7 +606,7 @@ async fn unreachable_requested_cids_end_on_the_node_budget() {
 /// A history deeper than one budget converges across retries: the second
 /// pass resumes from the retained frontier instead of restarting, and the
 /// grant still only contains reached CIDs.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn exhausted_walk_resumes_and_converges_on_retry() {
     let mut store = CountingReads::new(1000);
     store.delay = Duration::from_millis(20);

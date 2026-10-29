@@ -204,9 +204,9 @@ pub(crate) async fn prepare_with_timeout<S>(
 where
     S: Store,
 {
-    let deadline = n0_future::time::Instant::now() + timeout;
+    let deadline = p2p::rt::time::Instant::now() + timeout;
     loop {
-        if n0_future::time::Instant::now() >= deadline {
+        if p2p::rt::time::Instant::now() >= deadline {
             return Err(P2PError::transport(
                 "replicator replay is still active; try again",
             ));
@@ -247,7 +247,7 @@ where
             .transpose()?;
         drop(snapshot);
         if current.is_some_and(|current| current.id == id && current.pending) {
-            let remaining = deadline.saturating_duration_since(n0_future::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(p2p::rt::time::Instant::now());
             workers::timeout(remaining, watch.wait())
                 .await
                 .map_err(|error| match error {

@@ -44,7 +44,7 @@ impl VeraRsProvider {
         &self,
         data: Bytes,
     ) -> Result<ConfirmedSubmission, ProviderError> {
-        let mut worker = tokio::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
+        let mut worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
             .map_err(|_| unavailable("worker is busy"))?;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
@@ -56,12 +56,14 @@ impl VeraRsProvider {
                 return successful(confirmed);
             }
         }
-        let (worker, wire) = tokio::task::spawn_blocking(move || {
-            let wire = worker.prepare(ACP_ADDRESS, data)?.to_vec();
-            Ok::<_, ProviderError>((worker, wire))
-        })
-        .await
-        .map_err(unavailable)??;
+        let (worker, wire) = self
+            .edge
+            .spawn_blocking(move || {
+                let wire = worker.prepare(ACP_ADDRESS, data)?.to_vec();
+                Ok::<_, ProviderError>((worker, wire))
+            })
+            .await
+            .map_err(unavailable)??;
         let (_, confirmed) = self.resolve_pending(worker, wire).await?;
         successful(confirmed)
     }
@@ -73,7 +75,7 @@ impl VeraRsProvider {
     ) -> Result<(OwnedMutexGuard<NativeWorker>, ConfirmedSubmission), ProviderError> {
         let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
         let hash = tx.tx_id().0;
-        let response = tokio::time::timeout(self.sync_timeout, async {
+        let response = nuclei::time::timeout(self.sync_timeout, async {
             let mut awaiting_receipt = false;
             loop {
                 match self.client.receipt(hash, &self.trusted).await {
@@ -89,7 +91,7 @@ impl VeraRsProvider {
                     Err(error) if error.retryable() => {}
                     Err(error) => return Err(unavailable(error)),
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                nuclei::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         })
         .await
@@ -99,24 +101,27 @@ impl VeraRsProvider {
             ))
         })??;
         let revision = response.revision.height;
-        self.light_client
-            .wait_for_height(revision, self.sync_timeout)
-            .await
-            .map_err(unavailable)?;
-        let trusted = self.trusted;
-        tokio::task::spawn_blocking(move || {
-            let mut worker = worker;
-            let receipt = worker.acknowledge(&response, &trusted)?;
-            Ok((
-                worker,
-                ConfirmedSubmission {
-                    receipt,
-                    revision,
-                    sequence: tx.nonce,
-                },
-            ))
-        })
+        edge::compat(
+            self.light_client
+                .wait_for_height(revision, self.sync_timeout),
+        )
         .await
-        .map_err(unavailable)?
+        .map_err(unavailable)?;
+        let trusted = self.trusted;
+        self.edge
+            .spawn_blocking(move || {
+                let mut worker = worker;
+                let receipt = worker.acknowledge(&response, &trusted)?;
+                Ok((
+                    worker,
+                    ConfirmedSubmission {
+                        receipt,
+                        revision,
+                        sequence: tx.nonce,
+                    },
+                ))
+            })
+            .await
+            .map_err(unavailable)?
     }
 }

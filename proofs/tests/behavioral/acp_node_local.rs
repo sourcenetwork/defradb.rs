@@ -1,11 +1,11 @@
-//! Local (DAC) ACP is NODE-LOCAL — regression guard that matches Go.
+//! Local (DAC) ACP is NODE-LOCAL - regression guard that matches Go.
 //!
 //! A document protected by a Local ACP policy is gated on the node that CREATED
 //! it (the owner is registered there at creation), but a copy replicated to a
 //! PEER is NOT gated on that peer: Local ACP makes no cross-node calls and a
 //! document that is unregistered in a node's ACP store is treated as public
 //! (`LocalDocumentACP::check_doc_access`). Cross-node access control is
-//! Vera ACP's role (shared on-chain registry). This matches Go exactly —
+//! Vera ACP's role (shared on-chain registry). This matches Go exactly:
 //! Go never registers replicated docs on the peer for Local ACP, and gates the
 //! "hidden on peer" behaviour to Vera only.
 //!
@@ -55,7 +55,7 @@ async fn poll_owner_replicated(cluster: &TestCluster, owner: &TestIdentity, time
         if Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -155,7 +155,7 @@ async fn assert_node_local(backend: Backend) {
         "node0: ungranted reader must NOT see protected doc"
     );
 
-    // node1 (peer) does NOT gate — Local ACP is node-local, so the replicated doc
+    // node1 (peer) does NOT gate - Local ACP is node-local, so the replicated doc
     // is public there (matches Go). If peer-side Local-ACP gating is reintroduced,
     // these two assertions fail.
     assert_eq!(
@@ -170,15 +170,21 @@ async fn assert_node_local(backend: Backend) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn local_acp_is_node_local_rust() {
-    assert_node_local(Backend::Rust).await;
+    edge::compat(async move {
+        assert_node_local(Backend::Rust).await;
+    })
+    .await
 }
 
 /// Parity control: Go exhibits the same node-local matrix. Needs the
 /// harness-compatible Go `defradb` on PATH.
 #[ignore = "parity control; needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn local_acp_is_node_local_go() {
-    assert_node_local(Backend::Go).await;
+    edge::compat(async move {
+        assert_node_local(Backend::Go).await;
+    })
+    .await
 }

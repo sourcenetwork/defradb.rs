@@ -3,7 +3,7 @@ use std::time::Duration;
 use bitswap::client::{Client, KeepAlive, Outgoing, REQUEST_TIMEOUT};
 use bitswap::{BitswapMessage, Block, Entry, ProtocolId, WantType};
 use libp2p::PeerId;
-use tokio::sync::mpsc::error::TryRecvError;
+use nuclei::sync::mpsc::error::TryRecvError;
 
 mod common;
 use common::block_v1;
@@ -52,11 +52,11 @@ fn with_block(block: &Block) -> BitswapMessage {
     message
 }
 
-fn closed(rx: &mut tokio::sync::mpsc::Receiver<Block>) -> bool {
+fn closed(rx: &mut nuclei::sync::mpsc::Receiver<Block>) -> bool {
     matches!(rx.try_recv(), Err(TryRecvError::Disconnected))
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn first_provider_gets_block_others_have_one_message_per_peer() {
     let blocks = [block_v1(b"one"), block_v1(b"two"), block_v1(b"three")];
     let (p0, p1) = (peer(), peer());
@@ -82,7 +82,7 @@ async fn first_provider_gets_block_others_have_one_message_per_peer() {
     assert_eq!(entries(&sent, p1).len(), 3);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn have_then_block_request_to_that_peer() {
     let block = block_v1(b"fallback");
     let (p0, p1) = (peer(), peer());
@@ -109,7 +109,7 @@ async fn have_then_block_request_to_that_peer() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn all_dont_have_completes_with_zero_blocks() {
     let block = block_v1(b"nobody");
     let providers = [peer(), peer(), peer()];
@@ -128,7 +128,7 @@ async fn all_dont_have_completes_with_zero_blocks() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn block_from_another_peer_completes_and_cancels_the_rest() {
     let block = block_v1(b"elsewhere");
     let (p0, p1, p2) = (peer(), peer(), peer());
@@ -152,7 +152,7 @@ async fn block_from_another_peer_completes_and_cancels_the_rest() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn block_in_reply_to_a_want_have_completes() {
     let block = block_v1(b"small");
     let (p0, p1) = (peer(), peer());
@@ -164,7 +164,7 @@ async fn block_in_reply_to_a_want_have_completes() {
     assert!(rx.recv().await.is_none());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancel_cancels_only_peers_with_outstanding_requests() {
     let block = block_v1(b"cancelled");
     let (p0, p1) = (peer(), peer());
@@ -186,7 +186,7 @@ async fn cancel_cancels_only_peers_with_outstanding_requests() {
     assert!(client.is_idle());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn timeout_counts_as_no() {
     let block = block_v1(b"slow");
     let (p0, p1) = (peer(), peer());
@@ -194,11 +194,11 @@ async fn timeout_counts_as_no() {
     let (_, mut rx) = client.fetch(vec![block.cid], vec![p0, p1]);
     flush(&mut client);
 
-    tokio::time::advance(REQUEST_TIMEOUT - Duration::from_millis(1)).await;
+    nuclei::time::advance(REQUEST_TIMEOUT - Duration::from_millis(1)).await;
     client.expire();
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 
-    tokio::time::advance(Duration::from_millis(2)).await;
+    nuclei::time::advance(Duration::from_millis(2)).await;
     client.expire();
     assert!(rx.recv().await.is_none());
     assert!(client.next_deadline().is_none());
@@ -206,7 +206,7 @@ async fn timeout_counts_as_no() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn disconnect_counts_as_no_and_unprotects() {
     let block = block_v1(b"gone");
     let (p0, p1) = (peer(), peer());
@@ -229,7 +229,7 @@ async fn disconnect_counts_as_no_and_unprotects() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn send_failure_counts_as_no_for_every_carried_request() {
     let blocks = [block_v1(b"a"), block_v1(b"b")];
     let p0 = peer();
@@ -244,7 +244,7 @@ async fn send_failure_counts_as_no_for_every_carried_request() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn one_send_in_flight_per_peer_and_later_wants_coalesce() {
     let (first, second) = (block_v1(b"first"), block_v1(b"second"));
     let p0 = peer();
@@ -260,7 +260,7 @@ async fn one_send_in_flight_per_peer_and_later_wants_coalesce() {
     assert_eq!(entries(&sent, p0)[0].cid, second.cid);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn two_fetches_sharing_a_cid_both_receive_it() {
     let block = block_v1(b"shared");
     let p0 = peer();
@@ -280,7 +280,7 @@ async fn two_fetches_sharing_a_cid_both_receive_it() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancelling_one_of_two_fetches_keeps_the_get_alive() {
     let block = block_v1(b"kept");
     let p0 = peer();
@@ -296,7 +296,7 @@ async fn cancelling_one_of_two_fetches_keeps_the_get_alive() {
     assert_eq!(rx_b.recv().await.map(|b| b.cid), Some(block.cid));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn have_is_a_block_want_for_a_peer_without_have_support() {
     let block = block_v1(b"legacy");
     let (p0, p1) = (peer(), peer());
@@ -306,7 +306,7 @@ async fn have_is_a_block_want_for_a_peer_without_have_support() {
     assert_eq!(entries(&sent, p1)[0].want_type, WantType::Block);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn duplicates_are_dropped_and_empty_inputs_complete_at_once() {
     let block = block_v1(b"dup");
     let p0 = peer();
@@ -327,7 +327,7 @@ async fn duplicates_are_dropped_and_empty_inputs_complete_at_once() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_block_without_an_active_get_is_ignored() {
     let block = block_v1(b"unwanted");
     let mut client = Client::new();
@@ -335,7 +335,7 @@ async fn a_block_without_an_active_get_is_ignored() {
     assert!(client.is_idle());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn deadline_starts_when_the_send_completes() {
     let block = block_v1(b"dial");
     let (p0, p1) = (peer(), peer());
@@ -344,7 +344,7 @@ async fn deadline_starts_when_the_send_completes() {
     let sent = client.take_ready(|_| None);
     assert!(client.next_deadline().is_none());
 
-    tokio::time::advance(Duration::from_secs(15)).await;
+    nuclei::time::advance(Duration::from_secs(15)).await;
     client.expire();
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 
@@ -352,18 +352,18 @@ async fn deadline_starts_when_the_send_completes() {
         client.send_done(out.peer, &out.requests, true);
     }
     assert!(client.next_deadline().is_some());
-    tokio::time::advance(REQUEST_TIMEOUT - Duration::from_millis(1)).await;
+    nuclei::time::advance(REQUEST_TIMEOUT - Duration::from_millis(1)).await;
     client.expire();
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 
-    tokio::time::advance(Duration::from_millis(2)).await;
+    nuclei::time::advance(Duration::from_millis(2)).await;
     client.expire();
     assert!(rx.recv().await.is_none());
     flush(&mut client);
     assert!(client.is_idle());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn send_failure_is_a_no_without_waiting_for_a_deadline() {
     let block = block_v1(b"refused");
     let p0 = peer();
@@ -376,7 +376,7 @@ async fn send_failure_is_a_no_without_waiting_for_a_deadline() {
     assert!(client.is_idle());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn response_before_send_completion_leaves_no_deadline() {
     let block = block_v1(b"early");
     let p0 = peer();
@@ -392,7 +392,7 @@ async fn response_before_send_completion_leaves_no_deadline() {
     assert!(client.is_idle());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_late_send_result_does_not_arm_a_superseded_request() {
     let block = block_v1(b"superseded");
     let (p0, p1) = (peer(), peer());

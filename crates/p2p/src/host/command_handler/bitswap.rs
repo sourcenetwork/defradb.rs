@@ -20,7 +20,7 @@ impl<S: Store> P2PHost<S> {
         cid: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
-        response: tokio::sync::oneshot::Sender<Result<QueryId>>,
+        response: crate::rt::oneshot::Sender<Result<QueryId>>,
     ) {
         // Generate a query ID for tracking
         static QUERY_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -58,102 +58,102 @@ impl<S: Store> P2PHost<S> {
         // re-added with nothing left to remove it: the map would grow by one per
         // fetch, and a long-gone query would still report as cancellable. Gate
         // the task on registration having happened.
-        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel::<()>();
+        let (registered_tx, registered_rx) = crate::rt::oneshot::channel::<()>();
 
         // Spawn async task to fetch blocks (with cancellation support)
-        let task_handle = tokio::spawn(async move {
-            let _ = registered_rx.await;
+        let (abort, cancellation) = futures::future::AbortHandle::new_pair();
+        let fetch = futures::future::Abortable::new(
+            async move {
+                let _ = registered_rx.await;
 
-            #[cfg(feature = "test-utils")]
-            crate::testutil::block_started_fetch();
+                #[cfg(feature = "test-utils")]
+                crate::testutil::block_started_fetch();
 
-            let mut fetched = 0;
+                let mut fetched = 0;
 
-            // Timeout per block: 10 seconds. If no block arrives within this
-            // window, we give up and report partial success so the retry
-            // mechanism can try again with fresh provider info.
-            let per_block_timeout = std::time::Duration::from_secs(10);
+                // Timeout per block: 10 seconds. If no block arrives within this
+                // window, we give up and report partial success so the retry
+                // mechanism can try again with fresh provider info.
+                let per_block_timeout = std::time::Duration::from_secs(10);
 
-            loop {
-                match tokio::time::timeout(per_block_timeout, receiver.recv()).await {
-                    Ok(Some(block)) => {
-                        fetched += 1;
+                loop {
+                    match crate::rt::time::timeout(per_block_timeout, receiver.recv()).await {
+                        Ok(Some(block)) => {
+                            fetched += 1;
 
-                        // Send block to coordinator for storage
-                        if let Err(e) = event_tx
-                            .send(HostEvent::BitswapBlockReceived {
-                                query_id,
-                                cid: *block.cid(),
-                                data: block.data().to_vec(),
-                            })
-                            .await
-                        {
-                            tracing::warn!(
-                                query_id = query_id.0,
-                                error = %e,
-                                "Failed to send BitswapBlockReceived event"
-                            );
+                            // Send block to coordinator for storage
+                            if let Err(e) = event_tx
+                                .send(HostEvent::BitswapBlockReceived {
+                                    query_id,
+                                    cid: *block.cid(),
+                                    data: block.data().to_vec(),
+                                })
+                                .await
+                            {
+                                tracing::warn!(
+                                    query_id = query_id.0,
+                                    error = %e,
+                                    "Failed to send BitswapBlockReceived event"
+                                );
+                            }
+
+                            if fetched == missing_cids.len() {
+                                break;
+                            }
                         }
-
-                        if fetched == missing_cids.len() {
+                        Ok(None) => {
+                            tracing::debug!("Bitswap channel closed, no more blocks");
+                            break;
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                fetched = fetched,
+                                total = missing_cids.len(),
+                                "Bitswap timeout waiting for block"
+                            );
                             break;
                         }
                     }
-                    Ok(None) => {
-                        tracing::debug!("Bitswap channel closed, no more blocks");
-                        break;
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            fetched = fetched,
-                            total = missing_cids.len(),
-                            "Bitswap timeout waiting for block"
-                        );
-                        break;
-                    }
                 }
-            }
 
-            let success = fetched == missing_cids.len();
-            debug!(
-                query_id = query_id.0,
-                fetched = fetched,
-                total = missing_cids.len(),
-                success = success,
-                "Bitswap fetch complete"
-            );
-            // Dropping the receiver is enough on a timeout: the fetch in the
-            // behaviour ends once its requests resolve or time out.
-            drop(receiver);
+                let success = fetched == missing_cids.len();
+                debug!(
+                    query_id = query_id.0,
+                    fetched = fetched,
+                    total = missing_cids.len(),
+                    success = success,
+                    "Bitswap fetch complete"
+                );
+                // Dropping the receiver is enough on a timeout: the fetch in the
+                // behaviour ends once its requests resolve or time out.
+                drop(receiver);
 
-            let _ = event_tx
-                .send(HostEvent::BitswapComplete {
-                    query_id,
-                    success,
-                    error: if success {
-                        None
-                    } else {
-                        Some(format!(
-                            "Only fetched {} of {} blocks",
-                            fetched,
-                            missing_cids.len()
-                        ))
-                    },
-                })
-                .await;
-            queries.remove(&query_id);
-        });
+                let _ = event_tx
+                    .send(HostEvent::BitswapComplete {
+                        query_id,
+                        success,
+                        error: if success {
+                            None
+                        } else {
+                            Some(format!(
+                                "Only fetched {} of {} blocks",
+                                fetched,
+                                missing_cids.len()
+                            ))
+                        },
+                    })
+                    .await;
+                queries.remove(&query_id);
+            },
+            cancellation,
+        );
+        drop(self.edge.spawn(fetch));
 
         #[cfg(feature = "test-utils")]
         crate::testutil::stall_before_query_registration().await;
 
-        self.bitswap_queries.insert(
-            query_id,
-            BitswapQuery {
-                abort: task_handle.abort_handle(),
-                fetch_id,
-            },
-        );
+        self.bitswap_queries
+            .insert(query_id, BitswapQuery { abort, fetch_id });
         let _ = registered_tx.send(());
 
         if response.send(Ok(query_id)).is_err() {
@@ -164,7 +164,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_bitswap_cancel(
         &mut self,
         query_id: QueryId,
-        response: tokio::sync::oneshot::Sender<bool>,
+        response: crate::rt::oneshot::Sender<bool>,
     ) {
         let cancelled = if let Some(query) = self.bitswap_queries.remove(&query_id) {
             debug!(query_id = ?query_id, "Cancelling Bitswap query");

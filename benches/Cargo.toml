@@ -18,13 +18,7 @@ rapidhash.workspace = true
 regolith.workspace = true
 bytes.workspace = true
 criterion.workspace = true
-tokio = { workspace = true, features = [
-    "rt-multi-thread",
-    "macros",
-    "sync",
-    "time",
-    "test-util",
-] }
+nuclei.workspace = true
 
 async-trait.workspace = true
 axum.workspace = true

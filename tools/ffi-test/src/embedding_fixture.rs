@@ -2,9 +2,9 @@
 use std::net::SocketAddr;
 
 use axum::{routing::post, Json, Router};
+use nuclei::net::TcpListener;
+use nuclei::Task;
 use serde_json::{json, Value};
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
 
 use crate::error::{FfiTestError, Result};
 
@@ -14,7 +14,7 @@ const OLLAMA_TEST_IPV6: &str = "[::1]:11434";
 const EMBEDDING_DIMENSIONS: usize = 768;
 
 pub(crate) struct EmbeddingFixture {
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Vec<Task<()>>,
 }
 
 impl EmbeddingFixture {
@@ -61,7 +61,7 @@ impl EmbeddingFixture {
     #[cfg(test)]
     async fn start_on(address: &str) -> std::io::Result<(Self, SocketAddr)> {
         let listener = TcpListener::bind(address).await?;
-        let local_addr = listener.local_addr()?;
+        let local_addr = listener.get_ref().local_addr()?;
         Ok((
             Self {
                 tasks: vec![Self::serve(listener)],
@@ -70,10 +70,12 @@ impl EmbeddingFixture {
         ))
     }
 
-    fn serve(listener: TcpListener) -> JoinHandle<()> {
+    fn serve(listener: TcpListener) -> Task<()> {
         let app = Router::new().route("/api/embeddings", post(embeddings));
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
+        nuclei::spawn(async move {
+            if let Ok(edge) = edge::on_demand() {
+                let _ = net::server::serve(listener, None, app, edge.clone()).await;
+            }
         })
     }
 }
@@ -94,12 +96,12 @@ async fn embeddings(Json(_request): Json<Value>) -> Json<Value> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
+    use nuclei::io::{AsyncReadExt, AsyncWriteExt};
+    use nuclei::net::TcpStream;
 
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn serves_ollama_embedding() {
         let (_fixture, address) = EmbeddingFixture::start_on("127.0.0.1:0").await.unwrap();
         let body = r#"{"model":"nomic-embed-text","prompt":"hello"}"#;
@@ -110,6 +112,7 @@ mod tests {
 
         let mut stream = TcpStream::connect(address).await.unwrap();
         stream.write_all(request.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
 

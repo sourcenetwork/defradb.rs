@@ -597,7 +597,7 @@ mod tests {
         assert_eq!(blocks.len(), 2);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collect_exact_blocks_does_not_walk_descendants() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = DefraBlockstore::new(store, true);
@@ -627,7 +627,7 @@ mod tests {
         assert!(!collected.truncated());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collect_exact_blocks_serves_field_and_composite_history_subsets() {
         use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
 
@@ -686,7 +686,7 @@ mod tests {
         assert!(!collected.truncated());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collect_dag_blocks_handles_deep_chains_iteratively() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = DefraBlockstore::new(store, true);
@@ -715,7 +715,7 @@ mod tests {
         assert!(!collected.truncated());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn collect_frontier_dags_dedupes_shared_descendants() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = DefraBlockstore::new(store, true);

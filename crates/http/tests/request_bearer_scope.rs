@@ -22,12 +22,12 @@ async fn observe(
     let did = identity.did().unwrap().as_str();
     let before = defra_core::signing::get_request_bearer_token(did);
     barrier.wait().await;
-    tokio::task::yield_now().await;
+    nuclei::task::yield_now().await;
     let after = defra_core::signing::get_request_bearer_token(did);
     Json(vec![before, after])
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn concurrent_same_identity_requests_keep_distinct_bearers() {
     let identity = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
     let did = identity.did().unwrap();
@@ -63,7 +63,7 @@ async fn concurrent_same_identity_requests_keep_distinct_bearers() {
             .body(Body::empty())
             .unwrap()
     };
-    let (a, b) = tokio::join!(
+    let (a, b) = nuclei::join!(
         app.clone().oneshot(request(&first)),
         app.oneshot(request(&second))
     );

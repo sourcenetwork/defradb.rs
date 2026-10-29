@@ -231,11 +231,14 @@ for_each_runtime!(
     mutation_fragment_spread_order_test
 );
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_mutation_fragment_directives() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    mutation_fragment_directives_test(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        mutation_fragment_directives_test(cluster).await;
+    })
+    .await;
 }
 
 for_each_runtime!(

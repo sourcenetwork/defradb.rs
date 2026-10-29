@@ -1,16 +1,20 @@
-//! The runtime natively: one tokio runtime, built, held and dropped by an
+//! The runtime natively: one nuclei runtime, built, held and dropped by an
 //! owner thread of its own, so it is always dropped outside any async
 //! context, whoever drops the `EdgeRuntime` and wherever.
 
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::thread;
 
-use n0_future::task::JoinHandle;
-use n0_future::time::{Instant, Sleep};
+use nuclei::task::{AbortHandle, Join};
+use nuclei::{Runtime, RuntimeHandle};
 use regolith::sync::{Event, OnceCell};
-use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
+use workers::topology::CpuSet;
+
+pub(crate) use nuclei::time::{Instant, Sleep};
 
 use crate::config::EdgeConfig;
 use crate::error::EdgeError;
@@ -18,10 +22,12 @@ use crate::gate::Gate;
 use crate::handle::{drain_gate, Drained};
 use crate::shared::Shared;
 
-/// Where network work runs: the runtime's handle.
+/// Where network work runs: the runtime's handle, and the CPUs its threads
+/// are pinned to (empty when unpinned).
 #[derive(Clone)]
 pub(crate) struct Rt {
-    handle: Handle,
+    handle: RuntimeHandle,
+    pub(crate) cpus: CpuSet,
 }
 
 impl Rt {
@@ -30,7 +36,7 @@ impl Rt {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.handle.spawn(future)
+        JoinHandle::new(self.handle.spawn(future))
     }
 
     pub(crate) fn blocking<F, T>(&self, work: F) -> JoinHandle<T>
@@ -38,11 +44,11 @@ impl Rt {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        self.handle.spawn_blocking(work)
+        JoinHandle::new(self.handle.spawn_blocking(work))
     }
 
-    /// Drives `future` on the calling thread, which must be outside any
-    /// executor (a blocking thread of this runtime, or a plain thread).
+    /// Drives `future` on the calling thread. Inside a nuclei task the wait
+    /// nests: the thread's shard keeps running its other tasks meanwhile.
     pub(crate) fn drive<F>(&self, future: F) -> F::Output
     where
         F: Future,
@@ -50,34 +56,80 @@ impl Rt {
         self.handle.block_on(future)
     }
 
-    /// A timer of this runtime's clock, pollable from any thread.
     pub(crate) fn sleep_until(&self, at: Instant) -> Sleep {
-        let _context = self.handle.enter();
-        tokio::time::sleep_until(at)
+        nuclei::time::sleep_until(at)
+    }
+
+    /// Polls a timer of this runtime's clock from any thread. A timer polled
+    /// off the runtime's shards is fired by the runtime the thread is in, so
+    /// the poll enters this one; otherwise nuclei's default runtime would
+    /// start to fire it.
+    pub(crate) fn poll_sleep(&self, sleep: Pin<&mut Sleep>, cx: &mut Context<'_>) -> Poll<()> {
+        let _runtime = self.handle.enter();
+        sleep.poll(cx)
     }
 }
 
-/// Runs `wait` on the calling thread, which it blocks. On a thread of a
-/// multi-threaded runtime the thread's executor work is handed to another
-/// thread first; on a single-threaded executor nothing else could run its
-/// tasks, so the wait is refused. A panic inside `wait` comes back as the
-/// inner error.
-// The edge is the one place that may ask which runtime the caller is on.
-#[allow(clippy::disallowed_methods)]
-pub(crate) fn wait_here<T, W>(wait: W) -> Result<thread::Result<T>, EdgeError>
+/// A spawned task's completion. Dropping it leaves the task running: nuclei
+/// cancels a task whose handle is dropped, so the handle detaches it first.
+pub(crate) struct JoinHandle<T> {
+    abort: AbortHandle,
+    join: Option<Join<T>>,
+}
+
+impl<T> JoinHandle<T> {
+    fn new(task: nuclei::Task<T>) -> Self {
+        Self {
+            abort: task.abort_handle(),
+            join: Some(task.join()),
+        }
+    }
+
+    pub(crate) fn abort(&self) {
+        self.abort.abort();
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.abort.is_finished()
+    }
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = Result<T, EdgeError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let Some(join) = self.join.as_mut() else {
+            return Poll::Ready(Err(EdgeError::Cancelled));
+        };
+        Pin::new(join).poll(cx).map(|joined| {
+            joined.map_err(|error| {
+                if error.is_panic() {
+                    EdgeError::Panicked(error.to_string())
+                } else {
+                    EdgeError::Cancelled
+                }
+            })
+        })
+    }
+}
+
+impl<T> Drop for JoinHandle<T> {
+    fn drop(&mut self) {
+        if let Some(join) = self.join.take() {
+            join.detach();
+        }
+    }
+}
+
+/// Runs `wait` on the calling thread, which it blocks. A nuclei worker
+/// blocked here hands its shard to another thread of its core, so the
+/// shard's other tasks go on. A panic inside `wait` comes back as the inner
+/// error.
+pub(crate) fn wait_here<T, W>(wait: W) -> thread::Result<T>
 where
     W: FnOnce() -> T,
 {
-    let flavor = Handle::try_current()
-        .ok()
-        .map(|current| current.runtime_flavor());
-    match flavor {
-        None => Ok(catch_unwind(AssertUnwindSafe(wait))),
-        Some(RuntimeFlavor::MultiThread) => Ok(catch_unwind(AssertUnwindSafe(|| {
-            tokio::task::block_in_place(wait)
-        }))),
-        Some(_) => Err(EdgeError::WouldBlock),
-    }
+    catch_unwind(AssertUnwindSafe(wait))
 }
 
 #[derive(Default)]
@@ -141,11 +193,10 @@ impl Owner {
             return self.drained();
         };
         match wait_here(|| thread.join()) {
-            Ok(Ok(Ok(()))) => self.drained(),
-            Ok(Ok(Err(_))) | Ok(Err(_)) => Err(EdgeError::Panicked(
+            Ok(Ok(())) => self.drained(),
+            Ok(Err(_)) | Err(_) => Err(EdgeError::Panicked(
                 "the network runtime's owner thread panicked while stopping".to_string(),
             )),
-            Err(error) => Err(error),
         }
     }
 
@@ -167,7 +218,13 @@ impl Owner {
 type Started = std::sync::mpsc::SyncSender<Result<Arc<Shared>, EdgeError>>;
 
 fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Started) {
-    let runtime = match build(&config) {
+    let cores = Arc::new(match config.threads {
+        Some(threads) => workers::EdgeCores::unpinned(threads),
+        None => workers::EdgeCores::reserve(),
+    });
+    crate::compat::start_runtime();
+    crate::compat::start_timer();
+    let runtime = match build(&config, &cores) {
         Ok(runtime) => runtime,
         Err(error) => {
             let _ = started.send(Err(EdgeError::Start(error.to_string())));
@@ -176,7 +233,8 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
     };
     let shared = Shared::new(
         Rt {
-            handle: runtime.handle().clone(),
+            handle: runtime.handle(),
+            cpus: cores.cpus().clone(),
         },
         config.deadline,
     );
@@ -185,7 +243,8 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
     }
     let _finished = Finished(&control);
     tracing::info!(
-        threads = config.threads.map(|threads| threads.get()),
+        threads = cores.threads(),
+        cpus = %cores.cpus(),
         name = %config.thread_name,
         "network runtime started"
     );
@@ -217,14 +276,28 @@ impl Drop for Finished<'_> {
     }
 }
 
-fn build(config: &EdgeConfig) -> std::io::Result<Runtime> {
-    let mut builder = Builder::new_multi_thread();
-    builder.enable_all().thread_name(config.thread_name.clone());
-    if let Some(threads) = config.threads {
-        builder.worker_threads(threads.get());
-    }
-    if let Some(hook) = config.on_thread_start.clone() {
-        builder.on_thread_start(move || hook());
+/// Spawns balance strictly across the shards: an accept loop spawns every
+/// connection it takes, and with nuclei's default margin the first 32 would
+/// stay on the accepting shard, one core serving them all. On cores of its
+/// own, nuclei pins each shard to one CPU of the calling thread's affinity,
+/// which [`workers::EdgeCores::reserve`] set to them, and every thread that
+/// starts later pins itself there. The hook keeps `cores`, so the hold
+/// outlives the last thread placed through it.
+fn build(config: &EdgeConfig, cores: &Arc<workers::EdgeCores>) -> std::io::Result<Runtime> {
+    let mut builder = Runtime::builder()
+        .thread_name(config.thread_name.clone())
+        .worker_threads(cores.threads())
+        .pin_workers(cores.is_pinned())
+        .local_spawn_margin(0);
+    let hook = config.on_thread_start.clone();
+    if cores.is_pinned() || hook.is_some() {
+        let cores = Arc::clone(cores);
+        builder = builder.on_thread_start(move || {
+            cores.pin_current_thread();
+            if let Some(hook) = &hook {
+                hook();
+            }
+        });
     }
     builder.build()
 }
