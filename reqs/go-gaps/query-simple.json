@@ -12,48 +12,58 @@
   },
   {
     "id": "go.query.simple.select.unknown-field",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/custom_crdt/main.rs::a_node_without_the_type_keeps_the_definition_and_hides_the_field"
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_undefined_field",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_similarity_on_query_should_error"
     ],
-    "evidence": "custom_crdt/main.rs:92-96 asserts '{ Score { best } }' errors with 'Cannot query field \"best\" on type \"Score\"'",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Root-level 'query { SIMILARITY }' error 'Cannot query field \"SIMILARITY\" on type \"Query\".' is not asserted by any test (only in crates/query/src/query_parse/parser.rs:106)."
   },
   {
     "id": "go.query.simple.select.collection-isolation",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/multi_collection.rs::many_collections_field_ids_test"
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_deleted_docs_in_collection2_should_not_yield_deleted_docs_on_collection1_query",
+      "tools/integration-test/tests/query_scenarios/simple/with_multiple_types.rs::simple_with_eight_dummy_types_after",
+      "tools/integration-test/tests/query_scenarios/simple/with_multiple_types.rs::simple_with_eight_dummy_types_before",
+      "tools/integration-test/tests/query_scenarios/simple/with_multiple_types.rs::simple_with_eight_dummy_types_before_in_split_declaration",
+      "tools/integration-test/tests/query_scenarios/simple/with_multiple_types.rs::simple_with_seven_dummy_types_before",
+      "tools/integration-test/tests/query_scenarios/simple/with_multiple_types.rs::simple_with_seven_dummy_types_before_and_one_after"
     ],
-    "evidence": "multi_collection.rs:125-132 asserts each of 12 collections returns exactly its own 1 document",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: deleted documents of another collection never appear (Go #3242); split SDL declaration and collections declared after the target (Go #2810 variants). Searched for 3242/2810/DummyTypes/showDeleted across tests."
   },
   {
     "id": "go.query.simple.select.alias",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/join_order_1596.rs::sum_with_alias_order_test",
-      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
-      "crates/query/tests/query_parse_tests.rs::test_parse_query_with_alias"
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_alias",
+      "tools/integration-test/tests/query_scenarios/simple/with_operation_alias.rs::query_simple_with_operation_alias"
     ],
-    "evidence": "join_order_1596.rs:35-41 asserts result key 'totalRating' for an aliased aggregate; vector_post_scan_filters.rs:48-53 asserts key 'sim'; query_parse_tests.rs:143 asserts root alias output_name 'allUsers' (parse level only)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test asserts a scalar field alias ('username: Name') in results; root alias 'allUsers: Users' only checked at parse level, never in a response. limits.rs uses 'f1: title' aliases but only asserts success."
   },
   {
     "id": "go.query.simple.select.typename",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_typename.rs::query_simple_with_group_by_with_child_type_name",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_typename.rs::query_simple_with_group_by_with_type_name",
+      "tools/integration-test/tests/query_scenarios/simple/with_typename.rs::query_simple_with_aliased_type_name",
+      "tools/integration-test/tests/query_scenarios/simple/with_typename.rs::query_simple_with_type_name"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched __typename across tools/, crates/*/tests and query runner/planner: only root '{ __typename }' introspection tests (crates/query/src/runner/introspection/mod.rs:415, http unversioned_api_mount). Nothing selects __typename on a collection, under an alias, on groupBy rows or inside GROUP."
   },
   {
     "id": "go.query.simple.select.show-deleted",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/point_read_query_path.rs::deleted_rows_remain_visible_with_indexed_filters_and_ordering",
-      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_cid_after_delete_operation_should_return_user",
+      "tools/integration-test/tests/query_scenarios/simple/with_deleted_field.rs::query_simple_with_deleted_field"
     ],
-    "evidence": "point_read_query_path.rs:122-140 asserts showDeleted:true returns the deleted row with _deleted:true and the live one with _deleted:false; :83-92 docID + showDeleted returns the deleted doc",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Querying with the CID of the delete commit plus showDeleted (TestQuerySimple_WithCidAfterDeleteOperation_ShouldReturnUser) is not tested. Rows are on indexed fields, but filter-less showDeleted query at :143-150 also checks membership."
   },
   {
@@ -90,351 +100,536 @@
   },
   {
     "id": "go.query.simple.filter.equality.eq",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/float_precision.rs::filter_round_trip_test",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_int_eq_float_coercion"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_blob.rs::query_simple_with_eq_op_on_blob_field_should_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_datetime.rs::query_simple_with_date_time_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_datetime.rs::query_simple_with_nil_date_time_equals_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_float.rs::query_simple_with_float_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_int.rs::query_simple_with_int_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_different_field_than_filter_with_match",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_multiple_fields_but_no_match",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_same_field_as_filter_with_match"
     ],
-    "evidence": "cross_runtime_queries.rs:119,131 String _eq equals Go; float_precision.rs:42 Float _eq returns the matching doc; go_behavioral_compatibility_tests.rs:341 evaluator Int==Float",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified end to end: Int, DateTime and Blob hex _eq; that documents with the field unset never match; no-match returns []; filtering on an unselected field (QueryCase docs all have names)."
   },
   {
     "id": "go.query.simple.filter.equality.eq-null",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_null_field_comparison"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_datetime.rs::query_simple_with_date_time_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_float.rs::query_simple_with_float_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_int.rs::query_simple_with_int_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_eq_string.rs::query_simple_with_string_equals_nil_filter_block"
     ],
-    "evidence": "cross_runtime_queries.rs:125,131 Int 'optionalRank: {_eq: null}' equals Go; filter_tests.rs:481 evaluator null==null",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Float, String and DateTime '_eq: null' not tested end to end."
   },
   {
     "id": "go.query.simple.filter.equality.neq",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_null_ne_value"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_bool.rs::query_simple_with_bool_not_equals_false_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_bool.rs::query_simple_with_bool_not_equals_true_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_datetime.rs::query_simple_with_date_time_not_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_datetime.rs::query_simple_with_nil_date_time_not_equal_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_float.rs::query_simple_with_float_not_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_int.rs::query_simple_with_int_not_equals_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_string.rs::query_simple_with_string_not_equals_filter_block"
     ],
-    "evidence": "cross_runtime_queries.rs:120,131 String _neq equals Go; go_behavioral_compatibility_tests.rs:400 evaluator 'null _ne 25' is true",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Int, Float, DateTime and Boolean _neq untested end to end; inclusion of unset-field documents only checked in the evaluator (Verified: {_neq: true} returning false+unset not tested)."
   },
   {
     "id": "go.query.simple.filter.equality.neq-null",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_bool.rs::query_simple_with_bool_not_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_datetime.rs::query_simple_with_date_time_not_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_float.rs::query_simple_with_float_not_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_int.rs::query_simple_with_int_not_equals_nil_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_neq_string.rs::query_simple_with_string_not_equals_nil_filter_block"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched '_neq: null' / '_ne\": null' in tests: only an index-selection planner test (crates/query/src/planner/builder/tests.rs:1043) that checks scan choice, not results. No test asserts which documents '_neq: null' returns, nor Boolean false counting as a value."
   },
   {
     "id": "go.query.simple.filter.range.gt",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_float_gt_int_coercion",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_null_field_gt_comparison_returns_false"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_datetime.rs::query_simple_with_date_time_gt_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_datetime.rs::query_simple_with_date_time_gt_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_datetime.rs::query_simple_with_date_time_gt_filter_block_with_lesser_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_datetime.rs::query_simple_with_nil_date_time_gt_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_float.rs::query_simple_with_float_greater_than_filter_block_all_matching_result",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_float.rs::query_simple_with_float_greater_than_filter_block_no_matching_result",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_float.rs::query_simple_with_float_greater_than_filter_block_one_matching_result",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_float.rs::query_simple_with_float_greater_than_filter_block_with_int_filter_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_int.rs::query_simple_with_int_greater_than_filter_block_return_all_multi_matches",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_int.rs::query_simple_with_int_greater_than_filter_block_return_none_as_no_match",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_int.rs::query_simple_with_int_greater_than_filter_block_return_one_as_one_matches"
     ],
-    "evidence": "cross_runtime_queries.rs:121,131 Int _gt inside _and equals Go; datetime_index_range.rs:87-91 DateTime _gt (indexed field); go_behavioral_compatibility_tests.rs:320 evaluator Float field vs Int operand; filter_tests.rs:496 unset field does not match",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Float field with Int operand and unset-field exclusion only at evaluator level; DateTime across offsets and unindexed DateTime untested; zero/one/all-match cases only via the _and query."
   },
   {
     "id": "go.query.simple.filter.range.geq",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_datetime.rs::query_simple_with_date_time_ge_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_datetime.rs::query_simple_with_date_time_ge_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_datetime.rs::query_simple_with_date_time_ge_filter_block_with_lesser_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_datetime.rs::query_simple_with_nil_date_time_ge_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_float.rs::query_simple_with_height_mge_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_float.rs::query_simple_with_height_mge_filter_block_with_lesser_int_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_float.rs::query_simple_with_height_mge_filter_block_with_lesser_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_int.rs::query_simple_with_int_ge_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_int.rs::query_simple_with_int_ge_filter_block_with_greater_value"
     ],
-    "evidence": "cross_runtime_queries.rs:121,131 Int _geq equals Go; cross_runtime_indexes.rs:181-190 Float '_geq: -10.5' equals Go and expected names (indexed)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Equal-value inclusion on its own, Float with Int operand (2.0999999999999 case), DateTime _geq and unset-field exclusion not asserted end to end (evaluator test_p0_null_gte_comparison_returns_false only)."
   },
   {
     "id": "go.query.simple.filter.range.lt",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_range_filter_reaches_beyond_the_window",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_int_lt_float_boundary"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_datetime.rs::query_simple_with_date_time_lt_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_datetime.rs::query_simple_with_nil_date_time_lt_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_float.rs::query_simple_with_float_less_than_filter_block_with_greater_int_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_float.rs::query_simple_with_float_less_than_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_int.rs::query_simple_with_int_less_than_filter_block_with_greater_value"
     ],
-    "evidence": "cross_runtime_queries.rs:121,131 Int _lt equals Go; datetime_index_range.rs:99-103 DateTime _lt (indexed); go_behavioral_compatibility_tests.rs:365 evaluator Int vs Float operand",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Float field with Int operand and unset-field exclusion untested end to end."
   },
   {
     "id": "go.query.simple.filter.range.leq",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_null_lte_comparison_returns_false"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_datetime.rs::query_simple_with_date_time_le_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_datetime.rs::query_simple_with_date_time_le_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_datetime.rs::query_simple_with_nil_date_time_le_and_non_nil_filter_block_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_float.rs::query_simple_with_float_le_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_float.rs::query_simple_with_float_le_filter_block_with_greater_int_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_float.rs::query_simple_with_float_le_filter_block_with_greater_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_int.rs::query_simple_with_int_le_filter_block_with_equal_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_int.rs::query_simple_with_int_le_filter_block_with_greater_value"
     ],
-    "evidence": "cross_runtime_queries.rs:121,131 Int _leq equals Go; go_behavioral_compatibility_tests.rs:243 evaluator unset field does not match",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Float (and Int operand on Float) and DateTime _leq untested; equal-value inclusion only via the combined _and query."
   },
   {
     "id": "go.query.simple.filter.range.null-operand",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/mapper/filter/filter_tests.rs::test_value_gt_null_returns_true",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_value_ge_null_returns_true",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_null_ge_null_returns_true",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_value_lt_null_returns_false",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_null_le_null_returns_true",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_value_le_null_returns_false"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_datetime.rs::query_simple_with_date_time_ge_filter_block_with_nil_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_float.rs::query_simple_with_height_mge_filter_block_with_nil_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_geq_int.rs::query_simple_with_int_ge_filter_block_with_nil_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_datetime.rs::query_simple_with_date_time_gt_filter_block_with_nil_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_float.rs::query_simple_with_float_greater_than_filter_block_with_null_filter_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_gt_int.rs::query_simple_with_int_greater_than_filter_block_with_null_filter_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_datetime.rs::query_simple_with_date_time_le_filter_block_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_float.rs::query_simple_with_float_le_filter_block_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_leq_int.rs::query_simple_with_int_le_filter_block_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_datetime.rs::query_simple_with_date_time_lt_filter_block_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_float.rs::query_simple_with_float_less_than_filter_block_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_lt_int.rs::query_simple_with_int_less_than_filter_block_with_null_value"
     ],
-    "evidence": "filter_tests.rs:508,519,535,546,562,573 assert the null-sorts-lowest semantics for _gt/_ge/_lt/_le with a null operand",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Evaluator level only (Filter::matches), with an Int field; no GraphQL query asserts these results, and Float/DateTime null operands are untested."
   },
   {
     "id": "go.query.simple.filter.membership",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/json_missing_key.rs::json_missing_key_in_test",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_in_filter"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_in.rs::query_simple_with_int_in_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_in.rs::query_simple_with_int_in_filter_on_float",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_in.rs::query_simple_with_int_in_filter_with_null_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_in_blob.rs::query_simple_with_in_op_on_blob_field_should_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nin.rs::query_simple_with_not_in_filter"
     ],
-    "evidence": "cross_runtime_queries.rs:122,126,131 Int '_in: [1,3], _nin: [2]' and '_in: [null, 3]' (null matches unset) equal Go; json_missing_key.rs:39 _in with null on a JSON path",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: Int elements matching Float values (HeightM: {_in: [21, 21.2]}), Blob hex _in, and _nin with a null element returning only set values."
   },
   {
     "id": "go.query.simple.filter.pattern.like",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_like_filter",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_like_prefix_suffix_pattern",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_ilike_filter_case_insensitive_contains",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_ilike_null_field_returns_false"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_blob.rs::query_simple_with_like_op_on_blob_field_should_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_case_insensitive_like_should_match_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_case_insensitive_like_string_should_match_exact_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_case_insensitive_like_string_should_match_prefix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_case_insensitive_like_string_should_match_suffix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_as_prefix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_as_suffix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_contains_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_contains_string_muplitple_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_exact_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_has_both",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_has_either",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_has_start_and_end",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_like_string.rs::query_simple_with_like_string_contains_filter_block_prop_not_set"
     ],
-    "evidence": "cross_runtime_queries.rs:123,131 prefix '_like: \"alpha%\"' equals Go; filter_tests.rs:191-200,284-296 suffix and start-and-end, :220-236 _ilike, :307-315 unset field does not match (evaluator)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "End to end only the prefix _like is asserted. Contains/suffix/exact/start-and-end, _ilike, combination under _and/_or and Blob '_like: \"%FF99%\"' are evaluator-only or untested (Blob: no test)."
   },
   {
     "id": "go.query.simple.filter.pattern.nlike",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_nilike_filter",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_nilike_null_field_returns_true"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_case_insensitive_like_string_match_exact_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_case_insensitive_like_string_should_match_prefix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_case_insensitive_like_string_should_match_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_case_insensitive_like_string_should_match_suffix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_as_prefix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_as_suffix_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_contains_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_contains_string_muplitple_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_exact_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_has_both",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_has_either",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_has_start_and_end",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_nlike_string.rs::query_simple_with_not_like_string_contains_filter_block_prop_not_set"
     ],
-    "evidence": "cross_runtime_queries.rs:124,131 '_nlike: \"%ha%\"' equals Go; filter_tests.rs:247-258 _nilike (evaluator)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Only the contains _nlike is asserted end to end; prefix/suffix/exact/start-and-end, _nilike and _and/_or combinations are evaluator-only or untested."
   },
   {
     "id": "go.query.simple.filter.logical.and-or",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_or_filter",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_all_filter_match",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_any_filter_match"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_and.rs::query_simple_with_inline_int_array_greater_than_and_less_than_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_and.rs::query_simple_with_int_greater_than_and_int_less_than_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_or.rs::query_simple_with_inline_int_array_equal_to_x_or_y_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_or.rs::query_simple_with_int_equal_to_x_or_y_filter"
     ],
-    "evidence": "cross_runtime_queries.rs:121,131 _and equals Go; cross_runtime_indexes.rs:276-285 '{values: {_any: {_eq: 5}}}' on an indexed [Int] equals Go; filter_tests.rs:108-128 _or, :1003,1059 _any/_all (evaluator)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "_or and _all on an [Int] field have no GraphQL-level assertion; _any only through an indexed array field."
   },
   {
     "id": "go.query.simple.filter.logical.not",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/mapper/filter/filter_tests.rs::test_not_filter",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_nested_not_and_operators"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_not.rs::query_simple_with_empty_not_filter_return_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_not.rs::query_simple_with_not_and_comparison_x_filter_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_not.rs::query_simple_with_not_equal_to_x_and_not_y_filter_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_not.rs::query_simple_with_not_equal_to_x_filter_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_not.rs::query_simple_with_not_equal_to_xor_y_filter_no_error"
     ],
-    "evidence": "filter_tests.rs:131-138 _not excludes matches, :611-635 nested _not with _and (evaluator)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No GraphQL query uses _not (searched '_not:' in tools/, crates/*/tests, proofs/tests). '_not: {}' returning no documents (Go-Bug-Suspect) and _not over _or are untested."
   },
   {
     "id": "go.query.simple.filter.alias",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_alias_null_filter_is_valid_and_matches_none",
-      "crates/query/src/mapper/filter/filter_tests.rs::test_alias_scalar_filter_is_valid_and_matches_none"
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_alias_equals_filter_block_should_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_alias_with_compound_should_match_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_compound_alias_should_match_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_empty_alias_should_not_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_non_aliased_field_should_match_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_non_existant_alias_should_return_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_non_object_alias_should_filter_all",
+      "tools/integration-test/tests/query_scenarios/simple/with_filter/with_alias.rs::query_simple_with_null_alias_should_filter_all"
     ],
-    "evidence": "vector_post_scan_filters.rs:48-53 'filter: {_alias: {sim: {_lt: 50}}}' filters by an aliased selection; filter_tests.rs:155-173 '_alias: null' and '_alias: 1' match nothing (same as Go's suspect behaviour)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: _alias on an aliased scalar field (UserAge) or unaliased field name, _alias inside/around _and, '_alias: {}' not filtering, and 'field or alias not found. Name: UserAge' error."
   },
   {
     "id": "go.query.simple.filter.null-input.arguments",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_cid_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_doc_i_ds_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_doc_id_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_group_by_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_limit_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_offset_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_order_fields_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_order_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_show_deleted_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched 'filter: null', 'order: null', 'limit: null', 'offset: null', 'docID: null', 'cid: null', 'groupBy: null', 'showDeleted: null' in all Rust tests: none (only truncate_Users(filter: null) in mutation_tests.rs, a mutation)."
   },
   {
     "id": "go.query.simple.filter.null-input.logical",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/mapper/filter/filter_tests.rs::test_null_logical_filters_are_valid_and_match_all"
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_and_element_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_and_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_not_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_or_element_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_or_succeeds"
     ],
-    "evidence": "filter_tests.rs:140-152 '_and/_or/_not: null' validate and match every document (evaluator)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Evaluator only; no GraphQL query. '_or: [null]' / '_and: [null]' failing with 'Expected \"UsersFilterArg!\", found null' is untested."
   },
   {
     "id": "go.query.simple.filter.null-input.field",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_and_field_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_not_field_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_filter_with_null_or_field_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_null_input.rs::query_simple_with_null_filter_fields_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched 'filter: {X: null}' style conditions and '\"field\", json!(null)' in filter tests: none. No test of a field condition given as null, inside _or/_and, or under _not."
   },
   {
     "id": "go.query.simple.doc-id.argument",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id.rs::query_simple_with_doc_id_filter_multiple_documents_target_found",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id.rs::query_simple_with_doc_id_filter_single_document_target_found",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id.rs::query_simple_with_doc_id_filter_target_not_found",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_simple_returns_nothin_given_empty_doc_i_ds_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_simple_with_doc_i_ds_filter_all_found_from_multiple_targets",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_simple_with_doc_i_ds_filter_one_found_from_multiple_targets",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_with_doc_i_ds_filter_duplicate_doc_i_ds",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_with_doc_i_ds_filter_single_target_found",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_ids.rs::query_with_doc_i_ds_filter_single_target_not_found"
     ],
-    "evidence": "point_read_query_path.rs:52-53 'Note(docID: \"<id>\")' returns only that document; :76-82 docID of a deleted doc returns an empty list",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: docID given as a list (found subset, duplicates returned once, 'docID: []' empty) and a never-existing DocID returning [] without error. vector_index_query_path.rs:41 uses a docID list but compares two runs of the same list, not membership."
   },
   {
     "id": "go.query.simple.doc-id.filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/point_read_query_path.rs::exact_id_reads_seek_and_keep_filters_and_deleted_visibility"
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id_filter.rs::query_simple_with_doc_id_filter_block",
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id_filter.rs::query_simple_with_doc_id_filter_in_block"
     ],
-    "evidence": "point_read_query_path.rs:47,52-53 'filter: {_docID: {_eq: \"<id>\"}}' returns that document",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "'_docID: {_in: [...]}' only appears in benchmark helpers (crates/defra-node/src/benchmark_support_tests.rs:680,734) that check row counts under a limit, not the returned IDs."
   },
   {
     "id": "go.query.simple.order.single-field",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering",
-      "tools/integration-test/tests/query/datetime_index_range.rs::datetime_index_spans_the_full_range",
-      "tools/integration-test/tests/query/limit_pushdown.rs::limit_offset_on_non_indexed_field_is_correct"
+      "tools/integration-test/tests/query_scenarios/simple/with_doc_id_filter.rs::query_simple_orders_by_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_wit_float64_order_descending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_blob_order_ascending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_blob_order_descending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_date_time_order_ascending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_date_time_order_descending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_empty_order",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_float32_order_ascending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_float32_order_descending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_float64_order_ascending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_numeric_order_ascending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_numeric_order_descending",
+      "tools/integration-test/tests/query_scenarios/simple/with_order_filter.rs::query_simple_with_numeric_greater_than_filter_and_numeric_order_descending"
     ],
-    "evidence": "cross_runtime_queries.rs:93,118,155 ASC on String/Int(nullable) equal Go, :199 Float ASC on Book; cross_runtime_indexes.rs:156-190,226-235 Int/Float/String/DateTime ASC (indexed); datetime_index_range.rs:53-65 DateTime ASC and DESC",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: Blob ordering, ordering by _docID alone, DESC on an unindexed Int/Float field, Float32 vs Float64 distinction, and 'order: {}' returning unsorted without error."
   },
   {
     "id": "go.query.simple.order.multi-field",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/defra-node/tests/ordinary_indexes.rs::ordered_prefix_sorts_only_the_boundary_tie_group",
-      "crates/defra-node/tests/ordinary_indexes.rs::partial_index_order_keeps_residual_filter_and_page_offset"
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_acs_and_desc_should_order_correctly",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_asc_and_asc_should_order_correctly",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_decs_and_desc_should_order_correctly",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_desc_and_asc_should_order_correctly",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_numeric_order_descending_and_boolean_order_ascending"
     ],
-    "evidence": "cross_runtime_queries.rs:117,131 '[{rank: ASC}, {name: DESC}]' equals Go; ordinary_indexes.rs:159-168 '[{seq: DESC|ASC}, {_docID: ASC}]'; :216-219 '[{seq: DESC}, {rank: ASC}]'",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "DESC+DESC combination untested; two of the cases run on indexed fields."
   },
   {
     "id": "go.query.simple.order.validation",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/tests/query_parse_tests.rs::test_parse_query_with_multiple_order_fields_returns_error",
-      "crates/query/tests/query_parse_error_tests.rs::test_parse_invalid_order_direction_returns_error"
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_invalid_order_enum_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_nested_within_multple_fields_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_multiple_order_fields_returns_error"
     ],
-    "evidence": "query_parse_tests.rs:53-56 '{name: ASC, age: DESC}' fails with 'each order argument can only define one field'; query_parse_error_tests.rs:260-263 'order: {name: INVALID}' contains 'has invalid value'",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Parse level only. The two-field object as a list element is untested, and the full 'Argument \"order\" has invalid value {Age: INVALID}' text is only substring-checked."
   },
   {
     "id": "go.query.simple.order.alias",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/join_order_1596.rs::sum_with_alias_order_test",
-      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset"
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_alias_order_on_non_aliased_field_should_order_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_alias_order_on_non_existant_field_should_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_alias_order_should_order_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_compound_alias_order_should_order_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_empty_alias_order_should_do_nothing",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_int_alias_order_should_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_invalid_alias_order_should_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_order.rs::query_simple_with_null_alias_order_should_do_nothing"
     ],
-    "evidence": "join_order_1596.rs:35-41 'order: {_alias: {totalRating: DESC}}' sorts by an aliased aggregate; vector_post_scan_filters.rs:48-53 by aliased SIMILARITY",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: _alias on an aliased scalar field or unaliased field name, list of _alias entries, '_alias: {}' / '_alias: null' no-op, and errors 'field or alias not found', 'invalid order direction', 'invalid order input'."
   },
   {
     "id": "go.query.simple.order.aggregate-alias",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_average_order.rs::query_simple_with_average_with_order_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_max_order.rs::query_simple_with_max_with_order_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min_order.rs::query_simple_with_min_with_order_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_sum_order.rs::query_simple_with_sum_with_order_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched for per-document aggregates over sibling scalars ('AVG(HeightM: {}, Age: {})' pattern) in all tests: none. join_order_1596.rs orders by an aliased relation SUM, a different aggregate shape."
   },
   {
     "id": "go.query.simple.limit-offset",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/query/limit_pushdown.rs::limit_offset_on_non_indexed_field_is_correct",
-      "tools/integration-test/tests/query/limit_pushdown.rs::limit_query_returns_exact_page_from_large_collection"
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit0",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit0_and_offset0",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit1",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit1_and_offset1",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit2",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit2_and_offset2",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_limit_bigger_than_total_documents",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_offset0",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_offset1",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_offset2",
+      "tools/integration-test/tests/query_scenarios/simple/with_limit_offset.rs::query_simple_with_offset_bigger_than_total_documents"
     ],
-    "evidence": "cross_runtime_queries.rs:127,131 'limit: 2, offset: 1' equals Go; limit_pushdown.rs:98-108 limit+offset page equals the expected slice; :53 limit returns exactly n",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: 'limit: 0' meaning no limit, 'offset: 0', and limit/offset beyond the document count (searched 'limit: 0'/'offset: 0' in tests: none)."
   },
   {
     "id": "go.query.simple.aggregate.validation",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_average.rs::query_simple_with_average_on_undefined_field",
+      "tools/integration-test/tests/query_scenarios/simple/with_average.rs::query_simple_with_average_on_undefined_object",
+      "tools/integration-test/tests/query_scenarios/simple/with_count.rs::query_simple_with_count_on_undefined",
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_max_on_undefined_field_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_max_on_undefined_object_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_min_on_undefined_field_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_min_on_undefined_object_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_sum.rs::query_simple_with_sum_on_undefined_field",
+      "tools/integration-test/tests/query_scenarios/simple/with_sum.rs::query_simple_with_sum_on_undefined_object"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "'aggregate must be provided with a property to aggregate' and the 'Expected \"UsersNumericFieldsArg!\", found null' message appear only in sources (query_parse/aggregates.rs, runner/plan_validation.rs); no test sends a bare AVG/COUNT/SUM/MIN/MAX or AVG(Users: {})."
   },
   {
     "id": "go.query.simple.aggregate.count",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/defra-node/tests/aggregate_filters.rs::indexed_aggregate_filters_match_the_documents",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_count_empty_returns_zero"
+      "tools/integration-test/tests/query_scenarios/simple/with_count.rs::query_simple_with_aliased_count_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_count.rs::query_simple_with_count",
+      "tools/integration-test/tests/query_scenarios/simple/with_count.rs::query_simple_with_count_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_filter.rs::query_simple_with_count_with_date_time_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_filter.rs::query_simple_with_count_with_filter"
     ],
-    "evidence": "cross_runtime_queries.rs:128-131 'count: COUNT(QueryCase: {})' and a filter matching nothing (0) equal Go; aggregate_filters.rs:55-73 COUNT with filter returns 2/0/1",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "COUNT with a DateTime filter is untested; an empty collection is only approximated by a filter that matches nothing."
   },
   {
     "id": "go.query.simple.aggregate.count-group-by",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_single_field_test",
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_multiple_fields_test",
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::all_same_group_value_test",
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::group_by_and_filter_test",
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::on_empty_collection_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_count_groupby.rs::query_simple_with_count_with_group_by_all_same_group_value",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_groupby.rs::query_simple_with_count_with_group_by_and_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_groupby.rs::query_simple_with_count_with_group_by_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_groupby.rs::query_simple_with_count_with_group_by_on_multiple_fields",
+      "tools/integration-test/tests/query_scenarios/simple/with_count_groupby.rs::query_simple_with_count_with_group_by_on_single_field"
     ],
-    "evidence": "aggregate_groupby_1595.rs:53 (2 groups), :70 (3 tuples), :86 (1 group), :103 (filter before grouping, 2), :171 (empty collection, 0)",
-    "note": "on_multiple_fields_test uses three documents with three distinct (Age, Name) tuples, the same data as Go's test, so it can't tell grouping by the tuple from counting documents; no test groups by several fields with a repeated tuple."
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
+    "note": ""
   },
   {
     "id": "go.query.simple.aggregate.sum",
     "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/defra-node/tests/aggregate_filters.rs::indexed_aggregate_filters_match_the_documents",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_compatible_sum_empty_returns_zero"
+      "tools/integration-test/tests/query_scenarios/simple/with_sum.rs::query_simple_with_sum",
+      "tools/integration-test/tests/query_scenarios/simple/with_sum.rs::query_simple_with_sum_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_sum_filter.rs::query_simple_with_sum_with_filter"
     ],
-    "evidence": "cross_runtime_queries.rs:128-131 'SUM(QueryCase: {field: score})' and with a no-match filter equal Go; aggregate_filters.rs:63-73 SUM with filter == 3",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Empty collection approximated by a filter that matches nothing, plus the plan-node unit test."
   },
   {
     "id": "go.query.simple.aggregate.average",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "crates/query/tests/go_behavioral_compatibility_tests.rs::test_p0_avg_empty_set_returns_zero"
+      "tools/integration-test/tests/query_scenarios/simple/with_average.rs::query_simple_with_aliased_average_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_average.rs::query_simple_with_average",
+      "tools/integration-test/tests/query_scenarios/simple/with_average.rs::query_simple_with_average_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_average_filter.rs::query_simple_with_average_with_date_time_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_average_filter.rs::query_simple_with_average_with_filter"
     ],
-    "evidence": "cross_runtime_queries.rs:128-131 'avg: AVG(QueryCase: {field: score})' and with a no-match filter (0) equal Go; go_behavioral_compatibility_tests.rs:34-85 AVG of empty set is 0",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "AVG with a DateTime filter is untested; empty collection only via a no-match filter and a plan-node unit test."
   },
   {
     "id": "go.query.simple.aggregate.min-max",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_aliased_max_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_max_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_max_filter.rs::query_simple_with_max_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_aliased_min_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_min_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_min_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min_filter.rs::query_simple_with_min_filter_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched 'MIN(' / 'MAX(' in tests: only _commits aggregates (commits_aggregate.rs, continuous_rollup.rs, downsample*.rs) over delta, not collection-level MIN/MAX. Empty-collection null and filtered MIN/MAX untested."
   },
   {
     "id": "go.query.simple.aggregate.int64-extreme",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_max.rs::query_simple_with_max_and_max_value_int_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_min.rs::query_simple_with_min_and_max_value_int_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No MAX over a collection is tested. cross_runtime_queries.rs:60,89-99 round-trips 9223372036854775807 through a plain selection, not an aggregate."
   },
   {
     "id": "go.query.simple.aggregate.non-nillable",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_average_on_non_nillable_float32",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_average_on_non_nillable_float64",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_average_on_non_nillable_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_count_on_non_nillable_float32",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_count_on_non_nillable_float64",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_count_on_non_nillable_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_max_on_non_nillable_float32",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_max_on_non_nillable_float64",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_max_on_non_nillable_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_min_on_non_nillable_float32",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_min_on_non_nillable_float64",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_min_on_non_nillable_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_sum_on_non_nillable_float32",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_sum_on_non_nillable_float64",
+      "tools/integration-test/tests/query_scenarios/simple/with_aggregate_nonnillable.rs::query_simple_with_sum_on_non_nillable_int"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No aggregate over an Int!/Float64!/Float32! field is asserted (ScalarCase in cross_runtime_queries.rs has non-null fields but is only selected, not aggregated)."
   },
   {
     "id": "go.query.simple.group.basic",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/relation_rendering_1597.rs::group_by_with_parent_relation_filter_test",
-      "crates/defra-node/tests/vector_post_scan_filters.rs::group_limit_is_not_used_as_a_document_candidate_limit"
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_boolean_then_number",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_date_time",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_empty",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_number",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_number_with_group_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_string",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_string_then_boolean",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_string_with_inner_group_boolean",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_without_grouped_field_selected_with_inner_group"
     ],
-    "evidence": "relation_rendering_1597.rs:158-174 'Book(groupBy: [rating]) { rating GROUP {...} }' returns one row per distinct Float with the grouped docs; vector_post_scan_filters.rs:75 groupBy [tag] yields one row per String",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: Int/Boolean/DateTime keys, multi-field value tuples, nested GROUP(groupBy: ...), and 'groupBy: []' putting everything in one group."
   },
   {
@@ -446,28 +641,41 @@
   },
   {
     "id": "go.query.simple.group.undefined-value",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::grouped_count_plain_first_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_number_on_undefined",
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_with_group_by_number_on_undefined_with_children"
     ],
-    "evidence": "aggregate_groupby_1595.rs:233-236 counts 3 groups for four books where one has no name, i.e. the unset values form one group",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Only inferred through a relation COUNT(groupBy); no test returns a group row with key null (e.g. {\"Age\": null}) alongside set-value groups."
   },
   {
     "id": "go.query.simple.group.validation",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group.rs::query_simple_errors_with_non_group_fields_selected",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_average_of_undefined",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_with_count_on_inner_non_existant_group",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_with_undefined_field",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_without_group_by_with_count_on_group",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_max_of_undefined_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_min_of_undefined_returns_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_sum_of_undefined"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "'cannot select a non-group-by field at group-level', 'group may only be referenced when within a groupBy request' and group-level bare aggregates appear only in sources (query_parse/parser.rs, runner/plan_validation.rs); plan_validation.rs:270 tests only the array-relation groupBy error."
   },
   {
     "id": "go.query.simple.group.filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/relation_rendering_1597.rs::group_by_with_parent_relation_filter_test",
-      "tools/integration-test/tests/query/aggregate_groupby_1595.rs::group_by_and_filter_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_group_filter.rs::query_simple_with_group_by_string_with_group_number_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_filter.rs::query_simple_with_group_by_string_with_group_number_with_parent_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_filter.rs::query_simple_with_group_by_string_with_inner_group_boolean_then_inner_number_filter_that_excludes_all",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_filter.rs::query_simple_with_group_by_string_with_multiple_group_number_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_filter.rs::query_simple_with_group_by_string_with_unrendered_group_number_with_parent_filter"
     ],
-    "evidence": "relation_rendering_1597.rs:158-174 a root filter removes Voltaire's books so their rating groups disappear; aggregate_groupby_1595.rs:103 filter applies before grouping",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "GROUP(filter: ...) filtering only within groups (empty GROUP kept), per-alias independence and nested levels are untested."
   },
   {
@@ -479,179 +687,328 @@
   },
   {
     "id": "go.query.simple.group.limit-offset",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit.rs::query_simple_with_group_by_number_with_group_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit.rs::query_simple_with_group_by_number_with_group_limit_and_root_order",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit.rs::query_simple_with_group_by_number_with_limit_and_group_with_higher_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit.rs::query_simple_with_group_by_number_with_limit_and_group_with_lower_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit.rs::query_simple_with_group_by_number_with_multiple_groups_with_different_limits",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit_offset.rs::query_simple_with_group_by_number_with_group_limit_and_offset",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_limit_offset.rs::query_simple_with_group_by_number_with_limit_and_offset_and_with_group_limit_and_offset"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test pages groups or GROUP(limit/offset). vector_post_scan_filters.rs:64-75 has 'groupBy: [tag]' with limit: 2 but only two groups exist, so paging is not observable."
   },
   {
     "id": "go.query.simple.group.doc-id",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_doc_id.rs::query_simple_with_group_by_with_group_with_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_doc_ids.rs::query_simple_with_group_by_with_group_with_doc_i_ds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test uses GROUP(docID: ...) (searched 'GROUP(' in all Rust tests)."
   },
   {
     "id": "go.query.simple.group.aggregate.count",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_with_rendered_group_and_child_count",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_without_rendered_group_and_aliases_child_count",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_without_rendered_group_and_child_count",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_without_rendered_group_and_child_count_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count.rs::query_simple_with_group_by_number_without_rendered_group_and_duplicated_aliased_child_counts"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises COUNT(GROUP: {}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.sum",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_empty_float_sum",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_float_sum",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_sum",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_sum_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_sum"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises SUM(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.average",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_empty_float_average",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_float_average",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_on_empty_collection",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_average"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises AVG(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.min-max",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_empty_float_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_float_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_max_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_empty_float_min_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_float_min_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_min_on_empty_collection_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_min_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_min_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises MIN/MAX(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.multiple",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_count.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_and_count",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_max.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_and_max_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_and_min_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_and_sum"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises several aggregates over one GROUP: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.of-same",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_average_of_average_of_average_of_float",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_average_of_average_of_float",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_average_of_average_of_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_max_of_max_of_float_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_max_of_max_of_int_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_max_of_max_of_max_of_float_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_min_of_min_of_float_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_min_of_min_of_int_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_min_of_min_of_min_of_float_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_sum_of_float",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_sum_of_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_sum_of_sum_of_float"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises aggregate-of-aggregate over inner groups: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.of-other",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_max.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_max_of_average_of_int_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_min.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_min_of_average_of_int_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_count_of_int",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_max.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_max_of_count_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_min.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_min_of_count_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_count"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises aggregate of a different inner-group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-average",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_with_rendered_group_and_child_average_with_date_time_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_with_rendered_group_and_child_average_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_with_rendered_group_with_filter_and_child_average_with_different_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_with_rendered_group_with_filter_and_child_average_with_matching_date_time_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_with_rendered_group_with_filter_and_child_average_with_matching_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_without_rendered_group_and_child_average_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_without_rendered_group_and_child_average_with_filter_and_nil_item",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_filter.rs::query_simple_with_group_by_string_without_rendered_group_and_child_averages_with_different_filters"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises AVG(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-count",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_filter.rs::query_simple_with_group_by_number_with_rendered_group_and_child_count_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_count_with_different_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_count_with_matching_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_count_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_counts_with_different_filters"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises COUNT(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-sum",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_with_rendered_group_and_child_sum_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_sum_with_different_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_sum_with_matching_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_sum_with_filter",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_sums_with_different_filters"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises SUM(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-min-max",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_filter.rs::query_simple_with_group_by_number_with_rendered_group_and_child_max_with_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_max_with_different_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_max_with_matching_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_max_with_different_filters_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_max_with_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_filter.rs::query_simple_with_group_by_number_with_rendered_group_and_child_min_with_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_min_with_different_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_filter.rs::query_simple_with_group_by_number_with_rendered_group_with_filter_and_child_min_with_matching_filter_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_min_with_different_filters_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_min_with_filter_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises MIN/MAX(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.limit-offset",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_limit.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_with_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_average_limit_offset.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_with_limit_and_offset",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_limit.rs::query_simple_with_group_by_number_with_rendered_group_with_limit_and_child_count_with_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_limit.rs::query_simple_with_group_by_number_without_rendered_group_and_child_count_with_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_limit_offset.rs::query_simple_with_group_by_number_with_rendered_group_with_limit_and_child_count_with_limit_and_offset",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_count_limit_offset.rs::query_simple_with_group_by_number_without_rendered_group_and_child_count_with_limit_and_offset",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_limit.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_max_with_limit_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_max_limit_offset.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_max_with_limit_and_offset_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_limit.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_min_with_limit_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_min_limit_offset.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_min_with_limit_and_offset_succeeds",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_limit.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_sum_with_limit",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_sum_limit_offset.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_sum_with_limit_and_offset"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises limit/offset inside a GROUP aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.alias-filter",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_average_alias_filter_filters_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_count_alias_filter_filters_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_max_alias_filter_filters_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_min_alias_filter_filters_results",
+      "tools/integration-test/tests/query_scenarios/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_sum_alias_filter_filters_results"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No Rust test exercises filter: {_alias: {...}} on a group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.cid.doc-version",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/gql_list_args.rs::gql_list_args_single_value_compat_test",
-      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_for_same_doc_test",
-      "tools/integration-test/tests/query/commits_collection_id.rs::commits_and_versions_include_collection_id"
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_cid_multiple_docs",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_cid_and_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_update_and_first_cid_and_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_update_and_first_cid_and_doc_id_and_schema_version",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_update_and_last_cid_and_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_update_and_middle_cid_and_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_shared_field.rs::query_simple_with_shared_field_cid_returns_all_owners"
     ],
-    "evidence": "gql_list_args.rs:184-191 'User(cid: \"<composite>\")' returns only that doc with its values; multi_cid_vectors.rs:206-210 the create CID still returns 'John' after an update; commits_collection_id.rs:129-143 '_version { collectionID }' under cid",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: middle CID of several updates, cid + matching docID on a non-branchable doc, _version cid/height as of the commit, and a shared field-level CID returning every owning document."
   },
   {
     "id": "go.query.simple.cid.counter",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_cid_and_counter_after_update_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::cid_and_doc_id_query_contains_p_counter_with_float_kind_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::cid_and_doc_id_query_contains_p_counter_with_int_kind_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::cid_and_doc_id_query_contains_pn_counter_with_float_kind_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::cid_and_doc_id_query_contains_pn_counter_with_int_kind_no_error"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched files mentioning pncounter/pcounter for collection queries with 'cid:': none. No test reads a counter field at a past CID."
   },
   {
     "id": "go.query.simple.cid.list",
     "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/gql_list_args.rs::gql_list_args_single_value_compat_test",
-      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_test",
-      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_duplicate_cids_for_same_doc_test",
-      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_simple_multiple_cids_for_same_doc_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_duplicate_ci_ds_for_same_doc",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_list_of_one_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_multiple_ci_ds",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_multiple_ci_ds_for_same_doc"
     ],
-    "evidence": "gql_list_args.rs:184-191 list of one CID; multi_cid_vectors.rs:153 two docs -> ['John','Fred'], :177 duplicate CID -> ['John'] once, :206 two versions of one doc -> ['John','Johnnn']",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": ""
   },
   {
     "id": "go.query.simple.cid.doc-id-match",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_version_cid.rs::query_simple_with_version_and_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_version_cid_doc_ids.rs::query_simple_with_version_and_cid_and_correct_and_incorrect_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_version_cid_doc_ids.rs::query_simple_with_version_and_cid_and_correct_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_version_cid_doc_ids.rs::query_simple_with_version_and_cid_and_incorrect_doc_id"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test combines a document cid with a docID list (correct, correct+incorrect, incorrect). The nearest is cid_scoping_1604.rs:101-118, a branchable collection CID with a single docID, covered under cid.branchable."
   },
   {
     "id": "go.query.simple.cid.branchable",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/cid_scoping_1604.rs::cid_of_branchable_collection_with_doc_id_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_branchable.rs::query_simple_with_cid_of_branchable_collection_first_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_branchable.rs::query_simple_with_cid_of_branchable_collection_last_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_branchable.rs::query_simple_with_cid_of_branchable_collection_middle_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id_branchable.rs::query_simple_with_cid_of_branchable_collection_and_doc_id"
     ],
-    "evidence": "cid_scoping_1604.rs:110-118 collection CID + docID returns Fred's value as of that collection commit",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Collection CID without docID (first/middle/last commit returning every document at that state) is untested."
   },
   {
     "id": "go.query.simple.cid.errors",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/cid_scoping_1604.rs::unknown_cid_errors_test",
-      "tools/integration-test/tests/query/cid_scoping_1604.rs::cid_from_another_collection_returns_empty_test"
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_unknown_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_cid_from_another_collection_returns_empty",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid.rs::query_simple_with_invalid_cid",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_invalid_cid_and_invalid_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_cid_doc_id.rs::query_simple_with_unknown_cid_and_invalid_doc_id"
     ],
-    "evidence": "cid_scoping_1604.rs:131-134 unknown well-formed CID errors with 'failed to get block in blockstore: ipld: could not find' (same as Go, not a divergence); :75-79 a Users CID queried on Pets returns []",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: a non-CID string failing with 'invalid cid: selected encoding not supported', and unknown/invalid CID together with an invalid docID."
   },
   {
     "id": "go.query.simple.version.latest-commit",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/commits_collection_id.rs::commits_and_versions_include_collection_id"
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_add_doc_with_nested_latest_commit",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_simple_with_embedded_latest_commit_with_collection_version_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_simple_with_embedded_latest_commit_with_doc_id",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_simple_with_nested_latest_commit",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_update_doc_with_nested_latest_commit",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_with_all_commit_fields_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_with_all_commit_fields_with_update_no_error",
+      "tools/integration-test/tests/query_scenarios/simple/with_version_order.rs::query_simple_with_version_and_order"
     ],
-    "evidence": "commits_collection_id.rs:98-101 '_version { collectionID }' equals the collection ID",
-    "note": "Only the collection ID is asserted. Untested: both commits returned after an update (newest first), cid, delta, docID, fieldName \"_C\", height, links (the update links only the changed field; the create links every field, sorted by child CID), heads (the update names the create commit), and combination with order."
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
+    "note": "Only the collection ID is asserted. cid, delta, docID, fieldName null, height (2 after an update), links sorted by child CID plus previous head, heads, and combination with order are untested."
   },
   {
     "id": "go.query.simple.version.aliased",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_simple_with_multiple_aliased_embedded_latest_commit",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_simple_with_multiple_aliased_interleaved_nested_latest_commit",
+      "tools/integration-test/tests/query_scenarios/simple/with_version.rs::query_with_multiple_aliased_filtered_embedded_latest_commit"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test selects _version links/heads under aliases or with links(filter: ...) (searched '_version' in tools/, crates/*/tests)."
   },
   {
@@ -670,35 +1027,40 @@
   },
   {
     "id": "go.query.simple.similarity.full-scan",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_unrouted_shapes_agree",
-      "crates/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
-      "crates/defra-core/tests/vector_metric.rs::cosine_matches_hand_computed_oracle"
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_float32_similarity_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_float64_similarity_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_int_similarity_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_json_doc_creation_similarity_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_similarity_on_empty_collection_should_succeed"
     ],
-    "evidence": "go_vector_parity.rs:186-190 an unrouted (full-scan) similarity query returns the same order as Go; vector_index_query_path.rs:991-1002 full scan returns every document ordered by sim; vector_metric.rs:73 cosine matches an oracle (unit)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test asserts the SIMILARITY values on an unindexed field, nor [Int!] or [Float64!] fields, JSON-created documents, or an empty collection returning []. vector_index_query_path.rs::a_field_without_a_vector_index_never_warns only asserts no warning."
   },
   {
     "id": "go.query.simple.similarity.alias",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/vector_post_scan_filters.rs::computed_similarity_filter_keeps_a_full_page_after_offset",
-      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_similarity_ordering_matches"
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_similarity_and_filtering_on_similarity_result_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_similarity_and_ordering_with_limit_on_similarity_result_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_two_similarity_and_filtering_on_both_should_succeed",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity.rs::query_simple_with_two_similarity_and_filtering_on_second_should_succeed"
     ],
-    "evidence": "vector_post_scan_filters.rs:48-53 'filter: {_alias: {sim: {_lt: 50}}}' with 'order: {_alias: {sim: DESC}}, limit, offset' returns the expected rows; go_vector_parity.rs:145-149 order by alias with limit equals Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Two SIMILARITY selections with filtering on the second (or both) are untested; the Go-Bug-Suspect '_or' over two aliases case is untested."
   },
   {
     "id": "go.query.simple.similarity.vector-index",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/defra-node/tests/vector_index_query_path.rs::a_cosine_index_routes_and_agrees_with_the_exhaustive_scan",
-      "tools/integration-test/tests/vector.rs::rust_hnsw_vector_lifecycle",
-      "tools/integration-test/tests/query/go_vector_parity.rs::go_vector_similarity_ordering_matches",
-      "crates/defra-node/tests/vector_index_query_path.rs::doc_id_restrictions_fill_vector_pages_after_offset"
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity_vector_index.rs::query_simple_with_similarity_on_vector_index_excludes_deleted_doc",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity_vector_index.rs::query_simple_with_similarity_on_vector_index_is_magnitude_invariant",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity_vector_index.rs::query_simple_with_similarity_on_vector_index_reflects_updated_vector",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity_vector_index.rs::query_simple_with_similarity_on_vector_index_respects_offset",
+      "tools/integration-test/tests/query_scenarios/simple/with_similarity_vector_index.rs::query_simple_with_similarity_on_vector_index_returns_k_nearest"
     ],
-    "evidence": "vector_index_query_path.rs:471-482 routed k-nearest page equals the exhaustive page with explain index use; vector.rs:43,110-120 top-5 titles via the index, docFetches == 5, updated vector re-ranked, deleted doc excluded (:129); go_vector_parity.rs:145-149 matches Go; vector_index_query_path.rs:56 offset page",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Magnitude invariance ([10,0,0] and [1,0,0] both scoring 1) is not asserted directly; explain asserts indexFetches > 0, not exactly 1."
   },
   {

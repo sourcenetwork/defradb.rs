@@ -17,22 +17,31 @@
   },
   {
     "id": "go.collection_version.define.scalar_kinds",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_all_scalar_types",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_float32_scalar_type"
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_adds_collection_given_type_with_blob_field",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_with_all_types_adds_collection_given_types",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_with_float32_field_adds_collection_given_type",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_with_float64_field_adds_collection_given_type",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_with_float_field_adds_collection_given_type",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_with_json_field_adds_collection_given_type"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:275-277 asserts Float and Float64 both map to FieldKind::float64, Float32 to float32, and Blob/JSON accepted",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Introspection output (Float/Float64 reported as Float64 scalar, Float32 as Float32) is not asserted by any test; only the definition-level kind mapping is."
   },
   {
     "id": "go.collection_version.define.errors",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity",
-      "crates/db/tests/collection/validation.rs::atomic_creation_rejects_an_unknown_relation_target"
+      "tools/integration-test/tests/collection_version/nil_type.rs::collection_version_with_missing_type_errors",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_duplicate_collection",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_duplicate_collection_in_same_sdl",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_duplicate_collection_in_same_sdl_multiple",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_non_null_many_relation_field",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_type_with_invalid_field_type",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_errors_given_type_with_invalid_field_type_multiple"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:190 asserts duplicate type in one SDL (validateCollectionNameUnique) is rejected by both Rust and Go; crates/db/tests/collection/validation.rs:132 asserts 'no type found for given name. Field: author, Kind: Missing' at definition level",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: duplicate against an already-stored collection; the 'collection already exists. Name: X' message (only accept/reject compared); one-line-per-error multiple variants; 'NonNull variants for type are not supported' for [Dogs!]; 'field type not specified' for a missing type. No test found for these messages (rg over tests)."
   },
   {
@@ -80,11 +89,22 @@
   },
   {
     "id": "go.collection_version.define.embeddings",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity"
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_reference_to_another_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_reference_to_self_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_float32_for_embedding_should_succeed",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_float64_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_float_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_int_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_invalid_embedding_generation_field_type_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_missing_model_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_nillable_float32_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_non_existant_field_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_string_for_embedding_should_error",
+      "tools/integration-test/tests/collection_version/vector_embedding.rs::collection_version_with_unsupported_provider_for_embedding_should_error"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:190 asserts Rust and Go both reject @embedding on a String field, a missing source field, and an unknown provider (accept/reject only)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified: error messages; Int/Float/Float64/nillable [Float32] kinds rejected; [Float32!] accepted; JSON source field rejected; missing model ('embedding Model cannot be empty'); self/another-embedding reference. Searched tests for each Go message: none found outside src."
   },
   {
@@ -125,12 +145,13 @@
   },
   {
     "id": "go.collection_version.relations.relation_names",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/ffi/src/schema.rs::test_add_schema_duplicate_implicit_relation_name_errors",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_self_ref_complex_collection_id_matches_go"
+      "tools/integration-test/tests/collection_version/duplicate_relation_name.rs::collection_version_duplicate_relation_name_with_relation_directive",
+      "tools/integration-test/tests/collection_version/duplicate_relation_name.rs::collection_version_duplicate_relation_name_without_relation_directive",
+      "tools/integration-test/tests/collection_version/duplicate_relation_name.rs::collection_version_self_relation_primary_secondary_pair_with_same_relation_name"
     ],
-    "evidence": "crates/ffi/src/schema.rs:375 asserts exact 'relation name is not unique within collection. Field: author, RelationName: book_person'; crates/query/src/sdl_parse/parser_tests.rs:819 parses a self primary/secondary pair sharing @relation(name: \"boss_minion\")",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Not asserted: that giving the two fields distinct @relation names succeeds."
   },
   {
@@ -144,42 +165,71 @@
   },
   {
     "id": "go.collection_version.introspection.aggregate_inline_array",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_average",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_boolean_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_count",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_float_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_integer_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_nillable_boolean_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_nillable_float_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_nillable_integer_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_nillable_string_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_string_count_filter",
+      "tools/integration-test/tests/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_sum"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched introspection tests (crates/query/src/runner/introspection/mod.rs tests, integration __type queries) for inline-array arguments on COUNT/SUM/AVG and element-kind filter blocks; collection_count_and_array_types_match_go checks only the CountSelector groupBy and the array field type."
   },
   {
     "id": "go.collection_version.introspection.aggregate_fields",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/runner/introspection/mod.rs::aggregate_nullability_matches_go"
+      "tools/integration-test/tests/collection_version/aggregates/simple.rs::collection_version_aggregate_simple_adds_users_average",
+      "tools/integration-test/tests/collection_version/aggregates/simple.rs::collection_version_aggregate_simple_adds_users_count",
+      "tools/integration-test/tests/collection_version/aggregates/simple.rs::collection_version_aggregate_simple_adds_users_sum",
+      "tools/integration-test/tests/collection_version/aggregates/top_level.rs::collection_version_aggregate_top_level_adds_average_given_collection",
+      "tools/integration-test/tests/collection_version/aggregates/top_level.rs::collection_version_aggregate_top_level_adds_count_given_collection",
+      "tools/integration-test/tests/collection_version/aggregates/top_level.rs::collection_version_aggregate_top_level_adds_sum_given_collection"
     ],
-    "evidence": "crates/query/src/runner/introspection/mod.rs:445-447 asserts COUNT/SUM/AVG exist (non-null) on the collection type and on Query",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Not asserted: arguments naming related many-side fields on the collection's aggregates, or the top-level aggregates taking the collection as argument."
   },
   {
     "id": "go.collection_version.introspection.filter_inputs",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/filter.rs::collection_version_filter_inputs_with_json_field_succeeds",
+      "tools/integration-test/tests/collection_version/filter.rs::collection_version_filter_inputs_with_non_nillable_json_field_uses_json_scalar",
+      "tools/integration-test/tests/collection_version/filter.rs::collection_version_filter_inputs_with_non_nillable_string_field_uses_string_operator_block",
+      "tools/integration-test/tests/collection_version/filter.rs::filter_for_one_to_one_collection",
+      "tools/integration-test/tests/collection_version/filter.rs::filter_for_simple_collection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test introspects <Name>FilterArg (rg 'FilterArg' over tests found only the builder in src)."
   },
   {
     "id": "go.collection_version.introspection.group_order_inputs",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/group.rs::group_by_field_for_the_many_side_in_collection",
+      "tools/integration-test/tests/collection_version/group.rs::group_by_field_for_the_single_side_in_collection",
+      "tools/integration-test/tests/collection_version/input_type.rs::input_type_of_order_field_where_collection_has_many_relation_type",
+      "tools/integration-test/tests/collection_version/input_type.rs::input_type_of_order_field_where_collection_has_relation_type"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "No test introspects the collection's groupBy enum or <Name>OrderArg with relation fields (rg 'OrderArg|groupBy' in tests; the only groupBy check is on Users__CountSelector)."
   },
   {
     "id": "go.collection_version.introspection.mutation_inputs",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/runner/introspection/mod.rs::mutation_input_fields_are_nullable",
-      "crates/query/src/runner/introspection/mod.rs::collection_count_and_array_types_match_go"
+      "tools/integration-test/tests/collection_version/add_one_one_data.rs::add_one_to_one_input_primary_object",
+      "tools/integration-test/tests/collection_version/add_one_one_data.rs::add_one_to_one_input_secondary_object",
+      "tools/integration-test/tests/collection_version/type_explicit_fields.rs::encrypt_fields_for_add_mutation"
     ],
-    "evidence": "crates/query/src/runner/introspection/mod.rs:549 asserts scalar fields of UsersMutationInputArg; crates/query/src/runner/introspection/mod.rs:495 asserts a UsersField enum is referenced",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Not asserted: one-one primary side input carrying the relation object and _<rel>ID, secondary side listing only scalars, or the <Name>Field enum values (encryptFields)."
   },
   {
@@ -191,9 +241,13 @@
   },
   {
     "id": "go.collection_version.introspection.builtin_types",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/client.rs::introspection_explain_type_defined",
+      "tools/integration-test/tests/collection_version/client_introspection/one_many.rs::client_introspection_with_one_to_many_collection",
+      "tools/integration-test/tests/collection_version/client_introspection/simple.rs::client_introspection_basic"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "rg 'ExplainType|IntrospectionQuery|__schema' over tests: ExplainType only in query-parse tests, no full client introspection query run against a node."
   },
   {

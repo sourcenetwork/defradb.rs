@@ -92,23 +92,23 @@
   },
   {
     "id": "go.mutation.ordering",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/batch_mutations.rs::mutation_fragment_spread_order_test",
-      "crates/query/src/query_parse/mutation_tests.rs::test_parse_mutation_fragment_spread_in_request_order",
-      "crates/query/src/query_parse/mutation_tests.rs::test_parse_mutation_inline_fragment_in_request_order"
+      "tools/integration-test/tests/mutation/mix/with_multiple_operations.rs::mutation_multiple_operations_execute_in_request_order",
+      "tools/integration-test/tests/mutation/mix/with_multiple_operations.rs::mutation_multiple_operations_via_fragment_spread_execute_in_request_order"
     ],
-    "evidence": "mutation_tests.rs:193 asserts a fragment spread is ordered where it is spread; batch_mutations.rs:127-133 asserts both fragment and field mutations run",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Serial execution order is only asserted at parse level; no test checks that an unordered `User` query returns the docs in request (insertion) order."
   },
   {
     "id": "go.mutation.request_validation",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/query_parse/validation.rs::test_invalid_mutation_collection",
-      "crates/query/src/query_parse/mutation_tests.rs::test_invalid_mutation_name_error"
+      "tools/integration-test/tests/mutation/delete/simple.rs::mutation_deletion_without_sub_selection",
+      "tools/integration-test/tests/mutation/delete/simple.rs::mutation_deletion_without_sub_selection_fields",
+      "tools/integration-test/tests/mutation/special/invalid_operation.rs::mutation_invalid_mutation"
     ],
-    "evidence": "validation.rs:234 asserts `Cannot query field \"add_Usr\" on type \"Mutation\".`; mutation_tests.rs:357 asserts an unknown mutation name errors",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Not asserted: the exact message for an unknown verb (`dostuff_User`); `delete_User` without a selection set failing with `must have a sub selection` (implemented in query_parse/mutations.rs:249, untested); an empty selection set failing with a syntax error."
   },
   {

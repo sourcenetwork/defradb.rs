@@ -256,3 +256,74 @@ A migration configured in a transaction applies to queries in that transaction, 
 - **Scenarios:** ["collection_version.migrations.query.collection-migration-query-with-migration-registered-after-update", "collection_version.migrations.query.collection-migration-query-with-update-request"]
 
 An `update_` mutation on a document written at an older version returns migrated values, and a migration registered after the document was updated still applies.
+
+# `go.collection_version.define.scalar_kinds`: Every scalar kind is accepted and introspected
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version.simple-adds-collection-given-type-with-blob-field", "collection_version.simple-with-all-types-adds-collection-given-types", "collection_version.simple-with-float-field-adds-collection-given-type", "collection_version.simple-with-float32-field-adds-collection-given-type", "collection_version.simple-with-float64-field-adds-collection-given-type", "collection_version.simple-with-jsonfield-adds-collection-given-type"]
+- **Go-Bug-Suspect:** "WithFloatField and WithAllTypes carry a TODO saying they document a graphql-go introspection bug (Go issue #3429); the asserted introspection output for 'Float' may not be the intended one."
+
+Fields of kind `Blob`, `JSON`, `Float32`, `Float64`, `Float` and every other supported scalar can be declared in SDL; introspection reports `Float` and `Float64` fields as the `Float64` scalar and `Float32` as `Float32`.
+
+# `go.collection_version.define.errors`: Invalid SDL definitions are rejected
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version.simple-errors-given-duplicate-collection", "collection_version.simple-errors-given-duplicate-collection-in-same-sdl", "collection_version.simple-errors-given-duplicate-collection-in-same-sdlmultiple", "collection_version.simple-errors-given-non-null-many-relation-field", "collection_version.simple-errors-given-type-with-invalid-field-type", "collection_version.simple-errors-given-type-with-invalid-field-type-multiple", "collection_version.with-missing-type-errors"]
+
+Adding a collection whose name already exists (in the store or twice in one SDL) fails with `collection already exists` (one `collection already exists. Name: Users` line per duplicate); an unknown field type fails with `no type found for given name. Field: name, Kind: NotAType` (one line per bad field); a non-null list relation such as `[Dogs!]` fails with `NonNull variants for type are not supported. Type: Dogs`; a field with no type fails with `field type not specified. Object: User, Field: name`.
+
+# `go.collection_version.define.embeddings`: `@embedding` vector field definitions
+
+- **Parents:** ["go.collection_version.define"]
+- **Scenarios:** ["collection_version.reference-to-another-embedding-should-error", "collection_version.reference-to-self-for-embedding-should-error", "collection_version.with-float-for-embedding-should-error", "collection_version.with-float32-for-embedding-should-succeed", "collection_version.with-float64-for-embedding-should-error", "collection_version.with-int-for-embedding-should-error", "collection_version.with-invalid-embedding-generation-field-type-should-error", "collection_version.with-missing-model-for-embedding-should-error", "collection_version.with-nillable-float32-for-embedding-should-error", "collection_version.with-non-existant-field-for-embedding-should-error", "collection_version.with-string-for-embedding-should-error", "collection_version.with-unsupported-provider-for-embedding-should-error"]
+
+`@embedding(fields: [...], provider: ..., model: ...)` is accepted only on a `[Float32!]` field: other kinds (String, Int, Float, Float64, nillable Float32 array) fail with `invalid type for vector embedding`. A missing source field fails with `the given field does not exist. Embedding generation field: about`; a JSON source with `invalid field type for vector embedding generation. Actual: JSON`; an unknown provider with `unknown embedding provider`; a missing model with `embedding Model cannot be empty`; referring to itself or another embedding with `embedding fields cannot refer to self or another embedding field. Field: name_v`.
+
+# `go.collection_version.relations.relation_names`: Relation name uniqueness
+
+- **Parents:** ["go.collection_version.relations"]
+- **Scenarios:** ["collection_version.duplicate-relation-name-with-relation-directive", "collection_version.duplicate-relation-name-without-relation-directive", "collection_version.self-relation-primary-secondary-pair-with-same-relation-name"]
+
+Two relation fields in one collection that infer the same relation name fail with `relation name is not unique within collection. Field: author, RelationName: book_person`; giving them distinct `@relation(name: ...)` values succeeds, and a self-relation primary/secondary pair may share one relation name.
+
+# `go.collection_version.introspection.aggregate_inline_array`: Aggregate arguments over inline arrays
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.aggregates.inline-array-adds-users-average", "collection_version.aggregates.inline-array-adds-users-boolean-count-filter", "collection_version.aggregates.inline-array-adds-users-count", "collection_version.aggregates.inline-array-adds-users-float-count-filter", "collection_version.aggregates.inline-array-adds-users-integer-count-filter", "collection_version.aggregates.inline-array-adds-users-nillable-boolean-count-filter", "collection_version.aggregates.inline-array-adds-users-nillable-float-count-filter", "collection_version.aggregates.inline-array-adds-users-nillable-integer-count-filter", "collection_version.aggregates.inline-array-adds-users-nillable-string-count-filter", "collection_version.aggregates.inline-array-adds-users-string-count-filter", "collection_version.aggregates.inline-array-adds-users-sum"]
+
+For inline array fields, `_count`, `_sum` and `_avg` expose arguments for the array field, and `_count` takes a filter input whose operator block matches the element kind (nillable and non-nillable Boolean, Int, Float, String).
+
+# `go.collection_version.introspection.aggregate_fields`: Aggregate fields on collections and relations
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.aggregates.simple-adds-users-average", "collection_version.aggregates.simple-adds-users-count", "collection_version.aggregates.simple-adds-users-sum", "collection_version.aggregates.top-level-adds-average-given-collection", "collection_version.aggregates.top-level-adds-count-given-collection", "collection_version.aggregates.top-level-adds-sum-given-collection"]
+
+Every collection type exposes `_count`, `_sum` and `_avg` with arguments naming its related many-side fields, and the top-level `Query` exposes `_count`, `_sum` and `_avg` taking the collection as argument.
+
+# `go.collection_version.introspection.filter_inputs`: Filter input types
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.filter-for-one-to-one-collection", "collection_version.filter-for-simple-collection", "collection_version.filter-inputs-with-jsonfield-succeeds", "collection_version.filter-inputs-with-non-nillable-jsonfield-uses-jsonscalar", "collection_version.filter-inputs-with-non-nillable-string-field-uses-string-operator-block"]
+
+Each collection gets a `<Name>FilterArg` input with `_and`, `_or`, `_not`, one operator block per field and relation fields filtered through the related type's filter input; non-nillable String fields use the string operator block and JSON fields (nillable or not) use the JSON scalar.
+
+# `go.collection_version.introspection.group_order_inputs`: Group-by and order input types
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.group-by-field-for-the-many-side-in-collection", "collection_version.group-by-field-for-the-single-side-in-collection", "collection_version.input-type-of-order-field-where-collection-has-many-relation-type", "collection_version.input-type-of-order-field-where-collection-has-relation-type"]
+
+`groupBy` on a collection accepts its field enum including the one side's relation ID field, and the `order` argument's input type includes relation fields from both one and many sides as nested order inputs.
+
+# `go.collection_version.introspection.mutation_inputs`: Mutation input and field enum types
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.add-one-to-one-input-primary-object", "collection_version.add-one-to-one-input-secondary-object", "collection_version.encrypt-fields-for-add-mutation"]
+
+For a one-to-one relation, the primary side's `<Name>MutationInputArg` includes the relation object and `_<rel>ID` fields while the secondary side's input lists its scalar fields; each collection gets a `<Name>Field` enum listing its fields (used e.g. for `encryptFields`).
+
+# `go.collection_version.introspection.builtin_types`: Built-in schema types
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Scenarios:** ["collection_version.client_introspection.basic", "collection_version.client_introspection.with-one-to-many-collection", "collection_version.introspection-explain-type-defined"]
+
+With or without collections, introspection exposes the `ExplainType` enum with its description, and the full client introspection query succeeds, including with a one-to-many schema.

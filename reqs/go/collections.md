@@ -10,28 +10,6 @@ Declaring collections in SDL, the GraphQL schema generated from them, reading th
 
 `AddCollection` (`client collection add` / `POST /collections`) with an SDL type creates a collection version and the matching GraphQL types.
 
-# `go.collection_version.define.scalar_kinds`: Every scalar kind is accepted and introspected
-
-- **Parents:** ["go.collection_version.define"]
-- **Go-Tests:** ["collection_version/simple_test.go::TestCollectionVersionSimpleAddsCollectionGivenTypeWithBlobField", "collection_version/simple_test.go::TestCollectionVersionSimple_WithJSONField_AddsCollectionGivenType", "collection_version/simple_test.go::TestCollectionVersionSimple_WithFloat32Field_AddsCollectionGivenType", "collection_version/simple_test.go::TestCollectionVersionSimple_WithFloat64Field_AddsCollectionGivenType", "collection_version/simple_test.go::TestCollectionVersionSimple_WithFloatField_AddsCollectionGivenType", "collection_version/simple_test.go::TestCollectionVersionSimple_WithAllTypes_AddsCollectionGivenTypes"]
-- **Go-Bug-Suspect:** "WithFloatField and WithAllTypes carry a TODO saying they document a graphql-go introspection bug (Go issue #3429); the asserted introspection output for 'Float' may not be the intended one."
-
-Fields of kind `Blob`, `JSON`, `Float32`, `Float64`, `Float` and every other supported scalar can be declared in SDL; introspection reports `Float` and `Float64` fields as the `Float64` scalar and `Float32` as `Float32`.
-
-# `go.collection_version.define.errors`: Invalid SDL definitions are rejected
-
-- **Parents:** ["go.collection_version.define"]
-- **Go-Tests:** ["collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenDuplicateCollection", "collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenDuplicateCollectionInSameSDL", "collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenDuplicateCollectionInSameSDLMultiple", "collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenTypeWithInvalidFieldType", "collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenTypeWithInvalidFieldTypeMultiple", "collection_version/simple_test.go::TestCollectionVersionSimpleErrorsGivenNonNullManyRelationField", "collection_version/nil_type_test.go::TestCollectionVersion_WithMissingType_Errors"]
-
-Adding a collection whose name already exists (in the store or twice in one SDL) fails with `collection already exists` (one `collection already exists. Name: Users` line per duplicate); an unknown field type fails with `no type found for given name. Field: name, Kind: NotAType` (one line per bad field); a non-null list relation such as `[Dogs!]` fails with `NonNull variants for type are not supported. Type: Dogs`; a field with no type fails with `field type not specified. Object: User, Field: name`.
-
-# `go.collection_version.define.embeddings`: `@embedding` vector field definitions
-
-- **Parents:** ["go.collection_version.define"]
-- **Go-Tests:** ["collection_version/vector_embedding_test.go::TestCollectionVersion_WithStringForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithIntForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithFloatForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithFloat64ForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithNillableFloat32ForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithFloat32ForEmbedding_ShouldSucceed", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithNonExistantFieldForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithInvalidEmbeddingGenerationFieldType_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithUnsupportedProviderForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_WithMissingModelForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_ReferenceToSelfForEmbedding_ShouldError", "collection_version/vector_embedding_test.go::TestCollectionVersion_ReferenceToAnotherEmbedding_ShouldError"]
-
-`@embedding(fields: [...], provider: ..., model: ...)` is accepted only on a `[Float32!]` field: other kinds (String, Int, Float, Float64, nillable Float32 array) fail with `invalid type for vector embedding`. A missing source field fails with `the given field does not exist. Embedding generation field: about`; a JSON source with `invalid field type for vector embedding generation. Actual: JSON`; an unknown provider with `unknown embedding provider`; a missing model with `embedding Model cannot be empty`; referring to itself or another embedding with `embedding fields cannot refer to self or another embedding field. Field: name_v`.
-
 # `go.collection_version.define.vector_index`: Vector indexes declared in SDL
 
 - **Parents:** ["go.collection_version.define"]
@@ -60,53 +38,11 @@ A one-to-one relation needs exactly one side marked `@primary`: with neither sid
 
 A one-to-many relation gets its relation ID field on the one side regardless of field declaration order, including self-referencing one-to-many relations whatever field sorts first; a self one-to-many declared with the type's own name introspects correctly.
 
-# `go.collection_version.relations.relation_names`: Relation name uniqueness
-
-- **Parents:** ["go.collection_version.relations"]
-- **Go-Tests:** ["collection_version/duplicate_relation_name_test.go::TestCollectionVersionDuplicateRelationNameWithoutRelationDirective", "collection_version/duplicate_relation_name_test.go::TestCollectionVersionDuplicateRelationNameWithRelationDirective", "collection_version/duplicate_relation_name_test.go::TestCollectionVersionSelfRelationPrimarySecondaryPairWithSameRelationName"]
-
-Two relation fields in one collection that infer the same relation name fail with `relation name is not unique within collection. Field: author, RelationName: book_person`; giving them distinct `@relation(name: ...)` values succeeds, and a self-relation primary/secondary pair may share one relation name.
-
 # `go.collection_version.introspection`: GraphQL schema generated for collections
 
 - **Parents:** ["go.collection_version"]
 
 The GraphQL types, inputs and arguments DefraDB generates from collection definitions, checked through introspection queries.
-
-# `go.collection_version.introspection.aggregate_inline_array`: Aggregate arguments over inline arrays
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersCount", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersSum", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersAverage", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersNillableBooleanCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersBooleanCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersNillableIntegerCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersIntegerCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersNillableFloatCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersFloatCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersNillableStringCountFilter", "collection_version/aggregates/inline_array_test.go::TestCollectionVersionAggregateInlineArrayAddsUsersStringCountFilter"]
-
-For inline array fields, `_count`, `_sum` and `_avg` expose arguments for the array field, and `_count` takes a filter input whose operator block matches the element kind (nillable and non-nillable Boolean, Int, Float, String).
-
-# `go.collection_version.introspection.aggregate_fields`: Aggregate fields on collections and relations
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/aggregates/simple_test.go::TestCollectionVersionAggregateSimpleAddsUsersCount", "collection_version/aggregates/simple_test.go::TestCollectionVersionAggregateSimpleAddsUsersSum", "collection_version/aggregates/simple_test.go::TestCollectionVersionAggregateSimpleAddsUsersAverage", "collection_version/aggregates/top_level_test.go::TestCollectionVersionAggregateTopLevelAddsCountGivenCollection", "collection_version/aggregates/top_level_test.go::TestCollectionVersionAggregateTopLevelAddsSumGivenCollection", "collection_version/aggregates/top_level_test.go::TestCollectionVersionAggregateTopLevelAddsAverageGivenCollection"]
-
-Every collection type exposes `_count`, `_sum` and `_avg` with arguments naming its related many-side fields, and the top-level `Query` exposes `_count`, `_sum` and `_avg` taking the collection as argument.
-
-# `go.collection_version.introspection.filter_inputs`: Filter input types
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/filter_test.go::TestFilterForSimpleCollection", "collection_version/filter_test.go::TestFilterForOneToOneCollection", "collection_version/filter_test.go::TestCollectionVersionFilterInputs_WithJSONField_Succeeds", "collection_version/filter_test.go::TestCollectionVersionFilterInputs_WithNonNillableStringField_UsesStringOperatorBlock", "collection_version/filter_test.go::TestCollectionVersionFilterInputs_WithNonNillableJSONField_UsesJSONScalar"]
-
-Each collection gets a `<Name>FilterArg` input with `_and`, `_or`, `_not`, one operator block per field and relation fields filtered through the related type's filter input; non-nillable String fields use the string operator block and JSON fields (nillable or not) use the JSON scalar.
-
-# `go.collection_version.introspection.group_order_inputs`: Group-by and order input types
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/group_test.go::TestGroupByFieldForTheManySideInCollection", "collection_version/group_test.go::TestGroupByFieldForTheSingleSideInCollection", "collection_version/input_type_test.go::TestInputTypeOfOrderFieldWhereCollectionHasManyRelationType", "collection_version/input_type_test.go::TestInputTypeOfOrderFieldWhereCollectionHasRelationType"]
-
-`groupBy` on a collection accepts its field enum including the one side's relation ID field, and the `order` argument's input type includes relation fields from both one and many sides as nested order inputs.
-
-# `go.collection_version.introspection.mutation_inputs`: Mutation input and field enum types
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/add_one_one_data_test.go::TestAddOneToOne_Input_PrimaryObject", "collection_version/add_one_one_data_test.go::TestAddOneToOne_Input_SecondaryObject", "collection_version/type_explicit_fields_test.go::TestEncryptFieldsForAddMutation"]
-
-For a one-to-one relation, the primary side's `<Name>MutationInputArg` includes the relation object and `_<rel>ID` fields while the secondary side's input lists its scalar fields; each collection gets a `<Name>Field` enum listing its fields (used e.g. for `encryptFields`).
 
 # `go.collection_version.introspection.similarity`: `_similarity` on vector-capable fields
 
@@ -114,13 +50,6 @@ For a one-to-one relation, the primary side's `<Name>MutationInputArg` includes 
 - **Go-Tests:** ["collection_version/similarity_test.go::TestCollectionVersionIntrospection_SimilarityCapableFieldIntArray", "collection_version/similarity_test.go::TestCollectionVersionIntrospection_SimilarityCapableFieldFloat32Array", "collection_version/similarity_test.go::TestCollectionVersionIntrospection_SimilarityCapableFieldsIntArrayAndFloat32Array", "collection_version/similarity_test.go::TestCollectionVersionIntrospection_SimilarityIsDocumented"]
 
 Collections with `[Int!]` or `[Float32!]` array fields expose a `_similarity` field whose argument names those fields, and the field and its arguments carry descriptions visible through introspection.
-
-# `go.collection_version.introspection.builtin_types`: Built-in schema types
-
-- **Parents:** ["go.collection_version.introspection"]
-- **Go-Tests:** ["collection_version/client_test.go::TestIntrospectionExplainTypeDefined", "collection_version/client_introspection/simple_test.go::TestClientIntrospectionBasic", "collection_version/client_introspection/one_many_test.go::TestClientIntrospectionWithOneToManyCollection"]
-
-With or without collections, introspection exposes the `ExplainType` enum with its description, and the full client introspection query succeeds, including with a one-to-many schema.
 
 # `go.collection_version.get`: Reading collection versions
 
@@ -577,4 +506,3 @@ An aliased `_count` in a view query maps to an SDL field and returns the count; 
 - **Go-Bug-Suspect:** "TestView_OneToOneSameSchema carries a TODO: the setup works but prevents querying the right-hand type as the primary return object."
 
 A one-to-one view whose SDL reuses one type for both sides returns nested documents; an embedded type survives a later view update and a restart; declaring an embedded type a second time in another view fails with `collection already exists. Name: BookView`.
-

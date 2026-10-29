@@ -16,9 +16,13 @@
   },
   {
     "id": "go.explain.default.basic",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/basic.rs::default_explain_request_with_full_basic_graph",
+      "tools/integration-test/tests/explain/default/basic.rs::default_explain_with_alias",
+      "tools/integration-test/tests/explain/simple/basic.rs::simple_explain_request"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test asserts the selectTopNode>selectNode{docID,filter}>scanNode{collectionName,collectionID,prefixes} shape for a plain or aliased select, default or simple."
   },
   {
@@ -30,248 +34,476 @@
   },
   {
     "id": "go.explain.default.mutation.delete",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_filter",
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_filter_and_ids",
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_filter_to_match_everything",
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_id",
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_ids",
+      "tools/integration-test/tests/explain/default/delete.rs::default_explain_mutation_request_with_delete_using_no_ids"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of deleteNode{filter,docID} or the docID: [] case (Go-Bug-Suspect untested in Rust)."
   },
   {
     "id": "go.explain.default.mutation.update",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/update.rs::default_explain_mutation_request_with_update_using_boolean_filter",
+      "tools/integration-test/tests/explain/default/update.rs::default_explain_mutation_request_with_update_using_id",
+      "tools/integration-test/tests/explain/default/update.rs::default_explain_mutation_request_with_update_using_ids",
+      "tools/integration-test/tests/explain/default/update.rs::default_explain_mutation_request_with_update_using_ids_and_filter"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of updateNode{filter,docID,input} through @explain. plan/mutation/update.rs tests (update_node_accepts_matched_plain_and_keyed_targets etc.) test execution, not explain."
   },
   {
     "id": "go.explain.default.dagscan",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/dagscan.rs::default_explain_commits_dag_scan_query_op",
+      "tools/integration-test/tests/explain/default/dagscan.rs::default_explain_commits_dag_scan_query_op_without_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of _commits under default explain (dagScanNode cid/prefixes)."
   },
   {
     "id": "go.explain.default.filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/plan/scan.rs::explain_keeps_docid_filter_without_doc_id_prefix_scan"
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_greater_than_filter",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_integer_equal_filter",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_json_equal_filter_succeeds",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_logical_compound_and_filter",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_logical_compound_or_filter",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_match_inside_list",
+      "tools/integration-test/tests/explain/default/with_filter.rs::default_explain_request_with_string_equal_filter"
     ],
-    "evidence": "crates/query/src/plan/scan.rs:773 asserts a hand-built ScanNode's explain()['scanNode']['filter'] equals the given _docID+name _eq filter verbatim",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Only a unit test of ScanNode::explain on a hand-built node with an _eq filter. Unverified: the filter reaching scanNode via a real @explain query, _gt/_and/_or/_in/JSON _eq filters, and the collection prefix in 'prefixes'."
   },
   {
     "id": "go.explain.default.docid",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/plan/select.rs::explain_preserves_select_node_shape_while_stripping_docid_filter",
-      "crates/query/src/plan/scan.rs::explain_strips_docid_filter_when_doc_ids_are_supplied_separately",
-      "crates/query/src/plan/scan.rs::explain_keeps_docid_filter_without_doc_id_prefix_scan"
+      "tools/integration-test/tests/explain/default/with_filter_doc_id.rs::default_explain_request_with_doc_i_ds_filter_using_multiple_but_duplicate_i_ds",
+      "tools/integration-test/tests/explain/default/with_filter_doc_id.rs::default_explain_request_with_doc_i_ds_filter_using_multiple_unique_i_ds",
+      "tools/integration-test/tests/explain/default/with_filter_doc_id.rs::default_explain_request_with_doc_i_ds_filter_using_one_id",
+      "tools/integration-test/tests/explain/default/with_filter_doc_id.rs::default_explain_request_with_doc_id_filter",
+      "tools/integration-test/tests/explain/default/with_filter_doc_id.rs::default_explain_request_with_matching_id_filter"
     ],
-    "evidence": "select.rs:530 asserts selectNode explain is {docID: [\"doc-1\"], filter, scanNode}; scan.rs:793-798 asserts scan filter stripped of _docID and prefixes == [] when docIDs supplied; scan.rs:773 asserts _docID _eq stays in the scan filter",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unit tests on hand-built nodes only. Unverified: that docID: \"...\" / docID: [...] arguments (incl. duplicates kept) produce this through a real @explain query, and that _docID: {_eq} via the planner stays a scan filter."
   },
   {
     "id": "go.explain.default.index",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "proofs/tests/behavioral/index.rs::index_reconciles_lww_merge_after_restart",
-      "crates/defra-node/tests/ordinary_indexes.rs::reconcile_indexes_preserves_documents_and_uses_completed_composite"
+      "tools/integration-test/tests/explain/default/with_index.rs::default_explain_with_index_on_filter",
+      "tools/integration-test/tests/explain/default/with_index.rs::default_explain_with_index_on_order",
+      "tools/integration-test/tests/explain/default/with_index.rs::default_explain_with_index_on_subquery_nested_relation_order",
+      "tools/integration-test/tests/explain/simple/with_index.rs::simple_explain_with_index_on_filter",
+      "tools/integration-test/tests/explain/simple/with_index.rs::simple_explain_with_index_on_order",
+      "tools/integration-test/tests/explain/simple/with_index.rs::simple_explain_with_index_on_subquery_nested_relation_order"
     ],
-    "evidence": "proofs/tests/behavioral/index.rs:146-150 (called at :279) asserts @explain(type: simple) of User(filter: {age: {_eq: 99}}) has a User scanNode with a non-empty indexName; ordinary_indexes.rs:60-62 asserts default @explain output names the composite index",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Only the indexed-filter case is checked, and only that an index is named, not the selectTopNode>selectNode>scanNode shape. Unverified: ordering by an indexed field with no orderNode, and a child ordered by an indexed related field with limit giving limitNode but no orderNode."
   },
   {
     "id": "go.explain.default.group.selection",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/group.rs::default_explain_request_with_group_by_on_parent",
+      "tools/integration-test/tests/explain/default/group.rs::default_explain_request_with_group_by_two_fields_on_parent",
+      "tools/integration-test/tests/explain/default/group_with_doc_id.rs::default_explain_request_with_doc_i_ds_and_filter_on_parent_group_by",
+      "tools/integration-test/tests/explain/default/group_with_doc_id.rs::default_explain_request_with_doc_id_on_parent_group_by",
+      "tools/integration-test/tests/explain/default/group_with_doc_id_child.rs::default_explain_request_with_doc_i_ds_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_filter.rs::default_explain_request_with_filter_on_group_by_parent",
+      "tools/integration-test/tests/explain/default/group_with_filter_child.rs::default_explain_request_with_filter_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_filter_child.rs::default_explain_request_with_filter_on_parent_group_by_and_inner_group_selection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test asserts groupNode{groupByFields, childSelects} or filter/docID placement (crates/query/src/plan/groupby has no explain test)."
   },
   {
     "id": "go.explain.default.group.limit",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/group_with_limit.rs::default_explain_request_with_limit_and_offset_on_parent_group_by",
+      "tools/integration-test/tests/explain/default/group_with_limit.rs::default_explain_request_with_limit_on_parent_group_by_and_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_limit_child.rs::default_explain_request_with_limit_and_offset_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_limit_child.rs::default_explain_request_with_limit_and_offset_on_multiple_inner_group_selections"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of limitNode above groupNode or limit/offset in childSelects."
   },
   {
     "id": "go.explain.default.group.order",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/group_with_order.rs::default_explain_request_with_ascending_order_on_parent_group_by",
+      "tools/integration-test/tests/explain/default/group_with_order.rs::default_explain_request_with_descending_order_on_parent_group_by",
+      "tools/integration-test/tests/explain/default/group_with_order.rs::default_explain_request_with_order_on_parent_group_by_and_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_order_child.rs::default_explain_request_with_ascending_order_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_order_child.rs::default_explain_request_with_descending_order_on_inner_group_selection",
+      "tools/integration-test/tests/explain/default/group_with_order_child.rs::default_explain_request_with_order_on_nested_parent_group_by_and_on_nested_parents_inner_group_selection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of orderNode on grouped parent or orderBy in childSelects."
   },
   {
     "id": "go.explain.default.group.average",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/group_with_average.rs::default_explain_request_with_average_inside_the_inner_group_and_nested_group_by_with_average",
+      "tools/integration-test/tests/explain/default/group_with_average.rs::default_explain_request_with_average_inside_the_inner_group_on_a_field",
+      "tools/integration-test/tests/explain/default/group_with_average.rs::default_explain_request_with_average_inside_the_inner_group_on_a_field_and_nested_group_by",
+      "tools/integration-test/tests/explain/default/group_with_average.rs::default_explain_request_with_group_by_with_average_on_an_inner_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of averageNode>countNode>sumNode>groupNode with sources."
   },
   {
     "id": "go.explain.default.aggregate.top_level",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/top_with_average.rs::default_explain_top_level_average_request",
+      "tools/integration-test/tests/explain/default/top_with_average.rs::default_explain_top_level_average_request_with_filter",
+      "tools/integration-test/tests/explain/default/top_with_count.rs::default_explain_top_level_count_request",
+      "tools/integration-test/tests/explain/default/top_with_count.rs::default_explain_top_level_count_request_with_filter",
+      "tools/integration-test/tests/explain/default/top_with_max.rs::default_explain_with_top_level_max_request_succeeds",
+      "tools/integration-test/tests/explain/default/top_with_max.rs::default_explain_with_top_level_max_request_with_filter_succeeds",
+      "tools/integration-test/tests/explain/default/top_with_min.rs::default_explain_with_top_level_min_request_succeeds",
+      "tools/integration-test/tests/explain/default/top_with_min.rs::default_explain_with_top_level_min_request_with_filter_succeeds",
+      "tools/integration-test/tests/explain/default/top_with_sum.rs::default_explain_top_level_sum_request",
+      "tools/integration-test/tests/explain/default/top_with_sum.rs::default_explain_top_level_sum_request_with_filter"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of top-level COUNT/SUM/AVG/MIN/MAX explain nodes or sources (crates/query/tests/query_parse_explain_tests.rs::test_parse_top_level_aggregate only checks parsing)."
   },
   {
     "id": "go.explain.default.aggregate.inline_array",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_average.rs::default_explain_request_with_average_on_array_field",
+      "tools/integration-test/tests/explain/default/with_count.rs::default_explain_request_with_count_on_inline_array_field",
+      "tools/integration-test/tests/explain/default/with_max.rs::default_explain_request_with_max_on_inline_array_field_child_field_will_be_empty",
+      "tools/integration-test/tests/explain/default/with_min.rs::default_explain_request_with_min_on_inline_array_field_child_field_will_be_empty",
+      "tools/integration-test/tests/explain/default/with_sum.rs::default_explain_request_with_sum_on_inline_array_field_child_field_will_be_empty"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of aggregate sources {fieldName, childFieldName: nil, filter: nil} on inline arrays."
   },
   {
     "id": "go.explain.default.aggregate.join",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_average_join.rs::default_explain_request_with_average_on_joined_field",
+      "tools/integration-test/tests/explain/default/with_average_join.rs::default_explain_request_with_average_on_multiple_joined_fields_with_filter",
+      "tools/integration-test/tests/explain/default/with_count_join.rs::default_explain_request_with_count_on_one_to_many_joined_field",
+      "tools/integration-test/tests/explain/default/with_count_join.rs::default_explain_request_with_count_on_one_to_many_joined_field_with_many_sources",
+      "tools/integration-test/tests/explain/default/with_max_join.rs::default_explain_request_with_max_on_one_to_many_joined_field_succeeds",
+      "tools/integration-test/tests/explain/default/with_max_join.rs::default_explain_request_with_max_on_one_to_many_joined_field_with_filter_succeeds",
+      "tools/integration-test/tests/explain/default/with_max_join.rs::default_explain_request_with_max_on_one_to_many_joined_field_with_many_sources_succeeds",
+      "tools/integration-test/tests/explain/default/with_min_join.rs::default_explain_request_with_min_on_one_to_many_joined_field_succeeds",
+      "tools/integration-test/tests/explain/default/with_min_join.rs::default_explain_request_with_min_on_one_to_many_joined_field_with_filter_succeeds",
+      "tools/integration-test/tests/explain/default/with_min_join.rs::default_explain_request_with_min_on_one_to_many_joined_field_with_many_sources_succeeds",
+      "tools/integration-test/tests/explain/default/with_sum_join.rs::default_explain_request_with_sum_on_one_to_many_joined_field",
+      "tools/integration-test/tests/explain/default/with_sum_join.rs::default_explain_request_with_sum_on_one_to_many_joined_field_with_filter",
+      "tools/integration-test/tests/explain/default/with_sum_join.rs::default_explain_request_with_sum_on_one_to_many_joined_field_with_many_sources"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of aggregate over typeIndexJoin/typeJoinMany, sources filters, or parallelNode for several sources."
   },
   {
     "id": "go.explain.default.aggregate.shared_join",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_average_join.rs::default_explain_request_one_to_many_with_average_and_child_ne_nil_filter_shares_join_field",
+      "tools/integration-test/tests/explain/default/with_count_join.rs::default_explain_request_one_to_many_with_count_and_child_filter_does_not_share_join_field",
+      "tools/integration-test/tests/explain/default/with_count_join.rs::default_explain_request_one_to_many_with_count_with_filter_and_child_filter_shares_join_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test checks join sharing between an aggregate and a filtered child selection in the plan."
   },
   {
     "id": "go.explain.default.join.structure",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/type_join.rs::default_explain_request_with2_single_joins_and1_many_join",
+      "tools/integration-test/tests/explain/default/type_join_many.rs::default_explain_request_with_a_one_to_many_join",
+      "tools/integration-test/tests/explain/default/type_join_one.rs::default_explain_request_with_a_one_to_one_join",
+      "tools/integration-test/tests/explain/default/type_join_one.rs::default_explain_request_with_two_level_deep_nested_joins"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of default-explain typeIndexJoin{joinType, rootName, subTypeName} attributes (only execute-type join shape in tools/integration-test/tests/query/explain_nested.rs, and debug in relation_rendering_1597.rs, both outside this leaf). planner/builder/tests.rs one/many relation tests only check plan.kind() == selectNode."
   },
   {
     "id": "go.explain.default.join.related_filter",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/type_join_with_filter.rs::default_explain_request_with_many_related_filters",
+      "tools/integration-test/tests/explain/default/type_join_with_filter.rs::default_explain_request_with_related_and_regular_filter",
+      "tools/integration-test/tests/explain/default/type_join_with_filter_doc_id.rs::default_explain_request_with_many_related_filters_and_doc_id",
+      "tools/integration-test/tests/explain/default/type_join_with_filter_doc_id.rs::default_explain_request_with_related_and_regular_filter_and_doc_i_ds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of whole filter on selectNode vs own-field part on scanNode with typeIndexJoin per related field. planner/builder/tests.rs::test_plan_nested_filter_with_parent_filter checks only plan.kind(), not explain output."
   },
   {
     "id": "go.explain.default.limit.parent",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_limit.rs::default_explain_request_with_limit_and_offset",
+      "tools/integration-test/tests/explain/default/with_limit.rs::default_explain_request_with_only_limit",
+      "tools/integration-test/tests/explain/default/with_limit.rs::default_explain_request_with_only_offset"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of limitNode{limit, offset} in explain output. planner/builder/tests.rs::test_plan_with_limit only asserts the internal plan.kind() == limitNode (not explain JSON, no limit/offset attributes)."
   },
   {
     "id": "go.explain.default.limit.child",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_limit_count.rs::default_explain_request_with_limit_args_on_parent_and_related_child_with_count",
+      "tools/integration-test/tests/explain/default/with_limit_count.rs::default_explain_request_with_only_limit_on_related_child_with_count",
+      "tools/integration-test/tests/explain/default/with_limit_join.rs::default_explain_request_with_both_limit_and_offset_on_related_child",
+      "tools/integration-test/tests/explain/default/with_limit_join.rs::default_explain_request_with_limit_on_related_child_and_both_limit_and_offset_on_parent",
+      "tools/integration-test/tests/explain/default/with_limit_join.rs::default_explain_request_with_only_limit_on_related_child",
+      "tools/integration-test/tests/explain/default/with_limit_join.rs::default_explain_request_with_only_offset_on_related_child"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of limitNode in the join subType or with COUNT parallelNode. planner/builder/tests.rs::test_plan_relation_with_limit checks only internal plan kinds."
   },
   {
     "id": "go.explain.default.order",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/default/with_order.rs::default_explain_request_with_ascending_order_on_parent",
+      "tools/integration-test/tests/explain/default/with_order.rs::default_explain_request_with_multi_order_fields_on_parent",
+      "tools/integration-test/tests/explain/default/with_order_join.rs::default_explain_request_with_order_field_on_parent_and_related_child",
+      "tools/integration-test/tests/explain/default/with_order_join.rs::default_explain_request_with_order_field_on_related_child"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched rg for '@explain' across --type rust (only execute/debug/index-honesty uses outside crates/query/tests/query_parse_explain_tests.rs, which only checks ExplainType parsing) and for the node/attribute names in test code; no test of orderNode{orderings:[{direction, fields}]} on parent or child in default explain."
   },
   {
     "id": "go.explain.debug.scan",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/basic.rs::debug_explain_request",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_greater_than_filter",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_integer_equal_filter",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_logical_compound_and_filter",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_logical_compound_or_filter",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_match_inside_list",
+      "tools/integration-test/tests/explain/debug/with_filter.rs::debug_explain_request_with_string_equal_filter",
+      "tools/integration-test/tests/explain/debug/with_filter_doc_id.rs::debug_explain_request_with_doc_i_ds_filter_using_multiple_but_duplicate_i_ds",
+      "tools/integration-test/tests/explain/debug/with_filter_doc_id.rs::debug_explain_request_with_doc_i_ds_filter_using_multiple_unique_i_ds",
+      "tools/integration-test/tests/explain/debug/with_filter_doc_id.rs::debug_explain_request_with_doc_i_ds_filter_using_one_id",
+      "tools/integration-test/tests/explain/debug/with_filter_doc_id.rs::debug_explain_request_with_doc_id_filter",
+      "tools/integration-test/tests/explain/debug/with_filter_doc_id.rs::debug_explain_request_with_matching_id_filter"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No test explains a plain select, filter or docID selection in debug mode at top level; empty-bodied selectTopNode>selectNode>scanNode is asserted only inside a join subType (relation_rendering_1597.rs:89-93)."
   },
   {
     "id": "go.explain.debug.mutation",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/add.rs::debug_explain_mutation_request_does_not_add_doc_given_duplicate",
+      "tools/integration-test/tests/explain/debug/add.rs::debug_explain_mutation_request_with_add",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_filter",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_filter_and_ids",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_filter_to_match_everything",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_id",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_ids",
+      "tools/integration-test/tests/explain/debug/delete.rs::debug_explain_mutation_request_with_delete_using_no_ids",
+      "tools/integration-test/tests/explain/debug/update.rs::debug_explain_mutation_request_with_update_using_boolean_filter",
+      "tools/integration-test/tests/explain/debug/update.rs::debug_explain_mutation_request_with_update_using_id",
+      "tools/integration-test/tests/explain/debug/update.rs::debug_explain_mutation_request_with_update_using_ids",
+      "tools/integration-test/tests/explain/debug/update.rs::debug_explain_mutation_request_with_update_using_ids_and_filter",
+      "tools/integration-test/tests/explain/debug/upsert.rs::debug_explain_mutation_request_with_upsert_succeeds"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain of add_/delete_/update_/upsert_ mutations, and no check that an explained mutation writes nothing."
   },
   {
     "id": "go.explain.debug.dagscan",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/dagscan.rs::debug_explain_commits_dag_scan_query_op",
+      "tools/integration-test/tests/explain/debug/dagscan.rs::debug_explain_commits_dag_scan_query_op_without_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain of _commits; 'dagScanNode' appears in no test outside crates/query/src."
   },
   {
     "id": "go.explain.debug.group.selection",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/group.rs::debug_explain_request_with_group_by_on_parent",
+      "tools/integration-test/tests/explain/debug/group.rs::debug_explain_request_with_group_by_two_fields_on_parent",
+      "tools/integration-test/tests/explain/debug/group_with_doc_id.rs::debug_explain_request_with_doc_i_ds_and_filter_on_parent_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_doc_id.rs::debug_explain_request_with_doc_id_on_parent_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_doc_id_child.rs::debug_explain_request_with_doc_i_ds_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_filter.rs::debug_explain_request_with_filter_on_group_by_parent",
+      "tools/integration-test/tests/explain/debug/group_with_filter_child.rs::debug_explain_request_with_filter_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_filter_child.rs::debug_explain_request_with_filter_on_parent_group_by_and_inner_group_selection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. 'groupNode' is asserted nowhere; relation_rendering_1597.rs:44-47 notes the Rust planner does not emit groupNode inside a typeJoinMany subType."
   },
   {
     "id": "go.explain.debug.group.limit_order",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/group_with_limit.rs::debug_explain_request_with_limit_and_offset_on_parent_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_limit.rs::debug_explain_request_with_limit_on_parent_group_by_and_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_limit_child.rs::debug_explain_request_with_limit_and_offset_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_limit_child.rs::debug_explain_request_with_limit_and_offset_on_multiple_inner_group_selections",
+      "tools/integration-test/tests/explain/debug/group_with_order.rs::debug_explain_request_with_ascending_order_on_parent_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_order.rs::debug_explain_request_with_descending_order_on_parent_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_order.rs::debug_explain_request_with_order_on_parent_group_by_and_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_order_child.rs::debug_explain_request_with_ascending_order_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_order_child.rs::debug_explain_request_with_descending_order_on_inner_group_selection",
+      "tools/integration-test/tests/explain/debug/group_with_order_child.rs::debug_explain_request_with_order_on_nested_parent_group_by_and_on_nested_parents_inner_group_selection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain with groupBy plus limit/order."
   },
   {
     "id": "go.explain.debug.group.average",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/group_with_average.rs::debug_explain_request_with_average_inside_the_inner_group_and_nested_group_by_with_average",
+      "tools/integration-test/tests/explain/debug/group_with_average.rs::debug_explain_request_with_average_inside_the_inner_group_on_a_field",
+      "tools/integration-test/tests/explain/debug/group_with_average.rs::debug_explain_request_with_average_inside_the_inner_group_on_a_field_and_nested_group_by",
+      "tools/integration-test/tests/explain/debug/group_with_average.rs::debug_explain_request_with_group_by_with_average_on_an_inner_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No averageNode/countNode/sumNode assertions in any explain test."
   },
   {
     "id": "go.explain.debug.aggregate.top_level",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/top_with_average.rs::debug_explain_top_level_average_request",
+      "tools/integration-test/tests/explain/debug/top_with_average.rs::debug_explain_top_level_average_request_with_filter",
+      "tools/integration-test/tests/explain/debug/top_with_count.rs::debug_explain_top_level_count_request",
+      "tools/integration-test/tests/explain/debug/top_with_count.rs::debug_explain_top_level_count_request_with_filter",
+      "tools/integration-test/tests/explain/debug/top_with_max.rs::debug_explain_top_level_max_request_succeeds",
+      "tools/integration-test/tests/explain/debug/top_with_max.rs::debug_explain_top_level_max_request_with_filter_succeeds",
+      "tools/integration-test/tests/explain/debug/top_with_min.rs::debug_explain_top_level_min_request_succeeds",
+      "tools/integration-test/tests/explain/debug/top_with_min.rs::debug_explain_top_level_min_request_with_filter_succeeds",
+      "tools/integration-test/tests/explain/debug/top_with_sum.rs::debug_explain_top_level_sum_request",
+      "tools/integration-test/tests/explain/debug/top_with_sum.rs::debug_explain_top_level_sum_request_with_filter"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain of top-level COUNT/SUM/AVG/MIN/MAX."
   },
   {
     "id": "go.explain.debug.aggregate.inline_array",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/with_average.rs::debug_explain_request_with_average_on_array_field",
+      "tools/integration-test/tests/explain/debug/with_count.rs::debug_explain_request_with_count_on_inline_array_field",
+      "tools/integration-test/tests/explain/debug/with_max.rs::debug_explain_request_with_max_on_inline_array_field_child_field_will_be_empty",
+      "tools/integration-test/tests/explain/debug/with_min.rs::debug_explain_request_with_min_on_inline_array_field_child_field_will_be_empty",
+      "tools/integration-test/tests/explain/debug/with_sum.rs::debug_explain_request_with_sum_on_inline_array_field_child_field_will_be_empty"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain of aggregates over [Int!] fields."
   },
   {
     "id": "go.explain.debug.aggregate.join",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/with_average_join.rs::debug_explain_request_with_average_on_joined_field",
+      "tools/integration-test/tests/explain/debug/with_average_join.rs::debug_explain_request_with_average_on_multiple_joined_fields_with_filter",
+      "tools/integration-test/tests/explain/debug/with_count_join.rs::debug_explain_request_with_count_on_one_to_many_joined_field",
+      "tools/integration-test/tests/explain/debug/with_count_join.rs::debug_explain_request_with_count_on_one_to_many_joined_field_with_many_sources",
+      "tools/integration-test/tests/explain/debug/with_max_join.rs::debug_explain_request_with_max_on_one_to_many_joined_field_succeeds",
+      "tools/integration-test/tests/explain/debug/with_max_join.rs::debug_explain_request_with_max_on_one_to_many_joined_field_with_filter_succeeds",
+      "tools/integration-test/tests/explain/debug/with_max_join.rs::debug_explain_request_with_max_on_one_to_many_joined_field_with_many_sources_succeeds",
+      "tools/integration-test/tests/explain/debug/with_min_join.rs::debug_explain_request_with_min_on_one_to_many_joined_field_succeeds",
+      "tools/integration-test/tests/explain/debug/with_min_join.rs::debug_explain_request_with_min_on_one_to_many_joined_field_with_filter_succeeds",
+      "tools/integration-test/tests/explain/debug/with_min_join.rs::debug_explain_request_with_min_on_one_to_many_joined_field_with_many_sources_succeeds",
+      "tools/integration-test/tests/explain/debug/with_sum_join.rs::debug_explain_request_with_sum_on_one_to_many_joined_field",
+      "tools/integration-test/tests/explain/debug/with_sum_join.rs::debug_explain_request_with_sum_on_one_to_many_joined_field_with_filter",
+      "tools/integration-test/tests/explain/debug/with_sum_join.rs::debug_explain_request_with_sum_on_one_to_many_joined_field_with_many_sources"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain of aggregates over relations; no parallelNode assertion anywhere."
   },
   {
     "id": "go.explain.debug.join",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/relation_rendering_1597.rs::duplicate_relation_selection_plans_one_join_test",
-      "tools/integration-test/tests/query/relation_order_panic_1594.rs::debug_explain_asc_test"
+      "tools/integration-test/tests/explain/debug/type_join.rs::debug_explain_request_with2_single_joins_and1_many_join",
+      "tools/integration-test/tests/explain/debug/type_join_many.rs::debug_explain_request_with_a_one_to_many_join",
+      "tools/integration-test/tests/explain/debug/type_join_one.rs::debug_explain_request_with_a_one_to_one_join",
+      "tools/integration-test/tests/explain/debug/type_join_one.rs::debug_explain_request_with_two_level_deep_nested_joins",
+      "tools/integration-test/tests/explain/debug/type_join_with_filter.rs::debug_explain_request_with_many_related_filters",
+      "tools/integration-test/tests/explain/debug/type_join_with_filter.rs::debug_explain_request_with_related_and_regular_filter",
+      "tools/integration-test/tests/explain/debug/type_join_with_filter_doc_id.rs::debug_explain_request_with_many_related_filters_and_doc_id",
+      "tools/integration-test/tests/explain/debug/type_join_with_filter_doc_id.rs::debug_explain_request_with_related_and_regular_filter_and_doc_i_ds"
     ],
-    "evidence": "tools/integration-test/tests/query/relation_rendering_1597.rs:71-109 asserts the exact debug tree selectTopNode>selectNode>typeIndexJoin>typeJoinMany{root:{scanNode:{}}, subType: ...typeIndexJoin>typeJoinOne{root, subType: selectTopNode>selectNode>scanNode}}; tools/integration-test/tests/query/relation_order_panic_1594.rs:56-67 asserts typeJoinOne root/subType shape",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Asserted: one-to-many join with nested one-to-one join, node names only, root/subType subplans. Unverified: parallelNode for several sibling joins (TestDebugExplainRequestWith2SingleJoinsAnd1ManyJoin), a standalone one-to-one join and two-level-deep one-to-one from the parent, and every related-field-filter case (with or without docID)."
   },
   {
     "id": "go.explain.debug.limit",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/with_limit.rs::debug_explain_request_with_limit_and_offset",
+      "tools/integration-test/tests/explain/debug/with_limit.rs::debug_explain_request_with_only_limit",
+      "tools/integration-test/tests/explain/debug/with_limit.rs::debug_explain_request_with_only_offset",
+      "tools/integration-test/tests/explain/debug/with_limit_count.rs::debug_explain_request_with_limit_args_on_parent_and_related_child_with_count",
+      "tools/integration-test/tests/explain/debug/with_limit_count.rs::debug_explain_request_with_only_limit_on_related_child_with_count",
+      "tools/integration-test/tests/explain/debug/with_limit_join.rs::debug_explain_request_with_both_limit_and_offset_on_related_child",
+      "tools/integration-test/tests/explain/debug/with_limit_join.rs::debug_explain_request_with_limit_on_related_child_and_both_limit_and_offset_on_parent",
+      "tools/integration-test/tests/explain/debug/with_limit_join.rs::debug_explain_request_with_only_limit_on_related_child",
+      "tools/integration-test/tests/explain/debug/with_limit_join.rs::debug_explain_request_with_only_offset_on_related_child"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain with limit/offset. Internal planner tests (crates/query/src/planner/builder/tests.rs::test_plan_with_limit, test_plan_relation_with_limit) check plan kinds but not through @explain."
   },
   {
     "id": "go.explain.debug.order",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/with_order.rs::debug_explain_request_with_ascending_order_on_parent",
+      "tools/integration-test/tests/explain/debug/with_order.rs::debug_explain_request_with_multi_order_fields_on_parent",
+      "tools/integration-test/tests/explain/debug/with_order_join.rs::debug_explain_request_with_order_field_on_parent_and_related_child",
+      "tools/integration-test/tests/explain/debug/with_order_join.rs::debug_explain_request_with_order_field_on_related_child",
+      "tools/integration-test/tests/explain/debug/with_order_join.rs::debug_explain_request_with_subquery_order_by_nested_relation_field",
+      "tools/integration-test/tests/explain/debug/with_order_join.rs::debug_explain_request_with_subquery_order_by_nested_relation_field_asc"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain asserting an orderNode at parent, child or nested-relation level; relation_order_panic_1594.rs asserts the orphan sequenceNode, not orderNode."
   },
   {
     "id": "go.explain.debug.index",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/explain/debug/with_index.rs::debug_explain_with_index_on_filter",
+      "tools/integration-test/tests/explain/debug/with_index.rs::debug_explain_with_index_on_order",
+      "tools/integration-test/tests/explain/debug/with_index.rs::debug_explain_with_index_on_subquery_nested_relation_order"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Searched all Rust tests for '@explain(type: debug)' (only relation_order_panic_1594.rs and relation_rendering_1597.rs use it) and for the node name in test code outside crates/query/src. No debug explain asserting the absence of orderNode with @index. Index use is checked only through execute indexFetches (see go.explain.execute.index)."
   },
   {
     "id": "go.explain.debug.orphan",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/relation_order_panic_1594.rs::debug_explain_asc_test",
-      "tools/integration-test/tests/query/relation_order_panic_1594.rs::debug_explain_desc_test"
+      "tools/integration-test/tests/explain/debug/with_orphan.rs::debug_explain_request_with_order_by_relation_field_secondary_parent",
+      "tools/integration-test/tests/explain/debug/with_orphan.rs::debug_explain_request_with_order_by_relation_field_with_index",
+      "tools/integration-test/tests/explain/debug/with_orphan.rs::debug_explain_request_with_order_by_relation_field_with_index_desc"
     ],
-    "evidence": "tools/integration-test/tests/query/relation_order_panic_1594.rs:84-88 asserts sequenceNode children [orphanNode, typeJoinOne] for ASC and :106-110 [typeJoinOne, orphanNode] for DESC on Publisher(order: {book: {rating}}) @exhaustive",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Primary-parent ASC/DESC covered with the Go fixture. Unverified: secondary-side ordering Book(order: {publisher: {establishedYear: ASC}}) explaining as typeIndexJoin > orphanNode > typeJoinOne (TestDebugExplainRequestWithOrderByRelationFieldSecondaryParent)."
   },
   {
@@ -413,12 +645,15 @@
   },
   {
     "id": "go.encryption.doc.query",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/transactions.rs::txn_encrypted_create_commits",
-      "tools/integration-test/tests/encryption/document_policy.rs::document_policy_covers_new_field_test"
+      "tools/integration-test/tests/encryption_scenarios/query.rs::doc_encryption_with_encryption_on_counter_crdt_should_fetch_decrypted",
+      "tools/integration-test/tests/encryption_scenarios/query.rs::doc_encryption_with_encryption_should_fetch_decrypted",
+      "tools/integration-test/tests/encryption_scenarios/query_relation.rs::doc_encryption_with_encryption_on_both_relations_should_fetch_decrypted",
+      "tools/integration-test/tests/encryption_scenarios/query_relation.rs::doc_encryption_with_encryption_on_primary_relations_should_fetch_decrypted",
+      "tools/integration-test/tests/encryption_scenarios/query_relation.rs::doc_encryption_with_encryption_on_secondary_relations_should_fetch_decrypted"
     ],
-    "evidence": "transactions.rs:655 asserts an encrypt:true doc reads back name \"Alice\"; document_policy.rs:87 asserts the encrypted field decrypts on query",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Unverified on a single node: an encrypted pcounter field summing after an update (5 then +3 = 8), and relation resolution with encryption on both, primary-only or secondary-only sides. No Rust test combines encryption with relations."
   },
   {
@@ -503,9 +738,11 @@
   },
   {
     "id": "go.encryption.peer.diverged_versions",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/encryption_scenarios/peer_branchable_diverged_versions.rs::doc_encryption_branchable_sync_diverged_versions_fails_kms_auth"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Go test is t.Skip'd (issue #4789). Searched for diverged branchable versions with encrypted docs and bidirectional sync (`diverg`, `4789`, branchable + encrypt in tools/integration-test, crates/defra-node/tests, crates/db/tests); none found."
   },
   {
