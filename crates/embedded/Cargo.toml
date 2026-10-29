@@ -85,7 +85,7 @@ edge = { path = "../edge", features = ["testing"] }
 base64 = { workspace = true }
 tempfile = "3.17"
 zanzibar = { path = "../zanzibar" }
-zstd = "0.13"
+zstd = "0.14"
 tar = "0.4"
 
 [lints]
