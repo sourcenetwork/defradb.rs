@@ -16,13 +16,6 @@ Queries against one collection with no relations: selection, filtering, ordering
 
 What a plain collection query returns and which selections it rejects.
 
-# `go.query.simple.select.fields`: Plain query returns every document with the selected fields
-
-- **Parents:** ["go.query.simple.select"]
-- **Go-Tests:** ["query/simple/simple_test.go::TestQuerySimple", "query/simple/simple_test.go::TestQuerySimpleWithMultipleRows", "query/simple/simple_test.go::TestQuerySimpleWithSomeDefaultValues", "query/simple/simple_test.go::TestQuerySimpleWithDefaultValue", "query/simple/with_restart_test.go::TestQuerySimpleWithRestart"]
-
-`query { Users { Name Age } }` returns one object per document holding exactly the selected fields (including `_docID` when selected); fields never set on a document come back as `null`. Documents added after a node restart are returned like any others.
-
 # `go.query.simple.graphql`: GraphQL document features
 
 - **Parents:** ["go.query.simple"]

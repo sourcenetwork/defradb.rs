@@ -327,3 +327,10 @@ For a one-to-one relation, the primary side's `<Name>MutationInputArg` includes 
 - **Scenarios:** ["collection_version.client_introspection.basic", "collection_version.client_introspection.with-one-to-many-collection", "collection_version.introspection-explain-type-defined"]
 
 With or without collections, introspection exposes the `ExplainType` enum with its description, and the full client introspection query succeeds, including with a one-to-many schema.
+
+# `go.collection_version.migrations.query.restart`: Migrations survive restart
+
+- **Parents:** ["go.collection_version.migrations.query"]
+- **Scenarios:** ["collection_version.migrations.query.collection-migration-query-with-restart", "collection_version.migrations.query.collection-migration-query-with-restart-and-migration-before-patch-collection"]
+
+Migrations configured before or after the patch are still applied to queries after the node restarts.

@@ -773,11 +773,13 @@
   },
   {
     "id": "go.searchable_encryption.index.patch",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/searchable_encryption/patch.rs::patch_collection_modify_encrypted_index_should_error",
+      "tools/integration-test/tests/searchable_encryption/patch.rs::patch_collection_new_encrypted_index_should_error",
+      "tools/integration-test/tests/searchable_encryption/patch.rs::patch_collection_remove_encrypted_index_should_error"
     ],
-    "evidence": "cross_runtime_schema_validation.rs:378 asserts the `validateEncryptedIndexesNotModified` case (replace /EncryptedIndexes with []) is rejected by both Rust and Go (case at :226-231)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Only removal is tested; adding and modifying an encrypted index via patch are not, and the `collection encrypted indexes cannot be mutated` message is not asserted (only is_err)."
   },
   {

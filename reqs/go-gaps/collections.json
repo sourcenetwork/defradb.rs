@@ -909,10 +909,13 @@
   },
   {
     "id": "go.collection_version.migrations.query.restart",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
-    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); crates/db/tests/definition/migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc together with lens_set/set_migration."
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/migrations/query/with_restart.rs::collection_migration_query_with_restart",
+      "tools/integration-test/tests/collection_version/migrations/query/with_restart.rs::collection_migration_query_with_restart_and_migration_before_patch_collection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
+    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc together with lens_set/set_migration."
   },
   {
     "id": "go.collection_version.migrations.query.txn",

@@ -3,11 +3,13 @@
     "id": "go.query.simple.select.fields",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_queries.rs::go_cross_runtime_crud_and_query_equivalence",
-      "tools/integration-test/tests/basic/smoke.rs::smoke_single_rust_node",
-      "tools/integration-test/tests/basic/regolith_crash_reopen.rs::rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes"
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple",
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_default_value",
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_multiple_rows",
+      "tools/integration-test/tests/query_scenarios/simple/simple.rs::query_simple_with_some_default_values",
+      "tools/integration-test/tests/query_scenarios/simple/with_restart.rs::query_simple_with_restart"
     ],
-    "evidence": "cross_runtime_queries.rs:89-99 compares the whole ScalarCase response (incl. the 'nulls' doc with unset optional fields) byte-equal with Go; :116,131 plain QueryCase selection equal to Go (optionalRank unset -> null); smoke.rs:47-49 asserts selected name/age; regolith_crash_reopen.rs:134-147 asserts documents are returned after a restart",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
     "note": "Restart test restarts after a kill; it does not create new documents after the restart as the Go test description says."
   },
   {
