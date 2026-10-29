@@ -33,6 +33,13 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// The transaction does not exist, is finished, or belongs to another
+    /// caller. Go's text for all three.
+    #[error("transaction not found")]
+    TransactionNotFound,
+    /// The commit lost a write conflict; the message is the storage engine's.
+    #[error("{0}")]
+    TransactionConflict(String),
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),
