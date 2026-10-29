@@ -30,10 +30,12 @@ env:
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
   # Every RunsOn job shares compiled crates through this bucket. sccache refuses
   # to start when it cannot reach the bucket, so each job sets RUSTC_WRAPPER only
-  # after the server is up, and compiles locally otherwise (#1429).
+  # after the server is up, and compiles locally otherwise (#1429). The server
+  # never idles out, since a restart while the bucket is unreachable fails the build.
   SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
   SCCACHE_REGION: us-east-2
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  SCCACHE_IDLE_TIMEOUT: '0'
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
