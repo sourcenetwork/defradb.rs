@@ -217,6 +217,29 @@ impl QueryExecutor for PooledExecutor {
         self.inner.discard_txn_as(context, handle).await
     }
 
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.inner.add_collection_as(context, sdl).await
+    }
+
+    async fn collections_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.inner.collections_as(context).await
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.inner.set_migration_as(context, config).await
+    }
+
     fn abandon_txn(&self, handle: &TransactionHandle) {
         self.inner.abandon_txn(handle);
     }

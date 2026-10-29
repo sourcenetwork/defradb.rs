@@ -142,6 +142,45 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.discard(handle)).await
     }
 
+    /// Create the collections `sdl` defines in the transaction `context`
+    /// carries. They are visible to requests in it, and to others once it
+    /// commits.
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported in this configuration",
+        ))
+    }
+
+    /// Every collection version the transaction `context` carries sees,
+    /// its own uncommitted writes included.
+    async fn collections_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "transaction-scoped collection reads are not supported in this configuration",
+        ))
+    }
+
+    /// Register the lens migration `config` (JSON) in the transaction
+    /// `context` carries; the transform ID.
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported in this configuration",
+        ))
+    }
+
     /// Let go of a transaction without committing its writes, at once and
     /// without waiting: no later request finds it, and it ends after the
     /// requests already queued for it. Must be idempotent and work without

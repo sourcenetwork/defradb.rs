@@ -21,6 +21,6 @@ pub use traits::{
     P2PError, P2POperations, P2PResult, P2pDocumentInfo, P2pDocumentRequest, PolicyInfo,
     RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
     ReplicationFilter, ReplicationFilters, ReplicatorInfo, SyncBranchableRequest,
-    SyncDocumentsRequest, SyncVersionsRequest, TransactionOperations, TransportPeerId,
-    ViewOperations, MANAGE_UNAUTHORIZED,
+    SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId, ViewOperations,
+    MANAGE_UNAUTHORIZED,
 };

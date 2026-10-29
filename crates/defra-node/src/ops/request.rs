@@ -18,12 +18,12 @@ impl Node {
         context: &RequestContext,
         sdl: &str,
     ) -> Result<Vec<CollectionVersion>> {
-        if let Some(id) = context.txn() {
+        if context.txn().is_some() {
             return self
-                .txn_registry()
-                .add_collection_in_txn_as(&self.caller(context), &id.to_string(), sdl)
+                .runner()
+                .add_collection_as(&self.caller(context).with_txn(context.txn()), sdl)
                 .await
-                .map_err(Error::from);
+                .map_err(transaction_error);
         }
         let (ops, context, sdl) = (
             Arc::clone(&self.schema_ops),

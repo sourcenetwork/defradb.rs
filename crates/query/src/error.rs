@@ -13,7 +13,7 @@ pub type Result<T> = std::result::Result<T, QueryError>;
 #[derive(Debug, Error)]
 pub enum TransactionError {
     /// The transaction was not found (may have been committed/rolled back).
-    #[error("transaction not found: {0}")]
+    #[error("transaction not found")]
     NotFound(String),
 
     /// The transaction was already finalized (double commit/discard).
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn test_transaction_error_display() {
         let err = TransactionError::not_found("txn-123");
-        assert_eq!(err.to_string(), "transaction not found: txn-123");
+        assert_eq!(err.to_string(), "transaction not found");
 
         let err = TransactionError::already_finalized("txn-456");
         assert_eq!(err.to_string(), "transaction already finalized: txn-456");
