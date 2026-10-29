@@ -254,6 +254,9 @@ RUNS=(
   "MC_TxnContext_Red_RunAfterEnd.cfg TxnContext.tla RED" # a finished transaction still runs requests (INV_FinishedNeverRuns)
   "MC_TxnContext_Red_DiscardLeaks.cfg TxnContext.tla RED" # discard applies its writes (INV_DiscardLeavesNothing)
   "MC_TxnContext_Red_NoConflictCheck.cfg TxnContext.tla RED" # commit skips the conflict check (INV_NoLostUpdate)
+  "MC_CoreDispatch_Green.cfg CoreDispatch.tla GREEN" # schema-evolution ops: NAC before any effect, a named transaction holds the write, a patch in one is refused
+  "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
+  "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
   "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)
