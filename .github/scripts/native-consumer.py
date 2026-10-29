@@ -298,6 +298,7 @@ def qualify(runner):
     runner.run("fetch-defra", fetch)
     log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defra", "--features", "vera", "--message-format=json"])
     runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defra", "defra")
+    runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
     log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
     log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "verars", "--no-run", "--message-format=json"])
