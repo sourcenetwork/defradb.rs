@@ -28,9 +28,9 @@ env:
   # pull requests evicted main's and every new pull request compiled from
   # scratch. Only main saves, and one job saves each shared key.
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
-  # Every RunsOn job shares compiled crates through this bucket. A storage error
-  # falls back to a local compile instead of failing the build (#1429).
-  RUSTC_WRAPPER: sccache
+  # Every RunsOn job shares compiled crates through this bucket. sccache refuses
+  # to start when it cannot reach the bucket, so each job sets RUSTC_WRAPPER only
+  # after the server is up, and compiles locally otherwise (#1429).
   SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
   SCCACHE_REGION: us-east-2
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
@@ -86,6 +86,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -135,6 +136,7 @@ jobs:
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: feature
@@ -150,6 +152,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -195,6 +198,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -242,6 +246,7 @@ jobs:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -264,6 +269,7 @@ jobs:
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
@@ -320,6 +326,7 @@ jobs:
       - name: Check TLA ownership and convergence models
         run: proofs/tla/run-all.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lean-conformance
@@ -365,6 +372,7 @@ jobs:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -411,6 +419,7 @@ jobs:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -587,6 +596,7 @@ jobs:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
