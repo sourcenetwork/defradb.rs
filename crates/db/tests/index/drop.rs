@@ -324,3 +324,27 @@ fn a_dropped_index_id_is_never_handed_out_again() {
     })
     .unwrap()
 }
+
+#[test]
+fn drop_progress_survives_its_encoding() {
+    // A restart that cannot read the record clears the drop and leaves its
+    // entries behind.
+    let index = IndexDescription {
+        name: "by_age".to_string(),
+        id: 7,
+        fields: vec![schema::IndexedFieldDescription {
+            name: "age".to_string(),
+            descending: true,
+        }],
+        unique: true,
+        kind: None,
+        auto_generated: false,
+    }
+    .normalized();
+    for after in [None, Some(vec![0, 1, 0xff, b'k'])] {
+        let progress = DropProgress::new(42, index.clone(), after);
+        let decoded = DropProgress::decode(&progress.encode().unwrap());
+        assert_eq!(decoded, Some(progress));
+    }
+    assert_eq!(DropProgress::decode(b"{\"collection_short_id\":1}"), None);
+}
