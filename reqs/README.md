@@ -4,9 +4,27 @@ This folder describes what DefraDB is supposed to do, written as plain sentences
 
 ## Why we keep them
 
-We're rewriting DefraDB from Go into Rust, and the Rust version has to behave the same before the team can switch. Go's integration tests define that behaviour, but there are thousands of them, and a test name doesn't tell you what it's checking. So every Go test is written up here as the behaviour it proves. That gives us one list of everything DefraDB must do, and a way to see how much of it the Rust code already does.
+They do two jobs.
 
-After the switch, this list stays as the description of DefraDB. It's how a reviewer can tell what a change is meant to do, and how a newcomer can learn what the database promises without reading its tests.
+**They're how we finish the move from Go.** The Rust version has to behave like the Go one before the team can switch. Go's integration tests define that behaviour, but there are thousands of them, and a test name doesn't tell you what it's checking. So every Go test is written up here as the behaviour it proves. That gives us one list of everything DefraDB must do, and a way to see how much of it the Rust code already does.
+
+**They're how we say what a piece of work has to do.** This job doesn't end with the move. More and more of our code is written with AI agents, and an agent does what it's told, so a vague task gets a vague result. A requirement says precisely what done means: what goes in, what comes out, and the exact text of every error. It's checked by a test, so there's no arguing about whether the work is finished. When you hand a task to an agent, or pick one up yourself, the requirement is the brief.
+
+The same list helps people too. A reviewer can see what a change is meant to do, and a newcomer can learn what the database promises without reading its tests.
+
+## Working from requirements
+
+Whether you're a person or an agent, start a task here, before you touch the code:
+
+1. **Find the requirements the task touches.** Search this folder for the feature, or follow the IDs on the tests near the code you're changing.
+
+2. **Write down what should happen.** Edit those requirements, or add new ones, until they describe the behaviour you want. That includes the error cases. Anyone who reads them should know exactly what to build.
+
+3. **Write or update the tests** and tag them with the requirement IDs.
+
+4. **Then change the code** until those tests pass.
+
+The work is done when every requirement it touches is true and has a passing test. To find work that still needs doing, look for requirements without tests: the coverage report below lists them.
 
 ## What a requirement looks like
 
