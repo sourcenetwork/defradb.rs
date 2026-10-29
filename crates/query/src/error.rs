@@ -36,6 +36,11 @@ pub enum TransactionError {
     #[error("transaction conflict: {0}")]
     Conflict(String),
 
+    /// An operation inside the transaction was refused; the message is the
+    /// reason, in Go's words, with no prefix.
+    #[error("{0}")]
+    Operation(String),
+
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
     LockPoisoned(String),
@@ -62,6 +67,11 @@ impl TransactionError {
         Self::Execution(msg.into())
     }
 
+    /// Create an operation-refused error.
+    pub fn operation(msg: impl Into<String>) -> Self {
+        Self::Operation(msg.into())
+    }
+
     /// Create a write-conflict error.
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::Conflict(msg.into())
@@ -83,6 +93,7 @@ impl TransactionError {
     /// - `AlreadyFinalized`: Not retryable - the transaction was already committed
     ///   or rolled back.
     /// - `NotSupported`: Not retryable - transactions aren't available in this config.
+    /// - `Operation`: Not retryable - the operation itself was refused.
     /// - `Execution`: Retryable - transient storage errors that may succeed on retry
     ///   with a new transaction.
     /// - `Storage`: Uses the storage owner's classification; a full disk or
@@ -95,6 +106,7 @@ impl TransactionError {
             Self::NotFound(_) => false,
             Self::AlreadyFinalized(_) => false,
             Self::NotSupported(_) => false,
+            Self::Operation(_) => false,
             Self::Execution(_) => true,
             Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,

@@ -308,7 +308,9 @@ impl From<TransactionError> for HttpError {
         match err {
             TransactionError::NotFound(_) => HttpError::NotFound(message),
             TransactionError::AlreadyFinalized(_) => HttpError::Conflict(message),
-            TransactionError::Execution(message) => http_error_from_backend_message(message),
+            TransactionError::Execution(message) | TransactionError::Operation(message) => {
+                http_error_from_backend_message(message)
+            }
             TransactionError::Storage(cause) if cause.is_storage_full() => {
                 HttpError::StorageFull(message)
             }
