@@ -323,8 +323,12 @@ jobs:
         run: cargo test -p query --test storage_failure -- --ignored
       - name: Check native listener model binding
         run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_bindings_match_executed_model -- --exact --ignored
+      - name: Check native port mapping model binding
+        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model -- --exact --ignored
       - name: Check selected document push model binding
         run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
+      - name: Check HTTP router composition model binding
+        run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
@@ -408,7 +412,7 @@ jobs:
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
         with:
-          # The pinned GO_COMPAT_COMMIT declares `go 1.26.7`, so an older
+          # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
       - name: Restore Go DefraDB

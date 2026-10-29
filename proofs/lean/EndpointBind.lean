@@ -6,6 +6,10 @@ family. A port without an address keeps wildcard IPv4 and optional IPv6. With
 neither option the Minimal preset remains unchanged. Port zero asks the OS for
 an ephemeral port; native conformance observes its actual nonzero assignment.
 The Minimal preset's IPv4-required/IPv6-optional contract is an external premise.
+Iroh's gateway mapper discovers the system default route, independently of the
+endpoint's selected address. It cannot scope UPnP, PCP or NAT-PMP to a specific
+binding. Specific addresses therefore disable automatic gateway mapping; absent
+or wildcard addresses retain the caller's existing mapping configuration.
 Rust owner: crates/p2p/src/iroh/endpoint_config.rs::apply_bind_config.
 -/
 
@@ -42,6 +46,36 @@ def plan (request : Request) : List Socket :=
   | some address => [{ address, port := request.port.getD 0, required := true }]
   | none => wildcards (request.port.getD 0)
 
+-- Only an unrestricted local-address selection may retain default-route mapping.
+def port_mapping_allowed (request : Request) : Bool :=
+  match request.addr with
+  | none => true
+  | some address => address.ip == "0.0.0.0" || address.ip == "::"
+
+-- A specific address cannot open a gateway-discovery listener on another interface.
+theorem specific_address_disables_mapping (request : Request) (address : Address)
+    (selected : request.addr = some address)
+    (not_v4 : address.ip ≠ "0.0.0.0") (not_v6 : address.ip ≠ "::") :
+    port_mapping_allowed request = false := by
+  -- Both wildcard comparisons are false for the selected specific address.
+  simp [port_mapping_allowed, selected, not_v4, not_v6]
+
+-- Omitting an address preserves NAT mapping for every port selection.
+theorem absent_address_preserves_mapping (port : Option Nat) :
+    port_mapping_allowed { addr := none, port } = true := by
+  -- The endpoint keeps its caller's existing mapping configuration.
+  rfl
+
+-- Explicit wildcard selections retain automatic mapping in either address family.
+theorem wildcard_preserves_mapping (request : Request) (address : Address)
+    (selected : request.addr = some address)
+    (wildcard : address.ip = "0.0.0.0" ∨ address.ip = "::") :
+    port_mapping_allowed request = true := by
+  -- Either wildcard comparison is sufficient to keep mapping available.
+  rcases wildcard with v4 | v6
+  · simp [port_mapping_allowed, selected, v4]
+  · simp [port_mapping_allowed, selected, v6]
+
 -- No socket with another address or address family survives explicit selection.
 theorem explicit_replaces (request : Request) (address : Address)
     (h : request.addr = some address) :
@@ -73,7 +107,8 @@ theorem port_only_preserves_dual_stack (port : Nat) :
 def evaluate (input : Json) : Except String Json := do
   let requests : Array Request ← fromJson? input
   pure <| toJson <| requests.map fun request =>
-    Json.mkObj [("input", toJson request), ("expected", toJson (plan request))]
+    Json.mkObj [("input", toJson request), ("expected", toJson (plan request)),
+      ("port_mapping_allowed", toJson (port_mapping_allowed request))]
 
 end EndpointBind
 

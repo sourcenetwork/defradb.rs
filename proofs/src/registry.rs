@@ -48,18 +48,34 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
-        family: "Peer connection observation",
-        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused",
+        family: "HTTP router composition",
+        name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model",
+        anchor: "crates/http/src/server.rs Server::router, Server::serve; router_transform_tests::forwarding_filter_matches_executed_model; crates/defra-node/src/router_transform_tests.rs",
+        model_ref: "MC_HttpRouterComposition_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP router composition",
+        name: "configured_order / constructor_once / absent_preserves / forwarding_preserves / refuses_every_inner_status",
+        axis: Lean,
+        anchor: "crates/http/src/server.rs Server::router; router_transform_tests::forwarding_filter_matches_executed_model",
+        model_ref: "HttpRouterComposition (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model, native_port_mapping_configuration_matches_executed_model, loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners",
         model_ref: "MC_EndpointBind_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {
         family: "Peer connection observation",
-        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack",
+        name: "EndpointBind.explicit_replaces / explicit_preserves / absent_preserves_defaults / port_only_preserves_dual_stack / specific_address_disables_mapping / absent_address_preserves_mapping / wildcard_preserves_mapping",
         axis: Lean,
-        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases",
+        anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases, native_port_mapping_configuration_matches_executed_model",
         model_ref: "EndpointBind (lake build)",
         tiers: &[Boundary],
     },
@@ -209,7 +225,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
-        name: "Owner observations retain read gates and the transaction snapshot",
+        name: "Owner and visibility observations retain read gates and the transaction snapshot",
         axis: Tla,
         anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
         model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
@@ -217,7 +233,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
-        name: "Acp.OwnerObservation.exact_snapshot and denied-owner noninterference",
+        name: "Acp.OwnerObservation.exact_snapshot, unreadable_observation_hidden and unregistered_read_keeps_visibility",
         axis: Lean,
         anchor: "crates/query/src/runner/owners.rs",
         model_ref: "Acp.OwnerObservation",
@@ -1035,6 +1051,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // An embedded node checks its config before it opens anything, hands
+        // its retry ladder to every retry site of either transport, stops a
+        // host whose listen failed, enables NAC owned by the node identity,
+        // and dials bootstrap peers only once NAC is in place, logging a peer
+        // that does not answer.
+        family: "Embedded node startup",
+        name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
+        axis: Tla,
+        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Embedded node startup",
+        name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
+        model_ref: "RetrySchedule (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Inbound stream admission",
         name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
         axis: Tla,
@@ -1107,11 +1144,25 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        family: "Document create pipeline",
+        // Dropping an index while its backfill runs: the drop's commit takes
+        // the backfill record with it, a backfill failure is recorded only
+        // while the index is defined, entries go in pages after the
+        // definition commits, the drop retires the index's id so a new
+        // index never shares its keys, and a restart finishes an unfinished
+        // drop.
+        family: "Index drop during backfill",
+        name: "INV_NoRecordForGoneIndex / INV_NoOrphanEntries / INV_NewIndexIntact / LIVE_DropFinishes",
+        axis: Tla,
+        anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/db/src/index/manager/mod.rs index_id_floor; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
+        model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,
-        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity",
-        model_ref: "MC_CreatePipeline_{Green,Red_*}.cfg",
+        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity; crates/db/src/write/update.rs write_local, write_blocks; crates/db/src/write/autocommit/update.rs run_update_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::update_as; crates/db/src/block/builder/write.rs build_document_blocks, encrypt_with_new_key",
+        model_ref: "MC_WritePipeline_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {

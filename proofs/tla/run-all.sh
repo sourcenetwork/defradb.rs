@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # Run every TLA+ model and check its verdict against the expected red/green oracle.
-# Each run gets a unique -metadir (TLC's default scratch dir is per-second; a tight
-# loop would otherwise collide). Exits non-zero if any verdict does not match.
+# Each invocation gets private TLC state and output directories. Exits non-zero
+# if any verdict does not match, including a worker that fails to run TLC.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_HttpRouterComposition_Green.cfg HttpRouterComposition.tla GREEN"
+  "MC_HttpRouterComposition_Red_Early.cfg HttpRouterComposition.tla RED"
+  "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
+  "MC_HttpRouterComposition_Red_Twice.cfg HttpRouterComposition.tla RED"
+  "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Port.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Defaults.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_MappingScope.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_MappingDefaults.cfg EndpointBind.tla RED"
   "MC_SelectiveCarCapacity_Green.cfg SelectiveCarCapacity.tla GREEN"
   "MC_SelectiveCarCapacity_Red_NoReclaim.cfg SelectiveCarCapacity.tla RED"
   "MC_SelectiveCarCapacity_Red_ActiveEviction.cfg SelectiveCarCapacity.tla RED"
@@ -92,6 +99,8 @@ RUNS=(
   "MC_OwnerObservation_Red_Bound.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Snapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
@@ -142,10 +151,17 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
-  "MC_CreatePipeline_Green.cfg CreatePipeline.tla GREEN" # #1890: blocks stored once the composite exists, one short ID and one key mint per field across attempts
-  "MC_CreatePipeline_Red_AsComputed.cfg CreatePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
-  "MC_CreatePipeline_Red_PerAttempt.cfg CreatePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
-  "MC_CreatePipeline_Red_Direct.cfg CreatePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
+  "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
+  "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
+  "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
+  "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
+  "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
+  "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
+  "MC_WritePipeline_Green.cfg WritePipeline.tla GREEN" # #1890: creates and updates store blocks once the composite exists, one short ID and one key mint per field across attempts
+  "MC_WritePipeline_Red_AsComputed.cfg WritePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
+  "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
+  "MC_WritePipeline_Red_Direct.cfg WritePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
+  "MC_WritePipeline_Red_FirstMiss.cfg WritePipeline.tla RED" # the first missing key ends the attempt: a second wave (INV_OneWave)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
@@ -437,23 +453,66 @@ RUNS=(
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller
+  "MC_EmbeddedStartup_Green.cfg EmbeddedStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
+  "MC_EmbeddedStartup_Red_IrohDefaultLadder.cfg EmbeddedStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
+  "MC_EmbeddedStartup_Red_ListenLeak.cfg EmbeddedStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_LateNacCheck.cfg EmbeddedStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_NacUnowned.cfg EmbeddedStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
+  "MC_EmbeddedStartup_Red_DialBeforeNac.cfg EmbeddedStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
+  "MC_EmbeddedStartup_Red_BootstrapFatal.cfg EmbeddedStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
 )
 
-fails=0; n=0
-for row in "${RUNS[@]}"; do
+parallelism="${TLA_JOBS:-4}"
+case "$parallelism" in
+  ''|*[!0-9]*) echo "TLA_JOBS must be a positive integer" >&2; exit 2 ;;
+esac
+if [ "$parallelism" -lt 1 ]; then
+  echo "TLA_JOBS must be a positive integer" >&2
+  exit 2
+fi
+if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
+  echo "Could not create TLA scratch directory" >&2
+  exit 1
+fi
+trap 'rm -rf "$workdir"' EXIT
+
+run_model() {
+  local index="$1" row="$2" cfg mod want out got
   read -r cfg mod want <<<"$row"
-  n=$((n+1))
-  out=$(./tools/tlc -metadir "states/run$n" -config "$cfg" "$mod" 2>&1)
+  mkdir -p "$workdir/java-$index"
+  out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
   # Here-strings, not pipes: `grep -q` stops at the first match, and under
   # pipefail the writer's broken pipe would turn a long trace into ERROR.
   if grep -q "No error has been found" <<<"$out"; then got=GREEN
   elif grep -qE "is violated|was violated|properties were violated|Deadlock reached|Deadlock" <<<"$out"; then got=RED
   else got=ERROR; fi
-  rm -rf "states/run$n"
-  if [ "$got" = "$want" ]; then printf "  ok   %-6s %-34s %s\n" "$got" "$cfg" "$mod"
-  else printf "  FAIL want=%s got=%s  %-30s %s\n" "$want" "$got" "$cfg" "$mod"; fails=$((fails+1)); fi
+  if [ "$got" = "$want" ]; then
+    printf "  ok   %-6s %-34s %s\n" "$got" "$cfg" "$mod"
+  else
+    printf "  FAIL want=%s got=%s  %-30s %s\n%s\n" "$want" "$got" "$cfg" "$mod" "$out"
+    return 1
+  fi
+}
+
+fails=0; n=0
+pids=(); indices=()
+finish_batch() {
+  local index
+  for index in "${!pids[@]}"; do
+    if ! wait "${pids[$index]}"; then fails=$((fails+1)); fi
+    cat "$workdir/${indices[$index]}.result"
+  done
+  pids=(); indices=()
+}
+
+for row in "${RUNS[@]}"; do
+  n=$((n+1))
+  run_model "$n" "$row" >"$workdir/$n.result" 2>&1 &
+  pids+=("$!"); indices+=("$n")
+  if [ "${#pids[@]}" -ge "$parallelism" ]; then finish_batch; fi
 done
+if [ "${#pids[@]}" -gt 0 ]; then finish_batch; fi
 
 echo "----"
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
-exit "$fails"
+exit "$((fails > 0))"

@@ -262,6 +262,32 @@ fn batch_create_mints_one_kms_key_per_encrypted_field() {
     .unwrap()
 }
 
+/// Run `operation` as an engine-retried batch, resolving each wave of
+/// missing inputs between attempts and asserting no attempt reaches the KMS.
+/// Returns the operation's value and how many attempts ran.
+async fn run_retried(
+    fixture: &Fixture,
+    mutator: &dyn DocMutator,
+    memo: &query::prepared::PreparedInputMemo,
+    operation: MutationBatchOperation,
+) -> (serde_json::Value, usize) {
+    let batch = mutator.begin_batch().await.unwrap().unwrap();
+    let mut attempts = 0;
+    loop {
+        let minted = fixture.kms.0.load(Ordering::SeqCst);
+        let result = batch.run(Arc::clone(&operation)).await;
+        assert_eq!(fixture.kms.0.load(Ordering::SeqCst), minted);
+        attempts += 1;
+        match result {
+            Err(QueryError::NeedsInput(request)) => memo
+                .answer_wave(&request, |wave| mutator.resolve_prepared_inputs(wave))
+                .await
+                .unwrap(),
+            result => return (result.unwrap(), attempts),
+        }
+    }
+}
+
 /// An engine-retried batch mints no key inside an attempt: an unprepared
 /// create asks the memo, the keys are minted between attempts, and the next
 /// attempt finds them under the short ID the first one drew.
@@ -274,27 +300,13 @@ fn retried_batch_create_mints_kms_keys_between_attempts() {
         let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db))
             .with_prepared_inputs(memo.clone())
             .unwrap();
-        let batch = mutator.begin_batch().await.unwrap().unwrap();
         let operation: MutationBatchOperation = Arc::new(|mutator, _| {
             Box::pin(async move {
                 let created = mutator.create("Secrets", document("batched")).await?;
                 Ok(serde_json::Value::String(created.doc_id.to_string()))
             })
         });
-        let mut attempts = 0;
-        let doc_id = loop {
-            let minted = fixture.kms.0.load(Ordering::SeqCst);
-            let result = batch.run(Arc::clone(&operation)).await;
-            assert_eq!(fixture.kms.0.load(Ordering::SeqCst), minted);
-            attempts += 1;
-            match result {
-                Err(QueryError::NeedsInput(request)) => memo
-                    .answer_wave(&request, |wave| mutator.resolve_prepared_inputs(wave))
-                    .await
-                    .unwrap(),
-                result => break result.unwrap(),
-            }
-        };
+        let (doc_id, attempts) = run_retried(&fixture, &*mutator, &memo, operation).await;
         // One wave for the node permission, one for the keys, then the commit.
         assert_eq!(attempts, 3);
         assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 2);
@@ -573,6 +585,48 @@ fn explicit_txn_create_generates_its_kms_keys_outside_the_transaction() {
             .exists("Secrets", &created.doc_id)
             .await
             .unwrap());
+    })
+    .unwrap()
+}
+
+/// The update counterpart: an engine-retried batch update asks the memo for
+/// the keys of its encrypted fields instead of minting them in the attempt.
+#[test]
+fn retried_batch_update_mints_kms_keys_between_attempts() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let created = AutoCommitMutator::new(Arc::clone(&fixture.db))
+            .create("Secrets", document("first"))
+            .await
+            .unwrap();
+        encrypt();
+        let memo = query::prepared::PreparedInputMemo::default();
+        let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db))
+            .with_prepared_inputs(memo.clone())
+            .unwrap();
+        let doc_id = created.doc_id.clone();
+        let operation: MutationBatchOperation = Arc::new(move |mutator, _| {
+            let doc_id = doc_id.clone();
+            Box::pin(async move {
+                let mut doc = document("second");
+                doc.set_id(doc_id);
+                let fields = ["left".to_string(), "right".to_string()]
+                    .into_iter()
+                    .collect();
+                mutator.update("Secrets", doc, fields).await?;
+                Ok(serde_json::Value::Null)
+            })
+        });
+        let (_, attempts) = run_retried(&fixture, &*mutator, &memo, operation).await;
+        assert_eq!(attempts, 3);
+        assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 2);
+
+        let docs = db::LensedAutoCommitFetcher::new(Arc::clone(&fixture.db))
+            .get_by_ids("Secrets", &[created.doc_id.to_string()])
+            .await
+            .unwrap()
+            .into_docs();
+        assert_eq!(docs[0].get("left"), Some(&"second".into()));
     })
     .unwrap()
 }

@@ -19,42 +19,78 @@ structure Evidence where
   bound : Bool -- Authorization uses the same transaction view as the row.
   deriving DecidableEq, Repr
 
--- All gates must hold; an advertised capability alone is not a binding.
-def eligible (e : Evidence) : Bool :=
+-- Visibility is decided by the ordinary read gates, independently of registration.
+def readable (e : Evidence) : Bool :=
   e.sameActor && e.nodeAllowed && e.appAllowed && e.documentAllowed &&
-    e.liveMember && e.registered && e.bound
+    e.liveMember && e.bound
+
+-- Returning an authenticated owner additionally requires its registration.
+def eligible (e : Evidence) : Bool := readable e && e.registered
 
 -- Only the owner from that transaction can enter the observable result.
 def observe (e : Evidence) (snapshotOwner : Nat) : Option Nat :=
   if eligible e then some snapshotOwner else none
 
+-- The representation retains read visibility without inventing an owner.
+structure Observation where
+  visible : Bool -- The exact known document passed the transaction's read gates.
+  owner : Option Nat -- Registration independently determines whether ownership is known.
+  deriving DecidableEq, Repr
+
+/-- Both facts describe a successful native read. The transaction owner rejects
+actor mismatches before returning any observation; this projection does not
+represent that error channel. -/
+def observation (e : Evidence) (snapshotOwner : Nat) : Observation :=
+  ⟨readable e, observe e snapshotOwner⟩
+
 -- Borrowing another actor's transaction cannot reveal ownership.
 theorem foreign_actor_hidden (e : Evidence) (owner : Nat) (h : e.sameActor = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- Node read denial remains a denial on this metadata path.
 theorem node_denied_hidden (e : Evidence) (owner : Nat) (h : e.nodeAllowed = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- Application read restrictions cannot be bypassed by a known ID.
 theorem app_denied_hidden (e : Evidence) (owner : Nat) (h : e.appAllowed = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- Document read restrictions also protect its owner.
 theorem document_denied_hidden (e : Evidence) (owner : Nat) (h : e.documentAllowed = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- Deleted, missing and cross-collection IDs establish no live membership.
 theorem nonmember_hidden (e : Evidence) (owner : Nat) (h : e.liveMember = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- An unregistered document has no authenticated owner observation.
 theorem unregistered_hidden (e : Evidence) (owner : Nat) (h : e.registered = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
 
 -- A detached provider cannot certify even an otherwise readable row.
 theorem unbound_hidden (e : Evidence) (owner : Nat) (h : e.bound = false) :
-    observe e owner = none := by simp [observe, eligible, h]
+    observe e owner = none := by simp [observe, eligible, readable, h]
+
+-- A successful request cannot expose a denied read merely because its ID is known.
+theorem unreadable_observation_hidden (e : Evidence) (owner : Nat)
+    (_sameActor : e.sameActor = true)
+    (h : readable e = false) : observation e owner = ⟨false, none⟩ := by
+  simp [observation, observe, eligible, h]
+
+-- Readable public data has visibility even when its owner is unknown.
+theorem unregistered_read_keeps_visibility (e : Evidence) (owner : Nat)
+    (hread : readable e = true) (hregistered : e.registered = false) :
+    observation e owner = ⟨true, none⟩ := by
+  simp [observation, observe, eligible, hread, hregistered]
+
+-- A known owner can never be returned beside a false visibility observation.
+theorem owner_implies_visibility (e : Evidence) (owner returned : Nat)
+    (h : (observation e owner).owner = some returned) :
+    (observation e owner).visible = true := by
+  by_cases hr : readable e = true
+  · simpa [observation] using hr
+  · have hf : readable e = false := Bool.eq_false_iff.mpr hr
+    simp [observation, observe, eligible, hf] at h
 
 -- Every returned owner is exactly the supplied transaction observation.
 theorem exact_snapshot (e : Evidence) (snapshotOwner returned : Nat)

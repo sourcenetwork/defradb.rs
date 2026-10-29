@@ -26,6 +26,7 @@ use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::{Document, NormalValue};
 use query::mutator::{DocMutator, MutationBatchController};
 use query::runner::DocFetcher;
+use regolith::sync::Notify;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
@@ -119,12 +120,14 @@ impl MergeValidator for GrantValidator {
 #[derive(Default)]
 struct RecordingSink {
     forwarded: Atom<Vec<(Cid, String)>>,
+    forwarded_changed: Notify,
 }
 
 #[async_trait]
 impl RedrivenMergeSink for RecordingSink {
     async fn forward(&self, merged: RedrivenMerge) {
         push(&self.forwarded, (merged.cid, merged.collection_id));
+        self.forwarded_changed.notify_one();
     }
 }
 
@@ -343,6 +346,23 @@ impl Node {
                 .unwrap();
         }
         panic!("{collection} never merged {doc_id}");
+    }
+
+    /// A re-driven document commits before the redrive sink receives it.
+    /// Observe the sink's own event rather than treating database visibility
+    /// as completion of the forwarding path.
+    async fn wait_for_forwarded(&self, cid: &Cid) {
+        workers::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let notified = self.sink.forwarded_changed.notified();
+                if self.forwarded().contains(cid) {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("re-driven merge was not forwarded");
     }
 
     async fn doc_ids(&self, collection: &str) -> Vec<String> {
@@ -1140,6 +1160,7 @@ fn a_local_write_releases_a_composite_awaiting_an_immutable_field() {
             .await;
 
         node.wait_for_doc("Notes", &note.doc_id).await;
+        node.wait_for_forwarded(&note.cid).await;
         assert_eq!(node.handler.deferred_composites(), 0);
         assert_eq!(node.forwarded(), vec![note.cid]);
     })
@@ -1187,6 +1208,7 @@ fn a_local_write_releases_a_composite_awaiting_its_genesis() {
         assert_eq!(node.create_locally("Grants", &grant).await, awaited);
 
         node.wait_for_doc("Notes", &note.doc_id).await;
+        node.wait_for_forwarded(&note.cid).await;
         assert_eq!(node.handler.deferred_composites(), 0);
         assert_eq!(node.forwarded(), vec![note.cid]);
     })

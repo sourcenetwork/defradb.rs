@@ -953,6 +953,35 @@ async fn run_mixed_fields_3node_probe(
         "[{label}] seed DAG did not converge before the mixed-field updates"
     );
 
+    for n in 0..3 {
+        let state = mixed_fields_state(&cluster.client(n));
+        assert_eq!(
+            state,
+            ("seed".to_string(), 0),
+            "[{label}] node {n} must share the seed state before the isolated writes"
+        );
+    }
+
+    // Keep the counter writes based on the same zero value. Without this
+    // partition, the first writer can replicate before the second mutation
+    // reads its current value, turning this into sequential assignment rather
+    // than the independent counter updates this parity case exercises.
+    for i in 0..3 {
+        for (j, peer) in addr.iter().enumerate() {
+            if i != j {
+                let peer_id = peer.rsplit("/p2p/").next().expect("peer ID");
+                cluster
+                    .client(i)
+                    .p2p_replicator_delete(&["Mixed"], Some(peer_id))
+                    .expect("pause mixed-field replication");
+            }
+        }
+        cluster
+            .client(i)
+            .p2p_collection_delete(&["Mixed"])
+            .expect("pause mixed-field collection subscription");
+    }
+
     cluster
         .client(0)
         .query(&format!(
@@ -960,6 +989,11 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node0 name=alice");
     required_commits.extend(support::commit_cids(&cluster.client(0), &id));
+    assert_eq!(
+        mixed_fields_state(&cluster.client(1)),
+        ("seed".to_string(), 0),
+        "[{label}] node1 must still have the common counter base before its update"
+    );
     cluster
         .client(1)
         .query(&format!(
@@ -967,6 +1001,11 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node1 views=10");
     required_commits.extend(support::commit_cids(&cluster.client(1), &id));
+    assert_eq!(
+        mixed_fields_state(&cluster.client(2)),
+        ("seed".to_string(), 0),
+        "[{label}] node2 must still have the common counter base before its update"
+    );
     cluster
         .client(2)
         .query(&format!(
@@ -974,6 +1013,27 @@ async fn run_mixed_fields_3node_probe(
         ))
         .expect("node2 views=7");
     required_commits.extend(support::commit_cids(&cluster.client(2), &id));
+
+    for i in 0..3 {
+        cluster
+            .client(i)
+            .p2p_collection_add(&["Mixed"])
+            .expect("resume mixed-field collection subscription");
+    }
+    for i in 0..3 {
+        for (j, peer) in addr.iter().enumerate() {
+            if i != j {
+                cluster
+                    .client(i)
+                    .p2p_connect(&[peer.as_str()])
+                    .expect("reconnect mixed-field peer");
+                cluster
+                    .client(i)
+                    .p2p_replicator_set(&["Mixed"], peer)
+                    .expect("resume mixed-field replication");
+            }
+        }
+    }
 
     assert!(
         poll_mixed_fields_dags_converged(
@@ -1405,21 +1465,22 @@ async fn poll_account_scan_count(node: &DefraClient, want: usize, timeout: Durat
     }
 }
 
-/// Every configured replicator on `node` reports `Status: 0`
-/// (`client.ReplicatorStatusActive` in Go — the type has no json tags, so the
-/// wire field is the Go field name and the value the raw uint8).
-fn replicators_all_active(node: &DefraClient) -> bool {
+/// Every configured replicator on `node` reports `Status: want`
+/// (`client.ReplicatorStatusActive` is 0 and `ReplicatorStatusInactive` is 1 in
+/// Go; the type has no json tags, so the wire field is the Go field name and
+/// the value the raw uint8).
+fn replicators_all_status(node: &DefraClient, want: i64) -> bool {
     node.p2p_replicator_list()
         .unwrap_or_default()
         .as_array()
-        .map(|reps| !reps.is_empty() && reps.iter().all(|r| r["Status"].as_i64() == Some(0)))
+        .map(|reps| !reps.is_empty() && reps.iter().all(|r| r["Status"].as_i64() == Some(want)))
         .unwrap_or(false)
 }
 
-async fn poll_replicators_all_active(node: &DefraClient, timeout: Duration) -> bool {
+async fn poll_replicators_all_status(node: &DefraClient, want: i64, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if replicators_all_active(node) {
+        if replicators_all_status(node, want) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -1601,9 +1662,9 @@ async fn parity_unique_twins_rust_rust() {
 /// (`pushHeadsForAllDocs`, async OnSuccessAsync) and live pushes (spawned
 /// goroutines) are concurrent and not ordered. The post-witness settle
 /// re-check below mitigates a still-in-flight twin before asserting divergence.
-/// The replicator-`Active` assertion at the end is the #5058 silent-ack
-/// signature: the sender drained its retry queue believing the rejected push
-/// succeeded.
+/// The replicator-`Inactive` assertion at the end is what Go reports since
+/// #5302 and #5307: the sender sees the peer's rejection instead of draining its
+/// retry queue as if the push had succeeded (the #5058 silent ack).
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
 #[tokio::test]
 async fn parity_unique_twins_go_go() {
@@ -1656,13 +1717,15 @@ async fn parity_unique_twins_go_go() {
         );
     }
 
-    // #5058 silent-ack signature: despite the rejected twin push, each sender
-    // reports its replicator Active (retry record deleted as if successful).
+    // Go #5302 (peer rejections are reported without blocking replication) and
+    // #5307 (collection blocks are retried in the replicator) replaced the
+    // #5058 silent ack: the sender no longer reports its replicator Active after
+    // a rejected push, it reports it Inactive.
     for n in [0usize, 1] {
         assert!(
-            poll_replicators_all_active(&cluster.client(n), Duration::from_secs(15)).await,
-            "[{label}] node{n} replicator must report Active (the #5058 silent-ack \
-             signature); got {:?}",
+            poll_replicators_all_status(&cluster.client(n), 1, Duration::from_secs(15)).await,
+            "[{label}] node{n} replicator must report Inactive after the rejected twin \
+             push (Go #5302, #5307); got {:?}",
             cluster.client(n).p2p_replicator_list()
         );
     }

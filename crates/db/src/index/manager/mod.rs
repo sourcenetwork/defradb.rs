@@ -353,6 +353,13 @@ impl IndexManager {
             ));
         }
 
+        if let IndexKind::Vector(vector) = &kind {
+            let errs = vector.creation_errors(&name);
+            if !errs.is_empty() {
+                return Err(Error::Other(errs.join("; ")));
+            }
+        }
+
         for field in &fields {
             if let Some(schema_field) = schema_fields.iter().find(|f| f.name == field.name) {
                 if schema_field.crdt_type.is_counter() {
@@ -422,15 +429,7 @@ impl IndexManager {
     /// to index creation within a collection, either through transaction isolation or
     /// external synchronization.
     async fn next_index_id(&self, datastore: &NamespaceView) -> Result<u32> {
-        let seq_key = IndexIDSequenceKey::new(format!("{}", self.collection_short_id));
-        let key_bytes = seq_key.bytes();
-
-        let counter = match datastore.get(&key_bytes).await.map_err(Error::Storage)? {
-            Some(bytes) if bytes.len() == 4 => {
-                u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-            }
-            _ => 0,
-        };
+        let counter = index_id_floor(datastore, self.collection_short_id).await?;
         // The schema is the authority on which ids exist: a counter advanced
         // through another store, or lost, must never hand out an id an index
         // already owns.
@@ -443,7 +442,10 @@ impl IndexManager {
 
         let next_id = counter.max(highest) + 1;
         datastore
-            .set(&key_bytes, &next_id.to_be_bytes())
+            .set(
+                &IndexIDSequenceKey::new(self.collection_short_id.to_string()).bytes(),
+                &next_id.to_be_bytes(),
+            )
             .await
             .map_err(Error::Storage)?;
 
@@ -789,4 +791,43 @@ impl IndexManager {
     pub fn index_count(&self) -> usize {
         self.indexes.len()
     }
+}
+
+/// The highest index id the collection with `collection_short_id` has ever
+/// handed out or retired: a new index id is always above it.
+pub(crate) async fn index_id_floor(
+    datastore: &NamespaceView,
+    collection_short_id: u32,
+) -> Result<u32> {
+    let key = IndexIDSequenceKey::new(collection_short_id.to_string());
+    Ok(
+        match datastore.get(&key.bytes()).await.map_err(Error::Storage)? {
+            Some(bytes) if bytes.len() == 4 => {
+                u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            }
+            _ => 0,
+        },
+    )
+}
+
+/// Keep `index_id` from ever being handed out again on the collection with
+/// `collection_short_id`. A dropped index's entries are deleted after its
+/// drop commits, and an entry key names only the collection and the index
+/// id, so a new index with the same id would lose its entries to that
+/// deletion.
+pub(crate) async fn retire_index_id(
+    datastore: &NamespaceView,
+    collection_short_id: u32,
+    index_id: u32,
+) -> Result<()> {
+    if index_id_floor(datastore, collection_short_id).await? >= index_id {
+        return Ok(());
+    }
+    datastore
+        .set(
+            &IndexIDSequenceKey::new(collection_short_id.to_string()).bytes(),
+            &index_id.to_be_bytes(),
+        )
+        .await
+        .map_err(Error::Storage)
 }
