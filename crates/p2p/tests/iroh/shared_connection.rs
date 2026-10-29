@@ -7,6 +7,52 @@ use super::super::records::RecordsHandle;
 use super::super::solicited::Solicited;
 use super::super::task_registry::TaskRegistry;
 
+#[test]
+fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
+    edge::testing::edge()
+        .block_on(async {
+            let endpoint = tests::localhost_endpoint(vec![]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX_V1.to_vec()]).await;
+            let id = PeerId::new(peer.id().to_string());
+            let direct = peer.addr().ip_addrs().next().copied();
+            let cache = new_connection_cache(GossipHandle::new());
+            let admission = PeerAdmission::new(AllowlistState::AcceptAll);
+            let (first, accepted_first) = tokio::join!(
+                connect_with_cache(&endpoint, &id, direct, &cache, &admission),
+                async { peer.accept().await.unwrap().await.unwrap() },
+            );
+            let first = first.unwrap();
+            assert_eq!(first.alpn(), protocols::ALPN_MUX_V1);
+            let reused = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                connect_with_cache(&endpoint, &id, direct, &cache, &admission),
+            )
+            .await
+            .expect("a cache hit must not require another accept")
+            .unwrap();
+            assert_eq!(first.stable_id(), reused.stable_id());
+
+            let (replacement, accepted_replacement) = tokio::join!(
+                endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),
+                async { peer.accept().await.unwrap().await.unwrap() },
+            );
+            let replacement = replacement.unwrap();
+            remember_connection(&cache, &replacement);
+            evict_connection(&cache, peer.id(), &first);
+            assert_eq!(
+                cached_connection(&cache, &id).unwrap().unwrap().stable_id(),
+                replacement.stable_id()
+            );
+            close_cached_connections(&cache, &peer.id());
+            assert!(cached_connection(&cache, &id).unwrap().is_none());
+            assert!(replacement.close_reason().is_some());
+            drop((accepted_first, accepted_replacement));
+            endpoint.close().await;
+            peer.close().await;
+        })
+        .unwrap();
+}
+
 async fn peer_endpoint(secret: iroh::SecretKey) -> Endpoint {
     Endpoint::builder(iroh::endpoint::presets::Minimal)
         .secret_key(secret)
@@ -137,45 +183,62 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     }
 }
 
-#[tokio::test]
-async fn accepted_inbound_connection_serves_reverse_rpc_without_another_dial() {
-    reverse_rpc_uses_inbound(false).await;
-}
-
-#[tokio::test]
-async fn authenticated_reconnection_replaces_an_open_old_rpc_path() {
-    reverse_rpc_uses_inbound(true).await;
-}
-
-#[tokio::test]
-async fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
-    let endpoint = tests::localhost_endpoint(vec![]).await;
-    let peer = tests::localhost_endpoint(vec![
-        protocols::ALPN_MUX.to_vec(),
-        protocols::ALPN_MUX_V1.to_vec(),
-    ])
-    .await;
-    let (modern, accepted_modern) =
-        tokio::join!(endpoint.connect(peer.addr(), protocols::ALPN_MUX), async {
-            peer.accept().await.unwrap().await.unwrap()
-        },);
-    let modern = modern.unwrap();
-    let cache = new_connection_cache(GossipHandle::new());
-    remember_connection(&cache, &modern);
-    let (legacy, accepted_legacy) = tokio::join!(
-        endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),
-        async { peer.accept().await.unwrap().await.unwrap() },
-    );
-    let legacy = legacy.unwrap();
-    remember_connection(&cache, &legacy);
-    let selected = cached_connection(&cache, &PeerId::new(peer.id().to_string()))
-        .unwrap()
+#[test]
+fn accepted_inbound_connection_serves_reverse_rpc_without_another_dial() {
+    edge::testing::edge()
+        .block_on(async {
+            reverse_rpc_uses_inbound(false).await;
+        })
         .unwrap();
-    assert_eq!(selected.stable_id(), modern.stable_id());
-    assert_eq!(selected.alpn(), protocols::ALPN_MUX);
-    assert!(legacy.close_reason().is_none());
-    assert!(accepted_modern.close_reason().is_none());
-    assert!(accepted_legacy.close_reason().is_none());
-    endpoint.close().await;
-    peer.close().await;
+}
+
+#[test]
+fn authenticated_reconnection_replaces_an_open_old_rpc_path() {
+    edge::testing::edge()
+        .block_on(async {
+            reverse_rpc_uses_inbound(true).await;
+        })
+        .unwrap();
+}
+
+#[test]
+fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
+    edge::testing::edge()
+        .block_on(async {
+            let endpoint = tests::localhost_endpoint(vec![]).await;
+            let peer = tests::localhost_endpoint(vec![
+                protocols::ALPN_MUX.to_vec(),
+                protocols::ALPN_MUX_V1.to_vec(),
+            ])
+            .await;
+            let (modern, accepted_modern) =
+                tokio::join!(endpoint.connect(peer.addr(), protocols::ALPN_MUX), async {
+                    peer.accept().await.unwrap().await.unwrap()
+                },);
+            let modern = modern.unwrap();
+            let cache = new_connection_cache(GossipHandle::new());
+            remember_connection(&cache, &modern);
+            let (legacy, accepted_legacy) = tokio::join!(
+                endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),
+                async { peer.accept().await.unwrap().await.unwrap() },
+            );
+            let legacy = legacy.unwrap();
+            remember_connection(&cache, &legacy);
+            let selected = cached_connection(&cache, &PeerId::new(peer.id().to_string()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(selected.stable_id(), modern.stable_id());
+            assert_eq!(selected.alpn(), protocols::ALPN_MUX);
+            assert!(legacy.close_reason().is_none());
+            assert!(accepted_modern.close_reason().is_none());
+            assert!(accepted_legacy.close_reason().is_none());
+            close_cached_connections(&cache, &peer.id());
+            assert!(modern.close_reason().is_some());
+            assert!(legacy.close_reason().is_some());
+            assert!(cache.connections.get(&peer.id()).is_none());
+            assert!(cache.legacy_connections.get(&peer.id()).is_none());
+            endpoint.close().await;
+            peer.close().await;
+        })
+        .unwrap();
 }

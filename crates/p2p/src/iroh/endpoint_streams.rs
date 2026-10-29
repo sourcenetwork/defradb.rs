@@ -226,7 +226,7 @@ pub(super) async fn handle_connection_streams(
         });
     }
 
-    super::endpoint_rpc::evict_if_closed(&context.connection_cache, &peer_id, &connection);
+    super::endpoint_rpc::evict_connection(&context.connection_cache, remote_id, &connection);
     let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
 

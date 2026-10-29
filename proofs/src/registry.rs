@@ -241,15 +241,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
-        name: "Accepted replacement serves reverse RPC without stale selection or revoked borrowing",
+        name: "First inbound and replacement serve reverse RPC; legacy reuse preserves modern preference",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
-        model_ref: "MC_SharedRpcConnection_Green.cfg / MC_SharedRpcConnection_Red_*.cfg",
+        model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg",
         tiers: &[Contract],
     },
     Property {
         family: "Peer connection observation",
-        name: "SharedRpc replacement identity, peer isolation, revoked refusal and stable-id eviction",
+        name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal and stable-id eviction",
         axis: Lean,
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; endpoint_streams.rs handle_incoming",
         model_ref: "PeerConnection.SharedRpc",

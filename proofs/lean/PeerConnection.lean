@@ -36,14 +36,29 @@ structure Connection where
   -- Only the current mux sends replies on the original RPC stream.
   compatible : Bool
 
--- Each peer has at most one selected shared handle, which may later close.
-def Cache := Nat → Option Nat
+-- Each protocol retains a path; a modern path always wins selection.
+structure Paths where
+  -- The modern mux is preferred while it remains open.
+  modern : Option Nat
+  -- A legacy-only peer can still reuse its authenticated connection.
+  legacy : Option Nat
+
+-- Connections are kept under their authenticated peer labels.
+def Cache := Nat → Paths
+
+-- A modern path takes precedence over the legacy fallback.
+def selected (paths : Paths) : Option Nat := paths.modern.or paths.legacy
 
 -- Publication replaces only the authenticated peer's selected handle.
 def remember (cache : Cache) (connection : Connection) : Cache :=
-  if connection.compatible then
-    fun peer => if peer = connection.peer then some connection.handle else cache peer
-  else cache
+  fun peer =>
+    -- A publication cannot affect another authenticated peer.
+    if peer = connection.peer then
+      -- Modern and legacy publications change only their own slots.
+      if connection.compatible then { cache peer with modern := some connection.handle }
+      else { cache peer with legacy := some connection.handle }
+    -- All unrelated peers retain their exact prior paths.
+    else cache peer
 
 -- Closure and current revocation are checked independently of cache selection.
 def usable (revoked transportOpen : Bool) (selected : Option Nat) : Option Nat :=
@@ -59,9 +74,9 @@ def evict (selected : Option Nat) (failedHandle : Nat) : Option Nat :=
 -- An accepted replacement immediately becomes the shared handle of its peer.
 theorem replacement_is_selected (cache : Cache) (connection : Connection)
     (compatible : connection.compatible = true) :
-    remember cache connection connection.peer = some connection.handle := by
+    selected (remember cache connection connection.peer) = some connection.handle := by
   -- Substituting the authenticated peer takes the replacement branch.
-  simp [remember, compatible]
+  simp [selected, remember, compatible, Option.or]
 
 -- Remembering a connection cannot change another peer's selected path.
 theorem other_peer_is_unchanged (cache : Cache) (connection : Connection) (peer : Nat)
@@ -72,9 +87,26 @@ theorem other_peer_is_unchanged (cache : Cache) (connection : Connection) (peer 
 
 -- A legacy mux cannot replace the selected modern protocol connection.
 theorem incompatible_does_not_replace (cache : Cache) (connection : Connection)
-    (legacy : connection.compatible = false) : remember cache connection = cache := by
-  -- Legacy streams retain their separate reply path and leave this cache alone.
+    (legacy : connection.compatible = false) :
+    (remember cache connection connection.peer).modern = (cache connection.peer).modern := by
+  -- A legacy publication changes only the fallback slot.
   simp [remember, legacy]
+
+-- An empty modern slot still permits reuse of an authenticated legacy path.
+theorem legacy_is_reused (cache : Cache) (connection : Connection)
+    (legacy : connection.compatible = false)
+    (empty : (cache connection.peer).modern = none) :
+    selected (remember cache connection connection.peer) = some connection.handle := by
+  -- The legacy slot is selected only because the modern slot is empty.
+  simp [selected, remember, legacy, empty, Option.or]
+
+-- A modern path remains selected when another legacy connection arrives.
+theorem modern_is_preferred (cache : Cache) (connection : Connection) (handle : Nat)
+    (legacy : connection.compatible = false)
+    (present : (cache connection.peer).modern = some handle) :
+    selected (remember cache connection connection.peer) = some handle := by
+  -- Selection sees the unchanged modern slot before consulting the fallback.
+  simp [selected, remember, legacy, present, Option.or]
 
 -- A cached handle grants no ability to send to a revoked peer.
 theorem revoked_cannot_borrow (transportOpen : Bool) (selected : Option Nat) :
@@ -85,9 +117,9 @@ theorem revoked_cannot_borrow (transportOpen : Bool) (selected : Option Nat) :
 -- A peer which remains admitted borrows the replacement without a second dial.
 theorem admitted_replacement_is_usable (cache : Cache) (connection : Connection)
     (compatible : connection.compatible = true) :
-    usable false true (remember cache connection connection.peer) = some connection.handle := by
+    usable false true (selected (remember cache connection connection.peer)) = some connection.handle := by
   -- Acceptance picks this handle; neither of the refusal observations applies.
-  simp [usable, remember, compatible]
+  simp [usable, selected, remember, compatible, Option.or]
 
 -- The final check closes a connection published after revocation ran.
 theorem revoke_during_acceptance_closes (transportOpen : Bool) :

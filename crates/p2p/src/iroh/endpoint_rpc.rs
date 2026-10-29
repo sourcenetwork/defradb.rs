@@ -20,10 +20,11 @@ use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::services;
 
-/// One shared connection per peer, keyed by endpoint alone: every protocol is
-/// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
+/// Shared authenticated paths per peer. Modern RPC prefers the current mux;
+/// a separate legacy slot preserves 0.1 reuse without racing that selection.
 pub(super) struct ConnectionCacheState {
     connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
+    legacy_connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
     gossip: GossipHandle,
@@ -34,6 +35,7 @@ pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
+        legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
         gossip,
     })
@@ -227,40 +229,45 @@ fn cached_connection(
     peer_id: &PeerId,
 ) -> crate::error::Result<Option<iroh::endpoint::Connection>> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
-    match cache.connections.get(&endpoint_id) {
-        Some(connection) if connection.close_reason().is_none() => Ok(Some(connection)),
-        Some(closed) => {
-            evict_connection(cache, endpoint_id, &closed);
-            Ok(None)
+    for connections in [&cache.connections, &cache.legacy_connections] {
+        match connections.get(&endpoint_id) {
+            Some(connection) if connection.close_reason().is_none() => return Ok(Some(connection)),
+            Some(closed) => evict_connection(cache, endpoint_id, &closed),
+            None => {}
         }
-        None => Ok(None),
     }
+    Ok(None)
 }
 
-/// Share the authenticated current-mux handle with every outbound RPC. Legacy
-/// mux replies arrive on another stream, so those handles cannot satisfy the
-/// current RPC reader. The cache key comes from QUIC, never a caller's label.
+/// Keep protocol-specific paths separate so a concurrent legacy publication
+/// cannot overwrite a modern handle. The key comes from QUIC, not the caller.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
     connection: &iroh::endpoint::Connection,
 ) {
-    if connection.alpn() == protocols::ALPN_MUX {
-        cache
-            .connections
-            .insert(connection.remote_id(), connection.clone());
-    }
+    let connections = match connection.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return,
+    };
+    connections.insert(connection.remote_id(), connection.clone());
 }
 
 /// Drop the cached entry for `endpoint_id` only while it is still `connection`;
 /// an entry a concurrent dial replaced it with is put back.
-fn evict_connection(
+pub(super) fn evict_connection(
     cache: &ConnectionCache,
     endpoint_id: iroh::EndpointId,
     connection: &iroh::endpoint::Connection,
 ) {
-    if let Some(cached) = cache.connections.remove(&endpoint_id) {
+    let connections = if connection.alpn() == protocols::ALPN_MUX_V1 {
+        &cache.legacy_connections
+    } else {
+        &cache.connections
+    };
+    if let Some(cached) = connections.remove(&endpoint_id) {
         if cached.stable_id() != connection.stable_id() {
-            cache.connections.insert_if_absent(endpoint_id, cached);
+            connections.insert_if_absent(endpoint_id, cached);
         }
     }
 }
@@ -325,8 +332,10 @@ const DISCONNECT_ERROR_CODE: u32 = 0;
 /// Used by `disconnect` to tear down the outbound-send connection cache for a
 /// peer. Closing is idempotent — a peer with no cached connection is a no-op.
 pub(super) fn close_cached_connections(cache: &ConnectionCache, endpoint_id: &iroh::EndpointId) {
-    while let Some(connection) = cache.connections.remove(endpoint_id) {
-        connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
+    for connections in [&cache.connections, &cache.legacy_connections] {
+        while let Some(connection) = connections.remove(endpoint_id) {
+            connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
+        }
     }
     cache.dial_guards.remove(endpoint_id);
 }
