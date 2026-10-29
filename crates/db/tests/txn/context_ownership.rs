@@ -87,17 +87,22 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
         let alice = acting(Some(alice_did.as_str()));
         let handle = registry.begin_as(&alice, false).await.unwrap();
 
-        for stranger in [acting(None), acting(Some("did:key:bob"))] {
+        let add = |name: &str, identity: Option<&str>| {
+            let mutation =
+                format!(r#"mutation {{ add_Users(input: {{name: "{name}"}}) {{ _docID }} }}"#);
+            runner.execute_in_txn(
+                QueryRequest::new(mutation).with_context(acting(identity)),
+                &handle,
+            )
+        };
+        for stranger in [None, Some("did:key:bob")] {
             let foreign = rest
-                .bind_request(&stranger)
+                .bind_request(&acting(stranger))
                 .unwrap()
                 .with_transaction(handle.clone())
                 .unwrap();
             assert!(foreign.list_collections().await.is_err());
-            assert!(foreign
-                .add_document("Users", serde_json::json!({ "name": "stranger" }), None)
-                .await
-                .is_err());
+            assert!(!add("stranger", stranger).await.errors.is_empty());
         }
 
         let owner = rest
@@ -106,14 +111,8 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
             .with_transaction(handle.clone())
             .unwrap();
         assert_eq!(owner.list_collections().await.unwrap(), vec!["Users"]);
-        owner
-            .add_document(
-                "Users",
-                serde_json::json!({ "name": "alice" }),
-                Some(&alice_did),
-            )
-            .await
-            .unwrap();
+        let added = add("alice", Some(alice_did.as_str())).await;
+        assert!(added.errors.is_empty(), "{:?}", added.errors);
         registry.commit_as(&alice, &handle).await.unwrap();
 
         let read = runner
