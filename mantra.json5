@@ -2,6 +2,9 @@
     products: [{
         name: "defradb.rs",
         base: "main",
-        requirements: [{ path: "reqs/go/", source: "markup" }],
+        requirements: [
+            { path: "reqs/go/", source: "markup" },
+            { path: "reqs/defra/", source: "markup" },
+        ],
     }],
 }

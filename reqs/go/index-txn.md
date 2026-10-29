@@ -146,53 +146,11 @@ Adding a document whose indexed value (single field, DateTime, or composite comb
 
 Null indexed values do not collide: several documents may have a null (or absent) value in a unique-indexed field, before or after the index is created.
 
-# `go.index.unique.array`: Unique indexes on array fields
-
-- **Parents:** ["go.index.unique"]
-- **Go-Tests:** ["index/array_unique_test.go::TestArrayUniqueIndex_UponDeletingDoc_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_UponDocCreationWithUniqueElement_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_UponDocCreationWithUniqueElements_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_UponDocUpdateWithArrayElementThatExists_Error", "index/array_unique_test.go::TestArrayUniqueIndex_UponDocUpdateWithUniqueElements_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_WithNilElementsAndAllOp_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_WithNilElementsAndAnyOp_Succeed", "index/array_unique_test.go::TestArrayUniqueIndex_WithNilElementsAndNoneOp_Succeed", "index/array_unique_composite_test.go::TestArrayUniqueCompositeIndex_IfDocIsAddedThatViolatesUniqueness_Error", "index/array_unique_composite_test.go::TestArrayUniqueCompositeIndex_IfDocIsUpdatedThatViolatesUniqueness_Error", "index/array_unique_composite_test.go::TestArrayUniqueCompositeIndex_IfDocsHaveNilValues_Succeed", "index/array_unique_composite_test.go::TestArrayUniqueCompositeIndex_WithUniqueCombinations_Succeed"]
-
-A unique index on an array field is unique per element: creating or updating a document so that an element (or, for a composite, an element plus scalar combination) already exists in another document fails with `can not index a doc's field(s) that violates unique index.`. Unique combinations, null values and nil elements are allowed, deleting frees the values, and `_any`/`_all`/`_none` filters return correct results.
-
-# `go.index.unique.json`: Unique indexes on JSON fields
-
-- **Parents:** ["go.index.unique"]
-- **Go-Tests:** ["index/json_unique_test.go::TestJSONUniqueIndex_UponUpdate_ShouldUseNewIndexValues", "index/json_unique_test.go::TestJSONUniqueIndex_WithRandomValues_ShouldGuaranteeUniquenessAndBeAbelToUseIndexForFetching", "index/json_unique_array_test.go::TestJSONArrayUniqueIndex_ShouldAllowOnlyUniqueValuesAndUseThemForFetching"]
-
-A unique index on a JSON field is unique per leaf value path (and per element of JSON arrays): a create or update that repeats a value at the same path fails with `can not index a doc's field(s) that violates unique index.`, and equality filters on the new values are served by the index after updates.
-
 # `go.index.query`: Filtering through an index
 
 - **Parents:** ["go.index"]
 
 Filters on indexed scalar fields return the same documents as a full scan, and `@explain(type: execute)` reports index fetches when the index is used.
-
-# `go.index.query.single-operators`: Single-field index with comparison operators
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_index_only_filter_test.go::TestQueryWithIndex_EmptyFilterOnIndexedField_ShouldSucceed", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_IfSeveralDocsWithEqFilter_ShouldFetchAll", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_IfSeveralDocsWithInFilter_ShouldFetchAll", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithEqualFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGreaterOrEqualFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGreaterThanFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithInFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithInFilterOnFloat_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLessOrEqualFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLessThanFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLikeFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNonIndexedFields_ShouldFetchAllOfThem", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNotEqualFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNotInFilter_ShouldFetch", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNotLikeFilter_ShouldFetch"]
-
-With `@index` on one field, `_eq`, `_ne`, `_gt`, `_ge`, `_lt`, `_le`, `_in`, `_nin`, `_like` and `_nlike` (Int, Float, String) return the matching documents, several matches are all returned, an empty filter on the field returns all, and filters on non-indexed fields still work; explain reports the expected index fetch count.
-
-# `go.index.query.single-null`: Null semantics of indexed filters
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNeFilterAgainstBooleanField_ShouldFetchNilValues", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNeFilterAgainstDateTimeField_ShouldFetchNilValues", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNeFilterAgainstFloatField_ShouldFetchNilValues", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNeFilterAgainstIntField_ShouldFetchNilValues", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNeFilterAgainstStringField_ShouldFetchNilValues", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGeqNullFilterOnDateTimeField_ShouldNotUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGeqNullFilterOnFloatField_ShouldNotUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGeqNullFilterOnIntField_ShouldNotUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLeqNullFilterOnDateTimeField_ShouldUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLeqNullFilterOnFloatField_ShouldUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithLeqNullFilterOnIntField_ShouldUseIndex"]
-
-On an indexed Int, Float, String, Boolean or DateTime field, `_ne: <value>` also returns documents whose value is null and `_ne: null` returns only non-null ones. `_le: null` returns only null documents and uses the index; `_ge: null` returns every document and does not use the index (0 index fetches).
-
-# `go.index.query.datetime`: Indexed DateTime filters
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithEqFilterOnDateTimeField_ShouldIndex", "index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithGeFilterOnDateTimeField_ShouldIndex", "index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithGtFilterOnDateTimeField_ShouldIndex", "index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithLeFilterOnDateTimeField_ShouldIndex", "index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithLtFilterOnDateTimeField_ShouldIndex", "index/query_with_index_on_datetime_test.go::TestQueryWithIndex_WithNeFilterOnDateTimeField_ShouldIndex"]
-
-On an indexed DateTime field, `_eq`, `_ne`, `_gt`, `_ge`, `_lt` and `_le` with an RFC 3339 value return the matching documents through the index.
-
-# `go.index.query.unique-single`: Unique single-field index filters
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_IfNoMatch_ReturnEmptyResult", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithDateTimeField_ShouldIndex", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithEqualFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithEqualFilterOnNilValue_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithEqualFilterOnZero_ShouldNotFetchNil", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithGreaterOrEqualFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithGreaterThanFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithInFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithLessOrEqualFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithLessThanFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithLikeFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithMultipleNilValuesAndEqualFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithNotCaseInsensitiveLikeFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithNotEqualFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithNotEqualFilterOnNilValue_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithNotInFilter_ShouldFetch", "index/query_with_unique_index_only_filter_test.go::TestQueryWithUniqueIndex_WithNotLikeFilter_ShouldFetch"]
-
-With a unique index on one field (Int, String or DateTime), every comparison operator including `_ilike`/`_nilike` returns the matching documents; no match returns an empty list, `_eq: 0` does not return null documents, `_eq: null` returns every null document and `_ne: null` every non-null one.
 
 # `go.index.query.composite-prefix`: Composite index field-prefix use
 
@@ -200,41 +158,6 @@ With a unique index on one field (Int, String or DateTime), every comparison ope
 - **Go-Tests:** ["index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_IfConsecutiveEqOps_ShouldUseAllToOptimizeQuery", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_IfFirstFieldIsNotInFilter_ShouldNotUseIndex", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_IfMiddleFieldIsNotInFilter_ShouldIgnoreValue", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_IfFirstFieldIsNotInFilter_ShouldNotUseIndex", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_IfMiddleFieldIsNotInFilter_ShouldIgnoreValue", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithInForFirstAndEqForRest_ShouldFetchEfficiently"]
 
 A composite index (unique or not) is used only when its first field is in the filter; consecutive `_eq` on leading fields all narrow the scan, a field missing in the middle is skipped, and `_in` on the first field with `_eq` on the rest is served efficiently.
-
-# `go.index.query.composite-operators`: Composite index with comparison operators
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithEqualFilter_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithEqualFilterOnNilValueOnFirst_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithEqualFilterOnNilValueOnSecond_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithGreaterOrEqualFilterOnFirstField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithGreaterOrEqualFilterOnSecondField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithGreaterThanFilterOnFirstField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithGreaterThanFilterOnSecondField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithInFilter_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithLessOrEqualFilterOnFirstField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithLessOrEqualFilterOnSecondField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithLessThanFilterOnFirstField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithLessThanFilterOnSecondField_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithLikeFilter_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithNotEqualFilter_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithNotInFilter_ShouldFetch", "index/query_with_composite_index_only_filter_test.go::TestQueryWithCompositeIndex_WithNotLikeFilter_ShouldFetch"]
-
-With a composite index on two fields, `_eq`, `_ne`, `_gt`, `_ge`, `_lt`, `_le`, `_in`, `_nin`, `_like`, `_nlike` on the first or second field return the matching documents, including `_eq: null` on either field.
-
-# `go.index.query.unique-composite-operators`: Unique composite index with comparison operators
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithEqualFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithGreaterOrEqualFilterOnFirstField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithGreaterOrEqualFilterOnSecondField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithGreaterThanFilterOnFirstField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithGreaterThanFilterOnSecondField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithInFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithLessOrEqualFilterOnFirstField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithLessOrEqualFilterOnSecondField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithLessThanFilterOnFirstField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithLessThanFilterOnSecondField_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithLikeFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithNotCaseInsensitiveLikeFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithNotEqualFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithNotInFilter_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithNotLikeFilter_ShouldFetch"]
-
-With a unique composite index on two fields, every comparison operator on the first or second field, including `_nilike`, returns the matching documents.
-
-# `go.index.query.unique-composite-nil`: Nulls in a unique composite index
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_AfterUpdateOnNilFields_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithEqualFilterOnNilValueOnFirst_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithEqualFilterOnNilValueOnSecond_ShouldFetch", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithMultipleNilOnBothFieldsAndNilFilter_ShouldFetchAll", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithMultipleNilOnFirstFieldAndNilFilter_ShouldFetchAll", "index/query_with_unique_composite_index_filter_test.go::TestQueryWithUniqueCompositeIndex_WithMultipleNilOnSecondFieldsAndNilFilter_ShouldFetchAll"]
-
-A unique composite index allows several documents with null in either or both fields; `_eq: null` on either field returns all of them, and documents updated from null values are found by their new values.
-
-# `go.index.query.combined`: Indexed and non-indexed conditions together
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_index_combined_filter_test.go::TestQueryWithIndex_FilterOnNonIndexedField_ShouldIgnoreIndex", "index/query_with_index_combined_filter_test.go::TestQueryWithIndex_IfIndexFilterWithRegular_ShouldFilter", "index/query_with_index_combined_filter_test.go::TestQueryWithIndex_IfMultipleIndexFiltersWithRegular_ShouldFilter", "index/query_with_index_combined_filter_test.go::TestQueryWithIndex_IfMultipleIndexFiltersWithRegularCaseInsensitive_ShouldFilter"]
-
-A filter combining one or several indexed fields with non-indexed fields (field names case-insensitive in the test schema) returns only documents matching all conditions; a filter on only non-indexed fields ignores the index.
-
-# `go.index.query.or`: `_or` filters and indexes
-
-- **Parents:** ["go.index.query"]
-- **Go-Tests:** ["index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilter_ShouldFetchCorrectDocs", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterOnIndexedAndNonIndexedField_ShouldFallbackToFullScan", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterOnOnlyNonIndexedFields_ShouldNotUseIndex", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterOnTwoDifferentIndexedFields_ShouldNotUseIndex", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterOnTwoDifferentIndexedFields_WithOverlap_ShouldReturnCorrectResults", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterOnTwoDifferentIndexedFields_WithRangeConditions_ShouldNotUseIndex", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterWithAnyAndNoneOnSameArrayField_ShouldFallbackToFullScan", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterWithOverlappingConditions_ShouldDeduplicateResults", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterWithRangeConditions_ShouldUseIndex", "index/query_with_index_filter_compound_test.go::TestQueryWithIndex_WithOrFilterWithThreeBranches_ShouldUseIndex"]
-
-`_or` branches on the same indexed field (equality or ranges, two or three branches) are served by the index and overlapping branches return each document once. `_or` mixing indexed and non-indexed fields, two different indexed fields, or `_any` and `_none` on one array field falls back to a full scan, with correct results.
 
 # `go.index.query.performance`: Indexed query speed-up
 
@@ -250,27 +173,6 @@ An `_eq` filter on an indexed Int or Float32 field over 500 generated documents 
 
 Result order when an index serves `order` or when an unordered query reads an index.
 
-# `go.index.order.single-field`: `order` on a single indexed field
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/order_query_test.go::TestOrderQueryWithIndex_WithAscendingOrder_ShouldUseIndex", "index/order_query_test.go::TestOrderQueryWithIndex_WithAscendingQueryOnDescendingIndexedField_ShouldReturnInReverseOrder", "index/order_query_test.go::TestOrderQueryWithIndex_WithFilterOnIndexedFieldAscending_ShouldUseIndex", "index/order_query_test.go::TestOrderQueryWithIndex_WithFilterOnIndexedFieldDescending_ShouldUseIndex", "index/order_query_test.go::TestOrderQueryWithIndex_WithFilterOnNonIndexedFieldAscending_ShouldUseIndexForOrdering", "index/order_query_test.go::TestOrderQueryWithIndex_WithFilterOnNonIndexedFieldDescending_ShouldUseIndexForOrdering", "index/order_query_test.go::TestOrderQueryWithIndex_WithLimitAscending_ShouldUseIndex", "index/order_query_test.go::TestOrderQueryWithIndex_WithLimitDescending_ShouldUseIndex"]
-
-`order: {age: ASC|DESC}` on an indexed field returns documents in that order through the index, with or without `limit` and with filters on the same or another field; an ascending order on a `direction: DESC` index still returns ascending results.
-
-# `go.index.order.composite`: `order` against a composite index
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/order_query_test.go::TestOrderQueryWithCompositeIndex_OrderMismatchASCAndASC_ShouldNotUseIndex", "index/order_query_test.go::TestOrderQueryWithCompositeIndex_OrderMismatchASCAndDESC_ShouldNotUseIndex", "index/order_query_test.go::TestOrderQueryWithCompositeIndex_OrderMismatchDESCAndASC_ShouldNotUseIndex", "index/order_query_test.go::TestOrderQueryWithCompositeIndex_OrderMismatchDESCAndDESC_ShouldNotUseIndex", "index/order_query_test.go::TestOrderQueryWithCompositeIndex_WithOrderOnNonIndexInEnd_ShouldNotUseIndex", "index/order_query_test.go::TestOrderQueryWithCompositeIndex_WithOrderOnNonIndexInMiddle_ShouldNotUseIndex"]
-
-A multi-field `order` whose directions match neither the composite index nor its exact reverse, or that puts a non-indexed field in the middle or end, does not use the index (0 index fetches) and still returns correctly ordered results.
-
-# `go.index.order.relation`: `order` on related or relation ID fields
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/order_query_test.go::TestOrderQueryWithIndex_WithOrderOnNestedField_ShouldUseIndexForOrdering", "index/order_query_test.go::TestOrderQueryWithIndex_WithOrderOnRelationIDField_ShouldUseIndexForOrdering", "index/order_query_test.go::TestOrderQueryWithIndexOnRelation_OrderByPrimaryDoc_ShouldOrderWithIndex", "index/order_query_test.go::TestOrderQueryWithIndexOnRelation_OrderBySecondaryDoc_ShouldOrderWithIndex"]
-
-Ordering by an indexed field of a related document (`order: {device: {model: ASC}}`), by an indexed relation ID (`order: {_ownerID: ASC}`), or from either side of a relation returns correctly ordered results using the index.
-
 # `go.index.order.descending-index`: Unordered results follow a descending index
 
 - **Parents:** ["go.index.order"]
@@ -278,83 +180,11 @@ Ordering by an indexed field of a related document (`order: {device: {model: ASC
 
 A filtered query without `order` on a `@index(direction: DESC)` Int, Float, Float32 or String field returns documents in descending value order, for `_gt`, `_ge`, `_lt`, `_le` filters.
 
-# `go.index.order.composite-direction`: Unordered results follow composite index directions
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_IfExactMatchWithRevertedOrderOnFirstField_ShouldFetch", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_IfExactMatchWithRevertedOrderOnSecondField_ShouldFetch", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithDefaultOrder_ShouldFetchInDefaultOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithDefaultOrderCaseInsensitive_ShouldFetchInDefaultOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRevertedOrderOnFirstField_ShouldFetchInRevertedOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRevertedOrderOnFirstFieldAndNoFilter_ShouldFetchInRevertedOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRevertedOrderOnFirstFieldCaseInsensitive_ShouldFetchInRevertedOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRevertedOrderOnSecondField_ShouldFetchInRevertedOrder", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRevertedOrderOnSecondFieldCaseInsensitive_ShouldFetchInRevertedOrder"]
-
-A query without `order` filtered through a composite index returns documents in the index's per-field direction order (default ASC, or DESC on the first or second field), with direction keywords case-insensitive, also without a filter and for exact matches.
-
-# `go.index.order.composite-in`: `_in` through a composite index with a reversed field
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithInFilterOnFirstFieldWithRevertedOrder_ShouldFetch", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithInFilterOnSecondFieldWithRevertedOrder_ShouldFetch"]
-- **Go-Bug-Suspect:** "TestQueryWithCompositeIndex_WithInFilterOnSecondFieldWithRevertedOrder_ShouldFetch is marked 'TODO: This test documents incorrect behaviour' (Go issue #3780): the expected order Andy, Fred, Shahzad is replaced by the actual Shahzad, Andy, Fred, and the check is relaxed to non-ordered."
-
-`_in` on the first or second field of a composite index with one DESC field returns the matching documents.
-
-# `go.index.order.composite-range`: Range filters on a composite index's first field
-
-- **Parents:** ["go.index.order"]
-- **Go-Tests:** ["index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithDescendingFirstFieldAndRangeQuery_ShouldUseRangeOptimization", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRangeQueryOnFirstField_ShouldUseRangeOptimization", "index/query_with_composite_index_field_order_test.go::TestQueryWithCompositeIndex_WithRangeQueryOnFirstFieldWithMultipleFilters_ShouldUseRangeOptimization"]
-
-A range filter (`_gt` etc.) on the first field of a composite index, ASC or DESC, alone or with further filters, is served by an index range scan and returns the matching documents.
-
 # `go.index.relation`: Indexes across relations
 
 - **Parents:** ["go.index"]
 
 Filters and ordering on related documents through indexes on relation or related fields.
-
-# `go.index.relation.one-to-many-filter`: Filters through one-to-many and many-to-one indexes
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_filter_test.go::TestQueryWithIndexOnManyToOne_IfFilterOnIndexedField_ShouldFilterWithExplain", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnManyToOne_IfFilterOnIndexedRelation_ShouldFilterWithExplain", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnManyToOne_MultipleViaOneToMany", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToMany_IfFilterOnIndexedPrimaryDoc_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToMany_IfFilterOnIndexedPrimaryDocAndSubFilter_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToMany_IfFilterOnIndexedRelation_ShouldFilterWithExplain", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_EqNilFilterShouldUseIndex", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_NeNilFilterShouldUseIndex", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToManyRelation_IfFilterOnIndexedRelation_ShouldFilter"]
-
-Filtering parents by an indexed field of their children (`User(filter: {devices: {model: {_eq: ...}}})`), children by an indexed parent field or relation ID, including `_eq: null`/`_ne: null` on an indexed relation, and many-to-one chains, returns the right documents and reports index fetches at the expected explain levels.
-
-# `go.index.relation.one-to-one-filter`: Filters through one-to-one indexes
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToOne_IfFilterOnIndexedRelation_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToOnePrimaryRelation_IfFilterOnIndexedFieldOfRelation_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToOnePrimaryRelation_IfFilterOnIndexedFieldOfRelationAndRelation_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToOnePrimaryRelation_IfFilterOnIndexedRelationWhileIndexedForeignField_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithIndexOnOneToOnesSecondaryRelation_IfFilterOnIndexedRelation_ShouldFilter", "index/query_with_relation_filter_test.go::TestQueryWithUniqueIndex_WithFilterOnChildIndexedField_ShouldFetch", "index/query_with_unique_index_on_relation_filter_test.go::TestQueryWithUniqueCompositeIndex_WithFilterOnIndexedRelation_ShouldFilter"]
-
-Filtering on an indexed field of a one-to-one related document, from the primary or secondary side, on the relation and a related field together, or through a unique (composite) index on the related type, returns the matching documents.
-
-# `go.index.relation.combined-filter`: Relation filters combined with other conditions
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_filter_test.go::TestQueryWithIndex_WithMultipleScalarsAndRelationFilter_ShouldApplyAllAsAnd", "index/query_with_relation_filter_test.go::TestQueryWithIndex_WithScalarAndRelationFilterAtTopLevel_ShouldApplyBothAsAnd", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithFilterOn2Relations_ShouldFilter", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationAndFilter_Data", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationAndFilter_NoData", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationNotFilter_Data", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationNotFilter_NoData", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationOrFilter_Data", "index/query_with_compound_filter_relation_test.go::TestIndex_QueryWithIndexOnOneToManyRelationOrFilter_NoData", "index/query_with_group_test.go::TestIndex_GroupByWithFilterOnIndexedRelation_ReturnsGroupByFieldValue", "index/query_with_composite_inxed_on_relation_test.go::TestQueryWithCompositeIndexOnManyToOne_WithMultipleIndexedChildNodes_ShouldSucceed"]
-
-Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` and `_not` over an indexed one-to-many relation return the right documents or none; filters on two relations, `groupBy` with a filter on an indexed relation, and a composite index on several indexed child fields all return correct results.
-
-# `go.index.relation.sub-filter`: Child sub-filters through indexes
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_IfSubFilterAndOrderOnIndexedField_ShouldUseIndexForFilter", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_IfSubFilterOnIndexedField_ShouldFilter", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_IfSubFilterOnNonIndexedField_ShouldNotUseIndex", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithOrderOnParentAndSubFilter_ShouldFilterBothWithIndexes", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithOrderOnParentAndSubFilter_ShouldFilterPerParent", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithParentFilterOnOwnFieldAndRelationAndSubFilter_ShouldCombineAllFilters", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithParentFilterOnRelationAndSubFilterOnDifferentIndexedField_ShouldUseBothIndexes", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithParentFilterOnRelationAndSubFilterOnNonIndexedField_ShouldUseParentIndex", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithSameFilterOnParentAndSubType_ShouldFilterBothWithIndexes", "index/query_with_relation_sub_filter_test.go::TestQueryWithIndexOnOneToMany_WithSameFilterValueOnParentAndSubType_ShouldReturnMatchingDocs"]
-
-A filter on a one-to-many child selection (`devices(filter: ...)`), alone or with a parent filter, parent ordering, or the same condition at both levels, returns each parent's matching children, using the child's index when the field is indexed and not otherwise.
-
-# `go.index.relation.sub-order`: Child ordering through indexes
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithIndexOnOrderFieldAscending_ShouldOrder", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithIndexOnOrderFieldAscendingWithLimit_ShouldOrderAndLimit", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithIndexOnOrderFieldDescending_ShouldOrder", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithMultipleAuthors_ShouldOrderEachAuthorsBooks", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithMultipleAuthorsAndIndexOnRelation_ShouldOrderEachAuthorsBooks", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithParentFilterOnRelationAndSubOrder_ShouldOrderChildren", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithSubFilterAndOrderAndRelationIndex_ShouldFilterThenOrder", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithSubFilterAndOrderOnSameIndexedField_ShouldFilterThenOrderASC", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderOnOneToMany_WithSubFilterAndOrderOnSameIndexedField_ShouldFilterThenOrderDESC"]
-
-`published(order: {rating: ASC|DESC})` on a one-to-many child with an indexed order field orders each parent's children independently, with `limit`, with a sub-filter on the same or another field (filter then order), and with a parent filter on the relation.
-
-# `go.index.relation.order-orphans-excluded`: Ordering by a related field drops orphans without `@exhaustive`
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_WithParentPrimaryASC_ExcludesOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_WithParentSecondaryASC_ExcludesOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_WithASCAndLimit_ExcludesOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_WithDESCAndLimit_ExcludesOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_WithASCAndLimit_RecursiveExplain", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_WithDESCAndLimit_RecursiveExplain"]
-- **Go-Bug-Suspect:** "Adding 'order' silently removes documents with no related document from the result, so the result set depends on ordering and indexing; the tests say orphans are excluded 'for performance'."
-
-Without `@exhaustive`, ordering by an indexed field of a related document (`Book(order: {publisher: {establishedYear: ASC}})`, at the root or in a nested selection, with or without `limit`) returns only documents that have the related document; explain shows the index-based inverted join at each level.
-
-# `go.index.relation.order-orphans-exhaustive`: `@exhaustive` keeps orphans when ordering by a related field
-
-- **Parents:** ["go.index.relation"]
-- **Go-Tests:** ["index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_ExhaustiveWithParentPrimaryASC_ShouldIncludeOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_ExhaustiveWithParentPrimaryDESC_ShouldIncludeOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_ExhaustiveWithParentSecondaryASC_ShouldIncludeOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_ExhaustiveWithParentSecondaryDESC_ShouldIncludeOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_ExhaustiveWithASCAndLimit_ShouldIncludeOrphansFirst", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_ExhaustiveWithDESCAndLimit_ShouldAppendOrphansLast", "index/query_with_relation_sub_order_test.go::TestQueryWithNestedOrderByRelationField_ExhaustiveWithPrimaryParentASC_ShouldIncludeOrphans", "index/query_with_relation_sub_order_test.go::TestQueryWithOrderByRelationField_WithSomeDocsWithoutRelation_ShouldIncludeAll", "index/query_with_relation_sub_order_test.go::TestQueryWithFilterOnNullRelation_SecondaryDocWithoutRelation_ShouldReturnOrphans", "index/query_with_relation_sub_order_complex_test.go::TestQueryWithOrderByRelationField_ExhaustiveASC_ManyBooksShowsFullPipeline", "index/query_with_relation_sub_order_complex_test.go::TestQueryWithOrderByRelationField_ExhaustiveASCWithLimit_ManyOrphansEarlyTermination", "index/query_with_relation_sub_order_complex_test.go::TestQueryWithOrderByRelationField_ExhaustiveDESCWithLimit_ManyOrphansSkipsOrphanPhase", "index/query_with_relation_filter_test.go::TestQueryWithIndex_ExhaustiveOrderByRelationWithScalarFilter_ShouldFilterOrphans", "index/query_with_relation_filter_test.go::TestQueryWithIndex_ExhaustiveOrderByRelationWithScalarFilterDescending_ShouldFilterOrphans"]
-
-With `query @exhaustive`, ordering by a related document's field returns every document: orphans (null related value) come first for ASC and last for DESC, at the root or nested, from the primary or secondary side, with `limit` stopping early, and with same-object scalar filters still applied to orphans.
 
 # `go.index.array`: Indexes on array fields
 
@@ -362,74 +192,11 @@ With `query @exhaustive`, ordering by a related document's field returns every d
 
 Non-unique indexes on scalar array fields, indexed per element.
 
-# `go.index.array.types`: Array element types
-
-- **Parents:** ["go.index.array"]
-- **Go-Tests:** ["index/array_test.go::TestArrayIndex_Bool_ShouldUseIndex", "index/array_test.go::TestArrayIndex_Float_ShouldUseIndex", "index/array_test.go::TestArrayIndex_OptionalBool_ShouldUseIndex", "index/array_test.go::TestArrayIndex_OptionalFloat_ShouldUseIndex", "index/array_test.go::TestArrayIndex_OptionalInt_ShouldUseIndex", "index/array_test.go::TestArrayIndex_OptionalString_ShouldUseIndex"]
-
-An index on `[Int]`, `[Float]`, `[Boolean]`, `[String]` and their nillable-element variants serves `_any: {_eq: ...}` filters and returns the matching documents.
-
-# `go.index.array.operators`: `_any`, `_all`, `_none` on indexed arrays
-
-- **Parents:** ["go.index.array"]
-- **Go-Tests:** ["index/array_test.go::TestArrayIndex_WithAllAndInOperator_Succeed", "index/array_test.go::TestArrayIndex_WithAllAndNinOperator_Succeed", "index/array_test.go::TestArrayIndex_WithAnyAndInOperator_Succeed", "index/array_test.go::TestArrayIndex_WithAnyAndNinOperator_Succeed", "index/array_test.go::TestArrayIndex_WithFilterOnIndexedArrayUsingAll_ShouldUseIndex", "index/array_test.go::TestArrayIndex_WithFilterOnIndexedArrayUsingAny_ShouldUseIndex", "index/array_test.go::TestArrayIndex_WithFilterOnIndexedArrayUsingNone_ShouldNotUseIndex", "index/array_test.go::TestArrayIndex_WithNoneAndInOperator_Succeed", "index/array_test.go::TestArrayIndex_WithNoneAndNinOperator_Succeed"]
-
-`_any` and `_all` filters on an indexed array (with `_eq`, `_in`, `_nin`) use the index and return the matching documents; `_none` returns correct results without using the index.
-
-# `go.index.array.nil-elements`: Null elements in indexed arrays
-
-- **Parents:** ["go.index.array"]
-- **Go-Tests:** ["index/array_test.go::TestArrayIndex_WithNilElementsAndAllOp_Succeed", "index/array_test.go::TestArrayIndex_WithNilElementsAndAnyOp_Succeed", "index/array_test.go::TestArrayIndex_WithNilElementsAndNoneOp_Succeed"]
-
-Arrays containing null elements are indexed; `_any`, `_all` and `_none` filters with `_eq: null` or a value return the matching documents.
-
-# `go.index.array.update`: Array index maintenance on update
-
-- **Parents:** ["go.index.array"]
-- **Go-Tests:** ["index/array_test.go::TestArrayIndexDelete_IfUpdateRemovesSoughtElement_ShouldNotFetch", "index/array_test.go::TestArrayIndexUpdate_IfUpdateAddsSoughtElement_ShouldFetch", "index/array_test.go::TestArrayIndexUpdate_IfUpdateRearrangesArrayElements_ShouldFetch", "index/array_test.go::TestArrayIndexUpdate_IfUpdateRemovesSoughtElement_ShouldNotFetch"]
-
-After an update adds, removes or reorders array elements, `_any` filters return the document only if the sought element is present in the new array.
-
-# `go.index.array.composite`: Composite indexes with array fields
-
-- **Parents:** ["go.index.array"]
-- **Go-Tests:** ["index/array_composite_test.go::TestArrayCompositeIndex_With2ConsecutiveArrayFields_Succeed", "index/array_composite_test.go::TestArrayCompositeIndex_With2SeparateArrayFields_Succeed", "index/array_composite_test.go::TestArrayCompositeIndex_WithAnyNoneAll_Succeed", "index/array_composite_test.go::TestArrayCompositeIndex_WithFilterOnIndexedArrayUsingAll_ShouldUseIndex", "index/array_composite_test.go::TestArrayCompositeIndex_WithFilterOnIndexedArrayUsingAny_ShouldUseIndex", "index/array_composite_test.go::TestArrayCompositeIndex_WithFilterOnIndexedArrayUsingNone_ShouldUseIndex", "index/array_composite_test.go::TestArrayCompositeIndexDelete_With2ConsecutiveArrayFields_Succeed", "index/array_composite_test.go::TestArrayCompositeIndexUpdate_With2ArrayFields_Succeed"]
-
-Composite indexes with two array fields (adjacent or separated by a scalar) serve `_any`, `_all` and `_none` filters and stay correct after updates and deletes.
-
 # `go.index.json`: Indexes on JSON fields
 
 - **Parents:** ["go.index"]
 
 `@index` on a `JSON` field indexes each leaf value by its path.
-
-# `go.index.json.scalar-ops`: Comparison filters on JSON paths
-
-- **Parents:** ["go.index.json"]
-- **Go-Tests:** ["index/json_test.go::TestJSONIndex_UponUpdate_ShouldUseNewIndexValues", "index/json_test.go::TestJSONIndex_WithCompoundFilterCondition_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithEqFilterOnBoolField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithEqFilterOnStringField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithGeFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithGreaterThanFilterOnTopLevelJSONField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithGtFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithInFilter_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithInFilterOfDifferentTypes_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithLeFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithLikeFilterOnStringField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithLtFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNeFilterOnBoolField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNeFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNinFilter_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNLikeFilterOnStringField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNonNillableField_WithFilterOnNumberField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNotAndInFilter_ShouldNotUseIndex"]
-
-Filters on a path inside an indexed JSON field (`custom: {height: {_eq: 168}}`) for numbers, strings and booleans with `_eq`, `_ne`, `_gt`, `_ge`, `_lt`, `_le`, `_in` (including mixed-type lists), `_nin`, `_like`, `_ilike`, `_nlike`, `_nilike`, `_and`, and top-level `_gt` return the matching documents through the index, also for `JSON!` and after updates; `_not` over `_in` does not use the index.
-
-# `go.index.json.null`: Null semantics on indexed JSON
-
-- **Parents:** ["go.index.json"]
-- **Go-Tests:** ["index/json_test.go::TestJSONIndex_WithEqFilterAgainstExplicitNullField_ShouldFetchNullValues", "index/json_test.go::TestJSONIndex_WithEqFilterOnNullField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithGeqNullFilterOnNestedJSONPath_ShouldNotUseIndex", "index/json_test.go::TestJSONIndex_WithGeqNullFilterOnTopLevelJSONField_ShouldNotUseIndex", "index/json_test.go::TestJSONIndex_WithLeqNullFilterOnNestedJSONPath_ShouldNotUseIndex", "index/json_test.go::TestJSONIndex_WithLeqNullFilterOnTopLevelJSONField_ShouldUseIndex", "index/json_test.go::TestJSONIndex_WithNeFilterAgainstBoolField_ShouldFetchNullValues", "index/json_test.go::TestJSONIndex_WithNeFilterAgainstNumberField_ShouldFetchNullValues", "index/json_test.go::TestJSONIndex_WithNeFilterAgainstStringField_ShouldFetchNullValues", "index/json_test.go::TestJSONIndex_WithNeFilterOnNullNestedField_ShouldUseIndex"]
-
-`_eq: null` on a JSON path or on the whole field returns documents where it is null; `_ne: <value>` also returns documents where the path is null or missing; `_ne: null` returns non-null ones. `_le: null` on the whole field uses the index; `_ge: null` (top-level or nested) and `_le: null` on a nested path do not, with correct results.
-
-# `go.index.json.object-values`: Object and array values in JSON filters
-
-- **Parents:** ["go.index.json"]
-- **Go-Tests:** ["index/json_test.go::TestJSONIndex_WithEqFilterWithObjectValueOnNestedPath_ShouldFilter", "index/json_test.go::TestJSONIndex_WithInFilterWithObjectValueOnNestedPath_ShouldFilter", "index/json_test.go::TestJSONIndex_WithNeqFilterWithObjectValueOnNestedPath_ShouldFilter", "index/json_test.go::TestJSONIndex_WithNinFilterWithObjectValueOnNestedPath_ShouldFilter", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithEqFilterOnJSONFieldWithNestedArrayValue_ShouldNotUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithEqFilterOnJSONFieldWithObjectValue_ShouldNotUseIndex", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithInFilterOnJSONFieldWithObjectValue_ShouldNotUseIndex"]
-
-`_eq`, `_ne`, `_in` and `_nin` whose value is a JSON object or nested array (`nested: {_eq: {foo: "bar"}}`) return the matching documents by full-scan comparison without using the index (0 index fetches).
-
-# `go.index.json.array`: JSON arrays in an index
-
-- **Parents:** ["go.index.json"]
-- **Go-Tests:** ["index/json_array_test.go::TestJSONArrayIndex_WithAllEqAndComparisonFilter_ShouldFetchCorrectlyUsingIndex", "index/json_array_test.go::TestJSONArrayIndex_WithAllEqFilter_ShouldFetchCorrectlyUsingIndex", "index/json_array_test.go::TestJSONArrayIndex_WithAnyAndComparisonFilter_ShouldNotConsiderThem", "index/json_array_test.go::TestJSONArrayIndex_WithAnyEqFilter_ShouldNotConsiderThem", "index/json_array_test.go::TestJSONArrayIndex_WithDifferentElementValuesAndTypes_ShouldFetchCorrectlyUsingIndex", "index/json_array_test.go::TestJSONArrayIndex_WithNoneEqAndComparisonFilter_ShouldFetchCorrectlyUsingIndex", "index/json_array_test.go::TestJSONArrayIndex_WithNoneEqFilter_ShouldFetchCorrectlyUsingIndex"]
-
-Elements of JSON arrays are indexed: `_any: {_eq|_gt: ...}` matches top-level elements only (not elements of nested arrays or a scalar in place of the array); `_all` with `_eq`/`_gt` uses the index; `_none` returns correct results without the index; elements of mixed types are matched correctly.
 
 # `go.index.json.composite`: Composite indexes with JSON fields
 
@@ -443,13 +210,6 @@ Composite indexes pairing a JSON field (scalar paths or arrays) with a scalar or
 - **Parents:** ["go.index"]
 
 Index entries kept correct by deletes and P2P merges.
-
-# `go.index.maintenance.delete-with-filter`: Filter deletes clean up index entries
-
-- **Parents:** ["go.index.maintenance"]
-- **Go-Tests:** ["index/delete_test.go::TestDocDeleteWithFilter_WithMultipleMatchingDocs_CleansUpAllIndexEntries", "index/delete_test.go::TestDocDeleteWithFilter_WithUniqueIndex_CleansUpIndexEntries"]
-
-`delete_<Type>(filter: ...)` removes the index entries of every deleted document, so re-adding documents with the same unique or non-unique indexed values succeeds.
 
 # `go.index.maintenance.p2p`: Replicated changes update the peer's index
 
@@ -519,22 +279,6 @@ Document writes and GraphQL requests inside a transaction.
 - **Go-Tests:** ["txn/add_doc_test.go::TestTxn_AddDoc_WithCommit_Succeeds", "txn/add_doc_test.go::TestTxn_AddDoc_InsideTxnWithAddCollection_WithCommit_Succeeds", "txn/update_doc_test.go::TestTxn_UpdateDoc_WithCommit_Succeeds", "txn/update_doc_test.go::TestTxn_UpdateDocWithFilter_WithCommit_Succeeds", "txn/delete_doc_test.go::TestTxn_DeleteDoc_WithCommit_Succeeds", "txn/request_test.go::TestTxn_Request_WithCommit_Succeeds", "txn/truncate_test.go::TestCollectionTruncate_WithCommit_Succeeds"]
 
 After `CommitTransaction`, documents added, updated (by ID or filter), deleted, created via a GraphQL mutation request, or removed by `Truncate` inside the transaction are reflected in queries outside it; a collection and its documents added in one transaction are both visible.
-
-# `go.txn.docs.uncommitted-invisible`: Uncommitted document writes are invisible
-
-- **Parents:** ["go.txn.docs"]
-- **Go-Tests:** ["txn/add_doc_test.go::TestTxn_AddDoc_WithoutCommit_EmptyResults", "txn/update_doc_test.go::TestTxn_UpdateDoc_WithoutCommit_DoesNotUpdateDocument", "txn/update_doc_test.go::TestTxn_UpdateDocWithFilter_WithoutCommit_DoesNotUpdateDocument", "txn/delete_doc_test.go::TestTxn_DeleteDoc_WithoutCommit_DoesNotDelete", "txn/request_test.go::TestTxn_Request_WithoutCommit_EmptyResults"]
-- **Scope:** "database types: badger file, badger in-memory, defra in-memory (not leveldb, Go issue #4442)"
-
-Before commit, documents added, updated (by ID or filter), deleted or created by a mutation inside a transaction are not visible to queries outside it, which still return the previous state.
-
-# `go.txn.docs.read-own-writes`: Transactions see their own document writes
-
-- **Parents:** ["go.txn.docs"]
-- **Go-Tests:** ["txn/update_doc_test.go::TestTxn_UpdateDoc_ExhibitsTransactionalIsolation_Succeeds", "txn/update_doc_test.go::TestTxn_UpdateWithFilter_ExhibitsTransactionalIsolation_Succeeds", "txn/delete_doc_test.go::TestTxn_DeleteDoc_ExhibitsTransactionalIsolation_Succeeds"]
-- **Scope:** "database types: badger file, badger in-memory, defra in-memory (not leveldb, Go issue #4442), except TestTxn_UpdateWithFilter_ExhibitsTransactionalIsolation_Succeeds which runs on all"
-
-Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on documents created earlier in the same transaction, and the result is visible after commit.
 
 # `go.txn.definitions`: Schema, view and lens operations in transactions
 

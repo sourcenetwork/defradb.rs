@@ -106,7 +106,7 @@ impl HttpClient {
         filter: &Filter,
         updater: &str,
     ) -> Result<DocumentsResult> {
-        let body = json!({"filter": filter_body(filter), "updater": updater}).to_string();
+        let body = json!({"filter": filter_body(filter)?, "updater": updater}).to_string();
         let path = format!("collections/{}", encode(collection));
         Ok(self
             .send(Method::PATCH, &path, &[], Some(body), txn)
@@ -123,7 +123,7 @@ impl HttpClient {
         collection: &str,
         filter: &Filter,
     ) -> Result<DocumentsResult> {
-        let body = json!({"filter": filter_body(filter)}).to_string();
+        let body = json!({"filter": filter_body(filter)?}).to_string();
         let path = format!("collections/{}", encode(collection));
         Ok(self
             .send(Method::DELETE, &path, &[], Some(body), txn)
@@ -193,7 +193,7 @@ impl HttpClient {
 }
 
 fn not_found() -> Error {
-    Error::Server(documents::Error::DocumentNotFound.to_string())
+    Error::Documents(documents::Error::DocumentNotFound)
 }
 
 /// Go's `encrypt` and `encryptFields` query parameters.
@@ -208,11 +208,15 @@ fn encryption(options: &AddOptions) -> Vec<(&'static str, String)> {
     query
 }
 
-/// The filter as Go's handler takes it: an object or its source text.
-fn filter_body(filter: &Filter) -> Value {
+/// The filter as Go's wire takes it: an object or its source text. A filter
+/// of no kind Go knows is refused here, as the core refuses it, since the
+/// server cannot tell it from conditions.
+fn filter_body(filter: &Filter) -> Result<Value> {
     match filter {
-        Filter::Conditions(conditions) => Value::Object(conditions.clone()),
-        Filter::Source(source) => Value::String(source.clone()),
-        Filter::Unsupported(value) => value.clone(),
+        Filter::Conditions(conditions) => Ok(Value::Object(conditions.clone())),
+        Filter::Source(source) => Ok(Value::String(source.clone())),
+        Filter::Unsupported(_) => Err(Error::Documents(documents::Error::Request(
+            "unsupported filter type".to_owned(),
+        ))),
     }
 }
