@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, DeleteDocumentSubscription,
-    NodeOpenP2P, NodeStopForRestart, PeerEventsStart, Start, WaitForUpdate,
+    AddCollection, AddDoc, AddDocumentSubscription, Close, ConnectPeers,
+    DeleteDocumentSubscription, NewNode, Start, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -31,7 +33,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -39,7 +42,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -84,7 +88,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -107,7 +112,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -128,8 +134,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -150,8 +156,8 @@ fn nac_gates_delete_p2_p_document_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -202,7 +208,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -210,7 +217,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -218,7 +226,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -226,7 +235,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -271,7 +281,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -294,7 +305,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -315,8 +327,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -337,8 +349,8 @@ fn nac_gates_delete_p2_p_document_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -391,7 +403,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -399,7 +412,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -407,7 +421,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -415,7 +430,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -460,7 +476,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -483,7 +500,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -504,8 +522,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -526,8 +544,8 @@ fn nac_gates_delete_p2_p_document_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()

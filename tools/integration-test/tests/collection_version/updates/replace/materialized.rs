@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddView, GetCollectionsFiltered, PatchCollection, Request, Truncate,
+    AddCollection, AddDoc, AddView, GetCollections, PatchCollection, Request, Truncate,
 };
 use integration_test::m;
 use integration_test::scenario::Common;
@@ -166,8 +166,9 @@ fn col_version_update_replace_is_materialized_given_false_and_view() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("UserView".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

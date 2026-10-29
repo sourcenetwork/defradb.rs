@@ -1,9 +1,10 @@
 //! Generated from the conformance scenarios of tests/integration/signature/acp_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDACPolicy, AddDoc, NodeOpenSigningSecp256k1, PeerEventsStart,
-    SignatureVerifySeed, WaitForUpdates,
+    AddCollection, AddDACPolicy, AddDoc, NewNode, VerifyBlockSignature, WaitForPeersEvents,
+    WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +17,9 @@ fn signature_acp_if_has_access_to_doc_validate_signature() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -75,7 +78,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -91,8 +95,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 common: Common {
                     capture: captures([("head", "/cids/0")]),
                     ..Default::default()
@@ -100,8 +104,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
-                signer_seed: 1,
+            VerifyBlockSignature {
+                signer_seed: Some(1),
                 cid: Text::reference("head"),
                 common: Common {
                     identity_seed: Some(1),
@@ -122,7 +126,9 @@ fn signature_acp_if_has_no_access_to_doc_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -181,7 +187,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -197,8 +204,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 common: Common {
                     capture: captures([("head", "/cids/0")]),
                     ..Default::default()
@@ -206,8 +213,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
-                signer_seed: 1,
+            VerifyBlockSignature {
+                signer_seed: Some(1),
                 cid: Text::reference("head"),
                 expected_error: Some("missing permission".into()),
                 common: Common {

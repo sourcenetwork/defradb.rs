@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PKMS,
-    PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,9 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +25,9 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -31,7 +35,9 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -39,7 +45,9 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -111,7 +119,8 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -119,7 +128,8 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -127,7 +137,8 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -135,7 +146,8 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -193,8 +205,8 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -203,9 +215,9 @@ fn doc_encryption_peer_multiple_peers_on_encryption_topic_should_fetch_key_from_
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),

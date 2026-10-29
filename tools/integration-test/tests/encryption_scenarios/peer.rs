@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PKMS,
-    PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,9 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +26,9 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -64,7 +68,8 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -72,7 +77,8 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -112,8 +118,8 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -122,9 +128,9 @@ fn doc_encryption_peer_if_peer_did_not_receive_key_should_not_fetch() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -163,12 +169,16 @@ fn doc_encryption_peer_upon_sync_should_sync_encrypted_dag() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -197,12 +207,14 @@ fn doc_encryption_peer_upon_sync_should_sync_encrypted_dag() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -228,15 +240,15 @@ fn doc_encryption_peer_upon_sync_should_sync_encrypted_dag() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()

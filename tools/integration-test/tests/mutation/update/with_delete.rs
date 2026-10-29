@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/mutation/update/with_delete_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, DeleteDoc, SaveDoc};
+use integration_test::actions::{AddCollection, AddDoc, DeleteDoc};
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -22,9 +22,10 @@ fn update_save_deleted_doc_does_nothing() {
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
-                doc_map: json!({ "name": "John" }),
+                doc_map: Some(json!({ "name": "John" })),
+                upsert: true,
                 common: Common {
                     capture: captures([("docID", "/docID")]),
                     ..Default::default()
@@ -38,10 +39,11 @@ fn update_save_deleted_doc_does_nothing() {
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
                 doc_id: Some(Text::reference("docID")),
-                doc_map: json!({ "name": "Fred" }),
+                doc_map: Some(json!({ "name": "Fred" })),
+                upsert: true,
                 expected_error: Some("a document with the given ID has been deleted".into()),
                 ..Default::default()
             }

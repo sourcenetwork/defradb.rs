@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/view/one_to_one/with_restart_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, AddView, NodeOpenPersistent, Request, Restart};
+use integration_test::actions::{AddCollection, AddView, NewNode, Request, Restart};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -11,7 +11,8 @@ fn view_one_to_one_embedded_schema_is_not_lost_o_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),

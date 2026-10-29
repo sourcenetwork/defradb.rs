@@ -3,7 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, ConnectPeers, DeleteCollectionSubscription,
-    GetCollectionsFiltered, ListP2PCollections, NodeOpenP2P, SyncCollectionVersions,
+    GetCollections, ListP2PCollections, NewNode, SyncCollectionVersions,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn peer_events_delete_subscription_on_collection_with_no_active_version_should_s
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn peer_events_delete_subscription_on_collection_with_no_active_version_should_s
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -45,8 +47,9 @@ fn peer_events_delete_subscription_on_collection_with_no_active_version_should_s
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version0", "/collections/0/VersionID")]),
@@ -104,7 +107,8 @@ fn peer_events_list_collections_with_no_active_version_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -112,7 +116,8 @@ fn peer_events_list_collections_with_no_active_version_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -134,8 +139,9 @@ fn peer_events_list_collections_with_no_active_version_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version0", "/collections/0/VersionID")]),
@@ -193,7 +199,8 @@ fn peer_events_subscribe_to_collection_with_no_active_version_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -201,7 +208,8 @@ fn peer_events_subscribe_to_collection_with_no_active_version_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -223,8 +231,9 @@ fn peer_events_subscribe_to_collection_with_no_active_version_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("version0", "/collections/0/VersionID")]),

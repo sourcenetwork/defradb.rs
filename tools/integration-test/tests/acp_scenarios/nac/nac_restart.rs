@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/nac_restart_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{GetNACStatus, NodeOpenPersistent, NodeStopForRestart, Start};
+use integration_test::actions::{Close, GetNACStatus, NewNode, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -13,11 +13,13 @@ fn nac_restart_node_with_nac_enabled_with_another_identity_ignore_new_identity_a
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -30,7 +32,8 @@ fn nac_restart_node_with_nac_enabled_with_another_identity_ignore_new_identity_a
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -65,11 +68,13 @@ fn nac_restart_node_with_nac_enabled_with_explicitly_specifying_same_args_restar
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -82,7 +87,8 @@ fn nac_restart_node_with_nac_enabled_with_explicitly_specifying_same_args_restar
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -116,11 +122,13 @@ fn nac_restart_node_with_nac_enabled_without_nac_args_restarts_and_nac_is_still_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -133,7 +141,8 @@ fn nac_restart_node_with_nac_enabled_without_nac_args_restarts_and_nac_is_still_
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

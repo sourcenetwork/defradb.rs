@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddNACActorRelationship, ConnectPeers, NodeOpenP2P, NodeStopForRestart,
-    PeerEventsStart, Start, SyncDocs, WaitForUpdates,
+    AddCollection, AddDoc, AddNACActorRelationship, Close, ConnectPeers, NewNode, Start, SyncDocs,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -31,7 +33,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -39,7 +42,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -84,7 +88,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -107,7 +112,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -128,8 +134,8 @@ fn nac_admin_relation_can_sync_p2_p_documents() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0")]),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cids/0")]),

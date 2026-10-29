@@ -1,9 +1,9 @@
 //! Generated from the conformance scenarios of tests/integration/signature/commit_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDoc, DeleteDoc, NodeOpenSigningEd25519, NodeOpenSigningSecp256k1,
-    PeerEventsStart, Request, SaveDoc, UpdateDoc, WaitForUpdate, WaitForUpdates,
+    AddCollection, AddDoc, DeleteDoc, NewNode, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,12 +16,16 @@ fn signature_with_client_identity_should_use_it_for_signing() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
-            NodeOpenSigningEd25519 {
+            NewNode {
                 node_identity_seed: Some(1),
+                enable_signing: true,
+                key_type: Some(KeyType::Ed25519),
                 common: Common { node: Some("client".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -36,7 +40,8 @@ fn signature_with_client_identity_should_use_it_for_signing() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -47,8 +52,8 @@ fn signature_with_client_identity_should_use_it_for_signing() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 expected_data: json!({}),
                 ..Default::default()
             }
@@ -61,8 +66,8 @@ fn signature_with_client_identity_should_use_it_for_signing() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 expected_data: json!({}),
                 ..Default::default()
             }
@@ -75,8 +80,8 @@ fn signature_with_client_identity_should_use_it_for_signing() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 expected_data: json!({}),
                 ..Default::default()
             }
@@ -134,7 +139,9 @@ fn signature_with_commit_query_should_be_hex_encoded() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -148,7 +155,8 @@ fn signature_with_commit_query_should_be_hex_encoded() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -159,8 +167,8 @@ fn signature_with_commit_query_should_be_hex_encoded() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -221,7 +229,9 @@ fn signature_with_commit_query_should_include_signature_data() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -235,7 +245,8 @@ fn signature_with_commit_query_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -246,8 +257,8 @@ fn signature_with_commit_query_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -308,7 +319,9 @@ fn signature_with_deleted_doc_and_commit_query_should_include_signature_data() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -321,7 +334,8 @@ fn signature_with_deleted_doc_and_commit_query_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -332,8 +346,8 @@ fn signature_with_deleted_doc_and_commit_query_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -345,8 +359,8 @@ fn signature_with_deleted_doc_and_commit_query_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -402,8 +416,10 @@ fn signature_with_ed25519_key_type_should_include_signature_data() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningEd25519 {
+            NewNode {
                 node_identity_seed: Some(0),
+                enable_signing: true,
+                key_type: Some(KeyType::Ed25519),
                 ..Default::default()
             }
             .into(),
@@ -417,7 +433,8 @@ fn signature_with_ed25519_key_type_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -428,8 +445,8 @@ fn signature_with_ed25519_key_type_should_include_signature_data() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc")),
                 common: Common { capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -490,7 +507,9 @@ fn signature_with_per_op_signing_disabled_should_not_sign_any_commit() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -505,14 +524,16 @@ fn signature_with_per_op_signing_disabled_should_not_sign_any_commit() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
-                doc_map: json!({ "age": 21, "name": "John" }),
+                doc_map: Some(json!({ "age": 21, "name": "John" })),
                 enable_signing: Some(false),
+                upsert: true,
                 common: Common {
                     retry: true,
                     capture: captures([("doc", "/docID")]),
@@ -521,8 +542,8 @@ fn signature_with_per_op_signing_disabled_should_not_sign_any_commit() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
@@ -560,7 +581,9 @@ fn signature_with_per_op_signing_override_on_update() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -574,13 +597,15 @@ fn signature_with_per_op_signing_override_on_update() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
-                doc_map: json!({ "name": "John" }),
+                doc_map: Some(json!({ "name": "John" })),
+                upsert: true,
                 common: Common {
                     retry: true,
                     capture: captures([("doc", "/docID")]),
@@ -589,16 +614,17 @@ fn signature_with_per_op_signing_override_on_update() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
                 doc_id: Some(Text::reference("doc")),
-                doc_map: json!({ "name": "John Doe" }),
+                doc_map: Some(json!({ "name": "John Doe" })),
                 enable_signing: Some(false),
+                upsert: true,
                 common: Common {
                     retry: true,
                     ..Default::default()
@@ -606,8 +632,8 @@ fn signature_with_per_op_signing_override_on_update() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
@@ -632,11 +658,12 @@ fn signature_with_per_op_signing_override_on_update() {
                 ..Default::default()
             }
             .into(),
-            SaveDoc {
+            AddDoc {
                 collection: "Users".into(),
                 doc_id: Some(Text::reference("doc")),
-                doc_map: json!({ "name": "John Doe Junior" }),
+                doc_map: Some(json!({ "name": "John Doe Junior" })),
                 enable_signing: Some(true),
+                upsert: true,
                 common: Common {
                     retry: true,
                     ..Default::default()
@@ -644,8 +671,8 @@ fn signature_with_per_op_signing_override_on_update() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
@@ -683,7 +710,9 @@ fn signature_with_updated_docs_and_commit_query_should_sign_only_first_field_blo
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningSecp256k1 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
                 ..Default::default()
             }
             .into(),
@@ -697,7 +726,8 @@ fn signature_with_updated_docs_and_commit_query_should_sign_only_first_field_blo
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -712,8 +742,8 @@ fn signature_with_updated_docs_and_commit_query_should_sign_only_first_field_blo
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
@@ -728,8 +758,8 @@ fn signature_with_updated_docs_and_commit_query_should_sign_only_first_field_blo
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),
@@ -744,8 +774,8 @@ fn signature_with_updated_docs_and_commit_query_should_sign_only_first_field_blo
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc")]),
                 ..Default::default()
             }
             .into(),

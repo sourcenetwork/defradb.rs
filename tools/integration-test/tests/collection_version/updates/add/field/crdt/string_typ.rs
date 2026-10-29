@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/collection_version/updates/add/field/crdt/string_typ_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, GetCollectionsFiltered, PatchCollection};
+use integration_test::actions::{AddCollection, GetCollections, PatchCollection};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -30,8 +30,9 @@ fn collection_version_updates_add_field_crdt_typ_as_string_no_error() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

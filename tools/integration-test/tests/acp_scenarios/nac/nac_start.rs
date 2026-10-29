@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/nac_start_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{GetNACStatus, NodeStopForRestart, Start};
+use integration_test::actions::{Close, GetNACStatus, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -17,7 +17,8 @@ fn nac_start_node_no_identity_with_nac_enable_true_error_as_identity_is_needed()
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -44,7 +45,8 @@ fn nac_start_node_with_identity_and_with_nac_enable_false_nac_not_enabled() {
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -79,7 +81,8 @@ fn nac_start_node_with_identity_and_with_nac_enable_true_nac_enabled_successfull
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

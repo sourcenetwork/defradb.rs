@@ -1,9 +1,10 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/relation_admin/verify_signature_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::NodeClient;
 use integration_test::actions::{
-    AddCollection, AddDoc, AddNACActorRelationship, NodeOpenHTTPSigning, NodeStopForRestart,
-    PeerEventsStart, SignatureVerifySeed, Start, WaitForUpdate,
+    AddCollection, AddDoc, AddNACActorRelationship, Close, NewNode, Start, VerifyBlockSignature,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,11 +16,14 @@ fn nac_admin_relation_can_verify_signature() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTPSigning {
+            NewNode {
+                client_type: Some(NodeClient::Http),
+                enable_signing: true,
                 ..Default::default()
             }
             .into(),
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -49,7 +53,8 @@ fn nac_admin_relation_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -65,8 +70,8 @@ fn nac_admin_relation_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     capture: captures([("head", "/cid")]),
                     ..Default::default()
@@ -74,9 +79,9 @@ fn nac_admin_relation_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
+            VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: 0,
+                signer_seed: Some(0),
                 expected_error: Some(
                     "not authorized to perform operation. Permission: verify-signature".into(),
                 ),
@@ -98,9 +103,9 @@ fn nac_admin_relation_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
+            VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: 0,
+                signer_seed: Some(0),
                 common: Common {
                     identity_seed: Some(2),
                     ..Default::default()
@@ -120,7 +125,8 @@ fn nac_admin_relation_go_client_can_verify_signature() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -150,7 +156,8 @@ fn nac_admin_relation_go_client_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -166,8 +173,8 @@ fn nac_admin_relation_go_client_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 common: Common {
                     capture: captures([("head", "/cid")]),
                     ..Default::default()
@@ -175,9 +182,9 @@ fn nac_admin_relation_go_client_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
+            VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: 1,
+                signer_seed: Some(1),
                 expected_error: Some(
                     "not authorized to perform operation. Permission: verify-signature".into(),
                 ),
@@ -199,9 +206,9 @@ fn nac_admin_relation_go_client_can_verify_signature() {
                 ..Default::default()
             }
             .into(),
-            SignatureVerifySeed {
+            VerifyBlockSignature {
                 cid: Text::reference("head"),
-                signer_seed: 1,
+                signer_seed: Some(1),
                 common: Common {
                     identity_seed: Some(2),
                     ..Default::default()

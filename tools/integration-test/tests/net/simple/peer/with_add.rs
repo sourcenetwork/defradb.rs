@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2P, PeerEventsStart,
-    Request, SubscriptionFinish, SubscriptionRequest, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request,
+    SubscriptionRequest, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,12 +16,14 @@ fn p2_p_add_does_not_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -48,12 +50,14 @@ fn p2_p_add_does_not_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -65,8 +69,8 @@ fn p2_p_add_does_not_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -78,8 +82,8 @@ fn p2_p_add_does_not_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db1".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -97,8 +101,8 @@ fn p2_p_add_does_not_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common { node: Some("db0".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -142,7 +146,8 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -150,7 +155,8 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -208,15 +214,17 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream0".into(),
-                query: r#"
+                request: Some(
+                    r#"
                     subscription {
                                         Users {
                                             Age
                                         }
                                     }
                 "#
-                .into(),
-                expected_count: 1,
+                    .into(),
+                ),
+                expected_count: Some(1),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -224,7 +232,8 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -232,7 +241,8 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -252,8 +262,8 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -262,9 +272,9 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -273,7 +283,7 @@ fn p2_p_add_with_p2_p_collection_and_subscription_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            SubscriptionFinish {
+            SubscriptionRequest {
                 subscription: "stream0".into(),
                 expected_data: json!({ "events": [{ "data": { "Users": [{ "Age": 21 }] } }] }),
                 common: Common {
@@ -296,7 +306,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -304,7 +315,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -312,7 +324,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -320,7 +333,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -328,7 +342,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -456,7 +471,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -464,7 +480,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -472,7 +489,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -480,7 +498,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -488,7 +507,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -508,8 +528,8 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -518,9 +538,9 @@ fn p2_p_add_with_p2_p_collection_on_last_node_in_node_chain_should_propagate_upd
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -559,7 +579,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -567,7 +588,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -575,7 +597,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -583,7 +606,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -591,7 +615,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -746,7 +771,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -754,7 +780,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -762,7 +789,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -770,7 +798,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -778,7 +807,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -798,8 +828,8 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -808,9 +838,9 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -819,9 +849,9 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db2".into()),
@@ -830,9 +860,9 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),
@@ -841,9 +871,9 @@ fn p2_p_add_with_p2_p_collection_with_node_chain_should_succeed() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -950,12 +980,14 @@ fn p2_p_add_with_p2_p_collection() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -982,12 +1014,14 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -999,8 +1033,8 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db0".into()), capture: captures([("head0", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -1012,8 +1046,8 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common { node: Some("db1".into()), capture: captures([("head1", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -1037,8 +1071,8 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common { node: Some("db0".into()), capture: captures([("head2", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -1050,8 +1084,8 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
                 common: Common { node: Some("db0".into()), capture: captures([("head3", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
@@ -1063,23 +1097,23 @@ fn p2_p_add_with_p2_p_collection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_3")),
                 common: Common { node: Some("db1".into()), capture: captures([("head4", "/cid")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_1"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_2"),
-                cid: Text::reference("head3"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_2")),
+                cid: Some(Text::reference("head3")),
                 expected_data: json!({}),
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()

@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDACActorRelationship, AddDoc, PeerEventsStart, WaitForUpdate,
+    AddCollection, AddDACActorRelationship, AddDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -26,7 +26,8 @@ fn acp_add_doc_actor_relationship_with_collection_that_has_no_policy_not_allowed
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -42,8 +43,8 @@ fn acp_add_doc_actor_relationship_with_collection_that_has_no_policy_not_allowed
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 ..Default::default()
             }
             .into(),

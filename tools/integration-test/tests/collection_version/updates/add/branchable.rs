@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, GetCollectionsFiltered, PatchCollection, Request, UpdateDoc,
+    AddCollection, AddDoc, GetCollections, PatchCollection, Request, UpdateDoc,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -33,8 +33,9 @@ fn branchable_collection_add_new_field_should_update_collection_definition() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

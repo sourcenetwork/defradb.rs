@@ -3,8 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, AddDACActorRelationship, AddDACPolicy, AddDoc,
-    ConnectPeers, DacRemoteStart, GetCollectionsFiltered, NodeOpenP2PKMS, PeerEventsStart, Request,
-    WaitForMerge, WaitForUpdates,
+    ConnectPeers, GetCollections, NewNode, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -17,7 +16,9 @@ fn doc_encryption_acp_branchable_collection_authorized_peer_can_fetch() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -25,7 +26,9 @@ fn doc_encryption_acp_branchable_collection_authorized_peer_can_fetch() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -155,8 +158,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -165,7 +169,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -199,8 +204,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("collection1", "/collections/0/CollectionID")]),
@@ -209,7 +215,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -277,8 +284,11 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0Head", "/cids/1"), ("doc0_0Head", "/cids/0")]),
@@ -287,9 +297,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("doc0_0Head"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("doc0_0Head")),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -297,9 +307,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("collection0"),
-                cid: Text::reference("collection0Head"),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collection0Head")),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -338,7 +348,8 @@ fn doc_encryption_acp_branchable_collection_with_remote_dac_authorized_peer_can_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            DacRemoteStart {
+            NewNode {
+                is_document_acp_test: true,
                 common: Common {
                     node: Some("service".into()),
                     ..Default::default()
@@ -346,8 +357,10 @@ fn doc_encryption_acp_branchable_collection_with_remote_dac_authorized_peer_can_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -355,8 +368,10 @@ fn doc_encryption_acp_branchable_collection_with_remote_dac_authorized_peer_can_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -438,8 +453,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     identity_seed: Some(2),
@@ -449,7 +465,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -483,7 +500,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -537,8 +555,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0"), Text::reference("collection")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0"), Text::reference("collection")]),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cids/0"), ("head2", "/cids/1")]),
@@ -547,9 +565,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -558,9 +576,9 @@ resources:
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("collection"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

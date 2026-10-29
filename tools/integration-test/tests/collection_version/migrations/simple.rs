@@ -3,7 +3,7 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, ConfigureMigration, GetCollectionsFiltered, PatchCollection,
+    AddCollection, ConfigureMigration, GetCollections, PatchCollection,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
@@ -89,8 +89,9 @@ fn collection_migration_does_not_error_given_unknown_collection_roots() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -159,8 +160,9 @@ fn collection_migration_get_migrations_returns_multiple() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -248,8 +250,9 @@ fn collection_migration_replaces_existing_migation_based_on_source_id() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

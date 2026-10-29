@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/new_encrypted_index_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, NewEncryptedIndex, NodeStopForRestart, Start};
+use integration_test::actions::{AddCollection, Close, NewEncryptedIndex, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 
@@ -11,7 +11,8 @@ fn nac_gates_new_encrypted_index_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -62,7 +63,8 @@ fn nac_gates_new_encrypted_index_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -112,7 +114,8 @@ fn nac_gates_new_encrypted_index_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

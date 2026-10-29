@@ -3,7 +3,7 @@
 
 use integration_test::actions::{
     AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, DeleteCollectionSubscription,
-    NodeOpenP2P, PeerEventsStart, Request, WaitForMerge, WaitForUpdate,
+    NewNode, Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn p2_p_collection_add_and_remove_multiple() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -92,7 +94,8 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -100,7 +103,8 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -119,8 +123,8 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0_0", "/cid")]),
@@ -140,8 +144,8 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1_0", "/cid")]),
@@ -150,9 +154,9 @@ fn p2_p_collection_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc1_0"),
-                cid: Text::reference("head1_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1_0")),
+                cid: Some(Text::reference("head1_0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -208,7 +212,8 @@ fn p2_p_collection_add_and_remove_single() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -216,7 +221,8 @@ fn p2_p_collection_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -279,7 +285,8 @@ fn p2_p_collection_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -287,7 +294,8 @@ fn p2_p_collection_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -306,8 +314,8 @@ fn p2_p_collection_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0_0", "/cid")]),
@@ -327,8 +335,8 @@ fn p2_p_collection_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head0_1", "/cid")]),
@@ -367,7 +375,8 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -375,7 +384,8 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -439,7 +449,8 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -447,7 +458,8 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -466,8 +478,8 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0_0", "/cid")]),
@@ -476,9 +488,9 @@ fn p2_p_collection_add_single_and_remove_erroneous() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0_0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -534,7 +546,8 @@ fn p2_p_collection_add_single_and_remove_none() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -542,7 +555,8 @@ fn p2_p_collection_add_single_and_remove_none() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -605,7 +619,8 @@ fn p2_p_collection_add_single_and_remove_none() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -613,7 +628,8 @@ fn p2_p_collection_add_single_and_remove_none() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -632,8 +648,8 @@ fn p2_p_collection_add_single_and_remove_none() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0_0", "/cid")]),
@@ -642,9 +658,9 @@ fn p2_p_collection_add_single_and_remove_none() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0_0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

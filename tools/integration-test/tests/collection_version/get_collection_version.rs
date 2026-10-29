@@ -1,9 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/collection_version/get_collection_version_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{
-    AddCollection, GetCollections, GetCollectionsFiltered, PatchCollection,
-};
+use integration_test::actions::{AddCollection, GetCollections, PatchCollection};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -13,8 +11,9 @@ use serde_json::json;
 fn get_collection_version_given_no_collection_given_unknown_name() {
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: vec![GetCollectionsFiltered {
+        actions: vec![GetCollections {
             collection_name: Some("does not exist".into()),
+            filtered: true,
             expected_data: json!({ "collections": [] }),
             ..Default::default()
         }
@@ -29,8 +28,9 @@ fn get_collection_version_given_no_collection_given_unknown_name() {
 fn get_collection_version_given_no_collection_given_unknown_root() {
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: vec![GetCollectionsFiltered {
+        actions: vec![GetCollections {
             collection_id: Some("does not exist".into()),
+            filtered: true,
             expected_data: json!({ "collections": [] }),
             ..Default::default()
         }
@@ -60,8 +60,9 @@ fn get_collection_version_given_no_collection_returns_empty_set() {
 fn get_collection_version_given_non_existant_collection_version_id_errors() {
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: vec![GetCollectionsFiltered {
+        actions: vec![GetCollections {
             version_id: Some("does not exist".into()),
+            filtered: true,
             expected_error: Some("collection not found".into()),
             ..Default::default()
         }
@@ -101,8 +102,9 @@ fn get_collection_version_returns_all_collections() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -212,9 +214,10 @@ fn get_collection_version_returns_collection_for_given_name() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(true),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -306,9 +309,10 @@ fn get_collection_version_returns_collection_for_given_root() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
                 collection_id: Some("bafyreihuyovjl5ezgpud5xyqnouzsgx25x3ssrx3ncdv5p3guocc3laqna".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

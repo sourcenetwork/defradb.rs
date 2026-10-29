@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{EventType, Topic};
-use integration_test::actions::{ConnectPeers, NodeOpenP2P, PeerEventsStart, WaitForPeersEvents};
+use integration_test::actions::{ConnectPeers, NewNode, WaitForPeersEvents};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 
@@ -12,7 +12,8 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -20,7 +21,8 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -28,7 +30,8 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -36,7 +39,8 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -54,12 +58,12 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: "doc-sync".into(),
                     peers: vec!["db1".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -68,12 +72,12 @@ fn peer_events_on_connect_bidirectional_both_nodes_should_receive_join_events() 
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: "doc-sync".into(),
                     peers: vec!["db0".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -94,7 +98,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -102,7 +107,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -110,7 +116,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -118,7 +125,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -126,7 +134,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -134,7 +143,8 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -161,12 +171,12 @@ fn peer_events_on_connect_multiple_peers_should_receive_all_join_events() {
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: "doc-sync".into(),
                     peers: vec!["db1".into(), "db2".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -187,7 +197,8 @@ fn peer_events_on_connect_should_receive_join_event_on_doc_sync_topic() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -195,7 +206,8 @@ fn peer_events_on_connect_should_receive_join_event_on_doc_sync_topic() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -203,7 +215,8 @@ fn peer_events_on_connect_should_receive_join_event_on_doc_sync_topic() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -211,7 +224,8 @@ fn peer_events_on_connect_should_receive_join_event_on_doc_sync_topic() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -229,12 +243,12 @@ fn peer_events_on_connect_should_receive_join_event_on_doc_sync_topic() {
             }
             .into(),
             WaitForPeersEvents {
-                topics: vec![Topic {
+                topics: Some(vec![Topic {
                     topic: "doc-sync".into(),
                     peers: vec!["db1".into()],
-                }],
-                event_type: EventType::Joined,
-                millis: 5000,
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()

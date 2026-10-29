@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/node/identity_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{GetNodeIdentity, NodeOpenP2PIdentity};
+use integration_test::actions::{GetNodeIdentity, NewNode};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -12,14 +12,18 @@ fn node_identity_node_identity_succeed() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(0),
+                network: true,
+                with_identity: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PIdentity {
+            NewNode {
                 node_identity_seed: Some(1),
+                network: true,
+                with_identity: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }

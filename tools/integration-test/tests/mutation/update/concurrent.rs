@@ -59,6 +59,7 @@ fn mutation_update_concurrent_commit() {
                         }
                         .into(),
                 ],
+                ..Default::default()
             }
             .into(),
             Request {
@@ -141,6 +142,7 @@ fn mutation_update_concurrent_discard() {
                     }
                     .into(),
                 ],
+                ..Default::default()
             }
             .into(),
             Request {
@@ -224,6 +226,7 @@ fn mutation_update_concurrent_write() {
                     }
                     .into(),
                 ],
+                ..Default::default()
             }
             .into(),
             TxnCommit {

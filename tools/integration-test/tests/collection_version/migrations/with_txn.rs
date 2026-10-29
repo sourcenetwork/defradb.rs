@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{Lens, LensModule};
-use integration_test::actions::{ConfigureMigration, GetCollectionsFiltered, TxnBegin, TxnDiscard};
+use integration_test::actions::{ConfigureMigration, GetCollections, TxnBegin, TxnDiscard};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
@@ -35,9 +35,10 @@ fn collection_migration_get_migrations_with_txn() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 get_inactive: Some(true),
                 txn: Some(0),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({

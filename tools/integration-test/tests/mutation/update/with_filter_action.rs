@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::Filter;
-use integration_test::actions::{AddCollection, AddDoc, NodeOpenHTTP, Request, UpdateWithFilter};
+use integration_test::actions::{AddCollection, AddDoc, NewNode, Request, UpdateWithFilter};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -102,10 +102,10 @@ fn update_with_invalid_filter_type_returns_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenHTTP {
-                ttl_millis: 60000,
-                tick_millis: 1000,
-                buckets: 60,
+            NewNode {
+                ttl_millis: Some(60000),
+                tick_millis: Some(1000),
+                buckets: Some(60),
                 ..Default::default()
             }
             .into(),

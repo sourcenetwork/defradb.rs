@@ -1,9 +1,9 @@
 //! Generated from the conformance scenarios of tests/integration/txn/verify_signature_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDoc, NodeOpenSigningEd25519, Request, TxnBegin, TxnDiscard,
-    VerifyBlockSignature,
+    AddCollection, AddDoc, NewNode, Request, TxnBegin, TxnDiscard, VerifyBlockSignature,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,7 +16,9 @@ fn txn_verify_block_signature_inside_txn_succeeds() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningEd25519 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Ed25519),
                 ..Default::default()
             }
             .into(),
@@ -53,7 +55,7 @@ fn txn_verify_block_signature_inside_txn_succeeds() {
             .into(),
             VerifyBlockSignature {
                 txn: Some(0),
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("composite0"),
                 ..Default::default()
             }
@@ -75,7 +77,9 @@ fn txn_verify_block_signature_outside_txn_fails() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenSigningEd25519 {
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Ed25519),
                 ..Default::default()
             }
             .into(),
@@ -116,7 +120,7 @@ fn txn_verify_block_signature_outside_txn_fails() {
             .into(),
             VerifyBlockSignature {
                 txn: Some(1),
-                signer_node: "db".into(),
+                signer_node: Some("db".into()),
                 cid: Text::reference("composite0"),
                 expected_error: Some("ipld: could not find".into()),
                 ..Default::default()

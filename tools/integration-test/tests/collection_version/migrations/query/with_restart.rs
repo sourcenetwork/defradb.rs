@@ -3,8 +3,7 @@
 
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, ConfigureMigration, NodeOpenPersistent, PatchCollection, Request,
-    Restart,
+    AddCollection, AddDoc, ConfigureMigration, NewNode, PatchCollection, Request, Restart,
 };
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
@@ -16,7 +15,8 @@ fn collection_migration_query_with_restart_and_migration_before_patch_collection
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
@@ -94,7 +94,8 @@ fn collection_migration_query_with_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenPersistent {
+            NewNode {
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),

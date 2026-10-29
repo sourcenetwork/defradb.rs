@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, NodeOpenP2P, PeerEventsStart,
-    Request, UpdateDoc, WaitForMerge, WaitForUpdate,
+    AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, NewNode, Request, UpdateDoc,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -31,7 +33,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -39,7 +42,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -47,7 +51,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -130,7 +135,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -138,7 +144,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -146,7 +153,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db2".into()),
                     ..Default::default()
@@ -154,7 +162,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db3".into()),
                     ..Default::default()
@@ -162,7 +171,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db4".into()),
                     ..Default::default()
@@ -182,8 +192,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -203,8 +213,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),
@@ -224,8 +234,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head2", "/cid")]),
@@ -245,8 +255,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head3", "/cid")]),
@@ -266,8 +276,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head4", "/cid")]),
@@ -424,8 +434,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head5", "/cid")]),
@@ -447,8 +457,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head6", "/cid")]),
@@ -470,8 +480,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head7", "/cid")]),
@@ -493,8 +503,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head8", "/cid")]),
@@ -516,8 +526,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head9", "/cid")]),
@@ -539,8 +549,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head10", "/cid")]),
@@ -562,8 +572,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head11", "/cid")]),
@@ -585,8 +595,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head12", "/cid")]),
@@ -608,8 +618,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head13", "/cid")]),
@@ -631,8 +641,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head14", "/cid")]),
@@ -654,8 +664,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head15", "/cid")]),
@@ -677,8 +687,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head16", "/cid")]),
@@ -700,8 +710,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head17", "/cid")]),
@@ -723,8 +733,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head18", "/cid")]),
@@ -746,8 +756,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head19", "/cid")]),
@@ -769,8 +779,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head20", "/cid")]),
@@ -792,8 +802,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head21", "/cid")]),
@@ -815,8 +825,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head22", "/cid")]),
@@ -838,8 +848,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head23", "/cid")]),
@@ -861,8 +871,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head24", "/cid")]),
@@ -884,8 +894,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head25", "/cid")]),
@@ -907,8 +917,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head26", "/cid")]),
@@ -930,8 +940,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head27", "/cid")]),
@@ -953,8 +963,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head28", "/cid")]),
@@ -976,8 +986,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head29", "/cid")]),
@@ -999,8 +1009,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head30", "/cid")]),
@@ -1022,8 +1032,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head31", "/cid")]),
@@ -1045,8 +1055,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head32", "/cid")]),
@@ -1068,8 +1078,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head33", "/cid")]),
@@ -1091,8 +1101,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head34", "/cid")]),
@@ -1114,8 +1124,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head35", "/cid")]),
@@ -1137,8 +1147,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head36", "/cid")]),
@@ -1160,8 +1170,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head37", "/cid")]),
@@ -1183,8 +1193,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head38", "/cid")]),
@@ -1206,8 +1216,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head39", "/cid")]),
@@ -1229,8 +1239,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head40", "/cid")]),
@@ -1252,8 +1262,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head41", "/cid")]),
@@ -1275,8 +1285,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head42", "/cid")]),
@@ -1298,8 +1308,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head43", "/cid")]),
@@ -1321,8 +1331,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head44", "/cid")]),
@@ -1344,8 +1354,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head45", "/cid")]),
@@ -1367,8 +1377,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head46", "/cid")]),
@@ -1390,8 +1400,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head47", "/cid")]),
@@ -1413,8 +1423,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head48", "/cid")]),
@@ -1436,8 +1446,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head49", "/cid")]),
@@ -1459,8 +1469,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head50", "/cid")]),
@@ -1482,8 +1492,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head51", "/cid")]),
@@ -1505,8 +1515,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db2".into()),
                     capture: captures([("head52", "/cid")]),
@@ -1528,8 +1538,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db3".into()),
                     capture: captures([("head53", "/cid")]),
@@ -1551,8 +1561,8 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db4".into()),
                     capture: captures([("head54", "/cid")]),
@@ -1561,9 +1571,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head51"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head51")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -1572,9 +1582,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head52"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head52")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -1583,9 +1593,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head53"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head53")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -1594,9 +1604,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head54"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head54")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -1605,9 +1615,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head50"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head50")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1616,9 +1626,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head52"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head52")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1627,9 +1637,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head53"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head53")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1638,9 +1648,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head54"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head54")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1649,9 +1659,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head50"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head50")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db2".into()),
@@ -1660,9 +1670,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head51"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head51")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db2".into()),
@@ -1671,9 +1681,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head53"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head53")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db2".into()),
@@ -1682,9 +1692,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head54"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head54")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db2".into()),
@@ -1693,9 +1703,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head50"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head50")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),
@@ -1704,9 +1714,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head51"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head51")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),
@@ -1715,9 +1725,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head52"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head52")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),
@@ -1726,9 +1736,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head54"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head54")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db3".into()),
@@ -1737,9 +1747,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head50"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head50")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -1748,9 +1758,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head51"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head51")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -1759,9 +1769,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head52"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head52")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -1770,9 +1780,9 @@ fn p2_p_update_with_pn_counter_five_nodes_repeated_updates_all_converge() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head53"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head53")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db4".into()),
@@ -1879,7 +1889,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1887,7 +1898,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1925,7 +1937,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1933,7 +1946,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1953,8 +1967,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -1974,8 +1988,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head1", "/cid")]),
@@ -2024,8 +2038,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -2047,8 +2061,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head3", "/cid")]),
@@ -2070,8 +2084,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head4", "/cid")]),
@@ -2093,8 +2107,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head5", "/cid")]),
@@ -2116,8 +2130,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head6", "/cid")]),
@@ -2139,8 +2153,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head7", "/cid")]),
@@ -2162,8 +2176,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head8", "/cid")]),
@@ -2185,8 +2199,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head9", "/cid")]),
@@ -2208,8 +2222,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head10", "/cid")]),
@@ -2231,8 +2245,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head11", "/cid")]),
@@ -2254,8 +2268,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head12", "/cid")]),
@@ -2277,8 +2291,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head13", "/cid")]),
@@ -2300,8 +2314,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head14", "/cid")]),
@@ -2323,8 +2337,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head15", "/cid")]),
@@ -2346,8 +2360,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head16", "/cid")]),
@@ -2369,8 +2383,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head17", "/cid")]),
@@ -2392,8 +2406,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head18", "/cid")]),
@@ -2415,8 +2429,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head19", "/cid")]),
@@ -2438,8 +2452,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head20", "/cid")]),
@@ -2461,8 +2475,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head21", "/cid")]),
@@ -2484,8 +2498,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head22", "/cid")]),
@@ -2507,8 +2521,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head23", "/cid")]),
@@ -2530,8 +2544,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head24", "/cid")]),
@@ -2553,8 +2567,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head25", "/cid")]),
@@ -2576,8 +2590,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head26", "/cid")]),
@@ -2599,8 +2613,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head27", "/cid")]),
@@ -2622,8 +2636,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head28", "/cid")]),
@@ -2645,8 +2659,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head29", "/cid")]),
@@ -2668,8 +2682,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head30", "/cid")]),
@@ -2691,8 +2705,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head31", "/cid")]),
@@ -2714,8 +2728,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head32", "/cid")]),
@@ -2737,8 +2751,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head33", "/cid")]),
@@ -2760,8 +2774,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head34", "/cid")]),
@@ -2783,8 +2797,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head35", "/cid")]),
@@ -2806,8 +2820,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head36", "/cid")]),
@@ -2829,8 +2843,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head37", "/cid")]),
@@ -2852,8 +2866,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head38", "/cid")]),
@@ -2875,8 +2889,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head39", "/cid")]),
@@ -2898,8 +2912,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head40", "/cid")]),
@@ -2921,8 +2935,8 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db1".into()),
                     capture: captures([("head41", "/cid")]),
@@ -2931,9 +2945,9 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head41"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head41")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db0".into()),
@@ -2942,9 +2956,9 @@ fn p2_p_update_with_pn_counter_repeated_simultaneous_updates_converges() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head40"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head40")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

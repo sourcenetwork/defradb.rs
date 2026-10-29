@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/get_collection_by_name_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, GetCollectionsFiltered, NodeStopForRestart, Start};
+use integration_test::actions::{AddCollection, Close, GetCollections, Start};
 use integration_test::m;
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -13,7 +13,8 @@ fn nac_gates_get_collection_by_name_authorized_identity_allow_access() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -38,9 +39,10 @@ fn nac_gates_get_collection_by_name_authorized_identity_allow_access() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(false),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -82,7 +84,8 @@ fn nac_gates_get_collection_by_name_no_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -95,9 +98,10 @@ fn nac_gates_get_collection_by_name_no_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(false),
+                filtered: true,
                 expected_error: Some(
                     "not authorized to perform operation. Permission: get-collection".into(),
                 ),
@@ -116,7 +120,8 @@ fn nac_gates_get_collection_by_name_wrong_identity_not_authorized_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),
@@ -129,9 +134,10 @@ fn nac_gates_get_collection_by_name_wrong_identity_not_authorized_error() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
                 get_inactive: Some(false),
+                filtered: true,
                 expected_error: Some(
                     "not authorized to perform operation. Permission: get-collection".into(),
                 ),

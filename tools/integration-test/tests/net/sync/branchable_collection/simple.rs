@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, ConnectPeers, GetCollectionsFiltered, NodeOpenP2P, PeerEventsStart,
-    Request, SyncBranchableCollection, WaitForUpdates,
+    AddCollection, AddDoc, ConnectPeers, GetCollections, NewNode, Request,
+    SyncBranchableCollection, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -16,12 +16,14 @@ fn branchable_collection_sync_one_node_empty_another_with_docs_should_copy_all()
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -48,18 +50,21 @@ fn branchable_collection_sync_one_node_empty_another_with_docs_should_copy_all()
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common { node: Some("db0".into()), capture: captures([("collection0", "/collections/0/CollectionID")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common { node: Some("db1".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -71,8 +76,8 @@ fn branchable_collection_sync_one_node_empty_another_with_docs_should_copy_all()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -84,8 +89,8 @@ fn branchable_collection_sync_one_node_empty_another_with_docs_should_copy_all()
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_1"), Text::reference("collection0")]),
                 common: Common { node: Some("db0".into()), ..Default::default() },
                 ..Default::default()
             }
@@ -132,7 +137,8 @@ fn branchable_collection_sync_should_not_subscribe() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -140,7 +146,8 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -176,8 +183,9 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -186,7 +194,8 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -194,7 +203,8 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -223,8 +233,11 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -271,8 +284,11 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -292,8 +308,11 @@ fn branchable_collection_sync_should_not_subscribe() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_2"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_2"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -358,7 +377,8 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -366,7 +386,8 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -402,8 +423,9 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -412,7 +434,8 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -420,7 +443,8 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -440,8 +464,11 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -461,8 +488,11 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_1"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -482,8 +512,11 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_2"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_2"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -503,8 +536,11 @@ fn branchable_collection_sync_with_different_docs_on_both_nodes_should_sync() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_3"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_3"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -602,7 +638,8 @@ fn branchable_collection_sync_with_non_branchable_collection_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -624,8 +661,9 @@ fn branchable_collection_sync_with_non_branchable_collection_should_error() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -634,7 +672,8 @@ fn branchable_collection_sync_with_non_branchable_collection_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -666,7 +705,8 @@ fn branchable_collection_sync_with_non_existent_collection_should_error() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -688,8 +728,9 @@ fn branchable_collection_sync_with_non_existent_collection_should_error() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -698,7 +739,8 @@ fn branchable_collection_sync_with_non_existent_collection_should_error() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()

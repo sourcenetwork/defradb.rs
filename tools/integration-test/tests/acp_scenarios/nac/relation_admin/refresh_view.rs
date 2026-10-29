@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/acp/nac/relation_admin/refresh_view_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddNACActorRelationship, NodeStopForRestart, RefreshViews, Start};
+use integration_test::actions::{AddNACActorRelationship, Close, RefreshViews, Start};
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -12,7 +12,8 @@ fn nac_admin_relation_can_refresh_views() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeStopForRestart {
+            Close {
+                keep_data: true,
                 ..Default::default()
             }
             .into(),

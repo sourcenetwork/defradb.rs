@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NodeOpenP2PKMS,
-    PeerEventsStart, Request, UpdateDoc, WaitForMerge, WaitForUpdate,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, NewNode, Request, UpdateDoc,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -16,7 +16,9 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -24,7 +26,9 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -62,7 +66,8 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -70,7 +75,8 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -110,8 +116,8 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -120,9 +126,9 @@ fn doc_encryption_peer_if_all_fields_of_encrypted_public_doc_are_individually_en
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -163,7 +169,9 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -171,7 +179,9 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -209,7 +219,8 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -217,7 +228,8 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -257,8 +269,8 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -267,9 +279,9 @@ fn doc_encryption_peer_if_all_fields_of_public_doc_are_individually_encrypted_sh
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -309,7 +321,9 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -317,7 +331,9 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -355,7 +371,8 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -363,7 +380,8 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -403,8 +421,8 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -413,9 +431,9 @@ fn doc_encryption_peer_if_doc_is_public_should_fetch_key_and_decrypt() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -454,7 +472,9 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -462,7 +482,9 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -500,7 +522,8 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -508,7 +531,8 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -548,8 +572,8 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -558,9 +582,9 @@ fn doc_encryption_peer_if_encrypted_public_doc_has_encrypted_field_should_fetch_
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -600,7 +624,9 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -608,7 +634,9 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -646,7 +674,8 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -654,7 +683,8 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -694,8 +724,8 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -704,9 +734,9 @@ fn doc_encryption_peer_if_public_doc_has_encrypted_field_should_fetch_key_and_de
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -747,7 +777,9 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -755,7 +787,9 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -793,7 +827,8 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -801,7 +836,8 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -832,8 +868,8 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -855,8 +891,8 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -887,8 +923,8 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -897,9 +933,9 @@ fn doc_encryption_peer_with_updates_on_delta_based_crdt_field_of_encrypted_doc_s
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -940,7 +976,9 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -948,7 +986,9 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -986,7 +1026,8 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -994,7 +1035,8 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1025,8 +1067,8 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -1048,8 +1090,8 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -1080,8 +1122,8 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -1090,9 +1132,9 @@ fn doc_encryption_peer_with_updates_on_encrypted_delta_based_crdt_field_should_d
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1132,7 +1174,9 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1140,7 +1184,9 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1178,7 +1224,8 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1186,7 +1233,8 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1217,8 +1265,8 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -1249,8 +1297,8 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -1259,9 +1307,9 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1300,8 +1348,8 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -1310,9 +1358,9 @@ fn doc_encryption_peer_with_updates_that_sets_empty_string_should_decrypt_and_co
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1351,7 +1399,9 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1359,7 +1409,9 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2PKMS {
+            NewNode {
+                network: true,
+                kms: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1397,7 +1449,8 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -1405,7 +1458,8 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -1436,8 +1490,8 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head0", "/cid")]),
@@ -1468,8 +1522,8 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head1", "/cid")]),
@@ -1478,9 +1532,9 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head1")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -1519,8 +1573,8 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0_0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("head2", "/cid")]),
@@ -1529,9 +1583,9 @@ fn doc_encryption_peer_with_updates_that_sets_string_to_null_should_decrypt_and_
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head2"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head2")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, GetCollectionsFiltered, PatchCollection, TxnBegin, TxnDiscard,
+    AddCollection, GetCollections, PatchCollection, TxnBegin, TxnDiscard,
 };
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -41,18 +41,20 @@ fn col_version_update_replace_is_active_get_collections_with_txn() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
                 collection_name: Some("Users".into()),
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 txn: Some(0),
                 collection_id: Some(
                     "bafyreihuyovjl5ezgpud5xyqnouzsgx25x3ssrx3ncdv5p3guocc3laqna".into(),
                 ),
+                filtered: true,
                 expected_data: json!({ "collections": [] }),
                 ..Default::default()
             }

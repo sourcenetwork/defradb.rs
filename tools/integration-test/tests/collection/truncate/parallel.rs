@@ -2,7 +2,7 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddDoc, Parallel, PeerEventsStart, Request, Truncate, WaitForUpdate,
+    AddCollection, AddDoc, Parallel, Request, Truncate, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -24,7 +24,8 @@ fn truncate_collection_parallel_deletes_all_previously_existing_documents() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -35,8 +36,8 @@ fn truncate_collection_parallel_deletes_all_previously_existing_documents() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
                 ..Default::default()
             }
             .into(),
@@ -47,8 +48,8 @@ fn truncate_collection_parallel_deletes_all_previously_existing_documents() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdate {
-                doc_id: Text::reference("doc1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc1")),
                 ..Default::default()
             }
             .into(),
@@ -99,6 +100,7 @@ fn truncate_collection_parallel_deletes_all_previously_existing_documents() {
                         }
                         .into(),
                 ],
+                ..Default::default()
             }
             .into(),
             Request {

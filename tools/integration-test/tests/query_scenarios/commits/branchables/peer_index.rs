@@ -2,8 +2,8 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
-    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollectionsFiltered,
-    NodeOpenP2P, PeerEventsStart, Request, WaitForMerge, WaitForUpdates,
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollections, NewNode,
+    Request, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -15,7 +15,8 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -23,7 +24,8 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            NodeOpenP2P {
+            NewNode {
+                network: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -59,8 +61,9 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Users".into()),
+                filtered: true,
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collection0", "/collections/0/CollectionID")]),
@@ -69,7 +72,8 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db0".into()),
                     ..Default::default()
@@ -77,7 +81,8 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
@@ -115,8 +120,11 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            WaitForUpdates {
-                doc_ids: vec![Text::reference("doc0_0"), Text::reference("collection0")],
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
                 common: Common {
                     node: Some("db0".into()),
                     capture: captures([("collectionHead0", "/cids/1"), ("head0", "/cids/0")]),
@@ -125,9 +133,9 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("doc0_0"),
-                cid: Text::reference("head0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),
@@ -136,9 +144,9 @@ fn query_commits_branchables_syncs_index_across_peer_connection() {
                 ..Default::default()
             }
             .into(),
-            WaitForMerge {
-                doc_id: Text::reference("collection0"),
-                cid: Text::reference("collectionHead0"),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collectionHead0")),
                 expected_data: json!({}),
                 common: Common {
                     node: Some("db1".into()),

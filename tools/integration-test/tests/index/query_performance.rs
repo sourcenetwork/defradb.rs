@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/index/query_performance_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{Actions, AddCollection, AddDoc, Benchmark, NodeOpenPersistent};
+use integration_test::actions::{Actions, AddCollection, AddDoc, Benchmark, NewNode};
 use integration_test::m;
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
@@ -10,7 +10,8 @@ use testo::action::ActionInstance;
 
 fn query_performance_simple_actions_0() -> Vec<ActionInstance<Actions>> {
     vec![
-        NodeOpenPersistent {
+        NewNode {
+            database_dir: Some("".into()),
             ..Default::default()
         }
         .into(),
@@ -10108,7 +10109,8 @@ fn query_performance_simple() {
 
 fn query_performance_with_float32_actions_0() -> Vec<ActionInstance<Actions>> {
     vec![
-        NodeOpenPersistent {
+        NewNode {
+            database_dir: Some("".into()),
             ..Default::default()
         }
         .into(),

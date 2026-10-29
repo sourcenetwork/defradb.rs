@@ -2,7 +2,9 @@
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::{IndexField, IndexSpec};
-use integration_test::actions::{AddCollection, AddDACPolicy, NewIndex, PeerEventsStart, Request};
+use integration_test::actions::{
+    AddCollection, AddDACPolicy, NewIndex, Request, WaitForPeersEvents,
+};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -66,7 +68,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),
@@ -148,7 +151,8 @@ resources:
                 ..Default::default()
             }
             .into(),
-            PeerEventsStart {
+            WaitForPeersEvents {
+                start: true,
                 ..Default::default()
             }
             .into(),

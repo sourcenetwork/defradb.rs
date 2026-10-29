@@ -1,10 +1,9 @@
 //! Generated from the conformance scenarios of tests/integration/index/async_backfill_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::shared::{IndexField, IndexSpec};
+use integration_test::actions::shared::{IndexField, IndexGate, IndexSpec};
 use integration_test::actions::{
-    AddCollection, AddDoc, IndexReleaseBuildGate, ListIndexes, NewIndex, NodeOpenIndexGated,
-    NodeOpenIndexGatedPersistent, Request, Restart, WaitForIndexReady,
+    AddCollection, AddDoc, ListIndexes, NewIndex, NewNode, Request, Restart, WaitForIndexReady,
 };
 use integration_test::m;
 use integration_test::scenario::Common;
@@ -17,7 +16,8 @@ fn async_backfill_query_while_building_full_scans() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexGated {
+            NewNode {
+                index_gate: Some(IndexGate::Single),
                 ..Default::default()
             }
             .into(),
@@ -69,12 +69,13 @@ fn async_backfill_query_while_building_full_scans() {
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),
@@ -96,7 +97,9 @@ fn async_backfill_restart_mid_build_resumes_to_ready() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexGatedPersistent {
+            NewNode {
+                index_gate: Some(IndexGate::Single),
+                database_dir: Some("".into()),
                 ..Default::default()
             }
             .into(),
@@ -144,12 +147,13 @@ fn async_backfill_restart_mid_build_resumes_to_ready() {
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),
@@ -192,7 +196,8 @@ fn async_backfill_while_gated_reports_building_then_ready() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexGated {
+            NewNode {
+                index_gate: Some(IndexGate::Single),
                 ..Default::default()
             }
             .into(),
@@ -253,12 +258,13 @@ fn async_backfill_while_gated_reports_building_then_ready() {
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),
@@ -307,7 +313,8 @@ fn async_backfill_write_while_building_reflected_in_index() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: vec![
-            NodeOpenIndexGated {
+            NewNode {
+                index_gate: Some(IndexGate::Single),
                 ..Default::default()
             }
             .into(),
@@ -351,12 +358,13 @@ fn async_backfill_write_while_building_reflected_in_index() {
                 ..Default::default()
             }
             .into(),
-            IndexReleaseBuildGate {
+            WaitForIndexReady {
+                release_gate: true,
                 ..Default::default()
             }
             .into(),
             WaitForIndexReady {
-                collection: "User".into(),
+                collection: Some("User".into()),
                 ..Default::default()
             }
             .into(),

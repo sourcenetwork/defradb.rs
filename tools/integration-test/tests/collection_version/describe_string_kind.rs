@@ -1,7 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/collection_version/describe_string_kind_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
-use integration_test::actions::{AddCollection, GetCollectionsFiltered};
+use integration_test::actions::{AddCollection, GetCollections};
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -169,8 +169,9 @@ fn get_collection_version_renders_and_round_trips_stringified_kinds() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("Dog".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
@@ -235,8 +236,9 @@ fn get_collection_version_renders_and_round_trips_stringified_kinds() {
                 ..Default::default()
             }
             .into(),
-            GetCollectionsFiltered {
+            GetCollections {
                 collection_name: Some("User".into()),
+                filtered: true,
                 expected_data: json!({
                     "collections": [
                         m::object(json!({
