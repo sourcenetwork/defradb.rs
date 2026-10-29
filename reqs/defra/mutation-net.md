@@ -189,3 +189,16 @@ A transaction sees its own adds, updates and deletes (a doc deleted in txn 0 is 
 
 A write to a discarded transaction fails with `transaction not found` and nothing is stored. Two concurrent updates in one transaction leave either one update or the other, never a mix of their fields; an update racing a commit leaves either the old or the new values whole; an add racing a discard leaves the collection empty.
 
+# `go.mutation.ordering`: Mutation fields run in request order
+
+- **Parents:** ["go.mutation"]
+- **Scenarios:** ["mutation.mix.test-mutation-multiple-operations-execute-in-request-order", "mutation.mix.test-mutation-multiple-operations-via-fragment-spread-execute-in-request-order"]
+
+Several aliased `add_User` fields in one mutation execute serially in the order they appear, so an unordered `User` query returns them in that insertion order; a fragment spread executes where it is spread, not where the fragment is defined.
+
+# `go.mutation.request_validation`: Malformed mutation requests
+
+- **Parents:** ["go.mutation"]
+- **Scenarios:** ["mutation.delete.without-sub-selection", "mutation.delete.without-sub-selection-fields", "mutation.special.test-mutation-invalid-mutation"]
+
+An unknown mutation field fails with `Cannot query field "dostuff_User" on type "Mutation".`; `delete_User` without a selection set fails with `Field "delete_User" of type "[User]" must have a sub selection.`; an empty selection set fails with a `Syntax Error GraphQL` error.

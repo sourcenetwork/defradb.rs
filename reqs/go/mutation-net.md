@@ -25,20 +25,6 @@ Creating, updating, upserting, deleting and truncating documents through GraphQL
 
 Re-adding the same content after a delete, or saving an update to a deleted document, fails with `a document with the given ID has been deleted`, and the document stays deleted (a later `Users` query returns nothing).
 
-# `go.mutation.ordering`: Mutation fields run in request order
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/mix/with_multiple_operations_test.go::TestMutationMultipleOperationsExecuteInRequestOrder", "mutation/mix/with_multiple_operations_test.go::TestMutationMultipleOperationsViaFragmentSpreadExecuteInRequestOrder"]
-
-Several aliased `add_User` fields in one mutation execute serially in the order they appear, so an unordered `User` query returns them in that insertion order; a fragment spread executes where it is spread, not where the fragment is defined.
-
-# `go.mutation.request_validation`: Malformed mutation requests
-
-- **Parents:** ["go.mutation"]
-- **Go-Tests:** ["mutation/special/invalid_operation_test.go::TestMutationInvalidMutation", "mutation/delete/simple_test.go::TestMutationDeletion_WithoutSubSelection", "mutation/delete/simple_test.go::TestMutationDeletion_WithoutSubSelectionFields"]
-
-An unknown mutation field fails with `Cannot query field "dostuff_User" on type "Mutation".`; `delete_User` without a selection set fails with `Field "delete_User" of type "[User]" must have a sub selection.`; an empty selection set fails with a `Syntax Error GraphQL` error.
-
 # `go.mutation.embeddings`: `@embedding` vector fields
 
 - **Parents:** ["go.mutation"]
