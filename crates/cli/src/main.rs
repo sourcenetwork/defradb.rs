@@ -37,6 +37,21 @@ fn main() -> ExitCode {
             ..Default::default()
         });
     }
+    // CI's stall diagnosis: the node prints the runtime's counters and every
+    // socket's read state when the stall watchdog leaves a file named after
+    // its pid.
+    if let Some(dir) = std::env::var_os("DEFRA_DIAG_DIR") {
+        let trigger = std::path::Path::new(&dir).join(std::process::id().to_string());
+        let _ = std::thread::Builder::new()
+            .name("defra-diag".into())
+            .spawn(move || loop {
+                if std::fs::remove_file(&trigger).is_ok() {
+                    eprintln!("NUCLEI-STATS {:#?}", nuclei::stats());
+                    nuclei::debug_dump(None);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            });
+    }
     let runtime = match edge::EdgeRuntime::start(edge::EdgeConfig::default()) {
         Ok(runtime) => runtime,
         Err(error) => {

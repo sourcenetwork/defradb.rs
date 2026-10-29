@@ -342,3 +342,5 @@ commonware-resolver = { git = "https://github.com/iverc/commonware-upstream", re
 commonware-macros = { git = "https://github.com/iverc/commonware-upstream", rev = "b8bdee194ee8d4933d0c2867e1c104f229d94e96" }
 commonware-glue = { git = "https://github.com/iverc/commonware-upstream", rev = "b8bdee194ee8d4933d0c2867e1c104f229d94e96" }
 commonware-stream = { git = "https://github.com/iverc/commonware-upstream", rev = "b8bdee194ee8d4933d0c2867e1c104f229d94e96" }
+# Diagnostic run only: nuclei with a dump of every socket's read state.
+nuclei = { git = "https://github.com/vertexclique/nuclei", rev = "1c8cfefe80a363d62db08856480b68db6ca0e2cf" }

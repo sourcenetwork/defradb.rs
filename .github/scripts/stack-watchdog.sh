@@ -34,6 +34,11 @@ while true; do
     fi
     dumped[$client]=1
     file="$out/stacks-$(date +%s)-$client.log"
+    if [ -n "${DEFRA_DIAG_DIR:-}" ]; then
+      mkdir -p "$DEFRA_DIAG_DIR"
+      for pid in $(pgrep -f '^[^ ]*target/ci/defra '); do touch "$DEFRA_DIAG_DIR/$pid"; done
+      sleep 2
+    fi
     {
       for pid in $(pgrep -f '^[^ ]*target/ci/defra '); do stacks "$pid"; done
       echo "=== sockets"

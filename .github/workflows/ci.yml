@@ -372,6 +372,7 @@ jobs:
       RUST_LOG: info
       NUCLEI_BACKEND: ${{ matrix.io.backend }}
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
+      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -609,6 +610,7 @@ jobs:
       RUST_LOG: info
       NUCLEI_BACKEND: ${{ matrix.io.backend }}
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
+      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
