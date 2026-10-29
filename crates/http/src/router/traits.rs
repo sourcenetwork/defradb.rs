@@ -903,32 +903,6 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
     async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
 }
 
-/// Read-only collection-version observation.
-///
-/// Kept separate from collection management so embedded consumers can resolve
-/// collection names to IDs without enabling schema or data mutation routes.
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait CollectionVersionOperations: defra_core::thread_bounds::MaybeSendSync {
-    /// Get all collection versions (active + inactive) from the system store.
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String>;
-
-    /// The active collection versions only.
-    ///
-    /// Defaults to filtering the full listing, so an implementation that has
-    /// no cheaper path stays correct. A backend that can answer without
-    /// scanning every stored version should override this: it is the path a
-    /// selector takes whenever `needs_all_versions` is false.
-    async fn get_active_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        Ok(self
-            .get_all_collections()
-            .await?
-            .into_iter()
-            .filter(|version| version.is_active)
-            .collect())
-    }
-}
-
 /// Trait for collection management operations beyond basic CRUD.
 ///
 /// Provides schema patching, version activation, and truncation operations
@@ -974,20 +948,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 
     /// Delete multiple collection versions in a batch.
     async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String>;
-
-    /// Get all collection versions (active + inactive) from the system store.
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String>;
-
-    /// The active collection versions only. See
-    /// `CollectionVersionOperations::get_active_collections`.
-    async fn get_active_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        Ok(self
-            .get_all_collections()
-            .await?
-            .into_iter()
-            .filter(|version| version.is_active)
-            .collect())
-    }
 
     /// Delete a collection by name.
     async fn delete_collection(&self, name: &str) -> Result<(), String>;

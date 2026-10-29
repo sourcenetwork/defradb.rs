@@ -213,8 +213,6 @@ pub struct Node {
     runner: Arc<dyn QueryExecutor>,
     event_bus: Arc<dyn events::Bus>,
     schema_ops: Arc<dyn SchemaOps>,
-    #[cfg(feature = "http")]
-    collection_version_ops: Arc<dyn defra_http::router::CollectionVersionOperations>,
     block_ops: Arc<dyn BlockOps>,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,

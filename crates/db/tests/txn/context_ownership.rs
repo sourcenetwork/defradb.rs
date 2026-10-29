@@ -90,8 +90,10 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
         let add = |name: &str, identity: Option<&str>| {
             let mutation =
                 format!(r#"mutation {{ add_Users(input: {{name: "{name}"}}) {{ _docID }} }}"#);
-            let identity = identity.map(|did| Did::new(did).unwrap());
-            runner.execute_in_txn(QueryRequest::new(mutation).with_identity(identity), &handle)
+            runner.execute_in_txn(
+                QueryRequest::new(mutation).with_context(acting(identity)),
+                &handle,
+            )
         };
         for stranger in [None, Some("did:key:bob")] {
             let foreign = rest

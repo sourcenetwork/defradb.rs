@@ -7,7 +7,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::mock::update_vec;
-use crate::router::{CollectionManagementOperations, CollectionVersionOperations};
+use crate::router::CollectionManagementOperations;
 
 type TruncateCall = (String, Option<serde_json::Value>);
 
@@ -47,13 +47,6 @@ impl MockCollectionManagementOperations {
             calls.push(call);
         }
         calls
-    }
-}
-
-#[async_trait]
-impl CollectionVersionOperations for MockCollectionManagementOperations {
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        Ok(vec![mock_collection_version("MockCollection")])
     }
 }
 
@@ -103,10 +96,6 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
 
     async fn delete_collection_versions(&self, _version_ids: Vec<String>) -> Result<(), String> {
         Ok(())
-    }
-
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        CollectionVersionOperations::get_all_collections(self).await
     }
 
     async fn delete_collection(&self, name: &str) -> Result<(), String> {

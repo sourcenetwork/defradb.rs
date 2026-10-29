@@ -445,8 +445,7 @@ impl NodeBuilder {
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
-            }))
-            .with_collection_versions_arc(Arc::clone(&node.collection_version_ops));
+            }));
 
             // The node's own DID, however it was configured: a registered
             // identity, or one signing generated or was given a key for.

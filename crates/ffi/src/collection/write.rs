@@ -322,7 +322,7 @@ mod tests {
     use super::*;
     use crate::collection::read::has_collection;
     use crate::node::{new_node, node_close};
-    use crate::schema::add_schema;
+    use crate::schema::{add_schema, get_collections};
     use crate::types::NodeInitOptions;
     use std::ffi::CString;
 
@@ -522,17 +522,25 @@ mod tests {
         unsafe { crate::types::defra_free_string(result.value) };
 
         // Patch the collection - change is_active to false
-        let patch = CString::new(r#"[{"op":"replace","path":"/IsActive","value":false}]"#).unwrap();
+        let patch =
+            CString::new(r#"[{"op":"replace","path":"/Patchable/IsActive","value":false}]"#)
+                .unwrap();
         let name = CString::new("Patchable").unwrap();
         let result =
             unsafe { patch_collection(node, std::ptr::null(), name.as_ptr(), patch.as_ptr()) };
         assert_eq!(result.status, 0, "patch_collection should succeed");
+        unsafe { crate::types::defra_free_string(result.value) };
 
+        let result = unsafe { get_collections(node, std::ptr::null()) };
+        assert_eq!(result.status, 0);
         let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("Patchable"), "should contain Patchable");
+        assert!(
+            value.contains("Patchable"),
+            "should list Patchable: {value}"
+        );
         assert!(
             value.contains("\"IsActive\":false"),
-            "should have IsActive:false"
+            "should have IsActive:false: {value}"
         );
         unsafe { crate::types::defra_free_string(result.value) };
 
@@ -548,7 +556,9 @@ mod tests {
         assert_eq!(result.status, 0);
         let node = result.node_ptr;
 
-        let patch = CString::new(r#"[{"op":"replace","path":"/IsActive","value":false}]"#).unwrap();
+        let patch =
+            CString::new(r#"[{"op":"replace","path":"/NonExistent/IsActive","value":false}]"#)
+                .unwrap();
         let name = CString::new("NonExistent").unwrap();
         let result =
             unsafe { patch_collection(node, std::ptr::null(), name.as_ptr(), patch.as_ptr()) };

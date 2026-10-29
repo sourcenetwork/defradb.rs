@@ -100,4 +100,40 @@ impl CollectionSelector {
     fn applies_collection_id(&self) -> bool {
         (self.get_inactive || self.names.is_none()) && self.version_id.is_none()
     }
+
+    /// The versions of `versions` this selector picks, in the order Go's
+    /// storage keys give them: active versions by name; with inactive ones,
+    /// by version ID, except that a collection ID lists its root version
+    /// first (`internal/db/description/collection.go`,
+    /// `getCollectionVersionIDs`).
+    ///
+    /// `None` when a lone version lookup misses: Go propagates not-found
+    /// only from that direct lookup (`internal/db/collection.go:210-215`), so
+    /// `version_id=nope` alone is an error while `name=Users&version_id=nope`
+    /// is an empty answer.
+    pub fn select(&self, versions: Vec<CollectionVersion>) -> Option<Vec<CollectionVersion>> {
+        if let Some(version_id) = self
+            .version_id
+            .as_ref()
+            .filter(|_| self.resolves_by_version_lookup())
+        {
+            if !versions.iter().any(|v| &v.version_id == version_id) {
+                return None;
+            }
+        }
+        let mut selected: Vec<_> = versions
+            .into_iter()
+            .filter(|version| self.selects(version))
+            .collect();
+        match (self.get_inactive, &self.collection_id) {
+            (false, _) => {
+                selected.sort_by(|a, b| (&a.name, &a.version_id).cmp(&(&b.name, &b.version_id)))
+            }
+            (true, Some(root)) => selected.sort_by(|a, b| {
+                (&a.version_id != root, &a.version_id).cmp(&(&b.version_id != root, &b.version_id))
+            }),
+            (true, None) => selected.sort_by(|a, b| a.version_id.cmp(&b.version_id)),
+        }
+        Some(selected)
+    }
 }

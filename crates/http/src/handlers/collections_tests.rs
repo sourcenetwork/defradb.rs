@@ -1,8 +1,7 @@
 use super::*;
 use crate::identity_extractor::ExtractIdentity;
 use crate::mock::{
-    FailingMockRestOperations, MockCollectionManagementOperations, MockQueryExecutor,
-    MockRestOperations,
+    FailingMockExecutor, MockCollectionManagementOperations, MockQueryExecutor, MockRestOperations,
 };
 use crate::router::{AppStateBuilder, CollectionManagementOperations};
 use axum::body::{to_bytes, Body};
@@ -23,20 +22,11 @@ fn create_state() -> AppState {
     .build()
 }
 
-fn create_state_without_rest() -> AppState {
-    AppStateBuilder::new(
-        Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
-        edge::testing::edge(),
-    )
-    .build()
-}
-
 fn create_failing_state() -> AppState {
     AppStateBuilder::new(
-        Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+        Arc::new(FailingMockExecutor::with_schema_error("test error")) as Arc<dyn QueryExecutor>,
         edge::testing::edge(),
     )
-    .with_rest(Arc::new(FailingMockRestOperations::new("test error")))
     .build()
 }
 
@@ -58,20 +48,6 @@ async fn test_list_collections() {
     assert!(response
         .iter()
         .any(|version| version.name == "MockCollection"));
-}
-
-#[tokio::test]
-async fn test_list_collections_no_rest() {
-    let state = create_state_without_rest();
-    let identity = ExtractIdentity::anonymous();
-    let result = list_collections(
-        State(state),
-        identity,
-        HeaderMap::new(),
-        CollectionSelectorQuery::default(),
-    )
-    .await;
-    assert!(result.is_err());
 }
 
 #[tokio::test]

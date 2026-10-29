@@ -9,31 +9,6 @@ use schema::CollectionVersion;
 use crate::acp_ops::PolicyLookup;
 use crate::{BlockOps, Error, Result, SchemaOps};
 
-#[cfg(feature = "http")]
-pub(crate) struct DbCollectionVersionOps<S: storage::corekv::Store + 'static> {
-    database: Arc<db::DB<S>>,
-}
-
-#[cfg(feature = "http")]
-impl<S: storage::corekv::Store + 'static> DbCollectionVersionOps<S> {
-    pub(crate) fn new(database: Arc<db::DB<S>>) -> Self {
-        Self { database }
-    }
-}
-
-#[cfg(feature = "http")]
-#[async_trait::async_trait]
-impl<S: storage::corekv::Store + 'static> defra_http::router::CollectionVersionOperations
-    for DbCollectionVersionOps<S>
-{
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.database
-            .get_all_collection_versions()
-            .await
-            .map_err(|error| error.to_string())
-    }
-}
-
 pub(crate) struct DbBlockOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,

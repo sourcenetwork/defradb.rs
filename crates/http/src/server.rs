@@ -26,9 +26,8 @@ use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
-    EncryptedIndexOperations, IndexOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    ViewOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -111,7 +110,6 @@ pub struct Server {
     block: Option<Arc<dyn BlockOperations>>,
     schema: Option<Arc<dyn CollectionOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
-    collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
@@ -180,7 +178,6 @@ impl Server {
             block: None,
             schema: None,
             nac: None,
-            collection_versions: None,
             collection_mgmt: None,
             doc_acp: None,
             view: None,
@@ -332,15 +329,6 @@ impl Server {
         self
     }
 
-    /// Set read-only collection-version operations from an Arc.
-    pub fn with_collection_versions_arc(
-        mut self,
-        collection_versions: Arc<dyn CollectionVersionOperations>,
-    ) -> Self {
-        self.collection_versions = Some(collection_versions);
-        self
-    }
-
     /// Set view operations from an Arc.
     pub fn with_view_arc(mut self, view: Arc<dyn ViewOperations>) -> Self {
         self.view = Some(view);
@@ -440,9 +428,6 @@ impl Server {
         }
         if let Some(ref nac) = self.nac {
             builder = builder.with_nac(Arc::clone(nac));
-        }
-        if let Some(ref collection_versions) = self.collection_versions {
-            builder = builder.with_collection_versions(Arc::clone(collection_versions));
         }
         if let Some(ref collection_mgmt) = self.collection_mgmt {
             builder = builder.with_collection_mgmt(Arc::clone(collection_mgmt));
