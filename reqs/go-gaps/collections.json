@@ -1,14 +1,18 @@
 [
   {
     "id": "go.collection_version.define.basic_types",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_simple_type",
-      "tools/integration-test/tests/basic/document_lifecycle.rs::document_lifecycle_test",
-      "crates/query/src/runner/introspection/mod.rs::aggregate_nullability_matches_go",
-      "crates/query/src/runner/introspection/mod.rs::collection_count_and_array_types_match_go"
+      "tools/integration-test/tests/collection_version/comment.rs::collection_version_simple_adds_collection_given_leading_comment",
+      "tools/integration-test/tests/collection_version/comment.rs::collection_version_simple_adds_collection_given_leading_comment_with_multi_byte_char",
+      "tools/integration-test/tests/collection_version/simple.rs::col_version_simple_adds_col_given_empty_type",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_adds_collection_given_new_types",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_adds_collection_given_type_with_string_field",
+      "tools/integration-test/tests/collection_version/simple.rs::collection_version_simple_adds_collection_with_default_fields_given_empty_type",
+      "tools/integration-test/tests/collection_version/with_inline_array.rs::collection_version_inline_array_adds_collection_given_second_type",
+      "tools/integration-test/tests/collection_version/with_inline_array.rs::collection_version_inline_array_adds_collection_given_single_type"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:21 asserts _docID+declared fields; tools/integration-test/tests/basic/document_lifecycle.rs:33 asserts __type(name: \"Article\") exists; crates/query/src/runner/introspection/mod.rs:445-447 asserts COUNT/SUM/AVG on the collection type; crates/query/src/runner/introspection/mod.rs:503 asserts inline array field type",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Not asserted through introspection: the full default system field set (_docID, _version, _deleted, _group) on the generated type, empty types, several types in one SDL, and SDL with leading # comments incl. multi-byte chars (no comment test found)."
   },
   {
@@ -33,39 +37,45 @@
   },
   {
     "id": "go.collection_version.define.default_values",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_for_all_scalar_types",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_missing_value_returns_error",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_legacy_argument_returns_error",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_datetime_wrong_type_returns_error",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_default_directive_value_uses_field_type_coercion"
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_default_field_value_no_arg_returns_error",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_default_field_value_on_list_returns_error",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_default_field_value_on_relation_returns_error",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_default_field_values",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_incorrect_default_field_value_type_returns_error",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_invalid_default_field_value_type_returns_error",
+      "tools/integration-test/tests/collection_version/with_default_fields.rs::collection_version_with_unknown_default_field_arg_returns_error"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:1611-1645 asserts recorded defaults per kind; crates/query/src/sdl_parse/parser_tests.rs:960 exact 'default value must specify one argument. Field: role'; crates/query/src/sdl_parse/parser_tests.rs:976 exact 'Unknown argument \"string\" on directive \"@default\"'; crates/query/src/sdl_parse/parser_tests.rs:1589 exact 'default value is invalid. Field: created, Expected: DateTime, Actual: Int, Value: 12345'",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Not asserted: 'default value is not allowed for this field type' on a relation field (Type: User) or a list field (Type: List); the only not-allowed test (test_default_directive_value_rejects_unsupported_field_type) uses an ID field. Boolean-with-enum-value case also untested."
   },
   {
     "id": "go.collection_version.define.crdt_types",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_directive_variations",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_directive_unknown_type_returns_error",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_crdt_validation_fails_for_non_numeric",
-      "tools/integration-test/tests/basic/crdt_field_blocks.rs::create_and_update_blocks_are_pinned",
-      "crates/schema/src/error.rs::test_invalid_crdt_error"
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_p_counter_type_with_float32_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_p_counter_type_with_float64_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_p_counter_type_with_float_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_p_counter_type_with_int_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_p_counter_type_with_wrong_kind_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_pn_counter_type_with_float_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_pn_counter_type_with_int_kind_no_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_pn_counter_type_with_wrong_kind_error",
+      "tools/integration-test/tests/collection_version/crdt_type.rs::collection_add_contains_pn_counter_with_invalid_type_error"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:898 asserts 'Argument \"type\" has invalid value'; crates/query/src/sdl_parse/parser_tests.rs:715 asserts pncounter on String fails validation (is_err only); tools/integration-test/tests/basic/crdt_field_blocks.rs:23 (setup of create_and_update_blocks_are_pinned) expects schema add of Float pcounter / Float32 pncounter to succeed; error.rs test asserts the Display text 'CRDT type pncounter can't be assigned to field kind String'",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified end to end: the wrong-kind error message from AddCollection (only is_err at validate level; message only checked on the error enum's Display); pcounter on String; Float64 counters at add time (only parse-level)."
   },
   {
     "id": "go.collection_version.define.branchable",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_branchable_directive",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_branchable_directive_with_if_false",
-      "crates/defra-node/tests/branchable_sdl.rs::branchable_directive_survives_sdl_parsing"
+      "tools/integration-test/tests/collection_version/branchable_directive.rs::col_version_branchable_argument_if_false_should_be_false",
+      "tools/integration-test/tests/collection_version/branchable_directive.rs::col_version_branchable_argument_if_true_should_be_true",
+      "tools/integration-test/tests/collection_version/branchable_directive.rs::col_version_branchable_no_arguments_default_true"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:572 asserts @branchable sets is_branchable; crates/query/src/sdl_parse/parser_tests.rs:1119 asserts @branchable(if: false) leaves it false; crates/defra-node/tests/branchable_sdl.rs:26 asserts is_branchable on the stored collection",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "@branchable(if: true) is never asserted to set IsBranchable (test_unknown_argument_on_branchable_directive uses it but only checks warnings)."
   },
   {
@@ -125,13 +135,11 @@
   },
   {
     "id": "go.collection_version.relations.self_ref_ids",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/query/src/sdl_parse/parser_tests.rs::test_parse_self_reference",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_self_ref_collection_id_matches_go",
-      "tools/integration-test/tests/basic/self_ref_relations_4712.rs::multi_layer_self_ref_relations_test"
+      "tools/integration-test/tests/collection_version/one_one_many_self_ref.rs::collection_version_with_one_one_one_many_self_ref"
     ],
-    "evidence": "crates/query/src/sdl_parse/parser_tests.rs:221 asserts plain SelfRef kind; crates/query/src/sdl_parse/parser_tests.rs:801 asserts Go's CID for type User { boss: User }; tools/integration-test/tests/basic/self_ref_relations_4712.rs:58-62 asserts RelativeID index suffixes in a two-type cycle via GET /collections",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Not asserted: two types in a cycle share one base collection ID; separate cycles get different base IDs; cycles joined by a third cycle share one base ID; mixed one-one/one-many self relations through GetCollections."
   },
   {
@@ -215,65 +223,96 @@
   },
   {
     "id": "go.collection_version.version_branches",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/with_version_branch.rs::collection_version_updates_with_branching_collection",
+      "tools/integration-test/tests/collection_version/updates/with_version_branch.rs::collection_version_updates_with_branching_collection_and_get_collection_at_version",
+      "tools/integration-test/tests/collection_version/updates/with_version_branch.rs::collection_version_updates_with_branching_collection_and_set_active_collection_to_other_branch",
+      "tools/integration-test/tests/collection_version/updates/with_version_branch.rs::collection_version_updates_with_branching_collection_and_set_active_collection_to_other_branch_then_patch",
+      "tools/integration-test/tests/collection_version/updates/with_version_branch.rs::collection_version_updates_with_patch_on_branched_collection"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched crates/db/tests/definition, defra-node tests and integration tests for patching a non-active version / sibling version branches; set_active tests only switch along a linear history."
   },
   {
     "id": "go.collection_version.patch.add_field.basic",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/collection_management.rs::collection_patch_test",
-      "tools/integration-test/tests/basic/patch_secondary_relation_4709.rs::patch_new_field_with_existing_secondary_relation_test",
-      "crates/db/tests/definition/patch.rs::inactive_patch_keeps_the_active_version_in_cache",
-      "crates/defra-node/tests/issue_859_schema_migration.rs::patch_collection_adds_field_and_bumps_version"
+      "tools/integration-test/tests/collection_version/updates/add/field/constraint/size.rs::collection_version_updates_add_field_size_contraint_should_succeed",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_multiple_in_patch",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_multiple_patches",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_do_not_set_default_version_is_queryable",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_inactive_false_errors",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_filter.rs::collection_version_updates_add_field_simple_with_filter",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_filter.rs::collection_version_updates_add_field_simple_with_filter_on_populated_database",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_introspection.rs::collection_version_updates_add_field_introspection",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_relation.rs::collection_version_updates_add_field_does_not_affect_existing_relation"
     ],
-    "evidence": "tools/integration-test/tests/basic/collection_management.rs:24-33 queries the added `summary` field after patch; tools/integration-test/tests/basic/patch_secondary_relation_4709.rs:30 creates and reads back the added field; crates/db/tests/definition/patch.rs:78-82 asserts an IsActive=false patch returns a new inactive version while the active version stays",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: several fields in one or successive patches being queryable together, filtering and `__type` introspection on added fields, `@constraints(size: 2)` on an added array (`array size mismatch`), and the `Cannot query field \"email\" on type \"Users\".` error plus GetCollections listing for a SetAsActiveVersion=false patch."
   },
   {
     "id": "go.collection_version.patch.add_field.atomicity",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_multiple_in_patch_partial_success",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_introspection.rs::collection_version_updates_add_field_introspection_does_not_amend_gql_types_given_bad_patch"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched patch tests (crates/db/tests/definition/patch.rs, cross_runtime_schema_validation.rs, collection_management.rs, defra-node issue_859) for a multi-op patch where one op fails. Only single-op failing patches exist; patch.rs::patch_collection_rolls_back_when_migration_is_invalid checks rollback on an invalid migration, not on a failing patch op, and nothing checks the valid field stays unqueryable or GraphQL types unchanged."
   },
   {
     "id": "go.collection_version.patch.add_field.validation",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_duplicate_field",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_duplicate_of_existing_field",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_duplicate_of_existing_field_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_without_name"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:327-331 (validateFieldNotDuplicated, accepted:false) checked by assert_outcome at :378 against Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only rejection of a duplicate of an existing field is asserted, not the `duplicate field. Name: name` message; duplicates between two added fields and the empty-name error `Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"\" does not.` are untested."
   },
   {
     "id": "go.collection_version.patch.add_field.non_nillable",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_collection_rejects_new_non_nillable_field",
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_blob_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_bool_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_date_time_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_float32_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_float64_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_int_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_json_field_error",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_add_non_nillable_string_field_error"
     ],
-    "evidence": "crates/db/tests/definition/patch.rs:267-270 asserts exact message `adding a non-nillable field to an existing collection is not supported` for Kind 23; tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:275-279 same patch rejected on Rust and Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only one non-nillable kind (23) is tested; Boolean, Int, Float64, Float32, DateTime, Blob and JSON non-nillable kinds are not."
   },
   {
     "id": "go.collection_version.patch.add_field.existing_docs",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/collection_management.rs::collection_patch_test",
-      "tools/integration-test/tests/basic/patch_secondary_relation_4709.rs::patch_new_field_with_existing_secondary_relation_test",
-      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_update_new_field_older_version"
+      "tools/integration-test/tests/collection_version/updates/add/field/add.rs::collection_version_updates_add_field_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/add.rs::collection_version_updates_add_field_with_add_after_collection_update",
+      "tools/integration-test/tests/collection_version/updates/add/field/add.rs::collection_version_updates_add_field_with_existing_secondary_one_to_one_relationship",
+      "tools/integration-test/tests/collection_version/updates/add/field/add_update.rs::collection_version_updates_add_field_with_add_with_update_after_collection_update_and_commit_query",
+      "tools/integration-test/tests/collection_version/updates/add/field/add_update.rs::collection_version_updates_add_field_with_add_with_update_after_collection_update_and_version_join"
     ],
-    "evidence": "tools/integration-test/tests/basic/collection_management.rs:31-34 asserts the new field is null for a pre-patch doc; tools/integration-test/tests/basic/patch_secondary_relation_4709.rs:30 creates a doc after the patch with an existing secondary one-to-one relation; tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs:294-298 updates a pre-patch doc with the new field and reads it back",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: `_version` joins and `_commits` queries across the version change."
   },
   {
     "id": "go.collection_version.patch.add_field.by_name_path",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/with_index_sub.rs::collection_version_updates_add_field_simple_field_indexed_by_name",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_index_sub.rs::collection_version_updates_add_field_simple_field_indexed_by_name_multiple_times",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_index_sub.rs::collection_version_updates_add_field_simple_field_indexed_by_name_with_different_name_defined_in_value",
+      "tools/integration-test/tests/collection_version/updates/add/field/with_index_sub.rs::collection_version_updates_add_field_simple_field_indexed_by_name_with_same_name_defined_in_value"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched tests for add ops at `/<Col>/Fields/<name>` and for `the index used does not match the given name`; only crates/db/tests/definition/json.rs tests the path-parsing helper extract_field_name_from_path, no patch is applied by name and the mismatch error is never asserted."
   },
   {
@@ -288,50 +327,94 @@
   },
   {
     "id": "go.collection_version.patch.add_field.branchable",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/branchable.rs::branchable_collection_add_new_field_should_update_collection_definition",
+      "tools/integration-test/tests/collection_version/updates/add/branchable.rs::branchable_collection_add_new_field_with_multiple_docs_should_add_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched for patches on @branchable collections: p2p_iroh/sync/branchable.rs::branched_versions_and_docs patches but only asserts node1 is non-empty and never writes the new field; merge/synced_definition_cache.rs and collection_predecessor.rs test synced definitions. No test creates or updates documents with a field added to a branchable collection."
   },
   {
     "id": "go.collection_version.patch.add_field.crdt.valid",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/lww.rs::collection_version_updates_add_field_crdtlww",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/none.rs::collection_version_updates_add_field_crdt_default",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/none.rs::collection_version_updates_add_field_crdt_none",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/pcounter.rs::collection_version_updates_add_field_crdtp_counter_no_error",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/pncounter.rs::collection_version_updates_add_field_crdtpn_counter_no_error",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/string_typ.rs::collection_version_updates_add_field_crdt_typ_as_string_no_error"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched tests for `\"Typ\"` in patch values; the only hit is the rejected Boolean+Typ 4 case. No test adds a field with Typ 0, LWW, pcounter, pncounter or a string Typ name and queries it."
   },
   {
     "id": "go.collection_version.patch.add_field.crdt.invalid",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity",
-      "crates/schema/src/ctype.rs::test_unknown_string_matches_go_error"
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/composite.rs::collection_version_updates_add_field_crdt_composite_errors",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/composite.rs::collection_version_updates_add_field_crdt_composite_errors_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/invalid.rs::collection_version_updates_add_field_crdt_invalid_errors",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/invalid.rs::collection_version_updates_add_field_crdt_invalid_errors_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/object_bool.rs::collection_version_updates_add_field_crdt_object_with_bool_field_errors",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/object_bool.rs::collection_version_updates_add_field_crdt_object_with_bool_field_errors_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/pcounter.rs::collection_version_updates_add_field_crdtp_counter_with_mismatch_kind_error",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/pncounter.rs::collection_version_updates_add_field_crdtpn_counter_with_mismatch_kind_error",
+      "tools/integration-test/tests/collection_version/updates/add/field/crdt/string_typ.rs::collection_version_updates_add_field_crdt_typ_as_unknown_string_error"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:321-325 Boolean with Typ 4 (pncounter) rejected on Rust and Go (outcome only); crates/schema/src/ctype.rs:376 asserts `unknown crdt string representation` on deserializing an unknown string",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: `CRDT type not supported. Name: foo, CRDTType: composite|object|unknown` (no test hits that validator), the exact `CRDT type pcounter/pncounter can't be assigned to field kind Boolean` message, pcounter on Boolean, and the unknown-string error through a real patch."
   },
   {
     "id": "go.collection_version.patch.add_field.kind.numeric",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float.rs::collection_version_updates_add_field_kind_float",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float.rs::collection_version_updates_add_field_kind_float_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float.rs::collection_version_updates_add_field_kind_float_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float32.rs::collection_version_updates_add_field_kind_float32",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float32.rs::collection_version_updates_add_field_kind_float32_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/float32.rs::collection_version_updates_add_field_kind_float32_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/int.rs::collection_version_updates_add_field_kind_int",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/int.rs::collection_version_updates_add_field_kind_int_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/int.rs::collection_version_updates_add_field_kind_int_with_add"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Patches add `Kind: \"Int\"` in many tests (committed_lenses.rs, owed_reindex.rs, p2p_iroh/sync/version.rs) but none creates a document with an Int value and reads it back; Float, Float32 and numeric kind IDs for these are never added."
   },
   {
     "id": "go.collection_version.patch.add_field.kind.other_scalars",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicator_create_new_field_updated_version",
-      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity"
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/bool.rs::collection_version_updates_add_field_kind_bool",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/bool.rs::collection_version_updates_add_field_kind_bool_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/bool.rs::collection_version_updates_add_field_kind_bool_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/datetime.rs::collection_version_updates_add_field_kind_date_time",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/datetime.rs::collection_version_updates_add_field_kind_date_time_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/datetime.rs::collection_version_updates_add_field_kind_date_time_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/doc_id.rs::collection_version_updates_add_field_kind_doc_id",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/doc_id.rs::collection_version_updates_add_field_kind_doc_id_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/doc_id.rs::collection_version_updates_add_field_kind_doc_id_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/string.rs::collection_version_updates_add_field_kind_string",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/string.rs::collection_version_updates_add_field_kind_string_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/string.rs::collection_version_updates_add_field_kind_string_with_add"
     ],
-    "evidence": "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs:228-233 creates a doc with patch-added String field `Email` and reads it back; tools/integration-test/tests/query/lens_cross_runtime.rs:273 reads patch-added Boolean `migrated` (value set by lens)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only String (by name) is stored by a create after the patch; Boolean value comes from a lens, not a create; DateTime and ID kinds, and adding any of these by numeric kind ID, are untested."
   },
   {
     "id": "go.collection_version.patch.add_field.kind.blob_json",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/blob.rs::collection_version_updates_add_field_kind_blob",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/blob.rs::collection_version_updates_add_field_kind_blob_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/blob.rs::collection_version_updates_add_field_kind_blob_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/json.rs::collection_version_updates_add_field_kind_json",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/json.rs::collection_version_updates_add_field_kind_json_substitution_with_add",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/json.rs::collection_version_updates_add_field_kind_json_with_add"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched patch values for Blob/JSON kinds (names and IDs) in all test dirs; none found."
   },
   {
@@ -353,12 +436,14 @@
   },
   {
     "id": "go.collection_version.patch.add_field.kind.invalid",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_collection_reports_unknown_numeric_kind_like_go",
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/invalid.rs::collection_version_updates_add_field_kind198",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/invalid.rs::collection_version_updates_add_field_kind32",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/invalid.rs::collection_version_updates_add_field_kind_invalid",
+      "tools/integration-test/tests/collection_version/updates/add/field/kind/none.rs::collection_version_updates_add_field_kind_none"
     ],
-    "evidence": "crates/db/tests/definition/patch.rs:294-297 asserts `invalid patch: no type found for given name. Type: 111`; tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:315-319 same Kind 111 rejected on Rust and Go",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Kind 0, the unassigned IDs 32/198 named in Go, and an unknown kind name (`Field: foo, Kind: InvalidKind`) are not tested; 111 exercises the same unassigned-ID path."
   },
   {
@@ -372,34 +457,53 @@
   },
   {
     "id": "go.collection_version.patch.add_collection",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/add/collections.rs::col_version_update_add_collections_errors",
+      "tools/integration-test/tests/collection_version/updates/add/collections.rs::col_version_update_add_collections_with_empty_id_errors",
+      "tools/integration-test/tests/collection_version/updates/add/collections.rs::col_version_update_add_collections_with_no_index_errors",
+      "tools/integration-test/tests/collection_version/updates/add/collections.rs::col_version_update_add_collections_with_undefined_id_errors",
+      "tools/integration-test/tests/collection_version/updates/add/simple.rs::collection_version_updates_add_simple_errors_adding_collection",
+      "tools/integration-test/tests/collection_version/updates/copy/simple.rs::collection_version_updates_copy_collection_with_remove_id_and_replace_name",
+      "tools/integration-test/tests/collection_version/updates/replace/simple.rs::collection_version_updates_replace_collection_errors"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:281-285 (validateCollectionNotAdded: add at `/-`) rejected on Rust and Go via assert_outcome at :378",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only the `/-` form and only the rejection; the `adding collections via patch is not supported. Name: Book` message and the unknown top-level path, copy-under-new-name and replace-with-another-collection forms are untested."
   },
   {
     "id": "go.collection_version.patch.invalid_paths",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/field/simple.rs::collection_version_updates_add_field_simple_errors_adding_to_unknown_collection",
+      "tools/integration-test/tests/collection_version/updates/add/simple.rs::collection_version_updates_add_simple_errors_adding_collection_prop",
+      "tools/integration-test/tests/collection_version/updates/add/simple.rs::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop",
+      "tools/integration-test/tests/collection_version/updates/add/simple.rs::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop_at_root"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Searched tests for 'doc is missing path', 'unknown field \"-\"' and patch ops on unknown paths/root/unsupported properties (rg over tools/integration-test/tests, crates/*/tests, crates/db/tests/definition): only implementation in crates/db/src/definition/patch/{apply,helpers}.rs, no test."
   },
   {
     "id": "go.collection_version.patch.field_reorder",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/copy/field/simple.rs::collection_version_updates_copy_field_errors",
+      "tools/integration-test/tests/collection_version/updates/copy/field/simple.rs::collection_version_updates_copy_field_errors_multiple",
+      "tools/integration-test/tests/collection_version/updates/move_/field/simple.rs::collection_version_updates_move_field_errors",
+      "tools/integration-test/tests/collection_version/updates/move_/field/simple.rs::collection_version_updates_move_field_errors_multiple"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:257-260 move of /PatchFieldMove/Fields/1 to /Fields/2 asserted rejected by both Rust and Go (assert_outcome at :378)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only accept/reject is asserted; the 'moving fields is not currently supported. Name: ..., ProposedIndex, ExistingIndex' message, the copy-onto-position variant and one-line-per-moved-field are unverified."
   },
   {
     "id": "go.collection_version.patch.copy_field",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/copy/field/simple.rs::collection_version_updates_copy_field_and_replace_name_and_invalid_kind_substitution",
+      "tools/integration-test/tests/collection_version/updates/copy/field/simple.rs::collection_version_updates_copy_field_with_and_replace_name",
+      "tools/integration-test/tests/collection_version/updates/copy/field/simple.rs::collection_version_updates_copy_field_with_replace_name_and_kind_substitution",
+      "tools/integration-test/tests/collection_version/updates/copy/field/with_introspection.rs::collection_version_updates_copy_field_introspection_with_remove_id_and_replace_name"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No test issues a JSON Patch 'copy' op (rg for '\"op\": \"copy\"' and op.{0,6}copy in all Rust tests); new-field-from-copy queryability and the 'no type found ... Kind: NotAValidKind' substitution error are untested."
   },
   {
@@ -413,11 +517,20 @@
   },
   {
     "id": "go.collection_version.patch.immutable_identity",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/remove/version_id.rs::collection_version_updates_remove_version_id_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/col_source_source_id.rs::col_version_update_replace_collection_source_source_collection_id_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/id.rs::col_version_update_replace_id_with_empty_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/id.rs::col_version_update_replace_id_with_existing_different_root_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/id.rs::col_version_update_replace_id_with_existing_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/id.rs::col_version_update_replace_id_with_existing_same_root_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/id.rs::col_version_update_replace_id_with_new_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/root_id.rs::col_version_update_replace_collection_id_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/sources.rs::col_version_update_replace_sources_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/sources.rs::col_version_update_replace_sources_with_query_source_errors"
     ],
-    "evidence": "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:239-249 empty and changed CollectionID rejected; :287-291 VersionID replaced by an unknown CID rejected; :351-361 invalid VersionID and CollectionID strings rejected; :215 and :363 replaced PreviousVersion source rejected (all via assert_outcome at :378)",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only accept/reject parity with Go is asserted, none of the error messages; removing VersionID ('cid too short'), adding/removing sources vs replacing them, and a changed source collection ID ('collection source ID cannot be mutated.') are not exercised."
   },
   {
@@ -433,47 +546,100 @@
   },
   {
     "id": "go.collection_version.patch.remove_field",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/remove/fields/simple.rs::collection_version_updates_remove_all_fields",
+      "tools/integration-test/tests/collection_version/updates/remove/fields/simple.rs::collection_version_updates_remove_field",
+      "tools/integration-test/tests/collection_version/updates/replace/field/simple.rs::collection_version_updates_replace_field"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No test removes or replaces an existing field by patch and checks 'Cannot query field \"name\" on type \"Users\"' (searched for remove ops on /Fields paths and whole-Fields replacements dropping a field; crates/db/tests/definition/patch.rs:421 only replaces the list to add a field)."
   },
   {
     "id": "go.collection_version.patch.field_mutation_errors",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_collection_rejects_numeric_kind_in_direct_kind_replacement",
-      "tools/integration-test/tests/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
+      "tools/integration-test/tests/collection_version/updates/remove/contraints.rs::col_version_update_field_field_size_contraint_should_error",
+      "tools/integration-test/tests/collection_version/updates/remove/fields/simple.rs::collection_version_updates_remove_field_kind_errors",
+      "tools/integration-test/tests/collection_version/updates/remove/fields/simple.rs::collection_version_updates_remove_field_name_errors",
+      "tools/integration-test/tests/collection_version/updates/remove/fields/simple.rs::collection_version_updates_remove_field_typ_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/contraints.rs::col_version_update_replace_field_size_contraint_should_error",
+      "tools/integration-test/tests/collection_version/updates/replace/fields.rs::col_version_update_replace_default_value_errors",
+      "tools/integration-test/tests/collection_version/updates/replace/fields.rs::col_version_update_replace_fields_errors"
     ],
-    "evidence": "crates/db/tests/definition/patch.rs:483-486 asserts exact 'invalid patch: mutating an existing field is not supported. ProposedName: ' for replacing Fields/message/Kind; tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:251 Kind replacement rejected",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Only Kind replacement is checked; removing/replacing name, CRDT type, default value and size constraint are unverified, as is the whole-fields-list replacement error 'no type found for given name. Type: 0' (crates/db/tests/definition/patch.rs:294 asserts 'Type: 111' for an added field, not a list replacement)."
   },
   {
     "id": "go.collection_version.patch.embeddings.valid",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_should_succeed",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_url_should_succeed",
+      "tools/integration-test/tests/collection_version/updates/remove/embeddings.rs::col_version_update_remove_vector_embedding_should_succeed",
+      "tools/integration-test/tests/collection_version/updates/replace/embeddings.rs::col_version_update_replace_vector_embedding_params_should_succeed"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No test patches VectorEmbeddings (rg for VectorEmbeddings/vector_embeddings and patch usage in crates/db/tests, crates/query/tests, crates/defra-node/tests, tools/integration-test/tests found none); add/replace/remove by patch and GetCollections reflection untested."
   },
   {
     "id": "go.collection_version.patch.embeddings.missing_settings",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_field_name_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_field_name_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_fields_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_fields_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_model_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_model_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_provider_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_missing_provider_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unsupported_provider_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unsupported_provider_should_error_multiple"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No patch test for empty FieldName/Fields/Provider/Model or unknown provider; the messages exist only in crates/schema/src/definition_validation/global_validators.rs. Nearest: tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:176 rejects an unknown provider at SDL add (accept/reject only), a different surface."
   },
   {
     "id": "go.collection_version.patch.embeddings.field_references",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_another_embedding_in_patch_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_another_embedding_in_patch_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_another_embedding_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_another_embedding_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_self_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_reference_to_self_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_invalid_embedding_generation_field_kind_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unknown_embedding_generation_field_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unknown_embedding_generation_field_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unknown_field_name_should_error",
+      "tools/integration-test/tests/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unknown_field_name_should_error_multiple",
+      "tools/integration-test/tests/collection_version/updates/replace/embeddings.rs::col_version_update_replace_vector_embedding_with_invalid_embedding_generation_field_kind_should_error",
+      "tools/integration-test/tests/collection_version/updates/replace/embeddings.rs::col_version_update_replace_vector_embedding_with_unknown_embedding_generation_field_should_error",
+      "tools/integration-test/tests/collection_version/updates/replace/embeddings.rs::col_version_update_replace_vector_embedding_with_unknown_field_name_should_error"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No patch test for unknown vector/source field, JSON source, or self/other-embedding reference. Nearest: tools/integration-test/tests/basic/cross_runtime_schema_validation.rs:157 and :167 reject a String vector field and a missing generation field at SDL add (accept/reject only, no message, not via patch)."
   },
   {
     "id": "go.collection_version.patch.test_op",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_test_add_field",
+      "tools/integration-test/tests/collection_version/updates/test/add_field.rs::collection_version_updates_test_add_field_blocked_by_test",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_errors",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_name_errors",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_name_passes",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_passes",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_passes_targetting_kind_using_field_name_as_index",
+      "tools/integration-test/tests/collection_version/updates/test/field/simple.rs::collection_version_updates_test_field_passes_using_field_name_as_index",
+      "tools/integration-test/tests/collection_version/updates/test/name.rs::col_version_update_test_name",
+      "tools/integration-test/tests/collection_version/updates/test/name.rs::col_version_update_test_name_by_version_id",
+      "tools/integration-test/tests/collection_version/updates/test/name.rs::col_version_update_test_name_by_version_id_fails",
+      "tools/integration-test/tests/collection_version/updates/test/name.rs::col_version_update_test_name_fails"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "No test sends a JSON Patch 'test' op (rg '\"op\": \"test\"' in all Rust tests); 'testing value ... failed: test failed' exists only in crates/db/src/definition/patch/apply.rs:339."
   },
   {
@@ -570,36 +736,45 @@
   },
   {
     "id": "go.collection_version.migrations.configure",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_is_only_visible_inside_transaction",
-      "crates/db/tests/read/lensed_snapshot_history.rs::writable_transaction_observes_its_own_migration_registration",
-      "crates/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
+      "tools/integration-test/tests/collection_version/migrations/simple.rs::collection_migration_configure_migration_skipping_version_errors",
+      "tools/integration-test/tests/collection_version/migrations/simple.rs::collection_migration_does_not_error_given_unknown_collection_roots",
+      "tools/integration-test/tests/collection_version/migrations/simple.rs::collection_migration_get_migrations_returns_multiple",
+      "tools/integration-test/tests/collection_version/migrations/simple.rs::collection_migration_replaces_existing_migation_based_on_source_id",
+      "tools/integration-test/tests/collection_version/migrations/with_txn.rs::collection_migration_get_migrations_with_txn"
     ],
-    "evidence": "crates/db/tests/txn/registry_suite.rs:363-379 sets a migration between unknown versions 'users-v1'->'users-v2' without error and asserts it is visible inside the txn and not outside; crates/db/tests/read/lensed_snapshot_history.rs:179 asserts a read in the txn applies its own migration",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: several migrations returned by GetCollections, a second migration with the same source replacing the first, and the 'cannot migrate between non-adjacent collection versions' error (string exists in crates/db/src/definition/migration/set.rs:165 but no test asserts it)."
   },
   {
     "id": "go.collection_version.migrations.query.forward",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration",
-      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
-      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version",
-      "crates/db/tests/definition/migration_suite.rs::migration_context_cache_invalidates_when_graph_changes_without_version_change"
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_only_on_first_step_applies_only_first_step",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_only_on_last_step_applies_only_last_step",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_registered_before_patch_applies_migration",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migrations_registered_before_patches_applies_all_migrations",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migrations_registered_before_patches_in_reverse_order_applies_all_migrations",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_multiple_docs_applies_migration_to_all",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_single_migration_applies_migration",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_unknown_collection_version_i_ds_ignores_migration"
     ],
-    "evidence": "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs:109-120 asserts a v1->v2 migration registered after the patch applies to all 3 docs; tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs:524-525 asserts a two-step chain applies both steps; crates/db/tests/definition/migration_suite.rs:642-650 asserts both edges apply when v2->v3 was registered before v1->v2",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: migration registered before the patch that creates the destination version; a missing edge being skipped (replicated_doc_much_newer_with_history_gap only asserts name, not that verified stays unset); migrations naming unknown versions being ignored on query."
   },
   {
     "id": "go.collection_version.migrations.query.field_mapping",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
-      "crates/db/tests/definition/helpers.rs::lens_removed_field_is_returned_as_explicit_null",
-      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration"
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_copying_field_when_src_and_dst_field_not_requested_applies_copy",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_copying_field_when_src_field_not_requested_applies_copy",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_mutating_field_not_in_first_request_preserves_unmutated_field_in_second_request",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_mutating_inline_array_field_applies_mutation",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_mutating_scalar_field_applies_mutation",
+      "tools/integration-test/tests/collection_version/migrations/query/simple.rs::collection_migration_query_with_migration_removing_field_returns_nil_for_removed_field"
     ],
-    "evidence": "tools/integration-test/tests/query/lens_cross_runtime.rs:263-271 asserts a lens-set scalar plus untouched fields across 8 scalar kinds; crates/db/tests/definition/helpers.rs:169-172 asserts a field the lens omits comes back as Null (unit test of lens_doc_to_document); tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs:105-120 filters on the migrated field without selecting it",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: mutating an inline-array field, the removed-field null through a GraphQL query, copy migrations when src/dst fields are not requested, and a second request with a different field set still seeing unmutated fields."
   },
   {
@@ -614,23 +789,27 @@
   },
   {
     "id": "go.collection_version.migrations.query.active_version",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_newer_schema_version",
-      "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs::replicated_doc_other_schema_branch"
+      "tools/integration-test/tests/collection_version/migrations/query/with_collection_branch.rs::collection_migration_query_with_branching_collection",
+      "tools/integration-test/tests/collection_version/migrations/query/with_inverse.rs::collection_migration_query_inverses_across_multiple_versions",
+      "tools/integration-test/tests/collection_version/migrations/query/with_set_default.rs::collection_migration_query_with_set_default_to_latest_applies_forward_migration",
+      "tools/integration-test/tests/collection_version/migrations/query/with_set_default.rs::collection_migration_query_with_set_default_to_original_applies_inverse_migration"
     ],
-    "evidence": "tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs:585-590 asserts a node at the older version sees the inverse migration clear verified; tools/integration-test/tests/p2p_iroh/schema/schema_migration.rs:717-727 asserts a node on another version branch sees name cleared by the inverse and phone set by its branch's lens",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: switching the active version with set-active (latest -> forward, original -> inverse) on one node with a migration, and inverse migration across several versions. set_active tests (issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original, patch.rs) check only the version id, not migrated values."
   },
   {
     "id": "go.collection_version.migrations.query.filters",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/definition/migration_suite.rs::implicit_query_leaves_storage_unchanged_after_snapshot_closes",
-      "crates/db/tests/definition/migration_suite.rs::field_value_fetch_filters_after_lens_transform",
-      "tools/integration-test/tests/query/lens_reindex_secondary_index_979.rs::single_field_index_rebuilt_after_lens_migration"
+      "tools/integration-test/tests/collection_version/migrations/query/with_doc_id.rs::collection_migration_query_by_doc_id",
+      "tools/integration-test/tests/collection_version/migrations/query/with_doc_id.rs::collection_migration_query_multiple_queries_by_doc_id",
+      "tools/integration-test/tests/collection_version/migrations/query/with_filter.rs::collection_migration_query_with_filter_and_migration_between_old_versions_should_apply_migration",
+      "tools/integration-test/tests/collection_version/migrations/query/with_filter.rs::collection_migration_query_with_filter_and_migration_in_old_patch_should_apply_migration2",
+      "tools/integration-test/tests/collection_version/migrations/query/with_filter.rs::collection_migration_query_with_filter_should_filter_f_migration"
     ],
-    "evidence": "crates/db/tests/definition/migration_suite.rs:892-906 asserts a GraphQL filter on the migrated field returns the migrated doc, and :872-874 asserts lookup by docID returns the migrated value; crates/db/tests/definition/migration_suite.rs:956-957 asserts field-value fetch filters after the transform",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: filters when the migration sits between older versions or in an older patch, and a GraphQL query by several docIDs over migrated documents (the docID lookups are DB-level fetcher calls)."
   },
   {
@@ -683,21 +862,22 @@
   },
   {
     "id": "go.collection_version.migrations.query.txn",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/read/lensed_snapshot_history.rs::writable_transaction_observes_its_own_migration_registration",
-      "crates/db/tests/txn/registry_suite.rs::test_set_migration_in_txn_promotes_transform_on_commit"
+      "tools/integration-test/tests/collection_version/migrations/query/with_txn.rs::collection_migration_query_with_txn",
+      "tools/integration-test/tests/collection_version/migrations/query/with_txn.rs::collection_migration_query_with_txn_and_commit"
     ],
-    "evidence": "crates/db/tests/read/lensed_snapshot_history.rs:171-182 asserts a read in the txn applies the migration set in it (via the stub module's failure); crates/db/tests/txn/registry_suite.rs:408-413 asserts the transform is in the global store after commit",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: migrated values returned by a query in the transaction (the test infers application from an error), and migrated values returned by a query outside the transaction after commit."
   },
   {
     "id": "go.collection_version.migrations.query.update",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/definition/migration_suite/json_frontier.rs::lens_rewrite_of_a_json_field_lands_through_the_next_write"
+      "tools/integration-test/tests/collection_version/migrations/query/with_update.rs::collection_migration_query_with_migration_registered_after_update",
+      "tools/integration-test/tests/collection_version/migrations/query/with_update.rs::collection_migration_query_with_update_request"
     ],
-    "evidence": "crates/db/tests/definition/migration_suite/json_frontier.rs:91-100 asserts an update to a doc stored at v1 writes it at v2 carrying the lens-set value and the new name",
+    "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
     "note": "Unverified: the update_ GraphQL mutation's returned fields showing migrated values, and a migration registered after the update still applying. disjoint_parts.rs::updates_of_a_migrated_collection_both_commit uses an empty migration, so it does not check migrated values."
   },
   {

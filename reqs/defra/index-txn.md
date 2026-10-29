@@ -250,3 +250,16 @@ Before commit, documents added, updated (by ID or filter), deleted or created by
 
 Inside a transaction, `UpdateDoc`, update-with-filter and `DeleteDoc` operate on documents created earlier in the same transaction, and the result is visible after commit.
 
+# `go.index.definition.patch-immutable`: Indexes cannot be changed through PatchCollection
+
+- **Parents:** ["go.index.definition"]
+- **Scenarios:** ["index.patch-collection-add-secondary-index-should-error", "index.patch-collection-modify-secondary-index-should-error", "index.patch-collection-modify-vector-index-metric-should-error", "index.patch-collection-remove-secondary-index-should-error"]
+
+A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
+
+# `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
+
+- **Parents:** ["go.txn.definitions"]
+- **Scenarios:** ["txn.txn-get-collections-inside-txn-with-add-schema-succeeds", "txn.txn-get-collections-inside-txn-without-add-schema-no-collections", "txn.txn-list-lenses-inside-txn-with-add-lens-succeeds", "txn.txn-list-lenses-inside-txn-without-add-lens-no-lenses"]
+
+`GetCollections` and `ListLenses` inside the transaction that added a collection or lens return it; run in a different transaction they return nothing.

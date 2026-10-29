@@ -54,13 +54,6 @@ An index request may set the deprecated `Unique`/`Fields` or the kind configs (`
 
 Indexing a `pcounter` or `pncounter` field (Int or Float), through the index API or `@index`, alone, in a composite, unique or collection-level index, fails with `indexing accumulated CRDT fields is not yet supported` (Field, CRDTType). An LWW field can be indexed.
 
-# `go.index.definition.patch-immutable`: Indexes cannot be changed through PatchCollection
-
-- **Parents:** ["go.index.definition"]
-- **Go-Tests:** ["index/patch_test.go::TestPatchCollection_AddSecondaryIndex_ShouldError", "index/patch_test.go::TestPatchCollection_ModifySecondaryIndex_ShouldError", "index/patch_test.go::TestPatchCollection_ModifyVectorIndexMetric_ShouldError", "index/patch_test.go::TestPatchCollection_RemoveSecondaryIndex_ShouldError"]
-
-A collection patch that adds, removes or modifies a secondary index, or changes a vector index's metric, fails with `collection indexes cannot be mutated`.
-
 # `go.index.definition.status`: Index build status
 
 - **Parents:** ["go.index.definition"]
@@ -301,14 +294,6 @@ After commit, a collection added, a collection patch, `SetActiveCollectionVersio
 - **Scope:** "database types: badger file, badger in-memory, defra in-memory (not leveldb, Go issue #4442)"
 
 Without commit, a collection added in a transaction is not listed outside it, a patched field fails with `Cannot query field "name" on type "Users".`, an unswitched version field fails with `Cannot query field "email" on type "Users".`, a view fails with `Cannot query field "UserView" on type "Query".`, a lens fails with `lens CID not found`, and a migration set in the transaction is not applied (field reads null).
-
-# `go.txn.definitions.same-txn-visibility`: Definition reads see only their own transaction
-
-- **Parents:** ["go.txn.definitions"]
-- **Go-Tests:** ["txn/get_collections_test.go::TestTxn_GetCollections_InsideTxnWithAddSchema_Succeeds", "txn/get_collections_test.go::TestTxn_GetCollections_InsideTxnWithoutAddSchema_NoCollections", "txn/list_lenses_test.go::TestTxn_ListLenses_InsideTxnWithAddLens_Succeeds", "txn/list_lenses_test.go::TestTxn_ListLenses_InsideTxnWithoutAddLens_NoLenses"]
-- **Scope:** "database types: badger file, badger in-memory, defra in-memory (not leveldb, Go issue #4442), except TestTxn_GetCollections_InsideTxnWithAddSchema_Succeeds which runs on all"
-
-`GetCollections` and `ListLenses` inside the transaction that added a collection or lens return it; run in a different transaction they return nothing.
 
 # `go.txn.indexes`: Index operations in transactions
 
