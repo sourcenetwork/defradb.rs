@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use defra_harness::{BinarySource, TestCluster};
 use defra_node::{HttpConfig, Node};
 use serde::{Deserialize, Serialize};
 use testo::prelude::*;
 
 use crate::actions::{Actions, Connect};
+use crate::go_node::GoNode;
 use crate::test_case::State;
 
 /// How a test reaches its database. The Go suite's `DEFRA_CLIENT_*` switches.
@@ -33,18 +33,6 @@ enum GoBinaryError {
          git checkout 53f0e76a3 && make build (see .github/workflows/ci.yml)"
     )]
     NotFound { tried: String },
-}
-
-/// The Go node's process handle, dropped on the edge that spawned it.
-struct InRuntime(Option<TestCluster>, edge::Edge);
-
-impl Drop for InRuntime {
-    fn drop(&mut self) {
-        let cluster = self.0.take();
-        drop(workers::block_on(
-            self.1.spawn(async move { drop(cluster) }),
-        ));
-    }
 }
 
 pub(crate) fn network_edge() -> edge::Edge {
@@ -79,19 +67,9 @@ impl ClientType {
             }
             Self::GoHttp => {
                 let binary = go_binary().unwrap_or_else(|error| panic!("{error}"));
-                let edge = network_edge();
-                let cluster = edge
-                    .block_on(
-                        TestCluster::builder()
-                            .go_nodes(1)
-                            .with_go_binary(BinarySource::Path(binary))
-                            .with_node_store(0, "memory")
-                            .build(),
-                    )
-                    .expect("run on the network edge")
-                    .expect("start go node");
-                state.url = Some(cluster.api_url(0).to_owned());
-                state.held = vec![Arc::new(InRuntime(Some(cluster), edge))];
+                let node = GoNode::start(&binary).unwrap_or_else(|error| panic!("{error}"));
+                state.url = Some(node.api_url().to_owned());
+                state.held = vec![Arc::new(node)];
             }
         }
     }
