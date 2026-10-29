@@ -205,7 +205,7 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
             "invalid document",
             "invalid entityset",
             "filtered truncate is not supported",
-            "read only transaction",
+            "no sets or deletes are allowed in a read-only transaction",
             "invalid lens configuration",
             "invalid patch",
             "invalid policy",
@@ -477,7 +477,9 @@ mod tests {
         let cases = [
             (TransactionError::not_found("1"), StatusCode::NOT_FOUND),
             (
-                TransactionError::execution("read only transaction"),
+                TransactionError::execution(
+                    "No sets or deletes are allowed in a read-only transaction",
+                ),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (
