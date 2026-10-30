@@ -19,31 +19,41 @@ env:
   CARGO_PROFILE_SUPER_DEV_DEBUG: '0'
 
 jobs:
+  # Linux splits the workspace five ways across RunsOn runners. macOS runs it
+  # as one job: the org has five macOS runners, so four jobs a run queued
+  # behind each other, and each one compiled the shared dependencies again.
   unit-tests:
     name: ${{ inputs.os }}, ${{ matrix.group }}
     runs-on: ${{ inputs.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - group: core
-            packages: >-
-              -p defra-core -p crdt -p storage -p blockstore -p schema
-              -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
-              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
-              -p replication-filter -p telemetry
-          - group: data
-            packages: -p query -p db -p vera -p pg-compat
-          - group: network
-            packages: -p p2p -p defra-p2p-adapter -p orbis
-          - group: surfaces
-            packages: >-
-              -p defra-http -p cli -p ffi -p defra-node
-              -p lens-host -p defra-wasm -p benches -p ffi-test
-          - group: node-p2p
-            packages: -p defra-node --features p2p,http,libp2p
+        group: ${{ fromJSON(startsWith(inputs.os, 'macos') && '["all"]' || '["core","data","network","surfaces","node-p2p"]') }}
+    env:
+      CORE: >-
+        -p defra-core -p crdt -p storage -p blockstore -p schema
+        -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
+        -p path+file://${{ github.workspace }}/crates/identity -p path+file://${{ github.workspace }}/crates/zanzibar
+        -p path+file://${{ github.workspace }}/crates/acp -p defra-version -p events -p lens
+        -p replication-filter -p telemetry
+      DATA: -p query -p db -p vera -p pg-compat
+      NETWORK: -p p2p -p defra-p2p-adapter -p orbis
+      SURFACES: >-
+        -p defra-http -p cli -p ffi -p defra-node
+        -p lens-host -p defra-wasm -p benches -p ffi-test
+      NODE_P2P: -p defra-node --features p2p,http,libp2p
     steps:
+      - name: Pick the packages
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          case "$GROUP" in
+            all) packages="$CORE $DATA $NETWORK $SURFACES" ;;
+            core) packages="$CORE" ;; data) packages="$DATA" ;;
+            network) packages="$NETWORK" ;; surfaces) packages="$SURFACES" ;;
+            node-p2p) packages="$NODE_P2P" ;;
+          esac
+          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
@@ -58,10 +68,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: unit
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.group == 'surfaces' }}
-      - run: cargo nextest run --cargo-profile super-dev ${{ matrix.packages }}
+          save-if: ${{ github.ref == 'refs/heads/main' && (matrix.group == 'surfaces' || matrix.group == 'all') }}
+      - run: cargo nextest run --cargo-profile super-dev $PACKAGES
+      # The node's P2P tests need features the workspace run leaves off.
+      - if: matrix.group == 'all'
+        run: cargo nextest run --cargo-profile super-dev $NODE_P2P
       - name: Check loopback gateway discovery listeners
-        if: runner.os == 'macOS' && matrix.group == 'network'
+        if: runner.os == 'macOS'
         run: cargo test --profile super-dev -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners -- --exact --ignored
       # nextest does not run doctests.
-      - run: cargo test --doc --profile super-dev ${{ matrix.packages }}
+      - run: cargo test --doc --profile super-dev $PACKAGES
