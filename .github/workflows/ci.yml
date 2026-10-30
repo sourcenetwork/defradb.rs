@@ -190,7 +190,7 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     uses: ./.github/workflows/unit-tests.yml
     with:
-      os: ubuntu-latest
+      os: linux
 
   build-binaries:
     name: Build integration binaries
