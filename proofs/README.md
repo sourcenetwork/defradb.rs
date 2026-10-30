@@ -89,6 +89,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
+| Shinzo CAR exchange | TLA+ & Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

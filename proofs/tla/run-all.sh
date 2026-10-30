@@ -87,6 +87,14 @@ RUNS=(
   "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
   "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED" # the merge stops checking (INV_RefusedNeverMerged)
   "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED" # a check refuses what it cannot see (INV_KeptIsKept)
+  "MC_ShinzoCarExchange_Green.cfg ShinzoCarExchange.tla GREEN"
+  "MC_ShinzoCarExchange_Red_Root.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Access.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Length.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Empty.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Fallback.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Blame.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_Oversize.cfg ShinzoCarExchange.tla RED"
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
