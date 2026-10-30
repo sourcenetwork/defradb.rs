@@ -172,7 +172,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // forward history in permanent retry on both replicas (#1111).
                 // Both documents persist; the index converges to the same
                 // winner everywhere.
-                let index_result = match &old_doc {
+                let index_result = match state.indexed_before.as_ref().unwrap_or(&old_doc) {
                     Some(old_doc) => {
                         index_manager
                             .on_document_update_merge(

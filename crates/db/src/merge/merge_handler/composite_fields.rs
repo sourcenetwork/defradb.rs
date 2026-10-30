@@ -161,6 +161,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ));
         }
 
+        // A field merge of an operation type writes its merged value into
+        // the document, so the index update has to start from a read before.
+        if let Some(collection) = context
+            .collection
+            .as_ref()
+            .filter(|collection| !collection.schema().indexes.is_empty())
+        {
+            let doc_id = DocID::from_string(context.doc_id_str)
+                .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
+            let before = state
+                .reads
+                .document(collection, datastore, context.doc_short_id, &doc_id)
+                .await
+                .map_err(MergeError::Database)?;
+            state.indexed_before = Some(before);
+        }
+
         // Phase 2: persist the decoded deltas.
         for (link_cid, parents, deltas) in pending {
             let mut parked = false;

@@ -76,6 +76,9 @@ pub struct CompositeMergeState {
     pub(crate) reads: super::block_reads::BlockReads,
     /// Unique-index collisions this merge resolved, published after commit.
     pub(crate) unique_conflicts: Vec<events::UniqueIndexConflictData>,
+    /// The document before this composite's field merges, read only when the
+    /// collection has an index.
+    pub(crate) indexed_before: Option<Option<Document>>,
 }
 
 pub(super) enum CompositeMergePreparation {
