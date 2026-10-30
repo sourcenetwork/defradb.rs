@@ -30,9 +30,9 @@ impl EmbeddedNode {
         &self,
         readonly: bool,
     ) -> Result<EmbeddedTransaction<'_>, TransactionError> {
-        let guard =
-            TransactionGuard::begin_as(self.runner().as_ref(), self.node_context(), readonly)
-                .await?;
+        // Begun as a request, like begin_transaction, then owned by the guard.
+        let handle = self.begin_transaction(readonly).await?;
+        let guard = TransactionGuard::adopt(self.runner().as_ref(), self.node_context(), handle);
         Ok(EmbeddedTransaction { node: self, guard })
     }
 }
@@ -55,9 +55,12 @@ impl EmbeddedTransaction<'_> {
             .await
     }
 
-    /// Commit the writes and consume the owning transaction.
+    /// Commit the writes and consume the owning transaction, admitted as
+    /// [`EmbeddedNode::commit_transaction`] admits it. Dropping the guard
+    /// afterwards abandons nothing a commit finished; a refused commit's
+    /// transaction is abandoned with it.
     pub async fn commit(self) -> Result<(), TransactionError> {
-        self.guard.commit().await
+        self.node.commit_transaction(self.handle()).await
     }
 
     /// Roll back the writes and consume the owning transaction.

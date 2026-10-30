@@ -282,9 +282,10 @@ impl Store for RegolithStore {
     }
 
     async fn close(&self) -> Result<()> {
-        if !self.inner.slots.begin_close() {
-            return Ok(());
-        }
+        // A second close runs the whole close too: a first one cancelled while
+        // it waited for the transactions never reached regolith's close, which
+        // a close already done returns from at once.
+        self.inner.slots.begin_close();
         // A transaction still open, a commit still running and its
         // post-commit work each hold a slot; the last to end opens the latch.
         self.inner
@@ -314,6 +315,36 @@ impl Dropable for RegolithStore {
             .db()
             .drop_all()
             .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::*;
+    use std::future::Future as _;
+
+    /// A close cancelled while a transaction kept it waiting is completed by
+    /// the next close: regolith closes, and refuses writes.
+    #[test]
+    fn a_close_cancelled_while_waiting_completes_when_called_again() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            {
+                let mut close = std::pin::pin!(store.close());
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                assert!(close.as_mut().poll(&mut cx).is_pending());
+            }
+            drop(txn);
+
+            store.close().await.unwrap();
+
+            assert!(
+                store.inner.db.db().put(b"key", b"value").is_err(),
+                "regolith is still open after the second close"
+            );
+        })
+        .unwrap();
     }
 }
 

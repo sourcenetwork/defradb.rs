@@ -7,6 +7,7 @@ use std::time::Duration;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::response::IntoResponse;
 use axum::Router;
 use edge::Edge;
 use tokio::net::TcpListener;
@@ -587,6 +588,32 @@ impl Server {
         if let Some(transform) = &self.router_transform {
             router = transform(router);
         }
+        // Outermost: every request, extra routes included, runs as a task of
+        // the server's edge, admitted and counted until its handler ends, so a
+        // node's shutdown drains the requests in flight and refuses new ones
+        // before they write, ahead of stopping what their writes depend on
+        // (P2P's durable head markers). A task, not the connection's future:
+        // a client that goes away mid-request drops only its wait, while the
+        // handler, and the pool work it started, run to their end inside the
+        // drain. Accepted connections outlive the accept loop.
+        let edge = self.edge.clone();
+        router = router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let handled = edge.spawn(next.run(request));
+                async move {
+                    match handled.await {
+                        Ok(response) => response,
+                        Err(edge::EdgeError::Closed) => {
+                            StatusCode::SERVICE_UNAVAILABLE.into_response()
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "HTTP request task failed");
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                    }
+                }
+            },
+        ));
         Ok(router)
     }
 

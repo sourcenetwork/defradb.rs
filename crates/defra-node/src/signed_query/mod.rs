@@ -35,10 +35,16 @@ pub(super) async fn execute_with_signing_context(
         }
     }))
     .await
-    .unwrap_or_else(|error| match error {
+    .unwrap_or_else(refused_response)
+}
+
+/// The answer to a query its task never finished: refused because the node
+/// is shutting down, or failed.
+pub(super) fn refused_response(error: EdgeError) -> QueryResponse {
+    match error {
         EdgeError::Closed => QueryResponse::error("the node is shutting down"),
         error => QueryResponse::error(format!("query execution task failed: {error}")),
-    })
+    }
 }
 
 pub(super) fn unavailable_node_signer_response(node_did: &str) -> QueryResponse {
