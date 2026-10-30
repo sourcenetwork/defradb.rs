@@ -240,10 +240,7 @@ fn auto_commit_float32_counter_accumulates_with_float32_precision() {
             .unwrap()
             .unwrap();
         let expected = 10.1f32 + 10.2f32;
-        assert_eq!(
-            doc.get("points"),
-            Some(&NormalValue::Float64(f64::from(expected)))
-        );
+        assert_eq!(doc.get("points"), Some(&NormalValue::Float32(expected)));
     })
     .unwrap()
 }

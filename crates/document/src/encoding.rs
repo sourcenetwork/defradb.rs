@@ -338,6 +338,70 @@ pub fn coerce_stored_value_for_kind(value: NormalValue, kind: &schema::ScalarKin
     }
 }
 
+/// Widen an `f32` to the `f64` nearest its shortest decimal form, so `1.2f32`
+/// renders as `1.2`, as Go's `json.Marshal` renders a `float32`, and not as
+/// `1.2000000476837158`. Narrowing the result back gives the same `f32`.
+pub fn widen_f32(value: f32) -> f64 {
+    value.to_string().parse().unwrap_or(f64::from(value))
+}
+
+/// Re-type a stored `Float32` field against its declared kind.
+///
+/// CBOR decodes every float as `f64`, so a `Float32` field reads back from
+/// storage as `Float64`, `Float64Array`, `NillableFloat64ElementArray`, or (when
+/// its first element is null) a `JsonArray`, each holding exact `f32` values.
+/// Narrowing them back makes a read document carry the same values as a live
+/// write, and renders them as `f32`. Other kinds and values pass unchanged.
+pub fn retype_stored_float32(value: NormalValue, kind: &schema::FieldKind) -> NormalValue {
+    use schema::{FieldKind, ScalarArrayKind, ScalarKind};
+    let narrow = |value: f64| value as f32;
+    match (kind, value) {
+        (FieldKind::Scalar(scalar), NormalValue::Float64(value))
+            if scalar.base_kind() == ScalarKind::NillableFloat32 =>
+        {
+            NormalValue::Float32(narrow(value))
+        }
+        (
+            FieldKind::ScalarArray(ScalarArrayKind::Float32Array),
+            NormalValue::Float64Array(values),
+        ) => NormalValue::Float32Array(values.into_iter().map(narrow).collect()),
+        (
+            FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array),
+            NormalValue::Float64Array(values),
+        ) => NormalValue::NillableFloat32ElementArray(
+            values
+                .into_iter()
+                .map(|value| Some(narrow(value)))
+                .collect(),
+        ),
+        (
+            FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array),
+            NormalValue::NillableFloat64ElementArray(values),
+        ) => NormalValue::NillableFloat32ElementArray(
+            values.into_iter().map(|value| value.map(narrow)).collect(),
+        ),
+        (
+            FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array),
+            NormalValue::JsonArray(values),
+        ) => {
+            let floats = values
+                .iter()
+                .map(|value| match value {
+                    serde_json::Value::Null => Some(None),
+                    value => value.as_f64().map(|value| Some(narrow(value))),
+                })
+                .collect::<Option<Vec<_>>>();
+            match floats {
+                Some(floats) if !floats.is_empty() => {
+                    NormalValue::NillableFloat32ElementArray(floats)
+                }
+                _ => NormalValue::JsonArray(values),
+            }
+        }
+        (_, value) => value,
+    }
+}
+
 /// Convert a NormalValue to a JSON value.
 ///
 /// Returns an error if the value contains non-finite floats (NaN, Infinity),
@@ -348,7 +412,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<serde_json::Value> {
         NormalValue::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         NormalValue::Int(i) => Ok(serde_json::Value::Number((*i).into())),
         NormalValue::Float64(f) => float64_to_json(*f),
-        NormalValue::Float32(f) => float64_to_json(*f as f64),
+        NormalValue::Float32(f) => float64_to_json(widen_f32(*f)),
         NormalValue::String(s) => Ok(serde_json::Value::String(s.clone())),
         NormalValue::Bytes(b) => Ok(bytes_to_json(b)),
         NormalValue::Time(t) => Ok(serde_json::Value::String(format_time_rfc3339_nano(t))),
@@ -376,7 +440,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<serde_json::Value> {
         NormalValue::Float32Array(arr) => {
             let mut result = Vec::with_capacity(arr.len());
             for f in arr {
-                result.push(float64_to_json(*f as f64)?);
+                result.push(float64_to_json(widen_f32(*f))?);
             }
             Ok(serde_json::Value::Array(result))
         }
@@ -393,7 +457,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<serde_json::Value> {
             .iter()
             .map(|value| {
                 value
-                    .map(|value| float64_to_json(value as f64))
+                    .map(|value| float64_to_json(widen_f32(value)))
                     .unwrap_or(Ok(serde_json::Value::Null))
             })
             .collect::<Result<Vec<_>>>()
@@ -411,7 +475,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<serde_json::Value> {
             None => Ok(serde_json::Value::Null),
         },
         NormalValue::NillableFloat32(opt) => match opt {
-            Some(f) => float64_to_json(*f as f64),
+            Some(f) => float64_to_json(widen_f32(*f)),
             None => Ok(serde_json::Value::Null),
         },
         NormalValue::NillableString(opt) => Ok(opt

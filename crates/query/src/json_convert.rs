@@ -187,7 +187,7 @@ fn float64_to_json(f: f64) -> Result<JsonValue> {
 }
 
 fn float32_to_json(f: f32) -> Result<JsonValue> {
-    let f64_val = f as f64;
+    let f64_val = document::encoding::widen_f32(f);
     if !f64_val.is_finite() {
         return Err(QueryError::execution(format!(
             "cannot serialize non-finite float32 value '{}' to JSON",
