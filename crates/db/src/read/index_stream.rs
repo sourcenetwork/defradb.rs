@@ -43,11 +43,16 @@ impl IndexDocStream {
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )
         .map_err(|e| QueryError::execution(e.to_string()))?;
-        let index = manager.get_index(&params.index_name).ok_or_else(|| {
-            QueryError::execution(format!("index '{}' not found", params.index_name))
-        })?;
+        let index = manager
+            .read_index(&datastore, &collection, &params.index_name)
+            .await
+            .map_err(|e| QueryError::execution(e.to_string()))?
+            .ok_or_else(|| {
+                QueryError::execution(format!("index '{}' not found", params.index_name))
+            })?;
         let mut iter = match &params.scan_type {
             IndexScanType::PrefixScan {
                 prefix_values,

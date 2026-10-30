@@ -142,6 +142,8 @@ impl Node {
         let vector_rebuild_task = Some(database.clone().start_vector_rebuild_task());
         info!("Vector index rebuild worker enabled");
 
+        let deferred_index_task = Some(database.clone().start_deferred_index_task());
+
         let acp_setup = Self::setup_document_acp(
             config,
             identity_key_bytes.as_deref(),
@@ -358,6 +360,7 @@ impl Node {
             p2p_tasks: p2p_setup.p2p_tasks,
             downsample_task,
             vector_rebuild_task,
+            deferred_index_task,
             txn_cleanup_task,
             http_server,
             #[cfg(feature = "postgres")]

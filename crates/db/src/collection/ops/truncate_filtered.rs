@@ -119,6 +119,7 @@ impl<S: Store> crate::database::DB<S> {
                 collection.resolved_root_id(),
                 collection.schema(),
                 collection.write_indexes(),
+                collection.crdts(),
             )?;
             let mut seen = RapidHashSet::new();
             let mut targets = Vec::with_capacity(doc_ids.len());

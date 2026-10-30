@@ -684,9 +684,12 @@ fn an_increment_lands_on_a_directly_written_counter_value() {
             .get_collection("Counters")
             .expect("get collection")
             .expect("collection exists");
-        let index_manager =
-            IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
-                .expect("index manager");
+        let index_manager = IndexManager::from_collection(
+            collection.resolved_root_id(),
+            collection.schema(),
+            &crdt::Crdts::default(),
+        )
+        .expect("index manager");
 
         let mut setup_doc =
             Document::from_json_str(r#"{"count": 5}"#, counter_collection()).expect("doc");
@@ -1065,14 +1068,19 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
         );
 
         // The index entry must exist at the incremented value 8 (what a filter query
-        // `count: {_eq: 8}` would resolve), and must NOT exist at the stale 5.
+        // `count: {_eq: 8}` would resolve), and must NOT exist at the stale 5, once
+        // the deferred index has caught up.
+        db.drain_deferred_indexes().await.expect("drain");
         let collection = db
             .get_collection("IdxCounters")
             .expect("get collection")
             .expect("collection exists");
-        let manager =
-            IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
-                .expect("index manager");
+        let manager = IndexManager::from_collection(
+            collection.resolved_root_id(),
+            collection.schema(),
+            &crdt::Crdts::default(),
+        )
+        .expect("index manager");
         let index = manager.get_index("idx_count").expect("idx_count present");
 
         let txn = db.new_txn(true).await.expect("read txn");

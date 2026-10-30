@@ -115,6 +115,8 @@ defra-core = { path = "../defra-core", features = ["ambient"] }
 # The test network runtime the P2P push tests wait on.
 edge = { path = "../edge", features = ["testing"] }
 proptest.workspace = true
+# Counts the store's commit conflicts in the deferred index tests.
+telemetry = { path = "../telemetry" }
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"

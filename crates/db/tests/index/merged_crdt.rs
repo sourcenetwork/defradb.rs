@@ -325,8 +325,10 @@ impl Node {
             .and_then(|doc| doc.get("count").cloned())
     }
 
-    /// The index's entry count and how many sit at each of `values`.
+    /// The index's entry count and how many sit at each of `values`, once
+    /// the deferred index has caught up.
     async fn entries<const N: usize>(&self, values: [i64; N]) -> (usize, [(i64, usize); N]) {
+        self.db.drain_deferred_indexes().await.unwrap();
         let mut found = values.map(|value| (value, 0));
         for (value, count) in &mut found {
             *count = entries_at(&self.db, self.index_id, *value).await;

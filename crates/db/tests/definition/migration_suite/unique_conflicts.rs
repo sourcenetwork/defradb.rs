@@ -154,6 +154,7 @@ fn materialize_preserves_preexisting_unique_collision_across_transform() {
         let manager = db::index::IndexManager::from_collection(
             collection.resolved_root_id(),
             collection.schema(),
+            &crdt::Crdts::default(),
         )
         .unwrap();
         let mut iter = manager

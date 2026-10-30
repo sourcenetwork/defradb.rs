@@ -238,13 +238,16 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 collection.resolved_root_id(),
                 collection.schema(),
                 collection.write_indexes(),
+                collection.crdts(),
             )
             .map_err(|error| {
                 query::error::QueryError::execution(format!(
                     "failed to create index manager: {error}"
                 ))
             })?;
-            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
+            let index_manager = index_manager
+                .with_vector_caches(self.db.vector_codes())
+                .with_drains(Some(&self.db.deferred_drains));
             let existed = collection
                 .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
                 .await
@@ -460,11 +463,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 collection.resolved_root_id(),
                 collection.schema(),
                 collection.write_indexes(),
+                collection.crdts(),
             )
             .map_err(|e| {
                 query::error::QueryError::execution(format!("failed to create index manager: {e}"))
             })?;
-            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
+            let index_manager = index_manager
+                .with_vector_caches(self.db.vector_codes())
+                .with_drains(Some(&self.db.deferred_drains));
             let mut results = Vec::with_capacity(attempt.doc_ids.len());
             for requested_id in &attempt.doc_ids {
                 let Some((doc_short_id, canonical_id)) = collection

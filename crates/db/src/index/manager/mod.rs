@@ -12,16 +12,19 @@ use datastore::NamespaceView;
 use document::Document;
 use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
-    CollectionVersion, FieldDescription, IndexDescription, IndexKind, IndexedFieldDescription,
+    CollectionVersion, IndexDescription, IndexKind, IndexedFieldDescription,
     OrderedIndexDescription, VectorIndexDescription,
 };
 use storage::corekv::Key;
 use storage::index::FullTextIndex;
 
+mod deferred;
 mod index_type;
+mod read;
 mod rebuild;
 mod unique;
 pub use index_type::IndexType;
+pub use read::IndexRead;
 use storage::keys::IndexIDSequenceKey;
 
 pub mod doc_source;
@@ -120,6 +123,10 @@ pub struct IndexManager {
     collection_id: String,
     /// Active index instances keyed by index name
     indexes: RapidHashMap<String, IndexType>,
+    /// The node's CRDT types, which say whether an index is deferred.
+    crdts: crdt::Crdts,
+    /// Where a commit that owes a deferred index asks for its drain.
+    drains: Option<crate::index::deferred::DrainRequests>,
 }
 
 impl IndexManager {
@@ -150,7 +157,15 @@ impl IndexManager {
             collection_short_id,
             collection_id: String::new(),
             indexes: RapidHashMap::new(),
+            crdts: crdt::Crdts::default(),
+            drains: None,
         }
+    }
+
+    /// Asks `drains` for a drain of each deferred index a write owes.
+    pub fn with_drains(mut self, drains: Option<&crate::index::deferred::DrainRequests>) -> Self {
+        self.drains = drains.cloned();
+        self
     }
 
     /// Lets this manager's DiskANN indexes share their quantizers through
@@ -173,8 +188,12 @@ impl IndexManager {
     ///
     /// Returns an error if any index in the schema has invalid configuration
     /// (e.g., empty fields list).
-    pub fn from_collection(collection_short_id: u32, schema: &CollectionVersion) -> Result<Self> {
-        Self::from_indexes(collection_short_id, schema, &schema.indexes)
+    pub fn from_collection(
+        collection_short_id: u32,
+        schema: &CollectionVersion,
+        crdts: &crdt::Crdts,
+    ) -> Result<Self> {
+        Self::from_indexes(collection_short_id, schema, &schema.indexes, crdts)
     }
 
     /// Load a selected set of regular indexes plus all full-text indexes from a collection schema.
@@ -182,9 +201,11 @@ impl IndexManager {
         collection_short_id: u32,
         schema: &CollectionVersion,
         indexes: &[IndexDescription],
+        crdts: &crdt::Crdts,
     ) -> Result<Self> {
         let mut manager = Self::new(collection_short_id);
         manager.collection_id = schema.collection_id.clone();
+        manager.crdts = crdts.clone();
         for desc in indexes {
             if desc.fields.is_empty() {
                 return Err(Error::Other(format!(
@@ -265,7 +286,6 @@ impl IndexManager {
         name: String,
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
-        schema_fields: &[FieldDescription],
     ) -> Result<IndexDescription> {
         self.create_index_of_kind(
             datastore,
@@ -273,7 +293,6 @@ impl IndexManager {
             name,
             fields,
             IndexKind::Ordered(OrderedIndexDescription { unique }),
-            schema_fields,
         )
         .await
     }
@@ -323,7 +342,6 @@ impl IndexManager {
         name: String,
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
-        schema_fields: &[FieldDescription],
     ) -> Result<IndexDescription> {
         let name = if name.is_empty() {
             let first_field = fields.first().map(|f| f.name.as_str()).unwrap_or("unknown");
@@ -357,17 +375,6 @@ impl IndexManager {
             let errs = vector.creation_errors(&name);
             if !errs.is_empty() {
                 return Err(Error::Other(errs.join("; ")));
-            }
-        }
-
-        for field in &fields {
-            if let Some(schema_field) = schema_fields.iter().find(|f| f.name == field.name) {
-                if schema_field.crdt_type.is_counter() {
-                    return Err(Error::Other(format!(
-                        "indexing accumulated CRDT fields is not yet supported. Field: {}, CRDTType: {}",
-                        field.name, schema_field.crdt_type.to_string().to_lowercase()
-                    )));
-                }
             }
         }
 
@@ -525,10 +532,21 @@ impl IndexManager {
                 batch.skipped += 1;
                 continue;
             }
-            for values in &self.extract_index_values(&doc, index.description(), schema)? {
-                self.save_healing_stale_unique(&mut mutable_datastore, index, doc_short_id, values)
+            let value_sets = self.extract_index_values(&doc, index.description(), schema)?;
+            if self.is_deferred(index.description(), schema) {
+                self.backfill(datastore, index, doc_short_id, &value_sets)
+                    .await?;
+            } else {
+                for values in &value_sets {
+                    self.save_healing_stale_unique(
+                        &mut mutable_datastore,
+                        index,
+                        doc_short_id,
+                        values,
+                    )
                     .await
                     .map_err(Error::Storage)?;
+                }
             }
             batch.indexed += 1;
             batch.last_doc_short_id = Some(doc_short_id);
@@ -571,6 +589,11 @@ impl IndexManager {
         let mut conflicts = Vec::new();
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
+            if self.is_deferred(index.description(), schema) {
+                self.place(datastore, index, doc_short_id, &value_sets)
+                    .await?;
+                continue;
+            }
             for values in &value_sets {
                 conflicts.extend(
                     self.save_resolving_unique_conflict(
@@ -608,6 +631,13 @@ impl IndexManager {
         let mut mutable_datastore = datastore.clone();
         let mut conflicts = Vec::new();
         for index in self.indexes.values() {
+            // Owed without comparing: a merge that wrote the field before this
+            // runs can read the same value as old and new.
+            if self.is_deferred(index.description(), schema) {
+                self.owe(datastore, index.description(), doc_short_id)
+                    .await?;
+                continue;
+            }
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
             if old_value_sets != new_value_sets {
@@ -650,6 +680,11 @@ impl IndexManager {
 
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
+            if self.is_deferred(index.description(), schema) {
+                self.place(datastore, index, doc_short_id, &value_sets)
+                    .await?;
+                continue;
+            }
             Self::validate_unique_value_sets(index, &value_sets)?;
             for values in &value_sets {
                 // Local creates stay strict but self-heal stale unique entries
@@ -681,6 +716,11 @@ impl IndexManager {
         let mut mutable_datastore = datastore.clone();
 
         for index in self.indexes.values() {
+            if self.is_deferred(index.description(), schema) {
+                self.owe(datastore, index.description(), doc_short_id)
+                    .await?;
+                continue;
+            }
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
 
@@ -731,6 +771,13 @@ impl IndexManager {
             {
                 continue;
             }
+            // The write read nothing it could compare: a blind increment
+            // leaves its old value unvalidated (`update_parts`).
+            if self.is_deferred(index.description(), schema) {
+                self.owe(datastore, index.description(), doc_short_id)
+                    .await?;
+                continue;
+            }
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
             if old_value_sets == new_value_sets {
@@ -770,6 +817,11 @@ impl IndexManager {
         let mut mutable_datastore = datastore.clone();
 
         for index in self.indexes.values() {
+            if self.is_deferred(index.description(), schema) {
+                self.owe(datastore, index.description(), doc_short_id)
+                    .await?;
+                continue;
+            }
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
             for values in &value_sets {
                 index

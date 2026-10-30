@@ -87,7 +87,6 @@ where
                 descending: false,
             }],
             false,
-            &[],
         )
         .await
         .unwrap();

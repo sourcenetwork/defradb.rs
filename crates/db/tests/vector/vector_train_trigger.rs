@@ -259,7 +259,6 @@ fn training_triggers_through_bulk_index_from() {
                     descending: false,
                 }],
                 IndexKind::Vector(ivfpq_vector_description()),
-                &schema().fields,
             )
             .await
             .unwrap();

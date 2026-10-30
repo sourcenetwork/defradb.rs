@@ -336,6 +336,7 @@ pub(crate) async fn cache_migrated_document_with_indexes(
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )?;
         index_manager
             .on_document_update(datastore, &old_doc, doc, doc_short_id, collection.schema())
