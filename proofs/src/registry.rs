@@ -1306,4 +1306,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Shinzo CAR exchange",
+        name: "INV_RootMatches / INV_NoLeak / INV_NoStrayEntry / INV_RoundsBounded / INV_Accounted / INV_BlameOnlyFaults / INV_Served",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/shinzo_car.rs serve_cars, accept_reply, CarPeerBackoff; crates/p2p/src/two_stream/handler/shinzo_car.rs",
+        model_ref: "MC_ShinzoCarExchange_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Shinzo CAR exchange",
+        name: "decode_encode_request / decode_encode_reply / verify_bytes_request / verify_bytes_reply / decode_encode_document / empty_car_not_written",
+        axis: Lean,
+        anchor: "crates/p2p/src/message/car_exchange.rs CarRequest, CarReply; crates/p2p/src/message/pushlog.rs DocumentInfo",
+        model_ref: "ShinzoWire (lake build)",
+        tiers: &[Boundary],
+    },
 ];
