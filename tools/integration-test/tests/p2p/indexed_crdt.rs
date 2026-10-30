@@ -1,5 +1,7 @@
 //! An index on a field whose value is merged rather than written follows the
-//! merged value, after local edits and after peers' edits replicate.
+//! merged value, after local edits and after peers' edits replicate. An index
+//! on a counter catches up after the write, and reads in between still see
+//! the current total.
 
 use std::time::{Duration, Instant};
 
@@ -203,6 +205,69 @@ async fn a_json_index_follows_merged_edits() {
                 find(node, &filter),
                 (0, 0),
                 "{name}: old {path} left the index"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_counter_index_follows_local_increments() {
+    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+    let node = cluster.client(0);
+    node.schema_add("type Note { count: Int @crdt(type: pcounter) @index }")
+        .unwrap();
+    let doc_id = node
+        .query("mutation { add_Note(input: {count: 1}) { _docID } }")
+        .unwrap()["add_Note"][0]["_docID"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    update(&node, &doc_id, "{count: 2}");
+    update(&node, &doc_id, "{count: 3}");
+
+    assert_eq!(
+        find(&node, "{count: {_eq: 6}}"),
+        (1, 1),
+        "the total is indexed"
+    );
+    assert_eq!(
+        find(&node, "{count: {_gt: 4}}").0,
+        1,
+        "a range finds the total"
+    );
+    for stale in [1, 3] {
+        let filter = format!("{{count: {{_eq: {stale}}}}}");
+        assert_eq!(find(&node, &filter), (0, 0), "{stale} left the index");
+    }
+}
+
+#[tokio::test]
+async fn a_counter_index_follows_merged_increments() {
+    let (cluster, doc_id, alice_addr, bob_addr) = apart(
+        "type Note { count: Int @crdt(type: pcounter) @index }",
+        "{count: 1}",
+        "{count: {_eq: 1}}",
+    )
+    .await;
+    let (alice, bob) = (cluster.client(0), cluster.client(1));
+    update(&alice, &doc_id, "{count: 2}");
+    update(&bob, &doc_id, "{count: 3}");
+    rejoin(&cluster, &alice_addr, &bob_addr).await;
+
+    let merged = "{count: {_eq: 6}}";
+    for (name, node) in [("alice", &alice), ("bob", &bob)] {
+        wait_for(node, merged).await;
+        assert_eq!(
+            find(node, merged),
+            (1, 1),
+            "{name}: the merged total is indexed"
+        );
+        for stale in [1, 3, 4] {
+            let filter = format!("{{count: {{_eq: {stale}}}}}");
+            assert_eq!(
+                find(node, &filter),
+                (0, 0),
+                "{name}: {stale} left the index"
             );
         }
     }
