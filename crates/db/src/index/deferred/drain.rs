@@ -202,3 +202,137 @@ fn doc_short_id(value: &[u8]) -> Result<u64> {
         .map(u64::from_be_bytes)
         .map_err(|_| Error::Other("deferred index log entry is not a document short id".into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use document::{DocID, Document, FieldOp, NormalValue};
+    use query::DocMutator;
+    use rapidhash::{HashSetExt, RapidHashSet};
+    use schema::{
+        CType, CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
+        OrderedIndexDescription,
+    };
+    use storage::RegolithStore;
+
+    use super::*;
+    use crate::AutoCommitMutator;
+
+    const NAME: &str = "Tallies";
+
+    async fn indexed() -> (Arc<DB<RegolithStore>>, u32, u32) {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(CollectionVersion::new(
+            NAME,
+            "v1",
+            "col-drain-tallies",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+                FieldDescription::new("2", "count", FieldKind::int(), CType::PCounter),
+            ],
+        ))
+        .await
+        .unwrap();
+        let index = db
+            .create_index(
+                NAME,
+                Some("by_count"),
+                vec![IndexedFieldDescription {
+                    name: "count".to_string(),
+                    descending: false,
+                }],
+                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+            )
+            .await
+            .unwrap();
+        let short_id = db.require_collection(NAME).unwrap().resolved_root_id();
+        (db, short_id, index.id)
+    }
+
+    async fn create(db: &Arc<DB<RegolithStore>>, count: i64) -> DocID {
+        let mut doc = Document::new(db.require_collection(NAME).unwrap().schema_arc());
+        doc.set("count", NormalValue::Int(count)).unwrap();
+        AutoCommitMutator::new(Arc::clone(db))
+            .create(NAME, doc)
+            .await
+            .unwrap()
+            .doc_id
+    }
+
+    async fn increment(db: &Arc<DB<RegolithStore>>, id: &DocID) {
+        let mut doc = Document::new(db.require_collection(NAME).unwrap().schema_arc());
+        doc.set_id(id.clone());
+        doc.edit("count", FieldOp::Increment(NormalValue::Int(1)))
+            .unwrap();
+        let mut changed = RapidHashSet::new();
+        changed.insert("count".to_string());
+        AutoCommitMutator::new(Arc::clone(db))
+            .update(NAME, doc, changed)
+            .await
+            .unwrap();
+    }
+
+    async fn apply_committed(db: &DB<RegolithStore>, short_id: u32, index_id: u32, plan: Plan) {
+        let plan = Arc::new(plan);
+        datastore::transact(
+            db.store().as_ref(),
+            db.options().retry_options(),
+            move |txn| {
+                let plan = Arc::clone(&plan);
+                Box::pin(async move {
+                    apply(txn, NAME, short_id, index_id, &plan)
+                        .await
+                        .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+                    Ok(Box::new(()) as RetryAttemptValue)
+                })
+            },
+        )
+        .await
+        .map(|_: ()| ())
+        .unwrap();
+    }
+
+    /// An increment that commits after the plan stays owed: the drain
+    /// truncates only through the head it planned.
+    #[test]
+    fn an_increment_after_the_plan_stays_owed() {
+        workers::block_on(async {
+            let (db, short_id, index_id) = indexed().await;
+            let id = create(&db, 1).await;
+            increment(&db, &id).await;
+            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            increment(&db, &id).await;
+
+            apply_committed(&db, short_id, index_id, planned).await;
+
+            let left = plan(&db, short_id, index_id).await.unwrap();
+            assert_eq!(left.map(|plan| plan.docs.len()), Some(1));
+        })
+        .unwrap();
+    }
+
+    /// Two drains of one document: the one that read the position record
+    /// before the other moved it runs again instead of leaving an entry behind.
+    #[test]
+    fn a_drain_that_read_a_moved_record_does_not_commit() {
+        workers::block_on(async {
+            let (db, short_id, index_id) = indexed().await;
+            let id = create(&db, 1).await;
+            increment(&db, &id).await;
+            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            let mut first = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
+                .await
+                .unwrap();
+            apply(&mut first, NAME, short_id, index_id, &planned)
+                .await
+                .unwrap();
+            increment(&db, &id).await;
+
+            while drain_index(&db, NAME, index_id).await.unwrap() {}
+
+            assert!(first.commit().await.is_err());
+        })
+        .unwrap();
+    }
+}

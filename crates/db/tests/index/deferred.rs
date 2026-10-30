@@ -40,6 +40,15 @@ struct Node {
 impl Node {
     async fn on(store: RegolithStore, fresh: bool) -> Self {
         let db = Arc::new(DB::open(store).await.unwrap());
+        Self::with(db, fresh).await
+    }
+
+    /// A node on `db`, whose collection and index already exist.
+    async fn on_db(db: Arc<DB<RegolithStore>>) -> Self {
+        Self::with(db, false).await
+    }
+
+    async fn with(db: Arc<DB<RegolithStore>>, fresh: bool) -> Self {
         let index_id = if fresh {
             db.create_collection(collection()).await.unwrap();
             db.create_index(
@@ -293,6 +302,97 @@ fn work_owed_at_a_restart_is_drained_after_it() {
         );
         node.drain().await;
         assert_eq!((node.stored_at(1).await, node.stored_at(3).await), (0, 1));
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_reads_its_own_increment_through_the_index() {
+    use db::txn::registry::DbTransactionRegistry;
+    use query::planner::index_selection::{IndexScanParams, IndexScanType};
+    use query::txn::TransactionRegistry;
+
+    workers::block_on(async {
+        let node = Node::open().await;
+        let id = node.create("a", 1).await;
+        let registry = DbTransactionRegistry::new(Arc::clone(&node.db));
+        let handle = registry.begin(false).await.unwrap();
+        let found = crate::common::owned::in_txn(&registry, &handle, {
+            let schema = node.db.require_collection(COLLECTION).unwrap().schema_arc();
+            move |ctx| {
+                Box::pin(async move {
+                    let mut doc = document::Document::new(schema);
+                    doc.set_id(document::DocID::from_string(&id).unwrap());
+                    doc.edit("count", document::FieldOp::Increment(NormalValue::Int(4)))
+                        .unwrap();
+                    let mut changed = rapidhash::RapidHashSet::default();
+                    changed.insert("count".to_string());
+                    ctx.doc_mutator()
+                        .unwrap()
+                        .update(COLLECTION, doc, changed)
+                        .await
+                        .unwrap();
+                    let at = |value: i64| IndexScanParams {
+                        index_name: "by_count".to_string(),
+                        scan_type: IndexScanType::ExactMatch {
+                            values: vec![NormalValue::Int(value)],
+                        },
+                        limit: None,
+                        offset: 0,
+                        value_filter: None,
+                        cursor_seek: None,
+                    };
+                    let fetcher = ctx.doc_fetcher();
+                    let new = fetcher.get_by_index_scan(COLLECTION, &at(5)).await.unwrap();
+                    let old = fetcher.get_by_index_scan(COLLECTION, &at(1)).await.unwrap();
+                    (new.doc_ids().len(), old.doc_ids().len())
+                })
+            }
+        })
+        .await;
+        registry.commit(&handle).await.unwrap();
+        assert_eq!(
+            found,
+            (1, 0),
+            "the transaction's own increment, not the old value"
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_unique_index_on_a_counter_keeps_one_winner() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(collection()).await.unwrap();
+        db.create_index(
+            COLLECTION,
+            Some("by_count"),
+            vec![IndexedFieldDescription {
+                name: "count".to_string(),
+                descending: false,
+            }],
+            IndexKind::Ordered(OrderedIndexDescription { unique: true }),
+        )
+        .await
+        .unwrap();
+        let node = Node::on_db(db).await;
+        let a = node.create("a", 1).await;
+        node.create("b", 2).await;
+
+        let taken = node
+            .queries
+            .execute(QueryRequest::new(format!(
+                r#"mutation {{ update_Tallies(docID: "{a}", input: {{count: 1}}) {{ _docID }} }}"#
+            )))
+            .await;
+        assert!(!taken.errors.is_empty(), "2 is held by b");
+        node.increment(&a, 5).await;
+        assert_eq!(node.names("{count: {_eq: 6}}", "{count: ASC}").await, ["a"]);
+        assert!(node
+            .names("{count: {_eq: 1}}", "{count: ASC}")
+            .await
+            .is_empty());
     })
     .unwrap();
 }
