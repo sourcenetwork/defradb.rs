@@ -148,12 +148,8 @@ pub fn json_to_normal_value_with_kind_and_time(
                 // converter so the create and reindex paths cannot drift.
                 ScalarKind::NillableDateTime => {
                     if let JsonValue::String(s) = value {
-                        if s == "UTC_NOW" {
-                            let time = request_time.unwrap_or_else(|| {
-                                let utc_offset = FixedOffset::east_opt(0).unwrap();
-                                Utc::now().with_timezone(&utc_offset)
-                            });
-                            return Ok(NormalValue::Time(time));
+                        if s == UTC_NOW {
+                            return Ok(NormalValue::Time(utc_now(request_time)));
                         }
                     }
                     document::encoding::json_to_normal_value_for_kind(value, scalar).ok_or_else(
@@ -216,7 +212,9 @@ pub fn json_to_normal_value_with_kind_and_time(
             },
             // ScalarArray fields
             FieldKind::ScalarArray(array_kind) => match value {
-                JsonValue::Array(arr) => json_array_to_normal_value_with_kind(arr, *array_kind),
+                JsonValue::Array(arr) => {
+                    json_array_to_normal_value_with_kind(arr, *array_kind, request_time)
+                }
                 _ => Err(QueryError::execution(format!(
                     "Expected array, got: {:?}",
                     value
@@ -230,10 +228,35 @@ pub fn json_to_normal_value_with_kind_and_time(
     }
 }
 
+const UTC_NOW: &str = "UTC_NOW";
+
+/// The request's time, or now in UTC, as Go resolves `UTC_NOW`.
+fn utc_now(request_time: Option<DateTime<FixedOffset>>) -> DateTime<FixedOffset> {
+    request_time.unwrap_or_else(|| Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap()))
+}
+
+/// One `[DateTime]` element: `UTC_NOW` or RFC 3339. As in Go, the error names
+/// the value it could not parse.
+fn array_date_time(
+    value: &str,
+    request_time: Option<DateTime<FixedOffset>>,
+) -> Result<DateTime<FixedOffset>> {
+    if value == UTC_NOW {
+        return Ok(utc_now(request_time));
+    }
+    DateTime::parse_from_rfc3339(value).map_err(|_| {
+        QueryError::execution(format!(
+            "Invalid DateTime format '{}': expected RFC 3339 (e.g., '2024-01-15T10:30:00Z')",
+            value
+        ))
+    })
+}
+
 /// Convert a JSON array to NormalValue using schema-aware type coercion.
 fn json_array_to_normal_value_with_kind(
     arr: &[JsonValue],
     array_kind: ScalarArrayKind,
+    request_time: Option<DateTime<FixedOffset>>,
 ) -> Result<document::NormalValue> {
     use document::NormalValue;
 
@@ -405,12 +428,7 @@ fn json_array_to_normal_value_with_kind(
                 .iter()
                 .enumerate()
                 .map(|(i, value)| match value {
-                    JsonValue::String(value) => DateTime::parse_from_rfc3339(value).map_err(|_| {
-                        QueryError::execution(format!(
-                            "Array element at index {} is not a valid DateTime",
-                            i
-                        ))
-                    }),
+                    JsonValue::String(value) => array_date_time(value, request_time),
                     _ => Err(QueryError::execution(format!(
                         "Array element at index {} is not a DateTime string (found {:?})",
                         i, value
@@ -424,14 +442,7 @@ fn json_array_to_normal_value_with_kind(
                 .iter()
                 .enumerate()
                 .map(|(i, value)| match value {
-                    JsonValue::String(value) => {
-                        DateTime::parse_from_rfc3339(value).map(Some).map_err(|_| {
-                            QueryError::execution(format!(
-                                "Array element at index {} is not a valid DateTime",
-                                i
-                            ))
-                        })
-                    }
+                    JsonValue::String(value) => array_date_time(value, request_time).map(Some),
                     JsonValue::Null => Ok(None),
                     _ => Err(QueryError::execution(format!(
                         "Array element at index {} is not a DateTime string (found {:?})",
@@ -471,7 +482,7 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                 tracing::warn!(value = %f, "Float32 value cannot be represented in JSON, using null");
                 JsonValue::Null
             } else {
-                serde_json::Number::from_f64(*f as f64)
+                serde_json::Number::from_f64(document::encoding::widen_f32(*f))
                     .map(JsonValue::Number)
                     .unwrap_or(JsonValue::Null)
             }
@@ -509,7 +520,7 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                         tracing::warn!(value = %f, "Float32 array element cannot be represented in JSON, using null");
                         JsonValue::Null
                     } else {
-                        serde_json::Number::from_f64(*f as f64)
+                        serde_json::Number::from_f64(document::encoding::widen_f32(*f))
                             .map(JsonValue::Number)
                             .unwrap_or(JsonValue::Null)
                     }
@@ -522,15 +533,15 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                 .collect(),
         ),
         NormalValue::Time(t) => {
-            JsonValue::String(t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+            JsonValue::String(document::encoding::format_time_rfc3339_nano(t))
         }
         NormalValue::NillableTime(Some(t)) => {
-            JsonValue::String(t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+            JsonValue::String(document::encoding::format_time_rfc3339_nano(t))
         }
         NormalValue::NillableTime(None) => JsonValue::Null,
         NormalValue::TimeArray(arr) => JsonValue::Array(
             arr.iter()
-                .map(|t| JsonValue::String(t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)))
+                .map(|t| JsonValue::String(document::encoding::format_time_rfc3339_nano(t)))
                 .collect(),
         ),
         NormalValue::NillableTimeArray(arr) => arr
@@ -540,7 +551,7 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                     arr.iter()
                         .map(|time| {
                             JsonValue::String(
-                                time.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+                                document::encoding::format_time_rfc3339_nano(time),
                             )
                         })
                         .collect(),
@@ -586,7 +597,7 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                         if f.is_nan() || f.is_infinite() {
                             JsonValue::Null
                         } else {
-                            serde_json::Number::from_f64(*f as f64)
+                            serde_json::Number::from_f64(document::encoding::widen_f32(*f))
                                 .map(JsonValue::Number)
                                 .unwrap_or(JsonValue::Null)
                         }
@@ -609,7 +620,7 @@ pub fn normal_value_to_json(value: &document::NormalValue) -> JsonValue {
                     time.as_ref()
                         .map(|time| {
                             JsonValue::String(
-                                time.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+                                document::encoding::format_time_rfc3339_nano(time),
                             )
                         })
                         .unwrap_or(JsonValue::Null)
