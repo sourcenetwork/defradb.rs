@@ -8,6 +8,8 @@ mod feature_binaries;
 mod filtered_replication;
 #[path = "p2p/idempotent_replay.rs"]
 mod idempotent_replay;
+#[path = "p2p/indexed_crdt.rs"]
+mod indexed_crdt;
 #[path = "p2p/json_crdt.rs"]
 mod json_crdt;
 #[path = "p2p/long_history.rs"]
