@@ -96,24 +96,24 @@ async fn validate_mutation_collection(
 
 /// Go types `encryptFields` as a list of the collection's `<Name>ExplicitField`
 /// enum, which holds every field not starting with `_`, so a built-in or unknown
-/// field fails GraphQL validation before execution.
+/// field fails GraphQL validation before execution. The text is graphql-go's:
+/// one line per invalid item, each numbered within that item's own messages.
 fn validate_encrypt_fields(mutation: &Mutation, collection: &CollectionVersion) -> Result<()> {
     let is_explicit =
         |field: &str| !field.starts_with('_') && collection.fields.iter().any(|f| f.name == field);
-    let Some((index, invalid)) = mutation
-        .encrypt_fields
-        .iter()
-        .enumerate()
-        .find(|(_, field)| !is_explicit(field))
-    else {
+    let mut message = String::new();
+    for invalid in mutation.encrypt_fields.iter().filter(|f| !is_explicit(f)) {
+        message.push_str(&format!(
+            "\nIn element #1: Expected type \"{}ExplicitField\", found {invalid}.",
+            mutation.collection_name
+        ));
+    }
+    if message.is_empty() {
         return Ok(());
-    };
-    Err(QueryError::parse(format!(
-        "Argument \"encryptFields\" has invalid value [{}].\nIn element #{}: Expected type \"{}ExplicitField\", found {}.",
-        mutation.encrypt_fields.join(", "),
-        index + 1,
-        mutation.collection_name,
-        invalid
+    }
+    Err(QueryError::execution(format!(
+        "Argument \"encryptFields\" has invalid value [{}].{message}",
+        mutation.encrypt_fields.join(", ")
     )))
 }
 
@@ -290,9 +290,9 @@ mod tests {
     #[test]
     fn test_encrypt_fields_rejects_builtin_field_like_go() {
         let msg = encrypt_fields_result(&["_docID"]).unwrap_err().to_string();
-        assert!(
-            msg.contains("Argument \"encryptFields\" has invalid value [_docID]."),
-            "got: {msg}"
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [_docID].\nIn element #1: Expected type \"UsersExplicitField\", found _docID."
         );
     }
 
@@ -301,11 +301,20 @@ mod tests {
         let msg = encrypt_fields_result(&["name", "points"])
             .unwrap_err()
             .to_string();
-        assert!(
-            msg.contains(
-                "Argument \"encryptFields\" has invalid value [name, points].\nIn element #2: Expected type \"UsersExplicitField\", found points."
-            ),
-            "got: {msg}"
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [name, points].\nIn element #1: Expected type \"UsersExplicitField\", found points."
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_reports_every_invalid_field_like_go() {
+        let msg = encrypt_fields_result(&["_docID", "name", "points"])
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [_docID, name, points].\nIn element #1: Expected type \"UsersExplicitField\", found _docID.\nIn element #1: Expected type \"UsersExplicitField\", found points."
         );
     }
 

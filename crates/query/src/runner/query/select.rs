@@ -356,6 +356,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
     }
 
+    /// The SE transport that answers `encrypted_<collection>`. Go only generates
+    /// that field when searchable encryption is enabled; here that is a wired
+    /// SE transport, so without one the field does not exist.
+    pub(crate) fn encrypted_search_transport(
+        &self,
+        collection: &str,
+    ) -> Result<std::sync::Arc<dyn super::super::SeQueryTransport>> {
+        self.se_transport.clone().ok_or_else(|| {
+            QueryError::execution(format!(
+                "Cannot query field \"encrypted_{collection}\" on type \"Query\"."
+            ))
+        })
+    }
+
     /// Execute an encrypted search query (`encrypted_<Collection>`).
     ///
     /// Validates encrypted index exists, fans the `_eq` filter conditions out to
@@ -365,14 +379,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         select: &Select,
         caller_identity: Option<Did>,
     ) -> Result<JsonValue> {
-        // Go only generates `encrypted_<Collection>` when searchable encryption is
-        // enabled; here that is a wired SE transport.
-        let Some(transport) = self.se_transport.clone() else {
-            return Err(QueryError::execution(format!(
-                "Cannot query field \"encrypted_{}\" on type \"Query\".",
-                select.collection_name
-            )));
-        };
+        let transport = self.encrypted_search_transport(&select.collection_name)?;
 
         // Get collection to check for encrypted indexes
         let collection = self.get_collection(&select.collection_name).await?;
