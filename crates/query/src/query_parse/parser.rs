@@ -891,22 +891,18 @@ pub(super) fn parse_field_to_select(
     // are allowed at the group level (nested selects like _group are fine).
     if let Some(ref group_by) = select.group_by {
         for field in &select.fields {
-            if let Requestable::Field(f) = field {
+            let allowed = match field {
                 // Allow special meta-fields at group level
-                if f.name == "_docID" || f.name == "GROUP" || f.name == "__typename" {
-                    continue;
+                Requestable::Field(f) => {
+                    matches!(f.name.as_str(), "_docID" | "GROUP" | "__typename")
+                        || group_by.allows_field(&f.name)
                 }
-                if group_by.fields.contains(&f.name) {
-                    continue;
+                Requestable::Select(s) => {
+                    s.field.name == "GROUP" || group_by.allows_select(&s.field.name)
                 }
-                // Allow FK fields for relation groupBy fields (e.g. _authorID for author)
-                let is_fk_for_group = group_by
-                    .fields
-                    .iter()
-                    .any(|gb_field| f.name == format!("_{}ID", gb_field));
-                if is_fk_for_group {
-                    continue;
-                }
+                _ => true,
+            };
+            if !allowed {
                 return Err(QueryError::parse(
                     "cannot select a non-group-by field at group-level",
                 ));

@@ -38,17 +38,22 @@ impl PlanNode for GroupByNode {
         // can create new groups, so the group ordering depends on which source
         // encounters a new group key first. We replicate this interleaving here.
         //
-        // The interleaving only applies when _group has a simple order (no inner
-        // groupBy). When _group has a groupBy, Go's child source yields grouped
-        // results (fewer items) with different interleaving semantics.
-        let group_order = self.group_aliases.first().and_then(|a| a.order.clone());
-        let has_simple_group_order = group_order
-            .as_ref()
-            .is_some_and(|o| !o.is_empty() && self.inner_group_by_fields.is_empty());
+        // Go's child source is the _group select: the scan docs sorted by the
+        // _group order or, when _group groups again, one doc per inner group
+        // (Go appends the outer groupBy fields to the inner ones), in order of
+        // first appearance and then sorted. Without either the child source is
+        // the scan itself and the interleave reduces to first appearance.
+        let group_order = self
+            .group_aliases
+            .first()
+            .and_then(|a| a.order.clone())
+            .filter(|o| !o.is_empty());
+        let interleave_child_source =
+            group_order.is_some() || !self.inner_group_by_fields.is_empty();
         let mut ordered_keys: Vec<String> = Vec::new();
         let mut key_set: RapidHashSet<String> = RapidHashSet::new();
 
-        if !has_simple_group_order {
+        if !interleave_child_source {
             let mut group_map: RapidHashMap<String, usize> =
                 RapidHashMap::with_capacity(all_docs.len());
             self.groups.reserve(all_docs.len());
@@ -76,43 +81,55 @@ impl PlanNode for GroupByNode {
             return Ok(());
         }
 
-        if has_simple_group_order {
-            let order = group_order.as_ref().unwrap();
-            if !all_docs.is_empty() {
-                // Sort indices by _group order (child order)
-                let mut sorted_indices: Vec<usize> = (0..all_docs.len()).collect();
-                sorted_indices.sort_by(|&ai, &bi| {
-                    for cond in &order.conditions {
-                        if let Some(field_name) = cond.fields.first() {
-                            if let Some(idx) = self.document_mapping.first_index_of_name(field_name)
-                            {
-                                let val_a = all_docs[ai].get(idx);
-                                let val_b = all_docs[bi].get(idx);
-                                let cmp = Self::compare_field_values(val_a, val_b);
-                                let cmp = match cond.direction {
-                                    OrderDirection::Asc => cmp,
-                                    OrderDirection::Desc => cmp.reverse(),
-                                };
-                                if cmp != std::cmp::Ordering::Equal {
-                                    return cmp;
-                                }
-                            }
+        // The child source: every scan doc, or the first doc of each inner group.
+        let mut sorted_indices: Vec<usize> = if self.inner_group_by_fields.is_empty() {
+            (0..all_docs.len()).collect()
+        } else {
+            let mut seen: RapidHashSet<String> = RapidHashSet::new();
+            let mut key = String::new();
+            let mut firsts = Vec::new();
+            for (i, doc) in all_docs.iter().enumerate() {
+                self.build_group_key_for_fields(&mut key, &self.inner_group_by_fields, doc);
+                key.push_str(&self.generate_key(doc)?);
+                if seen.insert(key.clone()) {
+                    firsts.push(i);
+                }
+            }
+            firsts
+        };
+        let no_order = crate::mapper::OrderBy { conditions: vec![] };
+        let order = group_order.as_ref().unwrap_or(&no_order);
+        sorted_indices.sort_by(|&ai, &bi| {
+            for cond in &order.conditions {
+                if let Some(field_name) = cond.fields.first() {
+                    if let Some(idx) = self.document_mapping.first_index_of_name(field_name) {
+                        let val_a = all_docs[ai].get(idx);
+                        let val_b = all_docs[bi].get(idx);
+                        let cmp = Self::compare_field_values(val_a, val_b);
+                        let cmp = match cond.direction {
+                            OrderDirection::Asc => cmp,
+                            OrderDirection::Desc => cmp.reverse(),
+                        };
+                        if cmp != std::cmp::Ordering::Equal {
+                            return cmp;
                         }
                     }
-                    std::cmp::Ordering::Equal
-                });
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
 
-                // Interleave parent (scan order) and child (sorted order)
-                for i in 0..all_docs.len() {
-                    let parent_key = self.generate_key(&all_docs[i])?;
-                    if key_set.insert(parent_key.clone()) {
-                        ordered_keys.push(parent_key);
-                    }
+        // Interleave parent (scan order) and child (sorted order)
+        for i in 0..all_docs.len() {
+            let parent_key = self.generate_key(&all_docs[i])?;
+            if key_set.insert(parent_key.clone()) {
+                ordered_keys.push(parent_key);
+            }
 
-                    let child_key = self.generate_key(&all_docs[sorted_indices[i]])?;
-                    if key_set.insert(child_key.clone()) {
-                        ordered_keys.push(child_key);
-                    }
+            if let Some(&child) = sorted_indices.get(i) {
+                let child_key = self.generate_key(&all_docs[child])?;
+                if key_set.insert(child_key.clone()) {
+                    ordered_keys.push(child_key);
                 }
             }
         }

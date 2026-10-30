@@ -6,6 +6,7 @@ mod cursor;
 mod filter_prep;
 mod groupby;
 mod index_methods;
+mod ordering_only;
 mod scan_setup;
 pub(crate) mod se_detection;
 
