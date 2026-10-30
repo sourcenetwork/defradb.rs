@@ -108,15 +108,24 @@ impl Planner {
         // Get the relation field index in the parent mapping.
         // First try by render_key (for aliased fields), then fall back to name lookup.
         // The fallback handles relation fields inside _group which are added without render_keys.
-        let relation_field_index = mapping
-            .try_find_index_from_render_key(output_name)
-            .or_else(|| mapping.first_index_of_name(relation_field_name))
-            .ok_or_else(|| {
-                QueryError::internal(format!(
-                    "relation field '{}' (output name '{}') not in mapping",
-                    relation_field_name, output_name
-                ))
-            })?;
+        // A _group relation the group level also renders gets a slot of its own: each join
+        // stores the relation rendered with its own selection, so a shared slot would
+        // render the group-level relation with the _group selection.
+        let group_level_index = mapping.try_find_index_from_render_key(output_name);
+        let relation_field_index = if group_index.is_some() && group_level_index.is_some() {
+            let index = mapping.next_index();
+            mapping.add(index, relation_field_name);
+            index
+        } else {
+            group_level_index
+                .or_else(|| mapping.first_index_of_name(relation_field_name))
+                .ok_or_else(|| {
+                    QueryError::internal(format!(
+                        "relation field '{}' (output name '{}') not in mapping",
+                        relation_field_name, output_name
+                    ))
+                })?
+        };
 
         // If this relation field is inside _group, update the _group child mapping
         // to use the correct index for rendering. TypeJoinMany stores the relation

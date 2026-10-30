@@ -137,7 +137,6 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
 
         // Validate that non-special fields selected at group level are in the groupBy list
-        let group_fields: Vec<&str> = group_by.fields.iter().map(|s| s.as_str()).collect();
         for requestable in &select.fields {
             match requestable {
                 Requestable::Field(field) => {
@@ -146,24 +145,18 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
                     if name == "_docID" || name == "GROUP" || name == "__typename" {
                         continue;
                     }
-                    if group_fields.contains(&name) {
-                        continue;
+                    if !group_by.allows_field(name) {
+                        return Err(QueryError::parse(
+                            "cannot select a non-group-by field at group-level",
+                        ));
                     }
-                    // Allow FK fields for relation groupBy fields (e.g. _authorID for author)
-                    let is_fk_for_group = group_fields
-                        .iter()
-                        .any(|gb_field| name == format!("_{}ID", gb_field));
-                    if is_fk_for_group {
-                        continue;
-                    }
-                    return Err(QueryError::parse(
-                        "cannot select a non-group-by field at group-level",
-                    ));
                 }
                 Requestable::Select(nested) => {
-                    if nested.field.name == "GROUP" {
-                        // _group is always allowed in groupBy queries
-                        continue;
+                    let name = nested.field.name.as_str();
+                    if name != "GROUP" && !group_by.allows_select(name) {
+                        return Err(QueryError::parse(
+                            "cannot select a non-group-by field at group-level",
+                        ));
                     }
                 }
                 Requestable::Aggregate(_) => {
