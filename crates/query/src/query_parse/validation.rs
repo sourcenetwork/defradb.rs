@@ -8,6 +8,7 @@ use crate::collection_provider::CollectionProvider;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Mutation, Select};
 use crate::query_parse::ParsedOperation;
+use schema::CollectionVersion;
 
 /// Validate that all collections referenced in a parsed operation exist.
 ///
@@ -71,7 +72,7 @@ async fn validate_mutation_collection(
 ) -> Result<()> {
     let name = &mutation.collection_name;
 
-    if provider.get_collection(name).await?.is_none() {
+    let Some(collection) = provider.get_collection(name).await? else {
         let suggestion = suggest_collection(name, provider).await;
         let field_name = match mutation.mutation_type {
             crate::mapper::MutationType::Add => format!("add_{}", name),
@@ -88,9 +89,32 @@ async fn validate_mutation_collection(
             msg.push_str(&format!(" Did you mean \"{}\"?", suggested));
         }
         return Err(QueryError::parse(msg));
-    }
+    };
 
-    Ok(())
+    validate_encrypt_fields(mutation, &collection)
+}
+
+/// Go types `encryptFields` as a list of the collection's `<Name>ExplicitField`
+/// enum, which holds every field not starting with `_`, so a built-in or unknown
+/// field fails GraphQL validation before execution.
+fn validate_encrypt_fields(mutation: &Mutation, collection: &CollectionVersion) -> Result<()> {
+    let is_explicit =
+        |field: &str| !field.starts_with('_') && collection.fields.iter().any(|f| f.name == field);
+    let Some((index, invalid)) = mutation
+        .encrypt_fields
+        .iter()
+        .enumerate()
+        .find(|(_, field)| !is_explicit(field))
+    else {
+        return Ok(());
+    };
+    Err(QueryError::parse(format!(
+        "Argument \"encryptFields\" has invalid value [{}].\nIn element #{}: Expected type \"{}ExplicitField\", found {}.",
+        mutation.encrypt_fields.join(", "),
+        index + 1,
+        mutation.collection_name,
+        invalid
+    )))
 }
 
 fn is_internal_collection(name: &str) -> bool {
@@ -140,7 +164,6 @@ mod tests {
     use super::*;
     use crate::collection_provider::StaticCollectionProvider;
     use crate::document::DocumentMapping;
-    use schema::CollectionVersion;
 
     fn make_provider(names: &[&str]) -> StaticCollectionProvider {
         let collections: Vec<CollectionVersion> = names
@@ -235,6 +258,61 @@ mod tests {
             assert!(msg.contains("Did you mean \"User\""));
         })
         .unwrap()
+    }
+
+    fn encrypt_fields_result(encrypt_fields: &[&str]) -> Result<()> {
+        let collection: CollectionVersion = serde_json::from_value(serde_json::json!({
+            "Name": "Users",
+            "Fields": [{ "Name": "_docID" }, { "Name": "name" }, { "Name": "age" }],
+        }))
+        .unwrap();
+        let mutation = Mutation {
+            mutation_type: crate::mapper::MutationType::Add,
+            collection_name: "Users".to_string(),
+            alias: None,
+            create_input: vec![],
+            update_input: Default::default(),
+            doc_ids: None,
+            filter: None,
+            fields: vec![],
+            document_mapping: DocumentMapping::new(),
+            encrypt_doc: false,
+            encrypt_fields: encrypt_fields.iter().map(|f| f.to_string()).collect(),
+        };
+        let op = ParsedOperation::Mutation {
+            mutations: vec![mutation],
+            explain: None,
+        };
+        let provider = StaticCollectionProvider::new(vec![collection]);
+        workers::block_on(async { validate_parsed_operation(&op, &provider).await }).unwrap()
+    }
+
+    #[test]
+    fn test_encrypt_fields_rejects_builtin_field_like_go() {
+        let msg = encrypt_fields_result(&["_docID"]).unwrap_err().to_string();
+        assert!(
+            msg.contains("Argument \"encryptFields\" has invalid value [_docID]."),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_rejects_unknown_field_like_go() {
+        let msg = encrypt_fields_result(&["name", "points"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains(
+                "Argument \"encryptFields\" has invalid value [name, points].\nIn element #2: Expected type \"UsersExplicitField\", found points."
+            ),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_accepts_explicit_fields() {
+        assert!(encrypt_fields_result(&["name", "age"]).is_ok());
+        assert!(encrypt_fields_result(&[]).is_ok());
     }
 
     #[test]
