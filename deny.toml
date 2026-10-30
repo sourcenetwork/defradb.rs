@@ -77,6 +77,17 @@ ignore = [
     # rustls 0.23.46, which our direct rustls is already on.
     "RUSTSEC-2026-0346",
     "RUSTSEC-2026-0349",
+
+    # zstd 0.13 and zstd-safe 7 — pulled only by commonware-storage from the
+    # iverc/commonware-upstream fork, through vera.rs and backbone's
+    # acp-light-client (pinned revs). It calls bulk::Decompressor (one-shot
+    # DCtx::decompress) and CCtx, never stream::raw with_context (0391) or
+    # DCtx::decompress_stream (0403), and leaves the seekable feature off
+    # (0398). zstd-sys is already on the patched 2.1.2. Remove when the fork
+    # moves to zstd 0.14.3 and vera.rs and backbone repin (#2298).
+    { id = "RUSTSEC-2026-0391", reason = "commonware-storage fork still on zstd 0.13; unreachable call; #2298" },
+    { id = "RUSTSEC-2026-0398", reason = "commonware-storage fork still on zstd-safe 7; seekable off; #2298" },
+    { id = "RUSTSEC-2026-0403", reason = "commonware-storage fork still on zstd-safe 7; no decompress_stream; #2298" },
 ]
 
 [licenses]
