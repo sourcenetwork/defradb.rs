@@ -52,7 +52,7 @@ jobs:
   # and a type that changes between runs makes runs incomparable.
   quick:
     name: Quick benchmark
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/spot=false/family=c7i.4xlarge/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/spot=false/family=c7i.4xlarge/env=v3/extras=s3-cache
     timeout-minutes: 60
     permissions:
       contents: read
