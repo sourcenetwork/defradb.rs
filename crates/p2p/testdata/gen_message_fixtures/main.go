@@ -60,6 +60,28 @@ type pushLogRequest struct {
 	CollectionID string
 	Creator      string
 	Block        []byte
+	CAR          []byte         `cbor:"car,omitempty"`
+	Documents    []documentInfo `cbor:"documents,omitempty"`
+}
+
+// Go shinzo-develop internal/db/p2p/protocol/pushlog.go DocumentInfo.
+type documentInfo struct {
+	DocID string
+	CID   []byte
+	Block []byte
+	CAR   []byte `cbor:"car,omitempty"`
+}
+
+// Go shinzo-develop internal/db/p2p/protocol/car.go CARRequest.
+type carRequest struct {
+	metaData
+	CIDs [][]byte
+}
+
+// Go shinzo-develop internal/db/p2p/protocol/car.go CARReply.
+type carReply struct {
+	metaData
+	CARs [][]byte
 }
 
 type fixture struct {
@@ -84,6 +106,77 @@ func main() {
 				CollectionID: "bafy-collection",
 				Creator:      "did:key:zGo",
 				Block:        []byte{0xa1, 0x61, 0x78, 0x01},
+			},
+		},
+		{
+			label: "shinzo_push_log_request_car",
+			value: pushLogRequest{
+				metaData: metaData{
+					Version:   "/defradb/0.0.1",
+					MessageID: "msg-go",
+					SenderID:  "peer-go",
+					Pubkey:    []byte{0x01, 0x02},
+					Signature: []byte{0x03, 0x04},
+				},
+				DocID:        "bafy-doc",
+				CID:          []byte{0x01, 0x71, 0xaa},
+				CollectionID: "bafy-collection",
+				Creator:      "did:key:zGo",
+				Block:        []byte{0xa1, 0x61, 0x78, 0x01},
+				CAR:          []byte{0x0a, 0x0b},
+			},
+		},
+		{
+			// What shinzo-develop publishes on a collection topic: an empty
+			// envelope (nil Pubkey, CID and Block become CBOR null) and a batch.
+			label: "shinzo_push_log_batch",
+			value: pushLogRequest{
+				CollectionID: "bafy-collection",
+				Creator:      "12D3KooWGo",
+				Documents: []documentInfo{
+					{DocID: "doc-a", CID: []byte{0x01, 0x71, 0xaa}, Block: []byte{0xa1}},
+					{DocID: "doc-b", CID: []byte{0x01, 0x71, 0xbb}, Block: []byte{0xa2}, CAR: []byte{0x0c}},
+				},
+			},
+		},
+		{
+			label: "shinzo_car_request",
+			value: carRequest{
+				metaData: metaData{
+					Version:   "/defradb/0.0.1",
+					MessageID: "msg-car",
+					SenderID:  "peer-go",
+					Pubkey:    []byte{0x01, 0x02},
+					Signature: []byte{0x03, 0x04},
+				},
+				CIDs: [][]byte{{0x01, 0x71, 0xaa}, {0x01, 0x71, 0xbb}},
+			},
+		},
+		{
+			// serveCARs leaves an unserved head nil, which encodes as CBOR null.
+			label: "shinzo_car_reply",
+			value: carReply{
+				metaData: metaData{
+					Version:   "/defradb/0.0.1",
+					MessageID: "msg-car",
+					SenderID:  "peer-go",
+					Pubkey:    []byte{0x01, 0x02},
+					Signature: []byte{0x03, 0x04},
+				},
+				CARs: [][]byte{{0x0a, 0x0b}, nil, {}},
+			},
+		},
+		{
+			// The error reply onRequest sends: zero CARs (nil), ErrMessage set.
+			label: "shinzo_car_reply_error",
+			value: carReply{
+				metaData: metaData{
+					Version:    "/defradb/0.0.1",
+					MessageID:  "msg-car",
+					SenderID:   "peer-go",
+					Pubkey:     []byte{0x01, 0x02},
+					ErrMessage: "boom",
+				},
 			},
 		},
 		{
