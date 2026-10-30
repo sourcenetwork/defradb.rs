@@ -363,3 +363,79 @@ async fn router_construction_includes_extra_routes_without_a_transform() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+/// A server whose edge stopped accepting refuses every request before its
+/// handler runs, extra routes included, so nothing writes after a node's
+/// shutdown stopped admitting requests.
+#[tokio::test]
+async fn a_closed_edge_refuses_requests_before_their_handlers_run() {
+    let scope = edge::testing::edge().scope();
+    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let in_handler = Arc::clone(&reached);
+    let router = Server::with_config(
+        MockQueryExecutor::new(),
+        ServerConfig::default(),
+        scope.edge().clone(),
+    )
+    .with_extra_routes(axum::Router::new().route(
+        "/application",
+        axum::routing::get(move || async move {
+            in_handler.store(true, std::sync::atomic::Ordering::SeqCst);
+            "application"
+        }),
+    ))
+    .router()
+    .unwrap();
+    scope.close();
+
+    for uri in ["/application", "/api/v0/version"] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+    }
+    assert!(!reached.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+/// A client that goes away mid-request leaves its handler running, and a
+/// drain of the server's scope waits for the handler to end: the request's
+/// work never outlives the drain that should have covered it.
+#[tokio::test]
+async fn a_request_its_client_abandoned_runs_to_its_end_inside_the_drain() {
+    let network = edge::testing::edge();
+    let scope = network.scope();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (in_start, in_end, clock) = (Arc::clone(&started), Arc::clone(&ended), network.clone());
+    let router = Server::with_config(
+        MockQueryExecutor::new(),
+        ServerConfig::default(),
+        scope.edge().clone(),
+    )
+    .with_extra_routes(axum::Router::new().route(
+        "/slow",
+        axum::routing::get(move || async move {
+            in_start.notify_one();
+            clock.sleep(Duration::from_millis(200)).await;
+            in_end.store(true, std::sync::atomic::Ordering::SeqCst);
+            "done"
+        }),
+    ))
+    .router()
+    .unwrap();
+
+    let request = router.oneshot(Request::builder().uri("/slow").body(Body::empty()).unwrap());
+    tokio::select! {
+        _ = request => panic!("the slow handler answered before its client left"),
+        () = started.notified() => {}
+    }
+
+    let drained = scope.drain(Duration::from_secs(5)).await;
+    assert!(drained.is_complete());
+    assert!(
+        ended.load(std::sync::atomic::Ordering::SeqCst),
+        "the drain returned before the abandoned request's handler ended"
+    );
+}

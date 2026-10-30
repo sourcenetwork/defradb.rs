@@ -431,8 +431,16 @@ RUNS=(
   "MC_Arrivals_Red_Detached.cfg      Arrivals.tla RED"   # #1897 post-commit numbering: second durable commit (INV_OneCommitPerWrite)
   "MC_Arrivals_Red_DetachedOrder.cfg Arrivals.tla RED"   # #1897 short-ID numbering leaves commit order (INV_CommitOrder)
   "MC_Arrivals_Red_StampLatest.cfg   Arrivals.tla RED"   # bound by latest allocated seq: unapplied commit skipped (INV_NoSkip)
-  "MC_NodeShutdown_Green.cfg NodeShutdown.tla GREEN" # held tasks stop and are awaited before regolith closes; shutdown returns
+  "MC_NodeShutdown_Green.cfg NodeShutdown.tla GREEN" # held tasks and the coordinator's stop and are awaited before regolith closes; admitted writes keep their markers; shutdown returns
   "MC_NodeShutdown_Red_RedriveDetached.cfg NodeShutdown.tla RED" # detached ACP redrive outlives the wait for tasks
+  "MC_NodeShutdown_Red_P2PAfterDrain.cfg NodeShutdown.tla RED" # P2P after the scope closed: coordinator drain refused, its task outlives P2P shutdown
+  "MC_NodeShutdown_Red_P2PAfterDrainStorage.cfg NodeShutdown.tla RED" # same order: the unstopped coordinator task is in storage when regolith closes
+  "MC_NodeShutdown_Red_RequestsDuringP2P.cfg NodeShutdown.tla RED" # requests admitted until after P2P: a write commits with no head marker
+  "MC_NodeShutdown_Red_CommitNotAdmitted.cfg NodeShutdown.tla RED" # an in-process commit bypasses admission: it commits with no head marker
+  "MC_NodeShutdown_Red_OpenTransaction.cfg NodeShutdown.tla RED" # a transaction left open: the store close waits out its timeout (gents#3291)
+  "MC_NodeShutdown_Red_WaiterReturnsEarly.cfg NodeShutdown.tla RED" # a waiting caller returns before the shared shutdown ends
+  "MC_NodeShutdown_Red_LeadNotHandedBack.cfg NodeShutdown.tla RED" # a run that ends early keeps the lead: nobody finishes the teardown
+  "MC_NodeShutdown_Red_CloseNotCompleted.cfg NodeShutdown.tla RED" # a rerun returns early from an interrupted store close: regolith stays open
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller

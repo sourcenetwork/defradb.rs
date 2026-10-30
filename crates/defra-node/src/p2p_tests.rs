@@ -2358,4 +2358,372 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
         .unwrap()
 }
 
+/// Node shutdown stops P2P while the node's network scope still accepts work,
+/// so the coordinator's drain of its background tasks is admitted. Shut down
+/// after the scope drained, the edge refused that drain, and the tasks it
+/// should have ended ran on past the store's close.
+#[test]
+fn shutdown_drains_coordinator_tasks_before_the_network_scope_closes() {
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        threads: std::num::NonZeroUsize::new(2),
+        thread_name: "defra-node-shutdown-order".to_string(),
+        ..edge::EdgeConfig::default()
+    })
+    .expect("start the test network runtime");
+    let network = runtime.edge().clone();
+    network
+        .block_on(async {
+            init_tracing();
+            let node = EmbeddedNode::builder()
+                .with_edge(network.clone())
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node");
+            node.add_collection("type Note { text: String }")
+                .await
+                .expect("add schema");
+            let response = node
+                .execute(r#"mutation { add_Note(input: {text: "broadcast me"}) { _docID } }"#)
+                .await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+            let refused = network.stats().refused;
+            node.shutdown().await;
+            assert_eq!(
+                network.stats().refused,
+                refused,
+                "the network refused work during shutdown: the coordinator's drain did not run"
+            );
+        })
+        .unwrap();
+    runtime.shutdown().expect("stop the test network runtime");
+}
+
+/// A write admitted around shutdown either is refused before it commits or
+/// commits while P2P still records its durable head marker. HTTP writes run
+/// on one kept-alive connection, which outlives the accept loop, while the
+/// sender of a live replicator shuts down; none may answer "committed batch
+/// has undurable P2P head markers", and the shutdown, which also ends the
+/// coordinator's tasks, must not stall on the store's close.
+#[cfg(feature = "http")]
+#[test]
+fn shutdown_refuses_or_marks_every_write_admitted_around_it() {
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        threads: std::num::NonZeroUsize::new(4),
+        thread_name: "defra-node-shutdown-writes".to_string(),
+        ..edge::EdgeConfig::default()
+    })
+    .expect("start the test network runtime");
+    let network = runtime.edge().clone();
+    network
+        .block_on(async {
+            init_tracing();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind HTTP");
+            let address = listener.local_addr().expect("HTTP address");
+            let sender = std::sync::Arc::new(
+                EmbeddedNode::builder()
+                    .with_edge(network.clone())
+                    .with_p2p(test_p2p_config())
+                    .with_http(crate::HttpConfig::with_listener(listener).expect("HTTP config"))
+                    .build()
+                    .await
+                    .expect("build sender"),
+            );
+            let receiver = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build receiver");
+            for node in [&*sender, &receiver] {
+                node.add_collection("type Note { text: String }")
+                    .await
+                    .expect("add schema");
+            }
+            install_one_way_replicator(&sender, &receiver, &["Note"]).await;
+
+            let client = reqwest::Client::builder()
+                .pool_max_idle_per_host(1)
+                .build()
+                .expect("HTTP client");
+            let url = format!("http://{address}/api/v0/graphql");
+            let write = move |n: usize| {
+                let client = client.clone();
+                let url = url.clone();
+                async move {
+                    let body = serde_json::json!({
+                        "query": format!(r#"mutation {{ add_Note(input: {{text: "w{n}"}}) {{ _docID }} }}"#)
+                    });
+                    match client.post(&url).json(&body).send().await {
+                        Ok(response) => Some((response.status(), response.text().await.unwrap_or_default())),
+                        Err(_) => None,
+                    }
+                }
+            };
+            let (status, body) = write(0).await.expect("a write before shutdown");
+            assert!(status.is_success() && !body.contains("errors"), "{status} {body}");
+
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer = network.spawn({
+                let stop = std::sync::Arc::clone(&stop);
+                async move {
+                    let (mut committed, mut refused, mut undurable) = (0usize, 0usize, Vec::new());
+                    let mut n = 1;
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        match write(n).await {
+                            Some((status, body)) if body.contains("undurable") => {
+                                undurable.push(format!("{status} {body}"))
+                            }
+                            Some((status, body)) if status.is_success() && !body.contains("errors") => {
+                                committed += 1
+                            }
+                            _ => refused += 1,
+                        }
+                        n += 1;
+                    }
+                    (committed, refused, undurable)
+                }
+            });
+
+            let started = std::time::Instant::now();
+            sender.shutdown().await;
+            let took = started.elapsed();
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            let (committed, refused, undurable) = writer.await.expect("writer task");
+
+            assert!(
+                undurable.is_empty(),
+                "writes committed without a durable head marker: {undurable:?}"
+            );
+            assert!(refused > 0, "no write was refused after shutdown stopped admitting requests");
+            assert!(
+                took < Duration::from_secs(15),
+                "shutdown stalled for {took:?} (committed {committed}, refused {refused})"
+            );
+            receiver.shutdown().await;
+        })
+        .unwrap();
+    runtime.shutdown().expect("stop the test network runtime");
+}
+
+/// Callers share one shutdown: one cancelled midway leaves it running, and
+/// each concurrent caller returns only once it ended with the store closed;
+/// the data path then reopens.
+#[test]
+fn cancelled_and_concurrent_shutdown_callers_share_one_shutdown() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
+            let data_path = unique_data_path("p2p-shared-shutdown");
+            let secret_key_path = data_path.join("p2p.key");
+            let node = build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
+            node.add_collection("type Note { text: String }")
+                .await
+                .expect("add schema");
+
+            let _ = edge::testing::edge()
+                .timeout(Duration::from_millis(1), node.shutdown())
+                .await;
+            let closed_on_return = || async {
+                node.shutdown().await;
+                node.teardown
+                    .finished
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            };
+            let (first, second) = futures::join!(closed_on_return(), closed_on_return());
+            assert!(
+                first && second,
+                "a shutdown caller returned before the shared shutdown closed the store"
+            );
+
+            // Regolith releases its directory lock when the closed store drops.
+            drop(node);
+            let reopened = EmbeddedNode::builder()
+                .data_path(data_path.clone())
+                .with_p2p(persistent_p2p_config(secret_key_path))
+                .build()
+                .await;
+            let reopened = match reopened {
+                Ok(node) => node,
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&data_path);
+                    panic!("the store did not reopen after the shared shutdown: {error}");
+                }
+            };
+            reopened.shutdown().await;
+            let _ = std::fs::remove_dir_all(&data_path);
+        })
+        .unwrap()
+}
+
+/// An explicit transaction's commit around shutdown either is refused before
+/// it commits or commits while P2P still records its durable head marker:
+/// in-process commits are admitted as requests are. Transactions write and
+/// commit in a loop while the sender of a live replicator shuts down; once a
+/// probe saw the node refuse requests, no commit that starts may succeed. (A
+/// transaction commit whose marker cannot be registered is only logged, so the
+/// commit's own result cannot show it.)
+#[test]
+fn shutdown_refuses_or_marks_every_transaction_committed_around_it() {
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        threads: std::num::NonZeroUsize::new(4),
+        thread_name: "defra-node-shutdown-commits".to_string(),
+        ..edge::EdgeConfig::default()
+    })
+    .expect("start the test network runtime");
+    let network = runtime.edge().clone();
+    network
+        .block_on(async {
+            init_tracing();
+            let sender = std::sync::Arc::new(
+                EmbeddedNode::builder()
+                    .with_edge(network.clone())
+                    .with_p2p(test_p2p_config())
+                    .build()
+                    .await
+                    .expect("build sender"),
+            );
+            let receiver = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build receiver");
+            for node in [&*sender, &receiver] {
+                node.add_collection("type Note { text: String }")
+                    .await
+                    .expect("add schema");
+            }
+            install_one_way_replicator(&sender, &receiver, &["Note"]).await;
+
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let probe = network.spawn({
+                let (stop, refusing, sender) = (
+                    std::sync::Arc::clone(&stop),
+                    std::sync::Arc::clone(&refusing),
+                    std::sync::Arc::clone(&sender),
+                );
+                async move {
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        let read = sender.execute("query { Note { _docID } }").await;
+                        if read.errors.iter().any(|error| error.message.contains("shutting down")) {
+                            refusing.store(true, std::sync::atomic::Ordering::SeqCst);
+                            return;
+                        }
+                    }
+                }
+            });
+            let writer = network.spawn({
+                let (stop, refusing, sender, clock) = (
+                    std::sync::Arc::clone(&stop),
+                    std::sync::Arc::clone(&refusing),
+                    std::sync::Arc::clone(&sender),
+                    network.clone(),
+                );
+                async move {
+                    let (mut committed, mut undurable, mut late) = (0usize, Vec::new(), 0usize);
+                    let mut n = 0;
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        n += 1;
+                        let Ok(handle) = sender.begin_transaction(false).await else {
+                            // Refused at once: yield, or this loop holds its worker.
+                            clock.sleep(Duration::from_millis(1)).await;
+                            continue;
+                        };
+                        let written = sender
+                            .execute_request_in_txn(
+                                query::QueryRequest::new(format!(
+                                    r#"mutation {{ add_Note(input: {{text: "t{n}"}}) {{ _docID }} }}"#
+                                )),
+                                &handle,
+                            )
+                            .await;
+                        if !written.errors.is_empty() {
+                            let _ = sender.discard_transaction(&handle).await;
+                            continue;
+                        }
+                        // Widens the window between the write and its commit.
+                        clock.sleep(Duration::from_millis(5)).await;
+                        let refused_before = refusing.load(std::sync::atomic::Ordering::SeqCst);
+                        match sender.commit_transaction(&handle).await {
+                            Ok(()) if refused_before => late += 1,
+                            Ok(()) => committed += 1,
+                            Err(error) if error.to_string().contains("undurable") => {
+                                undurable.push(error.to_string())
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    (committed, undurable, late)
+                }
+            });
+
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !matches!(
+                receiver.execute("query { Note { _docID } }").await.data,
+                Some(ref data) if data["Note"].as_array().is_some_and(|notes| !notes.is_empty())
+            ) {
+                assert!(Instant::now() < deadline, "the replicator never received a note");
+                network.sleep(Duration::from_millis(20)).await;
+            }
+            sender.shutdown().await;
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            let (committed, undurable, late) = writer.await.expect("writer task");
+            probe.await.expect("probe task");
+
+            assert!(committed > 0, "no transaction committed before shutdown");
+            assert!(
+                refusing.load(std::sync::atomic::Ordering::SeqCst),
+                "the probe never saw the node refuse a request"
+            );
+            assert_eq!(late, 0, "commits started after the node refused requests succeeded");
+            assert!(
+                undurable.is_empty(),
+                "transactions committed without a durable head marker: {undurable:?}"
+            );
+            receiver.shutdown().await;
+        })
+        .unwrap();
+    runtime.shutdown().expect("stop the test network runtime");
+}
+
+/// A transaction a caller began and never finished (a client gone
+/// mid-transaction, a commit refused at shutdown) ends with the node's
+/// shutdown. Left in the registry, it kept the store's close waiting out its
+/// 30 s timeout ("closed with 1 transaction(s) still in flight").
+#[test]
+fn shutdown_ends_a_transaction_left_open_without_waiting_for_it() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
+            let node = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node");
+            node.add_collection("type Note { text: String }")
+                .await
+                .expect("add schema");
+            let handle = node.begin_transaction(false).await.expect("begin");
+            let written = node
+                .execute_request_in_txn(
+                    query::QueryRequest::new(
+                        r#"mutation { add_Note(input: {text: "open"}) { _docID } }"#,
+                    ),
+                    &handle,
+                )
+                .await;
+            assert!(written.errors.is_empty(), "{:?}", written.errors);
+
+            let started = Instant::now();
+            node.shutdown().await;
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "shutdown waited {:?} for a transaction left open",
+                started.elapsed()
+            );
+        })
+        .unwrap()
+}
+
 mod acknowledgment;

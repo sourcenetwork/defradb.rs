@@ -193,10 +193,9 @@ pub struct EmbeddedNode {
     node_query_identity: Option<identity::Did>,
     /// The node's share of the network runtime; `None` when the node has
     /// no network work and was given no runtime.
-    network: Option<NodeEdge>,
-    /// Closes the database: its worker pool finishes and stops, then its
-    /// store closes. Run once, at shutdown.
-    close_database: CloseDatabase,
+    network: Option<Arc<NodeEdge>>,
+    /// What the node's shutdown stops, in its order.
+    teardown: Arc<Teardown>,
     /// The database's worker pool: the node's data-path calls run there.
     pool: Option<workers::Pool>,
     /// Document ACP is a remote provider: its calls reach the network, so
@@ -204,6 +203,21 @@ pub struct EmbeddedNode {
     remote_acp: bool,
     #[cfg(not(target_arch = "wasm32"))]
     transaction_stats: Option<storage::TransactionStatsHandle>,
+    #[cfg(feature = "p2p")]
+    p2p_ops: Option<Arc<dyn defra_http::P2POperations>>,
+}
+
+/// What a node's shutdown stops, held apart from the node so the shutdown
+/// runs as a task of the network runtime: a caller cancelled midway leaves it
+/// running instead of half done, and every caller waits for the one shutdown.
+/// Model: proofs/tla/NodeShutdown.tla.
+struct Teardown {
+    network: Option<Arc<NodeEdge>>,
+    /// Ends the transactions callers left open, before the store closes.
+    end_transactions: EndTransactions,
+    /// Closes the database: its worker pool finishes and stops, then its
+    /// store closes.
+    close_database: CloseDatabase,
     #[cfg(feature = "http")]
     txn_cleanup_task: kovan_queue::seg_queue::SegQueue<workers::Background>,
     /// Vector index rebuild and downsample view refresh, as the CLI and the
@@ -211,11 +225,32 @@ pub struct EmbeddedNode {
     #[cfg(not(target_arch = "wasm32"))]
     background_tasks: BackgroundTasks,
     #[cfg(feature = "p2p")]
-    p2p_ops: Option<Arc<dyn defra_http::P2POperations>>,
-    #[cfg(feature = "p2p")]
     p2p_lifecycle: Option<p2p_runtime::P2PLifecycle>,
     #[cfg(feature = "otel")]
     telemetry: kovan_queue::seg_queue::SegQueue<TelemetryHandle>,
+    /// A caller is leading the shutdown.
+    started: std::sync::atomic::AtomicBool,
+    /// The shutdown ran to its end.
+    finished: std::sync::atomic::AtomicBool,
+    /// Wakes callers waiting for the leader.
+    done: regolith::sync::Notify,
+    /// Callers inside [`EmbeddedNode::shutdown`].
+    callers: std::sync::atomic::AtomicUsize,
+}
+
+/// Held by whatever runs the teardown, the caller or the runtime's task: if it
+/// goes before the teardown finished (cancelled, panicked, refused unrun), the
+/// next caller leads, and every waiter wakes to see that.
+struct Leading(Arc<Teardown>);
+
+impl Drop for Leading {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        if !self.0.finished.load(Ordering::SeqCst) {
+            self.0.started.store(false, Ordering::SeqCst);
+            self.0.done.notify_waiters();
+        }
+    }
 }
 
 /// Closes a node's database, whatever store it runs on.
@@ -234,6 +269,49 @@ where
     Box::new(move || {
         let database = Arc::clone(&database);
         Box::pin(async move { database.close().await })
+    })
+}
+
+/// The error of a transaction step whose request task never finished.
+fn refused_transaction(error: edge::EdgeError, step: &str) -> query::TransactionError {
+    query::TransactionError::Execution(match error {
+        edge::EdgeError::Closed => {
+            format!("the node is shutting down; the transaction was not {step}")
+        }
+        error => format!("transaction task failed: {error}"),
+    })
+}
+
+/// Ends the explicit transactions still open in a node's registry, whatever
+/// store it runs on.
+type EndTransactions =
+    Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
+/// The ender of `registry`'s open transactions. A transaction left open (a
+/// client gone mid-transaction, a commit refused at shutdown) keeps its store
+/// transaction in the registry's table past its owner's worker, and the
+/// store's close then waits its whole timeout for it.
+fn end_transactions<S>(registry: &Arc<db::DbTransactionRegistry<S>>) -> EndTransactions
+where
+    S: storage::corekv::Store + 'static,
+{
+    let registry = Arc::clone(registry);
+    Box::new(move || {
+        let registry = Arc::clone(&registry);
+        Box::pin(async move {
+            match registry.cleanup_stale_transactions(Duration::ZERO).await {
+                Ok(ended) if ended.cleaned > 0 => {
+                    tracing::info!(
+                        ended = ended.cleaned,
+                        "shutdown ended transactions left open"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "shutdown could not end the transactions left open");
+                }
+            }
+        })
     })
 }
 
@@ -327,10 +405,16 @@ impl EmbeddedNode {
     ) -> QueryResponse {
         let request = self.with_default_query_identity(request);
         let Some(node_identity_did) = self.node_identity_did.as_deref() else {
-            return match txn_handle {
-                Some(handle) => self.runner.execute_in_txn(request, &handle).await,
-                None => execute_autocommit_request(self.runner.as_ref(), request).await,
-            };
+            let runner = Arc::clone(&self.runner);
+            return self
+                .as_request(async move {
+                    match txn_handle {
+                        Some(handle) => runner.execute_in_txn(request, &handle).await,
+                        None => execute_autocommit_request(runner.as_ref(), request).await,
+                    }
+                })
+                .await
+                .unwrap_or_else(signed_query::refused_response);
         };
 
         #[cfg(target_arch = "wasm32")]
@@ -356,7 +440,7 @@ impl EmbeddedNode {
 
         #[cfg(not(target_arch = "wasm32"))]
         execute_with_signing_context(
-            network.edge(),
+            network.requests(),
             self.runner.clone(),
             request,
             txn_handle,
@@ -364,6 +448,22 @@ impl EmbeddedNode {
             node_identity_did.to_string(),
         )
         .await
+    }
+
+    /// Runs in-process work that may write as a task of the node's request
+    /// scope, as a signed query runs: admitted and counted until it ends, so
+    /// shutdown drains it before P2P stops recording head markers, refused once
+    /// shutdown stops admitting requests, and run to its end if its caller
+    /// stops waiting. A node with no network has no P2P, and runs it in place.
+    async fn as_request<F>(&self, work: F) -> std::result::Result<F::Output, edge::EdgeError>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
+        match self.network.as_ref() {
+            Some(network) => network.requests().spawn(work).await,
+            None => Ok(work.await),
+        }
     }
 
     fn with_default_query_identity(&self, mut request: QueryRequest) -> QueryRequest {
@@ -617,23 +717,35 @@ impl EmbeddedNode {
 
     /// Begin a manually finalized transaction. Dropping its handle does not
     /// roll it back; use [`Self::begin_transaction_guard`] for scope ownership.
+    ///
+    /// Begun as a request (see [`Self::shutdown`]): once shutdown stops
+    /// admitting requests, no transaction begins that its close would wait for.
     pub async fn begin_transaction(
         &self,
         readonly: bool,
     ) -> Result<TransactionHandle, query::TransactionError> {
-        self.runner
-            .begin_txn_as(&self.node_context(), readonly)
+        let runner = Arc::clone(&self.runner);
+        let context = self.node_context();
+        self.as_request(async move { runner.begin_txn_as(&context, readonly).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
     }
 
     /// Commit a transaction owned by this embedded node.
+    ///
+    /// The commit is admitted as a request (see [`Self::shutdown`]): once
+    /// shutdown stops admitting requests it is refused, uncommitted, rather
+    /// than committing after P2P stopped recording its head markers.
     pub async fn commit_transaction(
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner
-            .commit_txn_as(&self.node_context(), transaction)
+        let runner = Arc::clone(&self.runner);
+        let context = self.node_context();
+        let transaction = transaction.clone();
+        self.as_request(async move { runner.commit_txn_as(&context, &transaction).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
     }
 
     /// Roll back a transaction owned by this embedded node.
@@ -840,7 +952,98 @@ impl EmbeddedNode {
     /// that emit spans (e.g. `execute`, `add_collection`) go to a no-op
     /// tracer — they still work functionally, but observability is gone
     /// with no error surfaced. Drop the node after shutdown completes.
+    ///
+    /// Concurrent callers share one shutdown and each returns once it ended.
+    /// It runs on a blocking thread of the network runtime, so a caller
+    /// cancelled midway does not stop it; a node with no runtime, or one whose
+    /// runtime refused it, runs it on the caller, and a caller cancelled there
+    /// leaves the rest to the next.
     pub async fn shutdown(&self) {
+        use std::sync::atomic::Ordering;
+        let teardown = &self.teardown;
+        let _inside = InShutdown::enter(teardown);
+        // The teardown blocks (the store's close syncs and joins threads), so
+        // it runs on a blocking thread, as a task a cancelled caller does not
+        // stop: the node's runtime's first, the process's on-demand runtime's
+        // when that one refused it or it ended early, then the caller's own.
+        let mut attempt = 0;
+        loop {
+            let notified = teardown.done.notified();
+            if teardown.finished.load(Ordering::SeqCst) {
+                break;
+            }
+            if !teardown.started.swap(true, Ordering::SeqCst) {
+                let leading = Leading(Arc::clone(teardown));
+                attempt += 1;
+                match teardown_runtime(self.network.as_deref(), attempt) {
+                    // Ended early (refused, or panicked), it handed its lead
+                    // back: the next leader, this caller included, reruns it,
+                    // each step skipping what an earlier run took.
+                    Some(runtime) => {
+                        let _ = runtime
+                            .spawn_pinned(move || async move {
+                                leading.0.run().await;
+                                drop(leading);
+                            })
+                            .await;
+                    }
+                    None => {
+                        leading.0.run().await;
+                        drop(leading);
+                    }
+                }
+                continue;
+            }
+            notified.await;
+        }
+
+        // Last, outside the runtime's own tasks: a runtime the node started
+        // itself goes once nothing of the node runs on it.
+        if let Some(network) = &self.network {
+            network.stop_owned().await;
+        }
+    }
+}
+
+/// The runtime whose blocking thread runs the teardown on its `attempt`-th
+/// try, or `None` to run it on the caller.
+fn teardown_runtime(network: Option<&NodeEdge>, attempt: usize) -> Option<edge::Edge> {
+    match (network, attempt) {
+        (Some(network), 1) => Some(network.runtime().clone()),
+        #[cfg(not(target_arch = "wasm32"))]
+        (Some(_), 2) | (None, 1) => edge::on_demand().ok().cloned(),
+        _ => None,
+    }
+}
+
+/// Counts a caller inside [`EmbeddedNode::shutdown`]. The last one to leave a
+/// finished shutdown, cancelled before it stopped the node's own runtime,
+/// starts that runtime's stop; the teardown does the same when it finishes
+/// with no caller left to.
+struct InShutdown(Arc<Teardown>);
+
+impl InShutdown {
+    fn enter(teardown: &Arc<Teardown>) -> Self {
+        teardown
+            .callers
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(teardown))
+    }
+}
+
+impl Drop for InShutdown {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        if self.0.callers.fetch_sub(1, Ordering::SeqCst) == 1
+            && self.0.finished.load(Ordering::SeqCst)
+        {
+            self.0.release_runtime();
+        }
+    }
+}
+
+impl Teardown {
+    async fn run(&self) {
         #[cfg(feature = "http")]
         if let Some(task) = self.txn_cleanup_task.pop() {
             task.abort();
@@ -854,16 +1057,31 @@ impl EmbeddedNode {
             let _ = workers::timeout(Duration::from_secs(1), task).await;
         }
 
-        // Stop accepting the node's network work (signed queries, the HTTP
-        // server's accept loop) and drain what is in flight.
+        // Requests first: no new signed query or HTTP request is admitted,
+        // and those in flight finish while P2P still records their writes'
+        // durable head markers.
         if let Some(network) = &self.network {
-            network.drain().await;
+            network.drain_requests().await;
         }
 
+        // P2P while the node's scope still accepts work: the coordinator
+        // drains its background tasks there. Shut down after the scope
+        // closed, the drain is refused and the tasks run on, holding store
+        // transactions the store's close then waits for.
         #[cfg(feature = "p2p")]
         if let Some(lifecycle) = &self.p2p_lifecycle {
             lifecycle.shutdown().await;
         }
+
+        // Stop accepting the rest of the node's network work, which stops
+        // its services, and drain what is in flight.
+        if let Some(network) = &self.network {
+            network.drain().await;
+        }
+
+        // Nothing opens a transaction for the node any more: those left open
+        // end while their owners' workers still run.
+        (self.end_transactions)().await;
 
         // Nothing reaches the data path any more: the worker pool finishes
         // what it admitted and stops, then the store closes.
@@ -914,10 +1132,19 @@ impl EmbeddedNode {
             }
         }
 
-        // Last: a runtime the node started itself goes once nothing of the
-        // node runs on it.
+        self.finished
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.done.notify_waiters();
+        if self.callers.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            self.release_runtime();
+        }
+    }
+
+    /// Starts the stop of a runtime the node started itself, without waiting
+    /// for it, when no caller is left to stop it.
+    fn release_runtime(&self) {
         if let Some(network) = &self.network {
-            network.stop_owned().await;
+            network.release_owned();
         }
     }
 }
@@ -1545,7 +1772,7 @@ impl NodeBuilder {
             let server = defra_http::Server::from_arc_with_config(
                 node.runner.clone(),
                 server_config,
-                network.edge().clone(),
+                network.requests().clone(),
             )
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
@@ -1578,9 +1805,9 @@ impl NodeBuilder {
             };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
-            // The accept loop is a service of the node's scope: shutting the
-            // node down stops it accepting.
-            let service = network.edge().spawn_service(async move {
+            // The accept loop is a service of the node's request scope: the
+            // node's shutdown stops it accepting first.
+            let service = network.requests().spawn_service(async move {
                 let served = match bound {
                     Some(listener) => server.serve_on(listener).await,
                     None => server.run().await,
@@ -1776,6 +2003,7 @@ impl NodeBuilder {
             Some(b) => db::DbTransactionRegistry::with_broadcaster(database.clone(), b),
             None => db::DbTransactionRegistry::new(database.clone()),
         });
+        let transactions_ender = end_transactions(&registry);
 
         #[cfg(feature = "http")]
         let txn_cleanup_task = transaction_cleanup_config.map(|cleanup| {
@@ -1941,6 +2169,24 @@ impl NodeBuilder {
             None => (None, None),
         };
 
+        let network = network.map(Arc::new);
+        let teardown = Arc::new(Teardown {
+            network: network.clone(),
+            end_transactions: transactions_ender,
+            close_database: closer,
+            #[cfg(feature = "http")]
+            txn_cleanup_task: single_slot(txn_cleanup_task),
+            #[cfg(not(target_arch = "wasm32"))]
+            background_tasks,
+            #[cfg(feature = "p2p")]
+            p2p_lifecycle,
+            #[cfg(feature = "otel")]
+            telemetry: single_slot(telemetry_handle),
+            started: std::sync::atomic::AtomicBool::new(false),
+            finished: std::sync::atomic::AtomicBool::new(false),
+            done: regolith::sync::Notify::new(),
+            callers: std::sync::atomic::AtomicUsize::new(0),
+        });
         Ok(EmbeddedNode {
             runner,
             event_bus,
@@ -1954,21 +2200,13 @@ impl NodeBuilder {
             node_identity_did,
             node_query_identity,
             network,
-            close_database: closer,
+            teardown,
             pool,
             remote_acp,
             #[cfg(not(target_arch = "wasm32"))]
             transaction_stats,
-            #[cfg(feature = "http")]
-            txn_cleanup_task: single_slot(txn_cleanup_task),
-            #[cfg(not(target_arch = "wasm32"))]
-            background_tasks,
             #[cfg(feature = "p2p")]
             p2p_ops,
-            #[cfg(feature = "p2p")]
-            p2p_lifecycle,
-            #[cfg(feature = "otel")]
-            telemetry: single_slot(telemetry_handle),
         })
     }
 }

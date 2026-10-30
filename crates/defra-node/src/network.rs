@@ -7,7 +7,10 @@
 //! with no identity, no HTTP server and no P2P starts no runtime at all.
 //! Either way the node's work goes through a scope of its own, so shutting
 //! the node down stops accepting and drains the node's work alone, then
-//! stops a runtime the node started.
+//! stops a runtime the node started. Requests (signed queries, the HTTP
+//! server) go through a child scope, drained first: a request then never
+//! writes while P2P, which its writes' durable head markers need, shuts
+//! down on the node's scope.
 
 use crate::Result;
 use std::num::NonZeroUsize;
@@ -24,9 +27,9 @@ pub(crate) const NETWORK_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 const OWNED_RUNTIME_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1);
 
 pub(crate) struct NodeEdge {
-    #[cfg(feature = "otel")]
     runtime: Edge,
     scope: Scope,
+    requests: Scope,
     owned: SegQueue<EdgeRuntime>,
 }
 
@@ -50,9 +53,10 @@ impl NodeEdge {
             }
             None => return Ok(None),
         };
+        let scope = edge.scope();
         Ok(Some(Self {
-            scope: edge.scope(),
-            #[cfg(feature = "otel")]
+            requests: scope.edge().scope(),
+            scope,
             runtime: edge,
             owned,
         }))
@@ -63,24 +67,41 @@ impl NodeEdge {
         self.scope.edge()
     }
 
+    /// The handle requests (signed queries, the HTTP server) are admitted
+    /// through: a scope of the node's, which stops accepting first.
+    pub(crate) fn requests(&self) -> &Edge {
+        self.requests.edge()
+    }
+
     /// The runtime the node's scope is part of, which still accepts work
     /// after [`drain`](Self::drain) and until [`stop_owned`](Self::stop_owned).
-    #[cfg(feature = "otel")]
     pub(crate) fn runtime(&self) -> &Edge {
         &self.runtime
+    }
+
+    /// Stops admitting requests, which stops the HTTP accept loop, then waits
+    /// up to [`NETWORK_DRAIN_TIMEOUT`] for those in flight. The node's scope
+    /// keeps accepting the rest of its network work.
+    pub(crate) async fn drain_requests(&self) {
+        warn_undrained(
+            self.requests.drain(NETWORK_DRAIN_TIMEOUT).await,
+            "timed out draining the node's requests during shutdown",
+        );
     }
 
     /// Stops accepting the node's network work, which stops its services,
     /// then waits up to [`NETWORK_DRAIN_TIMEOUT`] for the rest.
     pub(crate) async fn drain(&self) {
-        let drained = self.scope.drain(NETWORK_DRAIN_TIMEOUT).await;
-        if !drained.is_complete() {
-            tracing::warn!(
-                remaining = drained.remaining,
-                timeout_secs = NETWORK_DRAIN_TIMEOUT.as_secs(),
-                "timed out draining the node's network work during shutdown"
-            );
-        }
+        warn_undrained(
+            self.scope.drain(NETWORK_DRAIN_TIMEOUT).await,
+            "timed out draining the node's network work during shutdown",
+        );
+    }
+
+    /// Starts the shutdown of the runtime the node started, if it started one
+    /// and nobody stopped it yet, without waiting for it: dropping it does.
+    pub(crate) fn release_owned(&self) {
+        drop(self.owned.pop());
     }
 
     /// Shuts down the runtime the node started, if it started one.
@@ -91,6 +112,16 @@ impl NodeEdge {
         if let Err(error) = runtime.shutdown_async().await {
             tracing::warn!(%error, "the node's network runtime did not shut down cleanly");
         }
+    }
+}
+
+fn warn_undrained(drained: edge::Drained, message: &'static str) {
+    if !drained.is_complete() {
+        tracing::warn!(
+            remaining = drained.remaining,
+            timeout_secs = NETWORK_DRAIN_TIMEOUT.as_secs(),
+            "{message}"
+        );
     }
 }
 
@@ -112,6 +143,9 @@ mod tests {
 
         assert!(network.owned.is_empty());
         assert_ne!(network.edge(), &given);
+        given.block_on(network.drain_requests()).unwrap();
+        assert!(network.requests().is_closed());
+        assert!(!network.edge().is_closed());
         given.block_on(network.drain()).unwrap();
         assert!(network.edge().is_closed());
         assert!(!given.is_closed());

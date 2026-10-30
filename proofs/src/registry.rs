@@ -1024,14 +1024,16 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A node's shutdown aborts every task it holds and waits for each to
-        // let go of storage before the pool stops and regolith closes; the
-        // drain gives up at its deadline; a refused telemetry flush moves to
-        // a thread of its own instead of the caller.
+        // let go of storage before the pool stops and regolith closes;
+        // requests stop and drain before P2P, so no admitted write loses its
+        // head marker; P2P shuts down while the node's scope still admits the
+        // coordinator's drain; each drain gives up at its deadline; a refused
+        // telemetry flush moves to a thread of its own instead of the caller.
         family: "Node shutdown order",
-        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / INV_CloseWaitsForNoTransaction / INV_ReturnsAfterShutdown / INV_StoreClosedPastClose / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, no admitted write loses its head marker, the close waits for no transaction left open, callers return only after the one shared shutdown, a rerun completes an interrupted close, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
-        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown, Teardown::run; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/lib.rs EmbeddedNode::as_request, begin_transaction, commit_transaction, end_transactions; crates/storage/src/backends/regolith/store.rs RegolithStore::close; crates/defra-node/src/p2p_tests.rs shutdown_drains_coordinator_tasks_before_the_network_scope_closes, shutdown_refuses_or_marks_every_write_admitted_around_it; crates/p2p/src/sync/coordinator/mod.rs SyncShutdownHandle::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_P2PAfterDrain,Red_P2PAfterDrainStorage,Red_RequestsDuringP2P,Red_CommitNotAdmitted,Red_OpenTransaction,Red_WaiterReturnsEarly,Red_LeadNotHandedBack,Red_CloseNotCompleted}.cfg",
         tiers: &[Boundary],
     },
     Property {

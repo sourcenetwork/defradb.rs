@@ -51,6 +51,7 @@ bench = false
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
+regolith.workspace = true
 crdt = { path = "../crdt" }
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
