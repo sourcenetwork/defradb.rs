@@ -148,3 +148,51 @@ pub mod vec_of_bytes {
         deserializer.deserialize_seq(VecBytesVisitor)
     }
 }
+
+/// `bytes::Bytes` written as `bytes_as_cbor` writes it, but read from CBOR
+/// null as well, which is how Go writes a nil `[]byte`. CBOR only: a
+/// positional format such as postcard would read null as an option tag.
+pub mod lenient_bytes_as_cbor {
+    use bytes::Bytes;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serde_bytes::serialize(value.as_ref(), serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Option<serde_bytes::ByteBuf> = Option::deserialize(deserializer)?;
+        Ok(buf.map_or_else(Bytes::new, |buf| Bytes::from(buf.into_vec())))
+    }
+}
+
+/// `bytes::Bytes` as Go writes a `[]byte` it may leave nil: empty is CBOR
+/// null, and CBOR null reads back as empty. CBOR only, as above.
+pub mod nullable_bytes_as_cbor {
+    use bytes::Bytes;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if value.is_empty() {
+            serializer.serialize_none()
+        } else {
+            serde_bytes::serialize(value.as_ref(), serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        super::lenient_bytes_as_cbor::deserialize(deserializer)
+    }
+}

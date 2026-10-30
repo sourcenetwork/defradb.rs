@@ -55,9 +55,8 @@ pub struct PushLogRequest {
     #[serde(rename = "DocID")]
     pub doc_id: String,
 
-    /// Content ID (CID) of the block.
-    /// Uses bytes_as_cbor for CBOR byte string compatibility with Go.
-    #[serde(rename = "CID", with = "super::cbor::bytes_as_cbor")]
+    /// Content ID (CID) of the block. Go's batched push leaves it nil (CBOR null).
+    #[serde(rename = "CID", with = "super::cbor::lenient_bytes_as_cbor")]
     pub cid: Bytes,
 
     /// Collection ID the document belongs to.
@@ -68,10 +67,24 @@ pub struct PushLogRequest {
     #[serde(rename = "Creator")]
     pub creator: String,
 
-    /// The IPLD block data.
-    /// Uses bytes_as_cbor for CBOR byte string compatibility with Go.
-    #[serde(rename = "Block", with = "super::cbor::bytes_as_cbor")]
+    /// The IPLD block data. Go's batched push leaves it nil (CBOR null).
+    #[serde(rename = "Block", with = "super::cbor::lenient_bytes_as_cbor")]
     pub block: Bytes,
+
+    /// Go Shinzo: the CAR of the DAG rooted at `CID`, written only when set.
+    /// A peer predating Shinzo's car channel sends it inline.
+    #[serde(
+        rename = "car",
+        default,
+        skip_serializing_if = "Bytes::is_empty",
+        with = "super::cbor::bytes_as_cbor"
+    )]
+    pub car: Bytes,
+
+    /// Go Shinzo: a batch of documents; the single-document fields are unused
+    /// when it is set. Written only when set.
+    #[serde(rename = "documents", default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<DocumentInfo>,
 
     /// Optional authorizer-signed explicit replay capability for encrypted replay.
     #[serde(
@@ -131,6 +144,8 @@ impl PushLogRequest {
             collection_id,
             creator,
             block,
+            car: Bytes::new(),
+            documents: Vec::new(),
             explicit_replay_capability: None,
             supports_same_stream_reply: false,
             supports_retry_after: false,
@@ -183,6 +198,31 @@ impl Message for PushLogRequest {
     fn err_message(&self) -> Option<&str> {
         self.err_message.as_deref()
     }
+}
+
+/// The most documents a received Go Shinzo batch may carry: Go's
+/// `maxInboundDocuments`, sixteen times its own 64-document batch.
+pub const MAX_INBOUND_DOCUMENTS: usize = 16 * 64;
+
+/// One document of a Go Shinzo batched push (`protocol.DocumentInfo`).
+///
+/// Go may leave `CID` and `Block` nil, written as CBOR null; `car` is written
+/// only when set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DocumentInfo {
+    #[serde(rename = "DocID")]
+    pub doc_id: String,
+    #[serde(rename = "CID", with = "super::cbor::nullable_bytes_as_cbor")]
+    pub cid: Bytes,
+    #[serde(rename = "Block", with = "super::cbor::nullable_bytes_as_cbor")]
+    pub block: Bytes,
+    #[serde(
+        rename = "car",
+        default,
+        skip_serializing_if = "Bytes::is_empty",
+        with = "super::cbor::bytes_as_cbor"
+    )]
+    pub car: Bytes,
 }
 
 /// PushLog reply message sent in response to a PushLogRequest.
@@ -726,6 +766,16 @@ impl PushLogBroadcast {
         payload: &[u8],
     ) -> Result<(Self, PushLogGossipPayloadEncoding), String> {
         defra_core::cbor::from_slice::<PushLogRequest>(payload)
+            .and_then(|request| {
+                // A Go Shinzo batch is read only by `decode_gossip_documents`.
+                if request.documents.is_empty() {
+                    Ok(request)
+                } else {
+                    Err(defra_core::cbor::Error::Deserialize(
+                        "a batched push is read as documents".to_string(),
+                    ))
+                }
+            })
             .map(|request| {
                 (
                     Self::from_request(&request),
@@ -742,6 +792,40 @@ impl PushLogBroadcast {
                 })
             })
             .map_err(|error| error.to_string())
+    }
+
+    /// Decode a Go Shinzo gossip payload: a batch (`documents`) becomes one
+    /// broadcast per document, and a single update keeps its inline `car`.
+    /// Each broadcast comes with its CAR, empty when none was sent. `None`
+    /// when the payload is neither a batch nor carries a CAR, and is read by
+    /// [`Self::decode_gossip_payload`] instead; an error when it is a batch
+    /// over [`MAX_INBOUND_DOCUMENTS`].
+    pub fn decode_gossip_documents(payload: &[u8]) -> Option<Result<Vec<(Self, Bytes)>, String>> {
+        let request = defra_core::cbor::from_slice::<PushLogRequest>(payload).ok()?;
+        if request.documents.is_empty() {
+            return (!request.car.is_empty())
+                .then(|| Ok(vec![(Self::from_request(&request), request.car.clone())]));
+        }
+        if request.documents.len() > MAX_INBOUND_DOCUMENTS {
+            return Some(Err(format!(
+                "batched push carries {} documents, over the {MAX_INBOUND_DOCUMENTS} cap",
+                request.documents.len()
+            )));
+        }
+        Some(Ok(request
+            .documents
+            .into_iter()
+            .map(|document| {
+                let broadcast = Self::new(
+                    document.doc_id,
+                    document.cid,
+                    request.collection_id.clone(),
+                    request.creator.clone(),
+                    document.block,
+                );
+                (broadcast, document.car)
+            })
+            .collect()))
     }
 
     /// Encode a gossip payload using the canonical, self-describing wire format.
