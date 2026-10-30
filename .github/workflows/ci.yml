@@ -32,8 +32,11 @@ env:
   # to start when it cannot reach the bucket, so each job sets RUSTC_WRAPPER only
   # after the server is up, and compiles locally otherwise (#1429). The server
   # never idles out, since a restart while the bucket is unreachable fails the build.
+  # CI owns the ci/ prefix: the runner role may only read and write there, and
+  # other bucket users can read it but not write it.
   SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
   SCCACHE_REGION: us-east-2
+  SCCACHE_S3_KEY_PREFIX: ci/
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
   SCCACHE_IDLE_TIMEOUT: '0'
 
