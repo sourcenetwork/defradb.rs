@@ -25,8 +25,8 @@ pub(crate) fn txn_id_from_headers(headers: &HeaderMap) -> Result<Option<&str>, H
     Ok(Some(txn_id))
 }
 
-/// Resolve REST operations serving the request `identity` acts in, in the
-/// transaction it selects.
+/// Resolve REST operations serving the request `identity` acts in, signing
+/// with its signing config, in the transaction it selects.
 pub(crate) fn rest_for_request(
     state: &crate::router::AppState,
     identity: &crate::identity_extractor::ExtractIdentity,
@@ -37,7 +37,10 @@ pub(crate) fn rest_for_request(
             .rest
             .as_ref()
             .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?,
-        &identity.context(),
+        &crate::query_context::with_signing(
+            identity.context(),
+            crate::query_context::resolve_signing_config(state, identity),
+        ),
     );
     match txn_id_from_headers(headers)? {
         Some(id) => rest

@@ -84,9 +84,10 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
         self.background_tasks.clone()
     }
 
-    /// [`Self::execute_as`] in [`RequestContext::ambient`].
+    /// [`Self::execute_as`] in [`RequestContext::ambient`], signing with the
+    /// node's identity when one is configured.
     pub async fn execute(&self, query_str: &str) -> query::QueryResponse {
-        self.execute_as(&RequestContext::ambient(), query_str).await
+        self.execute_as(&self.signing_context(), query_str).await
     }
 
     /// Execute a GraphQL query or mutation for the request `context` serves.
@@ -98,6 +99,21 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
         self.query_runner
             .execute(query::QueryRequest::new(query_str).with_context(context.clone()))
             .await
+    }
+
+    /// [`RequestContext::ambient`] signing with the node's identity, and
+    /// collecting into its batch session, when one is configured.
+    fn signing_context(&self) -> RequestContext {
+        let context = RequestContext::ambient();
+        match defra_core::signing::resolve_signing_config(None, self.node_identity_did.as_deref()) {
+            Some(signing) => {
+                let batch_session = Some(signing.public_key_hex.clone());
+                context
+                    .with_signing(Some(signing))
+                    .with_batch_session(batch_session)
+            }
+            None => context,
+        }
     }
 
     /// The context the node's own operations run in: the node's identity acts
