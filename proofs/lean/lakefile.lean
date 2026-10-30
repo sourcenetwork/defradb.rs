@@ -125,3 +125,6 @@ lean_lib TxnId where
 
 @[default_target]
 lean_lib LensListing where
+
+@[default_target]
+lean_lib ShinzoWire where
