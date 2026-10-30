@@ -17,11 +17,19 @@ env:
   CARGO_PROFILE_DEV_DEBUG: '0'
   CARGO_PROFILE_TEST_DEBUG: '0'
   CARGO_PROFILE_SUPER_DEV_DEBUG: '0'
+  # A called workflow does not inherit its caller's env, so the sccache settings
+  # are repeated from ci.yml. Only the RunsOn (Linux) jobs can reach the bucket.
+  SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
+  SCCACHE_REGION: us-east-2
+  SCCACHE_S3_KEY_PREFIX: ci/
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  SCCACHE_IDLE_TIMEOUT: '0'
 
 jobs:
   unit-tests:
     name: ${{ inputs.os }}, ${{ matrix.group }}
-    runs-on: ${{ inputs.os }}
+    # `linux` runs on RunsOn, like the rest of CI; any other value is a hosted label.
+    runs-on: ${{ inputs.os == 'linux' && format('runs-on={0}-{1}-{2}/spot={3}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache', github.run_id, github.run_attempt, strategy.job-index, github.event_name == 'merge_group' && 'false' || 'pco') || inputs.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -42,11 +50,17 @@ jobs:
               -p defra-http -p embedded -p cli -p ffi -p defra-node
               -p lens-host -p defra-wasm -p benches -p ffi-test
     steps:
+      - if: inputs.os == 'linux'
+        uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: .github/scripts/install-linux-ci-deps.sh
+      - if: inputs.os == 'linux'
+        uses: mozilla-actions/sccache-action@v0.0.11
+      - if: inputs.os == 'linux'
+        run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install protobuf
