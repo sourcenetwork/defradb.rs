@@ -49,6 +49,8 @@ mod prepare_fetcher;
 mod prepare_parse_tests;
 mod query;
 mod se_transport;
+#[cfg(test)]
+mod similarity_validation_tests;
 mod turn;
 mod version;
 

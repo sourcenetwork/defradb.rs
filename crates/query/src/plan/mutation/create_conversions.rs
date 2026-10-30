@@ -237,13 +237,18 @@ fn json_array_to_normal_value_with_kind(
 ) -> Result<document::NormalValue> {
     use document::NormalValue;
 
+    if !array_kind.has_nillable_elements() && arr.iter().any(JsonValue::is_null) {
+        return Err(QueryError::execution(
+            "null value provided for non-nillable field",
+        ));
+    }
+
     match array_kind {
         ScalarArrayKind::BoolArray => {
             let mut bools = Vec::with_capacity(arr.len());
             for (i, v) in arr.iter().enumerate() {
                 match v {
                     JsonValue::Bool(b) => bools.push(*b),
-                    JsonValue::Null => bools.push(false),
                     _ => {
                         return Err(QueryError::execution(format!(
                             "Array element at index {} is not a boolean (found {:?})",
@@ -275,7 +280,6 @@ fn json_array_to_normal_value_with_kind(
             for (i, v) in arr.iter().enumerate() {
                 match v {
                     JsonValue::Number(n) if n.as_i64().is_some() => ints.push(n.as_i64().unwrap()),
-                    JsonValue::Null => ints.push(0),
                     _ => {
                         return Err(QueryError::execution(format!(
                             "Array element at index {} is not an integer (found {:?})",
@@ -309,7 +313,6 @@ fn json_array_to_normal_value_with_kind(
             for (i, v) in arr.iter().enumerate() {
                 match v {
                     JsonValue::Number(n) => floats.push(n.as_f64().unwrap_or(0.0)),
-                    JsonValue::Null => floats.push(0.0),
                     _ => {
                         return Err(QueryError::execution(format!(
                             "Array element at index {} is not a number (found {:?})",
@@ -341,7 +344,6 @@ fn json_array_to_normal_value_with_kind(
             for (i, v) in arr.iter().enumerate() {
                 match v {
                     JsonValue::Number(n) => floats.push(n.as_f64().unwrap_or(0.0) as f32),
-                    JsonValue::Null => floats.push(0.0),
                     _ => {
                         return Err(QueryError::execution(format!(
                             "Array element at index {} is not a number (found {:?})",
@@ -373,7 +375,6 @@ fn json_array_to_normal_value_with_kind(
             for (i, v) in arr.iter().enumerate() {
                 match v {
                     JsonValue::String(s) => strings.push(s.clone()),
-                    JsonValue::Null => strings.push(String::new()),
                     _ => {
                         return Err(QueryError::execution(format!(
                             "Array element at index {} is not a string (found {:?})",
