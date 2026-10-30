@@ -48,12 +48,6 @@ impl Collection {
                         field_def.name
                     )));
                 }
-                // A relation ID field holds a DocID; Go parses it on write.
-                Some(NormalValue::String(id)) if matches!(field_def.kind, FieldKind::Scalar(scalar) if scalar.base_kind() == ScalarKind::DocID) =>
-                {
-                    DocID::from_string(id)
-                        .map_err(|error| Error::InvalidDocument(error.to_string()))?;
-                }
                 Some(value) if !is_value_compatible_with_kind(value, &field_def.kind) => {
                     return Err(Error::InvalidDocument(format!(
                         "Field '{}' has incompatible type: expected {:?}, got {:?}",
@@ -83,6 +77,24 @@ impl Collection {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Parse every relation ID this write sets, as Go does on write. A value
+    /// equal to the stored one is not re-parsed, so a document holding a relation
+    /// ID an earlier version accepted can still have its other fields updated.
+    pub fn validate_relation_ids(&self, doc: &Document, stored: Option<&Document>) -> Result<()> {
+        for field_def in &self.def.fields {
+            let is_relation_id = field_def.name != "_docID"
+                && matches!(field_def.kind, FieldKind::Scalar(scalar) if scalar.base_kind() == ScalarKind::DocID);
+            let Some(value @ NormalValue::String(id)) = doc.get(&field_def.name) else {
+                continue;
+            };
+            if !is_relation_id || stored.and_then(|old| old.get(&field_def.name)) == Some(value) {
+                continue;
+            }
+            DocID::from_string(id).map_err(|error| Error::InvalidDocument(error.to_string()))?;
         }
         Ok(())
     }

@@ -310,7 +310,7 @@ fn relation_id_of_wrong_length_is_rejected_like_go() {
     )
     .unwrap();
     let error = collection
-        .validate_document(&invalid)
+        .validate_relation_ids(&invalid, None)
         .unwrap_err()
         .to_string();
     assert!(
@@ -325,5 +325,14 @@ fn relation_id_of_wrong_length_is_rejected_like_go() {
         collection.schema_arc(),
     )
     .unwrap();
-    collection.validate_document(&valid).unwrap();
+    collection.validate_relation_ids(&valid, None).unwrap();
+
+    // Setting a malformed ID over a valid one is refused; keeping a malformed
+    // ID an earlier version stored is not, so other fields stay updatable.
+    assert!(collection
+        .validate_relation_ids(&invalid, Some(&valid))
+        .is_err());
+    collection
+        .validate_relation_ids(&invalid, Some(&invalid))
+        .unwrap();
 }
