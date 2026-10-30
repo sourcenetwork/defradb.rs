@@ -262,6 +262,8 @@ RUNS=(
   "MC_MixedFieldMaterialization_Green.cfg MixedFieldMaterialization.tla GREEN" # componentwise field materialization preserves mixed product state
   "MC_IndexReconciliation_Red_SaveOnly.cfg IndexReconciliation.tla RED" # stale index key survives CRDT winner rematerialization
   "MC_IndexReconciliation_Green.cfg IndexReconciliation.tla GREEN" # index keys equal the winning CRDT materialized value
+  "MC_MergedFieldIndex_Green.cfg MergedFieldIndex.tla GREEN" # #2235: a merge moves the index of a merged field from its pre-merge value
+  "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
