@@ -631,14 +631,16 @@ impl IndexManager {
         let mut mutable_datastore = datastore.clone();
         let mut conflicts = Vec::new();
         for index in self.indexes.values() {
+            // Owed without comparing: a merge that wrote the field before this
+            // runs can read the same value as old and new.
+            if self.is_deferred(index.description(), schema) {
+                self.owe(datastore, index.description(), doc_short_id)
+                    .await?;
+                continue;
+            }
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
             if old_value_sets != new_value_sets {
-                if self.is_deferred(index.description(), schema) {
-                    self.owe(datastore, index.description(), doc_short_id)
-                        .await?;
-                    continue;
-                }
                 for old_values in &old_value_sets {
                     index
                         .delete(&mut mutable_datastore, doc_short_id, old_values)
