@@ -24,11 +24,15 @@
 \* value does not match, or misses one that does; the index holds an entry
 \* the position record does not name; work is left in the log forever.
 \*
-\* Code it models (crates/db/src/index/deferred):
-\*   owe.rs     append to the pending log on every write of an indexed field
-\*   drain.rs   plan (snapshot), apply (position record, live value), truncate
-\*   overlay.rs the read through the index: stored entries minus owed docs,
-\*              merged with the owed docs' live keys
+\* Code it models:
+\*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
+\*                                            IndexManager::place (a create)
+\*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (position
+\*                                            record, live value), truncate
+\*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
+\*                                            own appends included)
+\*   crates/storage/src/index/overlay.rs      the stored keys of owed docs hidden,
+\*                                            their live keys merged in order
 EXTENDS Naturals, Integers, Sequences, FiniteSets
 
 CONSTANTS

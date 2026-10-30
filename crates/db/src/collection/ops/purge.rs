@@ -101,6 +101,7 @@ where
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )?
         .with_vector_caches(self.vector_codes());
         let mut seen = RapidHashSet::new();

@@ -128,9 +128,12 @@ where
     S: Store + 'static,
 {
     let collection = db.require_collection(collection).unwrap();
-    let manager =
-        IndexManager::from_collection(collection.schema().resolved_root_id(), collection.schema())
-            .unwrap();
+    let manager = IndexManager::from_collection(
+        collection.schema().resolved_root_id(),
+        collection.schema(),
+        &crdt::Crdts::default(),
+    )
+    .unwrap();
     let txn = db.new_txn(true).await.unwrap();
     let datastore = txn.datastore().unwrap();
     let mut entries = manager
@@ -757,6 +760,7 @@ fn backfill_batch_aborts_when_a_document_it_read_changes() {
         let manager = IndexManager::from_collection(
             collection.schema().resolved_root_id(),
             collection.schema(),
+            &crdt::Crdts::default(),
         )
         .unwrap();
         let txn = db.new_txn(false).await.unwrap();
@@ -834,8 +838,12 @@ fn index_backfill_resumes_after_a_restart() {
             let index = {
                 let datastore = txn.datastore().unwrap();
                 let systemstore = txn.systemstore().unwrap();
-                let mut manager =
-                    IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
+                let mut manager = IndexManager::from_collection(
+                    schema.resolved_root_id(),
+                    &schema,
+                    &crdt::Crdts::default(),
+                )
+                .unwrap();
                 let index = manager
                     .create_index_of_kind(
                         &datastore,
@@ -843,7 +851,6 @@ fn index_backfill_resumes_after_a_restart() {
                         "by_name".to_string(),
                         fields,
                         kind,
-                        &schema.fields,
                     )
                     .await
                     .unwrap();
@@ -887,7 +894,12 @@ fn index_backfill_resumes_after_a_restart() {
         .bytes();
 
         let indexed = Collection::new(schema.clone(), crdt::Crdts::default());
-        let manager = IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
+        let manager = IndexManager::from_collection(
+            schema.resolved_root_id(),
+            &schema,
+            &crdt::Crdts::default(),
+        )
+        .unwrap();
         let txn = db.new_txn(false).await.unwrap();
         {
             let datastore = txn.datastore().unwrap();

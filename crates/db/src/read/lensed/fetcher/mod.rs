@@ -379,14 +379,15 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
 
         let short_id = collection.resolved_root_id();
-        let index_manager =
-            IndexManager::from_indexes(short_id, collection.schema(), collection.write_indexes())
-                .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to create index manager: {}",
-                    e
-                ))
-            })?;
+        let index_manager = IndexManager::from_indexes(
+            short_id,
+            collection.schema(),
+            collection.write_indexes(),
+            collection.crdts(),
+        )
+        .map_err(|e| {
+            query::error::QueryError::execution(format!("failed to create index manager: {}", e))
+        })?;
 
         let idx_name = crate::index::fulltext_index_name(field_name);
         let ft_index = index_manager

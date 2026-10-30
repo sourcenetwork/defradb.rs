@@ -6,10 +6,12 @@
 //! - [`stored`]: the local document value, whose parts each hold one field's
 //!   CRDT state and merge through its type.
 
+pub mod deferred_index;
 pub mod field;
 pub mod fugue;
 pub mod stored;
 
+pub use deferred_index::deferred_index;
 pub use field::{
     history_op, CausalBlock, CausalCrdt, CrdtRef, Crdts, DeltaParts, FieldCrdt, FieldCrdtError,
     FieldWrite, JsonField, MergeResult, PartCrdts, Registration, RegistryError, TaggedBlock,

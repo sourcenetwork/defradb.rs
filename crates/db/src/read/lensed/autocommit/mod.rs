@@ -252,6 +252,7 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
             short_id,
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )
         .map_err(|e| {
             query::error::QueryError::execution(format!("failed to create index manager: {}", e))

@@ -38,6 +38,7 @@ async fn verification_rejects_an_obsolete_index_entry() {
     let indexes = db::index::IndexManager::from_collection(
         collection.resolved_root_id(),
         collection.schema(),
+        collection.crdts(),
     )
     .unwrap();
     let txn = fixture.db.new_txn(false).await.unwrap();
