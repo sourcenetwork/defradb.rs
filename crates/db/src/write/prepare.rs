@@ -87,6 +87,9 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
         return Ok(());
     }
     let Some(kms) = db.kms() else { return Ok(()) };
+    let collection = doc.collection().clone();
+    let config = crate::chunk::encryption::with_lists(config, &collection);
+    let config = config.as_deref();
     let mut prepared = WritePreparation::new(identity.collection_short_id, identity.doc_short_id);
     prepared.set_requires_kms_keys(true);
     let fields: Vec<_> = doc

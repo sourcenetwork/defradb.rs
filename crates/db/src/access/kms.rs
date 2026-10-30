@@ -48,6 +48,7 @@ impl<S: storage::corekv::Store + Send + Sync + 'static> DocCollectionLookup
                 policy_id: info.policy_id,
                 resource_name: info.resource_name,
                 is_branchable: info.is_branchable,
+                chunk_collection_ids: info.chunk_collection_ids,
             })),
             Ok(None) => Ok(None),
             Err(e) => Err(kms::Error::Storage(e.to_string())),

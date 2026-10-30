@@ -162,6 +162,29 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         Ok(())
     }
 
+    async fn capture_derived(
+        &self,
+        context: &RequestContext,
+        derived: &[query::mutator::DerivedWrite],
+    ) -> query::error::Result<()> {
+        for write in derived {
+            let doc_id = write.doc_id.to_string();
+            self.capture_broadcast(BroadcastCapture {
+                collection_name: &write.collection_name,
+                creator_did: context.creator().map(str::to_owned),
+                doc_id: &doc_id,
+                commit_cid: Some(write.commit_cid),
+                commit_block: Some(&write.commit_block),
+                document_json: write.document.as_ref().and_then(document_json_value),
+                se_artifacts: Vec::new(),
+                broadcast_cid: None,
+                broadcast_block: None,
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn register_pending_static(
         sync: &SyncCoordinator<B, T>,
         pending: &PendingBroadcast,
@@ -459,6 +482,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             broadcast_block: result.broadcast_block.as_ref(),
         })
         .await?;
+        self.capture_derived(context, &result.derived).await?;
         Ok(result)
     }
 
@@ -509,6 +533,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 broadcast_block: result.broadcast_block.as_ref(),
             })
             .await?;
+            self.capture_derived(context, &result.derived).await?;
         } else {
             warn!(
                 collection = %collection_name,
@@ -559,6 +584,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             broadcast_block: result.broadcast_block.as_ref(),
         })
         .await?;
+        self.capture_derived(context, &result.derived).await?;
         Ok(result)
     }
 

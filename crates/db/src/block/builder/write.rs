@@ -321,7 +321,7 @@ pub async fn write_document_blocks(
 /// the document's heads passes them in `heads`, so they are not read a second
 /// time; without them an update reads them here.
 #[allow(clippy::too_many_arguments)]
-async fn write_document_blocks_with_inputs(
+pub(crate) async fn write_document_blocks_with_inputs(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     doc: &Document,
@@ -371,6 +371,8 @@ pub(crate) async fn build_document_blocks(
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
     heads: Option<DocHeadsSnapshot>,
 ) -> Result<ComputedBlocks, BuildError> {
+    let encryption_config = crate::chunk::encryption::with_lists(encryption_config, schema);
+    let encryption_config = encryption_config.as_deref();
     let mut blockstore_entries: Vec<(Vec<u8>, Bytes)> = Vec::new();
     let mut headstore_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let collection_version_id = schema.version_id.as_str();

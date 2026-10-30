@@ -24,6 +24,8 @@
 \*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule)
 \*   crates/chunk-split/src/list.rs          describes, chunk_list (entry 0)
 \*   crates/crdt/src/lww.rs                  the per-field tie break
+\*   crates/db/src/chunk/sync/mod.rs         set_lists (text and list in one write)
+\*   crates/db/src/chunk/guard.rs            check_chunk_merge
 \* The deleted-parent and hash guards, and races with a reader, are ChunkRead.tla's.
 \* Numbers and finite sets are all this model needs.
 EXTENDS Naturals, FiniteSets

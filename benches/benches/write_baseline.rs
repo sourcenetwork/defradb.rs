@@ -4,7 +4,8 @@
 //! `cargo bench -p benches --bench write_baseline --profile release-fast`
 //! runs 1, 4, 16 and 64 writers, 256 requests each, three times. Override with
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
-//! DEFRA_BASELINE_REPETITIONS. Raw samples and provenance go to stdout as JSON
+//! DEFRA_BASELINE_REPETITIONS. DEFRA_BASELINE_CHUNK_MAX_CHARS makes `left` a
+//! `@chunk` field and emits the families with a `_chunked` suffix. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};
@@ -105,6 +106,7 @@ fn main() {
                 "durability": "Immediate", "store": "disk", "writers": writers,
                 "operations_per_writer": operations, "repetitions": repetitions,
             "shared_documents": workload::SHARED_DOCUMENTS,
+                "chunk_max_chars": workload::chunk_max_chars(),
                 "load_guard": guard,
             }
         })
@@ -166,6 +168,11 @@ fn main() {
         for group in groups {
             family = family.group(group);
         }
-        family.emit(&format!("write_baseline_{}", scenario.name()));
+        let suffix = if workload::chunk_max_chars().is_some() {
+            "_chunked"
+        } else {
+            ""
+        };
+        family.emit(&format!("write_baseline_{}{suffix}", scenario.name()));
     }
 }

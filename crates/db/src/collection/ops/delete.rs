@@ -14,18 +14,47 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
     ///
-    /// Returns the collection's short ID.
+    /// Its `@chunk` collections go with it. Returns each deleted collection's
+    /// name and short ID.
     #[instrument(skip(self, txn), fields(collection = %name), name = "db.delete_collection")]
     pub(crate) async fn delete_collection_with_txn(
         &self,
         txn: &mut DbTxn<S>,
         name: &str,
-    ) -> Result<u32> {
+    ) -> Result<Vec<(String, u32)>> {
+        let chunk_collections: Vec<String> = match txn.get_collection(name).await? {
+            Some(collection) => collection
+                .schema()
+                .chunked_fields
+                .iter()
+                .map(|chunked| chunked.collection(name))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut deleted = vec![(
+            name.to_string(),
+            self.delete_one_collection(txn, name).await?,
+        )];
+        for chunks in chunk_collections {
+            if txn.get_collection(&chunks).await?.is_some() {
+                let short_id = self.delete_one_collection(txn, &chunks).await?;
+                deleted.push((chunks, short_id));
+            }
+        }
+        Ok(deleted)
+    }
+
+    async fn delete_one_collection(&self, txn: &mut DbTxn<S>, name: &str) -> Result<u32> {
         // Get the collection to find its version_id and collection_id
         let collection = txn
             .get_collection(name)
             .await?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
+        if let Some(source) = &collection.schema().chunk_of {
+            if txn.get_collection(&source.collection).await?.is_some() {
+                return Err(Error::DeleteGeneratedCollection(name.to_string()));
+            }
+        }
 
         let version_id = collection.version_id().to_string();
         let collection_id = collection.collection_id().to_string();
@@ -89,17 +118,20 @@ impl<S: Store> crate::database::DB<S> {
         let mut txn = self.new_txn(false).await?;
 
         match self.delete_collection_with_txn(&mut txn, name).await {
-            Ok(short_id) => {
+            Ok(deleted) => {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let codes = std::sync::Arc::clone(&self.vector_codes);
-                let name = name.to_owned();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
-                        cache.remove(&name);
+                        for (name, _) in &deleted {
+                            cache.remove(name);
+                        }
                         cache
                     });
-                    codes.evict_collection(short_id);
+                    for (_, short_id) in &deleted {
+                        codes.evict_collection(*short_id);
+                    }
                 })))?;
                 txn.commit().await?;
 
@@ -153,10 +185,35 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let mut seen_names = rapidhash::RapidHashSet::new();
-        let unique_names: Vec<String> = names
+        let mut unique_names: Vec<String> = names
             .into_iter()
             .filter(|n| seen_names.insert(n.clone()))
             .collect();
+        // A parent's `@chunk` collections go with it.
+        for name in unique_names.clone() {
+            let Some(col) = self.get_collection(&name)? else {
+                continue;
+            };
+            for chunked in &col.schema().chunked_fields {
+                let chunks = chunked.collection(&name);
+                if self.get_collection(&chunks)?.is_some() && seen_names.insert(chunks.clone()) {
+                    unique_names.push(chunks);
+                }
+            }
+        }
+
+        for name in &unique_names {
+            let col = self
+                .get_collection(name)?
+                .ok_or_else(|| Error::CollectionNotFound(name.clone()))?;
+            if let Some(source) = &col.schema().chunk_of {
+                if !unique_names.contains(&source.collection)
+                    && self.get_collection(&source.collection)?.is_some()
+                {
+                    return Err(Error::DeleteGeneratedCollection(name.clone()));
+                }
+            }
+        }
 
         let mut version_ids: Vec<String> = Vec::new();
         let mut seen_versions = rapidhash::RapidHashSet::new();
@@ -217,6 +274,18 @@ impl<S: Store> crate::database::DB<S> {
         let collection = self
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
+        if collection.schema().is_generated() {
+            return Err(Error::TruncateGeneratedCollection(name.to_string()));
+        }
+        // Empty its `@chunk` collections too, or their chunks would outlive the parents.
+        let mut generated = Vec::new();
+        for chunked in &collection.schema().chunked_fields {
+            let chunks_name = chunked.collection(name);
+            generated.push(
+                self.get_collection(&chunks_name)?
+                    .ok_or(Error::CollectionNotFound(chunks_name))?,
+            );
+        }
 
         let collection_id = collection.collection_id().to_string();
         let short_id = collection.resolved_root_id();
@@ -226,12 +295,24 @@ impl<S: Store> crate::database::DB<S> {
             .await?;
 
         let result: Result<usize> = async {
-            let doc_ids = self.collect_doc_short_ids(&collection).await?;
+            // `@chunk` collections go first. If a parent is written meanwhile, the worst
+            // case is stray chunks no parent shows, never a live parent missing its chunks.
+            for chunks_col in &generated {
+                let chunk_ids = self.collect_doc_short_ids(chunks_col).await?;
+                for page in chunk_ids.chunks(TRUNCATE_CHUNK_SIZE) {
+                    self.truncate_chunk(chunks_col, page).await?;
+                }
+                self.truncate_collection_metadata(
+                    chunks_col.collection_id(),
+                    chunks_col.resolved_root_id(),
+                )
+                .await?;
+            }
 
+            let doc_ids = self.collect_doc_short_ids(&collection).await?;
             for chunk in doc_ids.chunks(TRUNCATE_CHUNK_SIZE) {
                 self.truncate_chunk(&collection, chunk).await?;
             }
-
             self.truncate_collection_metadata(&collection_id, short_id)
                 .await?;
 

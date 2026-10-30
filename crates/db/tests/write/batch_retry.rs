@@ -830,3 +830,61 @@ fn remote_acp_batch_replays_with_attempt_local_registration_projection() {
     })
     .unwrap()
 }
+
+const CHUNKED_SDL: &str = r#"
+    type Article {
+        body: String @chunk(maxChars: 64)
+    }
+"#;
+
+#[test]
+fn a_chunked_create_mints_no_key_inside_its_attempt() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let kms = Arc::new(super::kms::CountingKms::default());
+        db.set_kms(kms.clone());
+        db.create_collections_atomic(query::parse_sdl(CHUNKED_SDL).unwrap())
+            .await
+            .unwrap();
+        let runner = query::QueryRunner::with_provider(
+            LensedAutoCommitFetcher::new(db.clone()),
+            DbCollectionProvider::new_arc(db.clone()),
+        )
+        .with_mutator(Arc::new(db::write::autocommit::AutoCommitMutator::new(
+            db.clone(),
+        )));
+        let body = (0..4)
+            .map(|i| format!("Paragraph {i} is long enough to be a chunk of its own."))
+            .collect::<Vec<_>>()
+            .join("\\n\\n");
+        let request = QueryRequest::new(format!(
+            r#"mutation {{ add_Article(input: {{body: "{body}"}}, encrypt: true) {{ _docID }} }}"#
+        ));
+        let minted = || kms.0.load(Ordering::SeqCst);
+
+        // Resolve inputs outside the attempt, as the node does.
+        let mut prepared = runner.prepare_request(&request).await.unwrap();
+        let mut inside = 0;
+        let response = loop {
+            let before = minted();
+            let response = runner
+                .execute_prepared(request.clone(), prepared.clone())
+                .await;
+            inside += minted() - before;
+            match response.retry_input() {
+                Some(input) => {
+                    prepared = runner
+                        .resolve_retry_input(&request, prepared.clone(), input)
+                        .await
+                        .unwrap();
+                }
+                None => break response,
+            }
+        };
+
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        assert!(minted() > 2, "the chunks are encrypted too");
+        assert_eq!(inside, 0, "a retried attempt would mint these again");
+    })
+    .unwrap()
+}

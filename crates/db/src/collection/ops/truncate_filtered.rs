@@ -49,6 +49,17 @@ impl<S: Store> crate::database::DB<S> {
         if collection.schema().is_branchable {
             return Err(Error::FilteredTruncateBranchableCollection);
         }
+        if collection.schema().is_generated() {
+            return Err(Error::TruncateGeneratedCollection(name.to_string()));
+        }
+        let mut generated = Vec::new();
+        for chunked in &collection.schema().chunked_fields {
+            let chunks_name = chunked.collection(name);
+            generated.push(
+                self.get_collection(&chunks_name)?
+                    .ok_or(Error::CollectionNotFound(chunks_name))?,
+            );
+        }
 
         let collection_id = collection.collection_id().to_string();
         let short_id = collection.resolved_root_id();
@@ -70,7 +81,9 @@ impl<S: Store> crate::database::DB<S> {
                 if doc_ids.is_empty() {
                     break;
                 }
-                doc_count += self.truncate_filtered_chunk(&collection, &doc_ids).await?;
+                doc_count += self
+                    .truncate_filtered_chunk(&collection, &doc_ids, &generated)
+                    .await?;
             }
             Ok(doc_count)
         }
@@ -102,13 +115,92 @@ impl<S: Store> crate::database::DB<S> {
         Ok(())
     }
 
+    // Includes old chunks, which the parents' lists no longer name.
+    async fn chunk_doc_ids(
+        txn: &crate::txn::DbTxn<S>,
+        chunks_col: &Collection,
+        parents: &[String],
+    ) -> Result<Vec<String>> {
+        use storage::index::IndexIterator;
+
+        let index_manager = crate::IndexManager::from_indexes(
+            chunks_col.resolved_root_id(),
+            chunks_col.schema(),
+            chunks_col.write_indexes(),
+        )?;
+        let index = chunks_col
+            .schema()
+            .indexes
+            .iter()
+            .find(|index| {
+                index
+                    .fields
+                    .first()
+                    .is_some_and(|field| field.name == schema::CHUNK_SOURCE_ID_FIELD)
+            })
+            .and_then(|index| index_manager.get_index(&index.name))
+            .ok_or_else(|| Error::Other(format!("{} has no source index", chunks_col.name())))?;
+        let datastore = txn.datastore()?;
+        let systemstore = txn.systemstore()?;
+        let mut doc_ids = Vec::new();
+        for parent in parents {
+            let mut entries = index
+                .scan_prefix(
+                    &datastore,
+                    &[document::NormalValue::String(parent.clone())],
+                    false,
+                )
+                .await
+                .map_err(Error::Storage)?;
+            for entry in entries.collect_all().await.map_err(Error::Storage)? {
+                if let Some(doc_id) =
+                    crate::docid::map::get_doc_id(&systemstore, entry.doc_short_id).await?
+                {
+                    doc_ids.push(doc_id);
+                }
+            }
+        }
+        Ok(doc_ids)
+    }
+
+    // One transaction per page, so a parent and its `@chunk` chunks go together.
+    // A conflict with a concurrent write runs the page again.
     async fn truncate_filtered_chunk(
-        &self,
+        self: &Arc<Self>,
+        collection: &Collection,
+        doc_ids: &[String],
+        generated: &[Collection],
+    ) -> Result<usize>
+    where
+        S: 'static,
+    {
+        let attempt = TruncatePage {
+            db: Arc::clone(self),
+            collection: collection.clone(),
+            doc_ids: doc_ids.to_vec(),
+            generated: generated.to_vec(),
+        };
+        match self
+            .store()
+            .transact_retry(self.options().retry_options(), Box::new(attempt))
+            .await
+        {
+            Ok(count) => count
+                .downcast::<usize>()
+                .map(|count| *count)
+                .map_err(|_| Error::Other("invalid truncate page result".into())),
+            Err(error) => Err(match error.downcast_abort::<Error>() {
+                Ok(error) => error,
+                Err(error) => Error::Storage(error.into_storage()),
+            }),
+        }
+    }
+
+    async fn remove_documents(
+        txn: &crate::txn::DbTxn<S>,
         collection: &Collection,
         doc_ids: &[String],
     ) -> Result<usize> {
-        let txn = self.new_txn(false).await?;
-        txn.validate_collection_for_write(collection).await?;
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
@@ -242,26 +334,56 @@ impl<S: Store> crate::database::DB<S> {
         }
         .await;
 
-        drop(datastore);
-        drop(headstore);
-        drop(blockstore);
-        drop(systemstore);
+        result
+    }
+}
 
-        match result {
-            Ok(count) => {
-                txn.commit().await?;
-                Ok(count)
-            }
-            Err(error) => {
-                if let Err(discard_err) = txn.discard() {
-                    tracing::warn!(
-                        error = %discard_err,
-                        original_error = %error,
-                        "Transaction discard failed during filtered truncate"
-                    );
+struct TruncatePage<S>
+where
+    S: Store,
+{
+    db: Arc<crate::database::DB<S>>,
+    collection: Collection,
+    doc_ids: Vec<String>,
+    generated: Vec<Collection>,
+}
+
+impl<S> storage::corekv::RetryAttemptFn for TruncatePage<S>
+where
+    S: Store + 'static,
+{
+    fn run<'a>(
+        &'a mut self,
+        retry: &'a mut dyn storage::corekv::RetryTxn,
+    ) -> storage::corekv::RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            let abort = |error: Error| storage::corekv::RetryAttemptError::Abort(Box::new(error));
+            let io = retry.begin_attempt_io()?;
+            let txn = self
+                .db
+                .new_db_txn(datastore::BasicTxn::from_retry_attempt_io(
+                    io,
+                    0,
+                    self.db.crdts().clone(),
+                ));
+            let count = async {
+                txn.validate_collection_for_write(&self.collection).await?;
+                let count =
+                    crate::database::DB::remove_documents(&txn, &self.collection, &self.doc_ids)
+                        .await?;
+                for chunks_col in &self.generated {
+                    txn.validate_collection_for_write(chunks_col).await?;
+                    let chunk_ids =
+                        crate::database::DB::chunk_doc_ids(&txn, chunks_col, &self.doc_ids).await?;
+                    crate::database::DB::remove_documents(&txn, chunks_col, &chunk_ids).await?;
                 }
-                Err(error)
+                Ok::<_, Error>(count)
             }
-        }
+            .await
+            .map_err(abort)?;
+            let (io, callbacks) = txn.into_retry_attempt()?;
+            retry.finish_attempt_io(io, callbacks)?;
+            Ok(Box::new(count) as storage::corekv::RetryAttemptValue)
+        })
     }
 }

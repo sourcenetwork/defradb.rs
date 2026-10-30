@@ -12,13 +12,6 @@ RUNS=(
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Twice.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
-  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
-  "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list (INV_ReadsMatchText)
-  "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
-  "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
-  "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
-  "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
-  "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -108,6 +101,19 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: list and missing chunks in the parent's transaction, cascade delete
+  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_ListedChunksExist)
+  "MC_ParentChunks_Red_NoCascade.cfg ParentChunks.tla RED" # delete leaves chunks behind (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
+  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
+  "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list (INV_ReadsMatchText)
+  "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
+  "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
+  "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
+  "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"

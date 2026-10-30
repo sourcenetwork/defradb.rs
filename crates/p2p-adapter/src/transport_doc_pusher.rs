@@ -121,6 +121,11 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
 
     fn get_collection_id(&self, name: &str) -> Option<String>;
 
+    /// The `@chunk` collections generated for `name`'s text fields.
+    fn chunk_collections(&self, _name: &str) -> Vec<String> {
+        Vec::new()
+    }
+
     fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>>;
 
     fn list_collections(&self) -> P2PResult<Vec<String>>;
@@ -440,6 +445,18 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             })?;
 
         Ok(owner.map(|did| did.to_string()))
+    }
+
+    fn chunk_collections(&self, name: &str) -> Vec<String> {
+        match self.db.get_collection(name) {
+            Ok(Some(collection)) => collection
+                .schema()
+                .chunked_fields
+                .iter()
+                .map(|chunked| chunked.collection(name))
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     fn get_collection_id(&self, name: &str) -> Option<String> {

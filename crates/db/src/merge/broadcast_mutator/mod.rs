@@ -273,6 +273,87 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
 }
 
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, T> {
+    /// Publishes a write's derived writes, each like a normal write. Returns the
+    /// first error, which the write's broadcast status reports.
+    async fn publish_derived(
+        &self,
+        context: &RequestContext,
+        derived: &[query::mutator::DerivedWrite],
+    ) -> Option<String> {
+        if derived.is_empty() {
+            return None;
+        }
+        let creator_did = context.creator().map(str::to_owned);
+        let mut marker_error = None;
+        let mut blocks = Vec::with_capacity(derived.len());
+        for write in derived {
+            let block = BlockResult {
+                cid: write.commit_cid,
+                block: write.commit_block.clone(),
+                doc_id: write.doc_id.to_string(),
+                field_cids: vec![],
+                encryption_cids: vec![],
+            };
+            let document_map = match write.document.as_ref().map(|document| document.to_map()) {
+                Some(Ok(map)) => Some(map),
+                Some(Err(error)) => {
+                    tracing::warn!(doc_id = %block.doc_id, %error, "chunk document did not encode; pushed without it");
+                    None
+                }
+                None => None,
+            };
+            let marker = match document_map {
+                Some(map) => {
+                    let document_json = serde_json::Value::Object(map.into_iter().collect());
+                    self.sync
+                        .push_document_to_replicators_with_creator(
+                            &block.cid,
+                            &block.block,
+                            &block.doc_id,
+                            &write.collection_id,
+                            &document_json,
+                            creator_did.as_deref(),
+                        )
+                        .await
+                }
+                None => {
+                    self.sync
+                        .push_to_replicators_with_creator(
+                            &block.cid,
+                            &block.block,
+                            &block.doc_id,
+                            &write.collection_id,
+                            creator_did.as_deref(),
+                        )
+                        .await
+                }
+            };
+            capture_marker_error(&mut marker_error, marker);
+            blocks.push((
+                block,
+                write.collection_id.clone(),
+                write.collection_name.clone(),
+            ));
+        }
+        let sync = self.sync.clone();
+        self.sync
+            .spawn_non_authoritative_broadcast_task("broadcast_derived_writes", async move {
+                for (block, collection_id, collection_name) in blocks {
+                    log_broadcast_failure(
+                        &broadcast_with_retry_with_creator(
+                            &sync,
+                            &block,
+                            &collection_id,
+                            &collection_name,
+                            creator_did.as_deref(),
+                        )
+                        .await,
+                    );
+                }
+            });
+        marker_error
+    }
+
     async fn broadcast_update_result(
         &self,
         context: &RequestContext,
@@ -280,6 +361,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         se_fields: Vec<String>,
         result: UpdateResult,
     ) -> query::error::Result<UpdateResult> {
+        let derived_error = self.publish_derived(context, &result.derived).await;
         let collection = self
             .db
             .get_collection(collection_name)
@@ -422,7 +504,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         Ok(UpdateResult::with_broadcast(
             result.document,
             result.fields_modified,
-            marker_broadcast_status(marker_error),
+            marker_broadcast_status(marker_error.or(derived_error)),
         ))
     }
 }
@@ -606,6 +688,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Execute the create mutation
         let result = self.inner.create_as(context, collection_name, doc).await?;
+        let derived_error = self.publish_derived(context, &result.derived).await;
 
         // Build the block result for broadcast
         let (cid, block, doc_id_str) =
@@ -759,7 +842,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             result.document,
             return_cid,
             return_block,
-            marker_broadcast_status(marker_error),
+            marker_broadcast_status(marker_error.or(derived_error)),
         ))
     }
 
@@ -790,6 +873,15 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .create_many_as(context, collection_name, docs)
             .await?;
+        for result in &results {
+            if let Some(error) = self.publish_derived(context, &result.derived).await {
+                tracing::error!(
+                    doc_id = %result.doc_id,
+                    error = %error,
+                    "Failed to register chunk writes for replication"
+                );
+            }
+        }
 
         let creator_did = context.creator().map(str::to_owned);
 
@@ -1085,6 +1177,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .delete_as(context, collection_name, doc_id)
             .await?;
+        let derived_error = self.publish_derived(context, &result.derived).await;
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so
         // there's no tombstone block to read or broadcast. Returning here
@@ -1233,7 +1326,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         Ok(DeleteResult::with_broadcast(
             result.doc_id,
             result.existed,
-            marker_broadcast_status(marker_error),
+            marker_broadcast_status(marker_error.or(derived_error)),
         ))
     }
 
