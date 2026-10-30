@@ -467,6 +467,7 @@ impl Collection {
     ) -> Result<DocID> {
         // Validate document against schema
         self.validate_document(doc)?;
+        self.validate_relation_ids(doc, None)?;
 
         let doc_id = doc
             .id()
@@ -514,6 +515,7 @@ impl Collection {
             None => return Err(Error::DocumentNotFound(doc_id.to_string())),
         };
 
+        self.validate_relation_ids(doc, Some(&old_doc))?;
         self.validate_immutable_fields_unchanged(&old_doc, doc)?;
 
         self.release_series(datastore, &old_doc).await?;
