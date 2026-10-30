@@ -56,12 +56,24 @@ fn a_counter_increment_is_not_a_dependency() {
     );
 }
 
-/// An index over the counter reads its old value, so the counter is a
-/// dependency again.
+/// An index over the counter is deferred and reads nothing, so an increment
+/// still decides on nothing.
 #[test]
-fn an_indexed_counter_stays_a_dependency() {
+fn an_indexed_counter_stays_blind() {
     let collection =
         tally().with_index(IndexDescription::new("by_count").with_field("count", false));
+    assert_eq!(
+        planned(&crdt::Crdts::default(), &collection, &set(&["count"]), None),
+        Some(set(&[]))
+    );
+}
+
+/// A unique index over the counter keeps one winner, so it reads the old value.
+#[test]
+fn a_uniquely_indexed_counter_is_a_dependency() {
+    let mut index = IndexDescription::new("by_count").with_field("count", false);
+    index.unique = true;
+    let collection = tally().with_index(index);
     assert_eq!(
         planned(&crdt::Crdts::default(), &collection, &set(&["count"]), None),
         Some(set(&["count"]))
