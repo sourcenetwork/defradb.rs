@@ -47,9 +47,12 @@ jobs:
   # "improvements" on a pull request that changed only YAML. Interleaving puts
   # both sides at both ends of the job, and each side's recorded range spans its
   # passes, so a separation between the two ranges means the code moved.
+  #
+  # One pinned instance type, on demand: a spot reclaim mid-run loses the job,
+  # and a type that changes between runs makes runs incomparable.
   quick:
     name: Quick benchmark
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/spot=false/family=c7i.4xlarge/extras=s3-cache
     timeout-minutes: 60
     permissions:
       contents: read
@@ -68,6 +71,7 @@ jobs:
       DEFRA_BASELINE_PROFILE: release-fast
       CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
+      - uses: runs-on/action@v2
       - uses: actions/checkout@v4
         with:
           path: head
