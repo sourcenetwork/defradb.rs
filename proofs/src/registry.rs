@@ -1050,6 +1050,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Increments of an indexed counter append the document to a log
+        // instead of moving the entry; reads check owed documents live and a
+        // drain moves the entries later.
+        family: "Index-maintenance consistency",
+        name: "INV_ReadExact — a read through a deferred index finds exactly the matching documents",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred",
+        model_ref: "MC_DeferredIndex_{Green,Green_Drains,Red_NoOverlay,Red_NoOwnAppends,Red_UnvalidatedRecord,Red_TruncateHead}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
