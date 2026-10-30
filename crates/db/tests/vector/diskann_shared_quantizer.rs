@@ -115,7 +115,50 @@ fn a_quantizer_under_another_training_is_not_used() {
             cache.quantizer(training).is_some(),
             "the write built its own training's quantizer and shared it"
         );
-        assert!(cache.quantizer(training ^ 1).is_none());
+        assert!(
+            cache.quantizer(training ^ 1).is_some(),
+            "the other training's quantizer stays for its writers"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn writers_straddling_a_rebuild_keep_both_quantizers() {
+    workers::block_on(async {
+        let (store, mut index) = trained_store().await;
+        let training = training(&store).await;
+        let caches = CodeCaches::default();
+        index.share_quantizer(&caches);
+        insert(&store, &index, 72_001, 0xC1).await;
+        let cache = caches.get(COLLECTION, INDEX_ID);
+        let current = cache.quantizer(training).unwrap();
+
+        let older = training ^ 1;
+        cache.share_quantizer(older, current.clone());
+        insert(&store, &index, 72_002, 0xC2).await;
+        assert!(
+            std::sync::Arc::ptr_eq(&current, &cache.quantizer(training).unwrap()),
+            "an older training's share does not evict the current one"
+        );
+
+        let rebuilt = cache.quantizer(older).unwrap();
+        cache.share_quantizer(training, rebuilt.clone());
+        assert!(
+            std::sync::Arc::ptr_eq(&current, &cache.quantizer(training).unwrap()),
+            "a training already shared keeps the quantizer it has"
+        );
+
+        cache.share_quantizer(training ^ 2, current.clone());
+        assert!(cache.quantizer(training ^ 2).is_some());
+        assert!(
+            cache.quantizer(older).is_some(),
+            "the newer of the two stays"
+        );
+        assert!(
+            cache.quantizer(training).is_none(),
+            "a third training drops the oldest share"
+        );
     })
     .unwrap()
 }
