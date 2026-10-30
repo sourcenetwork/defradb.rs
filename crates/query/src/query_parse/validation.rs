@@ -6,9 +6,11 @@
 
 use crate::collection_provider::CollectionProvider;
 use crate::error::{QueryError, Result};
-use crate::mapper::{Mutation, Select};
+use std::sync::Arc;
+
+use crate::mapper::{Mutation, Requestable, Select};
 use crate::query_parse::ParsedOperation;
-use schema::CollectionVersion;
+use schema::{CollectionVersion, FieldKind, ScalarKind};
 
 /// Validate that all collections referenced in a parsed operation exist.
 ///
@@ -53,16 +55,98 @@ async fn validate_select_collection(
         return Ok(());
     }
 
-    if provider.get_collection(name).await?.is_none() {
+    let Some(collection) = provider.get_collection(name).await? else {
         let suggestion = suggest_collection(name, provider).await;
         let mut msg = format!("Cannot query field \"{}\" on type \"{}\".", name, root_type);
         if let Some(suggested) = suggestion {
             msg.push_str(&format!(" Did you mean \"{}\"?", suggested));
         }
         return Err(QueryError::parse(msg));
-    }
+    };
 
+    validate_similarity(&select.fields, &collection, provider).await
+}
+
+/// Go checks every `SIMILARITY` selection, through fragments, relations and
+/// mutation selections: an argument naming a field that cannot hold a vector
+/// fails validation. An argument naming no field is left to the planner's
+/// `Unknown argument` error, as graphql-go leaves it to the library.
+async fn validate_similarity(
+    fields: &[Requestable],
+    collection: &CollectionVersion,
+    provider: &dyn CollectionProvider,
+) -> Result<()> {
+    let nested = fields
+        .iter()
+        .any(|field| matches!(field, Requestable::Select(sub) if has_similarity(&sub.fields)));
+    // Relation targets are only resolved when a relation selects a SIMILARITY.
+    let mut collections = Vec::new();
+    if nested {
+        for name in provider.list_collections().await? {
+            collections.extend(provider.get_collection(&name).await?);
+        }
+    }
+    check_similarity(fields, collection, &collections)
+}
+
+fn has_similarity(fields: &[Requestable]) -> bool {
+    fields.iter().any(|field| match field {
+        Requestable::Similarity(_) => true,
+        Requestable::Select(sub) => has_similarity(&sub.fields),
+        _ => false,
+    })
+}
+
+fn check_similarity(
+    fields: &[Requestable],
+    collection: &CollectionVersion,
+    collections: &[Arc<CollectionVersion>],
+) -> Result<()> {
+    for field in fields {
+        match field {
+            Requestable::Similarity(similarity) => {
+                let Some(target) = collection.field_by_name(&similarity.target_field) else {
+                    continue;
+                };
+                if !holds_vector(&target.kind) {
+                    return Err(QueryError::execution(format!(
+                        "similarity can only target a numeric array field. Field: {}, Type: {}",
+                        target.name,
+                        target.kind.graphql_type_name()
+                    )));
+                }
+            }
+            Requestable::Select(sub) if has_similarity(&sub.fields) => {
+                let related = collection
+                    .field_by_name(&sub.collection_name)
+                    .and_then(|relation| relation.kind.relation_collection_id())
+                    .and_then(|id| {
+                        if id.is_empty() {
+                            return Some(collection);
+                        }
+                        collections
+                            .iter()
+                            .map(Arc::as_ref)
+                            .find(|c| c.collection_id == id || c.version_id == id || c.name == id)
+                    });
+                if let Some(related) = related {
+                    check_similarity(&sub.fields, related, collections)?;
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(())
+}
+
+fn holds_vector(kind: &FieldKind) -> bool {
+    matches!(
+        kind,
+        FieldKind::ScalarArray(array) if matches!(
+            array.element_kind(),
+            ScalarKind::NillableInt | ScalarKind::NillableFloat32 | ScalarKind::NillableFloat64
+        )
+    )
 }
 
 /// Validate that the collection referenced by a Mutation exists.
@@ -91,7 +175,8 @@ async fn validate_mutation_collection(
         return Err(QueryError::parse(msg));
     };
 
-    validate_encrypt_fields(mutation, &collection)
+    validate_encrypt_fields(mutation, &collection)?;
+    validate_similarity(&mutation.fields, &collection, provider).await
 }
 
 /// Go types `encryptFields` as a list of the collection's `<Name>ExplicitField`

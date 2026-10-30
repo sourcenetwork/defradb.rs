@@ -2,6 +2,8 @@
 
 mod add;
 mod create_conversions;
+#[cfg(test)]
+mod create_conversions_tests;
 mod delete;
 mod update;
 mod update_ops;
