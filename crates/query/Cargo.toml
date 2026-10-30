@@ -34,6 +34,7 @@ document = { path = "../document" }
 crdt = { path = "../crdt" }
 storage = { path = "../storage" }
 schema = { path = "../schema" }
+chunk-split = { path = "../chunk-split" }
 identity = { path = "../identity" }
 acp = { path = "../acp" }
 lens = { path = "../lens", default-features = false }

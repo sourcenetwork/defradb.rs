@@ -60,19 +60,53 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
             if collection.resolved_root_id() != collection_short_id {
                 continue;
             }
-            let collection = collection.schema();
-            let policy = collection
-                .policy
-                .as_ref()
-                .map(|p| (p.id.clone(), p.resource_name.clone()));
-            return Some(BlockAcpMeta {
-                collection_id: collection.collection_id.clone(),
-                is_branchable: collection.is_branchable,
-                policy,
-                doc_ids,
-            });
+            return self.attribute(collection.schema(), doc_ids).await;
         }
         None
+    }
+
+    /// The metadata a block's read is checked against.
+    ///
+    /// A `@chunk` chunk's blocks are part of its parent's history, so they are
+    /// checked as the parent's. A chunk this node doesn't have is denied.
+    async fn attribute(
+        &self,
+        collection: &schema::CollectionVersion,
+        doc_ids: Vec<String>,
+    ) -> Option<BlockAcpMeta> {
+        let meta = |collection: &schema::CollectionVersion, doc_ids| BlockAcpMeta {
+            collection_id: collection.collection_id.clone(),
+            is_branchable: collection.is_branchable,
+            policy: collection
+                .policy
+                .as_ref()
+                .map(|p| (p.id.clone(), p.resource_name.clone())),
+            doc_ids,
+        };
+        let Some(source) = &collection.chunk_of else {
+            return Some(meta(collection, doc_ids));
+        };
+        let parents = match db::chunk::access::history_parents(&self.db, collection, &doc_ids).await
+        {
+            Ok(parents) if !parents.is_empty() => parents,
+            Ok(_) => {
+                tracing::debug!(chunks = %collection.name, "chunk block has no parent here");
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(chunks = %collection.name, %error, "chunk parent lookup failed");
+                return None;
+            }
+        };
+        let parent = match self.db.get_collection(&source.collection) {
+            Ok(Some(parent)) => parent,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(parent = %source.collection, %error, "parent collection lookup failed");
+                return None;
+            }
+        };
+        Some(meta(parent.schema(), parents))
     }
 
     /// The block's owning docs and their shared collection. Ownership is only
@@ -135,21 +169,13 @@ impl<S: Store + 'static> BlockClassifier for DbBlockClassifier<S> {
                     Ok(Some(collection)) => collection,
                     Ok(None) | Err(_) => return BlockClass::Deny,
                 };
-                let collection = collection.schema();
-                let policy = collection
-                    .policy
-                    .as_ref()
-                    .map(|p| (p.id.clone(), p.resource_name.clone()));
                 let Some(doc_ids) = self.doc_ids_for_block(cid, &block).await else {
                     return BlockClass::Deny;
                 };
-
-                BlockClass::Data(BlockAcpMeta {
-                    collection_id: collection.collection_id.clone(),
-                    is_branchable: collection.is_branchable,
-                    policy,
-                    doc_ids,
-                })
+                match self.attribute(collection.schema(), doc_ids).await {
+                    Some(meta) => BlockClass::Data(meta),
+                    None => BlockClass::Deny,
+                }
             }
             Err(_) if is_lens_block(data) => BlockClass::Allow,
             Err(_) => BlockClass::Deny,

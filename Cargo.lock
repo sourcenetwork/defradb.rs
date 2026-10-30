@@ -9890,6 +9890,7 @@ dependencies = [
  "bm25",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",

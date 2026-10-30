@@ -1197,4 +1197,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Text chunking",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/db/src/chunk/access.rs history_parents, read_owners",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg",
+        tiers: &[Boundary],
+    },
 ];
