@@ -1061,6 +1061,16 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The drain finds a document's old entries only through its position
+        // record, so the record must read back as the keys it names.
+        family: "Index-maintenance consistency",
+        name: "decode_encode — a position record reads back as exactly its entry keys",
+        axis: Lean,
+        anchor: "crates/db/src/index/deferred/record.rs encode_record, decode_record",
+        model_ref: "PositionRecord (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
