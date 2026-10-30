@@ -136,12 +136,15 @@ fn main() {
 
     let json = serde_json::to_vec(&doc.to_map().expect("the document to serialize"))
         .expect("a JSON encoding of it");
+    // Built once, as real callers share one definition: the row counts the
+    // parse, not a definition build per document.
+    let collection = Arc::new(collection_version());
     group = group.row(Row::new(
         "document from json",
         per_op(OPS, || {
             for _ in 0..OPS {
                 std::hint::black_box(
-                    Document::from_json(&json, collection_version())
+                    Document::from_json(&json, Arc::clone(&collection))
                         .expect("the document to parse"),
                 );
             }
