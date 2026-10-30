@@ -52,7 +52,8 @@ pub mod utils;
 pub use blockstore::{BlockstoreKey, ToMergeIndexKey, MERGE_PREFIX};
 pub use crdt::{CRDTNonceKey, CRDTNoncePrefix, CRDTPriorityKey, CRDTValueKey};
 pub use datastore::{
-    DataStoreKey, DatastoreSE, IndexDataStoreKey, IndexedField, PrimaryDataStoreKey, ViewCacheKey,
+    index_pending_log, index_position_key, index_position_prefix, DataStoreKey, DatastoreSE,
+    IndexDataStoreKey, IndexedField, PrimaryDataStoreKey, ViewCacheKey,
     DATASTORE_DOC_VERSION_FIELD_ID,
 };
 pub use doc_id_index::{

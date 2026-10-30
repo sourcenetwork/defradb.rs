@@ -7,6 +7,7 @@
 /// - Search engine artifacts
 /// - View caching
 mod data_store_key;
+mod deferred_index_key;
 mod index_key;
 mod misc;
 mod vector_index_key;
@@ -15,6 +16,7 @@ mod vector_index_key;
 mod tests;
 
 pub use data_store_key::*;
+pub use deferred_index_key::*;
 pub use index_key::*;
 pub use misc::*;
 pub use vector_index_key::*;
