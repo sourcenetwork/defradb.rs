@@ -55,6 +55,21 @@ fn encrypted_query_without_searchable_encryption_is_unknown_field() {
 }
 
 #[test]
+fn explaining_an_encrypted_query_without_searchable_encryption_is_unknown_field() {
+    workers::block_on(async {
+        let runner = QueryRunner::new(MockFetcher::new(), vec![users()]);
+        let explain = r#"query @explain { encrypted_User(filter: {age: {_eq: 21}}) { docIDs } }"#;
+        let response = runner.execute(QueryRequest::new(explain)).await;
+        let messages: Vec<&str> = response.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["Cannot query field \"encrypted_User\" on type \"Query\"."]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn encrypted_query_with_searchable_encryption_asks_the_transport() {
     workers::block_on(async {
         let runner =
