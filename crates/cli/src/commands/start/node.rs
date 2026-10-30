@@ -43,6 +43,7 @@ pub(super) struct ServerSetup {
     pub p2p_tasks: Option<P2PTasks>,
     pub downsample_task: Option<workers::Background>,
     pub vector_rebuild_task: Option<workers::Background>,
+    pub deferred_index_task: Option<workers::Background>,
     pub txn_cleanup_task: Option<workers::Background>,
     pub http_server: defra_http::Server,
     #[cfg(feature = "postgres")]
@@ -60,6 +61,7 @@ pub struct Node {
     pub(super) p2p_tasks: Option<P2PTasks>,
     pub(super) downsample_task: Option<workers::Background>,
     pub(super) vector_rebuild_task: Option<workers::Background>,
+    pub(super) deferred_index_task: Option<workers::Background>,
     pub(super) txn_cleanup_task: Option<workers::Background>,
     pub(super) http_server: Option<defra_http::Server>,
     #[cfg(feature = "postgres")]
@@ -371,6 +373,7 @@ impl Node {
             p2p_tasks: servers.p2p_tasks,
             downsample_task: servers.downsample_task,
             vector_rebuild_task: servers.vector_rebuild_task,
+            deferred_index_task: servers.deferred_index_task,
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
             #[cfg(feature = "postgres")]

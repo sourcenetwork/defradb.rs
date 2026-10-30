@@ -160,6 +160,11 @@ impl Node {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
         }
 
+        if let Some(task) = self.deferred_index_task.take() {
+            task.abort();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+        }
+
         if let Some(task) = self.txn_cleanup_task.take() {
             info!("Stopping transaction idle cleanup worker...");
             task.abort();

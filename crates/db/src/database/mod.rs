@@ -177,6 +177,8 @@ pub struct DB<S: Store> {
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
     pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    /// The deferred indexes a commit owes a drain.
+    pub(crate) deferred_drains: crate::index::deferred::DrainRequests,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -263,6 +265,7 @@ impl<S: Store> DB<S> {
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -333,6 +336,7 @@ impl<S: Store> DB<S> {
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -652,6 +656,7 @@ impl<S: Store> DB<S> {
     pub(crate) fn new_db_txn(&self, basic_txn: BasicTxn) -> DbTxn<S> {
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))
+            .with_deferred_drains(self.deferred_drains.clone())
     }
 
     pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {

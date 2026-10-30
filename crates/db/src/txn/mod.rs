@@ -96,6 +96,8 @@ pub struct DbTxn<S: Store> {
     /// The database's committed collections, so a collection this transaction
     /// loads with the same definition reuses the cached handle's decoded state.
     shared_collections: Option<Arc<crate::collection::epoch::EpochedCollections>>,
+    /// Where a commit that owes a deferred index asks for its drain.
+    deferred_drains: Option<crate::index::deferred::DrainRequests>,
     statement_savepoint: Option<catalog::Snapshot>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
@@ -154,6 +156,7 @@ impl<S: Store> DbTxn<S> {
             catalog: Catalog::new(),
             vector_codes,
             shared_collections: None,
+            deferred_drains: None,
             statement_savepoint: None,
             _marker: std::marker::PhantomData,
         }
@@ -166,6 +169,18 @@ impl<S: Store> DbTxn<S> {
 
     pub(crate) fn vector_codes(&self) -> &Arc<CodeCaches> {
         &self.vector_codes
+    }
+
+    pub(crate) fn with_deferred_drains(
+        mut self,
+        drains: crate::index::deferred::DrainRequests,
+    ) -> Self {
+        self.deferred_drains = Some(drains);
+        self
+    }
+
+    pub(crate) fn deferred_drains(&self) -> Option<&crate::index::deferred::DrainRequests> {
+        self.deferred_drains.as_ref()
     }
 
     pub(crate) fn with_shared_collections(

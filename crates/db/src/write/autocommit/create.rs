@@ -316,6 +316,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 collection.resolved_root_id(),
                 collection.schema(),
                 collection.write_indexes(),
+                collection.crdts(),
             )
             .map_err(|error| {
                 query::error::QueryError::execution(format!(
@@ -323,7 +324,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     attempt.collection_name
                 ))
             })?;
-            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
+            let index_manager = index_manager
+                .with_vector_caches(self.db.vector_codes())
+                .with_drains(Some(&self.db.deferred_drains));
             let stores = WriteStores {
                 datastore: &datastore,
                 systemstore: &systemstore,

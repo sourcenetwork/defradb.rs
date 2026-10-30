@@ -29,6 +29,11 @@ impl IndexManager {
         let mut mutable_datastore = datastore.clone();
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
+            if self.is_deferred(index.description(), schema) {
+                self.place(datastore, index, doc_short_id, &value_sets)
+                    .await?;
+                continue;
+            }
             let IndexType::Unique(unique) = index else {
                 for values in &value_sets {
                     self.save_healing_stale_unique(

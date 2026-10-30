@@ -753,6 +753,7 @@ where
     let background_tasks = Arc::new(BackgroundTasks::new([
         database.clone().start_downsample_task(),
         database.clone().start_vector_rebuild_task(),
+        database.clone().start_deferred_index_task(),
     ]));
 
     #[cfg(any(feature = "libp2p", feature = "iroh"))]

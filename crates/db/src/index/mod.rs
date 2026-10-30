@@ -2,6 +2,7 @@
 
 pub mod backfill;
 pub mod create;
+pub mod deferred;
 pub mod drop;
 pub mod error;
 pub mod manager;

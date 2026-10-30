@@ -354,11 +354,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )
         .map_err(|error| {
             query::error::QueryError::execution(format!("failed to create index manager: {error}"))
         })?;
-        let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
+        let index_manager = index_manager
+            .with_vector_caches(self.db.vector_codes())
+            .with_drains(Some(&self.db.deferred_drains));
         let result: query::error::Result<(Document, usize, Cid, Bytes, Option<(Cid, Bytes)>)> =
             async {
                 let stores = WriteStores {

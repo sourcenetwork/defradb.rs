@@ -3570,9 +3570,12 @@ fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canonical_p
         let txn = handler.db().new_txn(true).await.unwrap();
         let datastore = txn.datastore().unwrap();
         let systemstore = txn.systemstore().unwrap();
-        let index_manager =
-            IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
-                .unwrap();
+        let index_manager = IndexManager::from_collection(
+            collection.resolved_root_id(),
+            collection.schema(),
+            &crdt::Crdts::default(),
+        )
+        .unwrap();
         let mut entries = index_manager
             .get_index("idx_session_id_unique")
             .unwrap()

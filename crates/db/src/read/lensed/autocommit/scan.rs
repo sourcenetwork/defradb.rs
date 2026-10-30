@@ -29,29 +29,36 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )
         .map_err(|e| query::error::QueryError::execution(format!("index manager error: {}", e)))?;
-        let Some(index) = index_manager.get_index(&params.index_name) else {
-            return Ok(None);
-        };
         let txn = self.db.new_txn(true).await.map_err(|e| {
             query::error::QueryError::execution(format!("failed to create txn: {}", e))
         })?;
         let datastore = txn.datastore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get datastore: {}", e))
         })?;
-        let count = crate::read::index_count::count_index_scan(
-            index,
-            &datastore,
-            &params.scan_type,
-            usize::try_from(cap).unwrap_or(usize::MAX),
-        )
-        .await;
+        let count = match index_manager
+            .read_index(&datastore, &collection, &params.index_name)
+            .await
+        {
+            Ok(Some(index)) => crate::read::index_count::count_index_scan(
+                &index,
+                &datastore,
+                &params.scan_type,
+                usize::try_from(cap).unwrap_or(usize::MAX),
+            )
+            .await
+            .map(Some)
+            .map_err(|e| e.to_string()),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        };
         let _ = txn.discard();
         let count = count.map_err(|e| {
             query::error::QueryError::execution(format!("index count error: {}", e))
         })?;
-        Ok(Some(count as u64))
+        Ok(count.map(|count| count as u64))
     }
 
     pub(super) fn get_by_index_scan_impl<'a>(
@@ -85,21 +92,29 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         })?;
 
         let short_id = collection.resolved_root_id();
-        let index_manager =
-            IndexManager::from_indexes(short_id, collection.schema(), collection.write_indexes())
-                .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to create index manager for collection '{}': {}",
-                    collection_name, e
-                ))
-            })?;
-
-        let index = index_manager.get_index(&params.index_name).ok_or_else(|| {
+        let index_manager = IndexManager::from_indexes(
+            short_id,
+            collection.schema(),
+            collection.write_indexes(),
+            collection.crdts(),
+        )
+        .map_err(|e| {
             query::error::QueryError::execution(format!(
-                "index '{}' not found on collection '{}'",
-                params.index_name, collection_name
+                "failed to create index manager for collection '{}': {}",
+                collection_name, e
             ))
         })?;
+
+        let index = index_manager
+            .read_index(&datastore, &collection, &params.index_name)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            .ok_or_else(|| {
+                query::error::QueryError::execution(format!(
+                    "index '{}' not found on collection '{}'",
+                    params.index_name, collection_name
+                ))
+            })?;
 
         let limit = params.limit;
         let offset = params.offset;

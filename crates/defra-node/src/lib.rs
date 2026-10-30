@@ -1919,6 +1919,7 @@ impl NodeBuilder {
         let background_tasks = BackgroundTasks::new([
             database.clone().start_vector_rebuild_task(),
             database.clone().start_downsample_task(),
+            database.clone().start_deferred_index_task(),
         ]);
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(replay) = database.clone().start_parked_replay() {

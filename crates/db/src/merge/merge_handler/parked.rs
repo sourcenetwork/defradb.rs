@@ -478,18 +478,23 @@ where
                     )
                     .await
                     .map_err(MergeError::Database)?;
-                IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
-                    .map_err(index_error)?
-                    .on_document_update_merge(
-                        &datastore,
-                        &systemstore,
-                        &old,
-                        &doc,
-                        record.doc_short_id,
-                        collection.schema(),
-                    )
-                    .await
-                    .map_err(index_error)?;
+                IndexManager::from_collection(
+                    collection.resolved_root_id(),
+                    collection.schema(),
+                    collection.crdts(),
+                )
+                .map_err(index_error)?
+                .with_drains(Some(&self.db.deferred_drains))
+                .on_document_update_merge(
+                    &datastore,
+                    &systemstore,
+                    &old,
+                    &doc,
+                    record.doc_short_id,
+                    collection.schema(),
+                )
+                .await
+                .map_err(index_error)?;
             }
         }
         systemstore.delete(key).await.map_err(storage)?;

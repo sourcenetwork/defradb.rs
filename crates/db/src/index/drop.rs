@@ -374,10 +374,28 @@ impl Page for DropPage {
             self.progress.collection_short_id,
             self.progress.index.clone(),
         )?;
-        let (removed, last) = index
-            .remove_page(&mut txn.datastore(), self.progress.after.as_deref(), size)
-            .await
-            .map_err(Error::Storage)?;
+        let (short_id, index_id) = (self.progress.collection_short_id, self.progress.index.id);
+        let records = storage::keys::index_position_prefix(short_id, index_id);
+        let after = self.progress.after.as_deref();
+        let in_records = after.is_some_and(|after| after.starts_with(&records));
+        let (mut removed, mut last) = (0, None);
+        if !in_records {
+            (removed, last) = index
+                .remove_page(&mut txn.datastore(), after, size)
+                .await
+                .map_err(Error::Storage)?;
+        }
+        // A deferred index's position records and log go once its entries are gone.
+        if removed < size {
+            (removed, last) = crate::index::deferred::remove_page(
+                &txn.datastore(),
+                short_id,
+                index_id,
+                after.filter(|_| in_records),
+                size,
+            )
+            .await?;
+        }
         if last.is_some() {
             let progress = DropProgress {
                 after: last.clone(),

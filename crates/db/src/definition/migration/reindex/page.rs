@@ -89,6 +89,7 @@ impl ReindexPage {
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )?;
 
         let mut stage = progress::read(systemstore, collection_id, self.token).await?;
