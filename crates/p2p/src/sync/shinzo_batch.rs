@@ -24,18 +24,21 @@ pub const INLINE_CAR_BUDGET: usize = 64 << 20;
 pub const INLINE_CAR_TTL: Duration = Duration::from_secs(60);
 
 /// CARs that came inline with an update (a Go peer predating the `car`
-/// channel sends them), by head. Taken, at most once, when the coordinator
-/// asks for that head, in place of a network request.
+/// channel sends them), by head and the authenticated peer that offered
+/// them. Taken, at most once, when the coordinator asks that peer for that
+/// head, in place of a network request, so no other peer can replace or
+/// spend an honest peer's CAR.
 #[derive(Debug, Default)]
 pub struct InlineCars {
-    cars: RapidHashMap<Cid, (Bytes, Instant)>,
+    cars: RapidHashMap<(Cid, String), (Bytes, Instant)>,
     bytes: usize,
 }
 
 impl InlineCars {
-    /// Keep `car` for `head`, if it is a CAR whose only root is `head` and
-    /// it fits the budget once CARs older than the TTL are dropped.
-    pub fn offer(&mut self, head: Cid, car: Bytes, now: Instant) -> bool {
+    /// Keep `car` for `head` as offered by `peer`, if it is a CAR whose only
+    /// root is `head` and it fits the budget once CARs older than the TTL are
+    /// dropped.
+    pub fn offer(&mut self, head: Cid, peer: &str, car: Bytes, now: Instant) -> bool {
         if !car_rooted_at(&car, &head) {
             return false;
         }
@@ -44,15 +47,15 @@ impl InlineCars {
             return false;
         }
         self.bytes += car.len();
-        if let Some((old, _)) = self.cars.insert(head, (car, now)) {
+        if let Some((old, _)) = self.cars.insert((head, peer.to_string()), (car, now)) {
             self.bytes -= old.len();
         }
         true
     }
 
-    /// The CAR kept for `head`, removed so it is used once.
-    pub fn take(&mut self, head: &Cid) -> Option<Bytes> {
-        let (car, _) = self.cars.remove(head)?;
+    /// The CAR `peer` offered for `head`, removed so it is used once.
+    pub fn take(&mut self, head: &Cid, peer: &str) -> Option<Bytes> {
+        let (car, _) = self.cars.remove(&(*head, peer.to_string()))?;
         self.bytes -= car.len();
         Some(car)
     }
