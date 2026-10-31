@@ -127,6 +127,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
+        // The retention rule judges the document as merged, alive ones only;
+        // a refusal discards the attempt, so nothing of it is stored.
+        if !doc_is_tombstoned {
+            if let Some(refusal) = self
+                .db
+                .options()
+                .retention_floor(collection.schema())
+                .and_then(|floor| floor.refusal(&doc))
+            {
+                return Err(MergeError::RetentionRefused(refusal));
+            }
+        }
+
         if old_doc.is_none() && !doc_is_tombstoned {
             if context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty) {
                 if let (Some(provider), Some(policy), Some(signer)) = (
