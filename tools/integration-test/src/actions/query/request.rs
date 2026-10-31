@@ -58,10 +58,11 @@ impl Op for Request {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
         state
-            .block_on(state.node_on(self.common.node())?.execute_request_as(
-                &state.context(self.txn),
-                QueryRequest::new(self.request.as_str()),
-            ))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .execute_request_as(&state.context(self.txn), self.query_request()),
+            )
             .map(|response| {
                 envelope(
                     response.data,
@@ -73,11 +74,18 @@ impl Op for Request {
 }
 
 impl Request {
+    fn query_request(&self) -> QueryRequest {
+        let request = QueryRequest::new(self.request.as_str());
+        match &self.variables {
+            Some(variables) => request.with_variables(variables.clone()),
+            None => request,
+        }
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.plain(Self::name())?;
         let unsupported = [
-            ("variables", self.variables.is_some()),
             ("nonFiniteFloats", self.non_finite_floats.is_some()),
             ("resultTypes", self.result_types.is_some()),
             ("operationName", self.operation_name.is_some()),
@@ -119,10 +127,11 @@ impl HttpRun for Request {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             let request = action.request.as_str().to_owned();
+            let variables = action.variables.clone();
             let txn = state.txn_id(action.txn);
             state
                 .http_on(action.common.node(), |client| async move {
-                    client.graphql(&request, None, txn).await
+                    client.graphql(&request, variables, txn).await
                 })?
                 .map(|response| {
                     envelope(
@@ -139,12 +148,13 @@ impl CliRun for Request {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            let variables = action.variables.as_ref().map(Value::to_string);
+            let mut args = vec!["query", action.request.as_str()];
+            if let Some(variables) = &variables {
+                args.extend(["--variables", variables.as_str()]);
+            }
             state
-                .defra_client_on(
-                    action.common.node(),
-                    action.txn,
-                    &["query", action.request.as_str()],
-                )
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map_err(Failure::operation)
         });
     }
