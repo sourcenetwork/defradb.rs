@@ -226,6 +226,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 )
                 .await
             {
+                self.db.merge_stats().record_drop(&error);
                 results.push(Err(error));
                 continue;
             }
