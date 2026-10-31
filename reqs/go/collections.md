@@ -351,34 +351,12 @@ Deleting a collection removes its secondary indexes. A view over it does not blo
 
 `Truncate` removes documents and their blocks from a collection while keeping its definition.
 
-# `go.collection.truncate.basic`: Truncating a collection
-
-- **Parents:** ["go.collection.truncate"]
-- **Go-Tests:** ["collection/truncate/simple_test.go::TestTruncateCollection", "collection/truncate/simple_test.go::TestTruncateCollection_TruncateTwice", "collection/truncate/parallel_test.go::TestTruncateCollectionParallel_DeletesAllPreviouslyExistingDocuments"]
-
-Truncating an empty collection, or the same collection twice, succeeds; truncating while documents are added in parallel deletes every document that existed before the truncate.
-
 # `go.collection.truncate.removes_data`: Truncate removes documents and blocks
 
 - **Parents:** ["go.collection.truncate"]
 - **Go-Tests:** ["collection/truncate/add_test.go::TestTruncateCollectionAdd_RemovesDocument", "collection/truncate/add_test.go::TestTruncateCollectionAdd_RemovesSignedDocument", "collection/truncate/add_test.go::TestTruncateCollectionAdd_RemovesEncryptedDocument", "collection/truncate/add_test.go::TestTruncateCollectionAdd_RemovesBlocks", "collection/truncate/add_test.go::TestTruncateCollectionAdd_RemovesSharedFieldBlock", "collection/truncate/branchable_add_test.go::TestTruncateCollectionBranchableAdd_RemovesDocument", "collection/truncate/branchable_add_test.go::TestTruncateCollectionBranchableAdd_RemovesBlocks"]
 
 After truncating, plain, signed, encrypted and branchable documents are no longer returned by queries, and their blocks (including shared field blocks and the collection's branchable head) are gone from `_commits`.
-
-# `go.collection.truncate.re_add`: Re-adding documents after truncate
-
-- **Parents:** ["go.collection.truncate"]
-- **Go-Tests:** ["collection/truncate/add_test.go::TestTruncateCollectionAdd_AddsDocWithSameDocIDAsOriginal", "collection/truncate/add_test.go::TestTruncateCollectionAdd_AddsDocWithSameCIDAsOriginal", "collection/truncate/add_test.go::TestTruncateCollectionAdd_AddsDocWithBlocksAtHeight1"]
-
-A document re-added after truncate gets the same docID and the same head CID as the original, with blocks starting again at height 1.
-
-# `go.collection.truncate.filter`: Truncating selected documents
-
-- **Parents:** ["go.collection.truncate"]
-- **Go-Tests:** ["collection/truncate/filter_test.go::TestTruncateCollection_WithFilterIsIdempotent", "collection/truncate/filter_test.go::TestTruncateCollection_WithLargeIntegerFilter_RemovesOnlyExactMatch", "collection/truncate/index_filter_test.go::TestTruncateCollectionIndexFilter_RemovesDocument", "collection/truncate/index_filter_test.go::TestTruncateCollectionIndexFilter_WithUniqueIndex_RemovesDocument", "collection/truncate/index_filter_test.go::TestTruncateCollectionIndexFilter_WithUniqueIndex_AllowsRecreationOfDocument"]
-- **Scope:** "the large-integer test: Go, HTTP, CLI and C clients with collection save/named mutations only"
-
-A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
 
 # `go.collection.truncate.acp`: Truncate keeps document ACP
 

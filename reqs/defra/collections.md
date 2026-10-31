@@ -334,3 +334,25 @@ With or without collections, introspection exposes the `ExplainType` enum with i
 - **Scenarios:** ["collection_version.migrations.query.collection-migration-query-with-restart", "collection_version.migrations.query.collection-migration-query-with-restart-and-migration-before-patch-collection"]
 
 Migrations configured before or after the patch are still applied to queries after the node restarts.
+
+# `go.collection.truncate.basic`: Truncating a collection
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.truncate-collection", "collection.truncate.truncate-collection-truncate-twice", "collection.truncate.truncate-collection-parallel-deletes-all-previously-existing-documents"]
+
+Truncating an empty collection, or the same collection twice, succeeds; truncating while documents are added in parallel deletes every document that existed before the truncate.
+
+# `go.collection.truncate.re_add`: Re-adding documents after truncate
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.truncate-collection-add-adds-doc-with-same-doc-id-as-original", "collection.truncate.truncate-collection-add-adds-doc-with-same-cid-as-original", "collection.truncate.truncate-collection-add-adds-doc-with-blocks-at-height1"]
+
+A document re-added after truncate gets the same docID and the same head CID as the original, with blocks starting again at height 1.
+
+# `go.collection.truncate.filter`: Truncating selected documents
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.truncate-collection-with-filter-is-idempotent", "collection.truncate.truncate-collection-with-large-integer-filter-removes-only-exact-match", "collection.truncate.truncate-collection-index-filter-removes-document", "collection.truncate.truncate-collection-index-filter-with-unique-index-removes-document", "collection.truncate.truncate-collection-index-filter-with-unique-index-allows-recreation-of-document"]
+- **Scope:** "the large-integer test: Go, HTTP, CLI and C clients with collection save/named mutations only"
+
+A truncate limited to certain documents removes only those (idempotently on retry), matches large integers exactly (2^53 vs 2^53+1), works through plain and unique secondary indexes, and frees a unique value so a document with it can be created again.
