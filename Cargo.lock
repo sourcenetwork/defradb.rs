@@ -3830,6 +3830,7 @@ dependencies = [
  "kovan-queue 0.2.2",
  "lens",
  "libp2p",
+ "mantra-macros",
  "multihash",
  "n0-future",
  "p2p",
