@@ -40,6 +40,45 @@ pub unsafe extern "C" fn new_node_with_p2p(
     }
 }
 
+/// The libp2p host `options` describe: its listen addresses (the JSON list,
+/// else `listen_addr`), bootstrap peers, GossipSub and relay switches, and
+/// resource limits.
+#[cfg(feature = "libp2p")]
+fn libp2p_config(
+    options: &NodeInitOptions,
+    listen_addr: &str,
+) -> Result<defra_node::Libp2pConfig, String> {
+    let list = |raw: *const c_char, name: &str| -> Result<Vec<String>, String> {
+        match unsafe { c_str_to_string(raw) } {
+            Some(json) if !json.trim().is_empty() => {
+                serde_json::from_str(&json).map_err(|error| format!("invalid {name}: {error}"))
+            }
+            _ => Ok(Vec::new()),
+        }
+    };
+    let mut listen_addrs = list(options.p2p_listen_addrs_json, "p2p_listen_addrs_json")?;
+    if listen_addrs.is_empty() && !listen_addr.is_empty() {
+        listen_addrs.push(listen_addr.to_string());
+    }
+    if listen_addrs.is_empty() {
+        return Err("listen_addr is required for libp2p transport".to_string());
+    }
+    let nonzero = |value: u64| (value > 0).then_some(value);
+    Ok(defra_node::Libp2pConfig {
+        listen_addrs,
+        bootstrap_peers: list(options.p2p_bootstrap_peers_json, "p2p_bootstrap_peers_json")?,
+        enable_pubsub: options.p2p_disable_pubsub == 0,
+        enable_relay: options.p2p_disable_relay == 0,
+        resource_limits: p2p::ResourceLimits {
+            memory_mib: nonzero(options.p2p_resource_memory_mib),
+            file_descriptors: nonzero(options.p2p_resource_file_descriptors),
+            max_streams_per_peer: (options.p2p_max_streams_per_peer > 0)
+                .then_some(options.p2p_max_streams_per_peer),
+        },
+        ..Default::default()
+    })
+}
+
 #[cfg_attr(
     not(any(feature = "libp2p", feature = "iroh")),
     allow(unused_variables)
@@ -56,15 +95,10 @@ fn resolve_transport(
         "" | "libp2p" => {
             #[cfg(feature = "libp2p")]
             {
-                if listen_addr.is_empty() {
-                    return Err("listen_addr is required for libp2p transport".to_string());
-                }
-                Ok(defra_node::TransportConfig::Libp2p(
-                    defra_node::Libp2pConfig {
-                        listen_addrs: vec![listen_addr.to_string()],
-                        ..Default::default()
-                    },
-                ))
+                Ok(defra_node::TransportConfig::Libp2p(libp2p_config(
+                    options,
+                    listen_addr,
+                )?))
             }
             #[cfg(not(feature = "libp2p"))]
             {

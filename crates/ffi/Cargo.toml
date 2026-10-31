@@ -70,6 +70,7 @@ hex.workspace = true
 
 # Internal crates
 crypto = { path = "../crypto" }
+keyring = { path = "../keyring", default-features = false }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
 defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
