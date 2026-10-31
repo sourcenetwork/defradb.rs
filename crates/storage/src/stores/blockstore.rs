@@ -2,7 +2,7 @@ use crate::corekv::{
     IterOptions, Iterator, Key, Reader, Result, RetryAttemptFn, RetryAttemptFuture, RetryOptions,
     RetryTxn, Store, Txn, Writer,
 };
-use crate::keys::blockstore::{BlockstoreKey, ToMergeIndexKey, OBJECT_MARKER};
+use crate::keys::blockstore::{BlockstoreKey, ToMergeIndexKey};
 use crate::namespace::{Namespace, NamespacedStore};
 use async_trait::async_trait;
 /// Blockstore - IPLD blocks and merkle tree nodes
@@ -85,6 +85,28 @@ fn put_keys(cid: Cid, is_p2p: bool) -> (Vec<u8>, Option<Vec<u8>>) {
     )
 }
 
+/// A to-merge mark's value: the time the block was fetched, as big-endian
+/// unix seconds. The orphan sweep reads it; whether a block is merged depends
+/// only on the mark being there, as in Go, which writes `0xff`.
+pub fn marker_value(unix_secs: u64) -> [u8; 8] {
+    unix_secs.to_be_bytes()
+}
+
+/// The fetch time a mark holds. A value that is not eight bytes (the single
+/// `0xff` byte older builds wrote) holds none, and the sweep leaves it.
+pub fn marker_time(value: &[u8]) -> Option<u64> {
+    <[u8; 8]>::try_from(value).ok().map(u64::from_be_bytes)
+}
+
+/// A mark for a block fetched now.
+fn fresh_marker() -> [u8; 8] {
+    use web_time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    marker_value(now.as_secs())
+}
+
 struct BlockWritesAttempt {
     writes: Vec<BlockWrite>,
     is_p2p: bool,
@@ -103,8 +125,7 @@ impl RetryAttemptFn for BlockWritesAttempt {
                         } else {
                             txn.set(&block_key, data).await?;
                             if let Some(merge_key) = merge_key {
-                                // 0xff matches the Go marker for cross-implementation compatibility.
-                                txn.set(&merge_key, &[OBJECT_MARKER]).await?;
+                                txn.set(&merge_key, &fresh_marker()).await?;
                             }
                             true
                         }
@@ -178,8 +199,7 @@ impl BlockstoreTxn {
         let (block_key, merge_key) = put_keys(*cid, self.is_p2p);
         self.set(&block_key, data).await?;
         if let Some(merge_key) = merge_key {
-            // 0xff matches the Go marker for cross-implementation compatibility.
-            self.set(&merge_key, &[OBJECT_MARKER]).await?;
+            self.set(&merge_key, &fresh_marker()).await?;
         }
         Ok(())
     }

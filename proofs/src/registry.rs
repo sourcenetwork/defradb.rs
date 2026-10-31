@@ -1267,6 +1267,54 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Purging documents by DocID: values, index entries, the primary
+        // key, heads and DocID aliases go in one transact attempt; outside a
+        // branchable collection every block only the purged documents own
+        // goes too, decided by a validated owner scan; in a branchable
+        // collection the history stays and no owner edge names a purged
+        // document; the count is the distinct stored documents, taken at
+        // commit; a sync re-storing a walked block re-runs the attempt.
+        family: "Purge by DocID",
+        name: "INV_OthersIntact / INV_CollectionIntact / INV_Gone / INV_NoStaleOwner / INV_Pruned / INV_Count / PROP_Commits",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, DB::purge_documents; crates/db/src/txn/attempt.rs DB::transact_db; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_filtered_chunk; crates/db/src/txn/registry/purge.rs DbTransactionRegistry::purge_by_doc_ids_as; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners; crates/db/src/docid/map.rs block_has_owners",
+        model_ref: "MC_Purge_{Green_Prune,Green_Branchable,Red_Blind,Red_PruneBranchable,Red_KeepEdges,Red_KeepIndex,Red_CountRequests,Red_CountAttempt,Red_Fail,Red_PlainScan}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The orphan block sweep: a fetched block's to-merge mark
+        // holds its fetch time and a refetch leaves it alone; the sweep nominates
+        // expired marks from a snapshot and decides each in a transaction
+        // that reads the mark and the owners again, deleting an unowned
+        // block, clearing the mark of an owned one, and never touching an
+        // untimed mark; a merge clears and owns its signature block too.
+        family: "Orphan block sweep",
+        name: "INV_NoMergedLoss / INV_NoOwnedLoss / INV_MergedUnmarked / INV_SigOwned / INV_LegacyKept / PROP_Reclaims",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run, marker_value, marker_time; crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, DB::decide_orphans; crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership",
+        model_ref: "MC_OrphanGc_{Green,Red_SnapshotRead,Red_NoOwnerCheck,Red_BlindRefresh,Red_ReclaimLegacy,Red_SigMarked,Red_SigUnowned}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Orphan block sweep",
+        name: "time_value / time_short / time_long / time_legacy",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/blockstore.rs marker_value, marker_time",
+        model_ref: "OrphanMarker (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The replication filter (#2451): asked between the merge's phases,
+        // so a refused document stores nothing; a refusal skips only its own
+        // event, for good; a branchable collection is not filtered.
+        family: "Replication filter",
+        name: "INV_RefusedNothingStored / INV_KeptMerged / INV_MergedOnce / INV_BranchableUnfiltered",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/replication_filter.rs add_field_values; crates/db/src/merge/merge_handler/batch.rs try_batch_merge",
+        model_ref: "MC_ReplicationFilter_{Green,Green_Branchable,Red_AfterPersist,Red_WholeBatch,Red_Retry,Red_FilterBranchable}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,
@@ -1304,6 +1352,25 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/p2p/src/iroh/records/verify.rs verify; crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/p2p/src/iroh/records/task.rs Records::providers, rank",
         model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Per-peer stream cap",
+        name: "INV_WithinCap / INV_SlotsFollowStreams",
+        axis: Tla,
+        anchor: "crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit, StreamAdmission; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run",
+        model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The receive gate: a replication filter asked when a push arrives,
+        // before its head is stored, and again on a fetched CAR, before it is
+        // imported; the merge asks again as the backstop.
+        family: "Receive gate",
+        name: "INV_ArrivalRefusalStoresNothing / INV_FetchRefusalImportsNothing / INV_RefusedNeverMerged / INV_KeptIsKept",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_arrival, SyncCoordinator::gate_fetched; crates/db/src/receive_gate.rs DbReceiveGate::allows",
+        model_ref: "MC_ReceiveGate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
 ];

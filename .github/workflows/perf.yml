@@ -130,6 +130,7 @@ jobs:
           - { family: p2p_codec, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: parsing, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: planner, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: purge_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: query_e2e, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: read_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: replication_filter, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

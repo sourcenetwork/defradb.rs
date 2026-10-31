@@ -108,6 +108,7 @@ where
             p2p::P2PHostConfig {
                 enable_pubsub: config.enable_pubsub,
                 enable_relay: config.enable_relay,
+                resource_limits: config.resource_limits,
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
@@ -217,6 +218,11 @@ where
             .await;
     });
 
+    // A replication filter also judges pushes before their blocks are
+    // fetched; the merge keeps its own check.
+    if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+        coordinator.set_receive_gate(Arc::new(gate));
+    }
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
     let coordinator_for_retry_clock = coordinator.clone();
@@ -239,6 +245,18 @@ where
     );
     let governance_sweep_task = spawn_node_task(edge, async move {
         let _ = governance_sweep.await;
+    });
+    // The orphan block sweep, which the node turns off on a store that does
+    // not persist.
+    let orphan_sweep = db::block::orphan_gc::start_orphan_sweep(
+        database.clone(),
+        config.orphan_sweep,
+        coordinator.shutdown_handle(),
+    )
+    .map(|sweep| {
+        spawn_node_task(edge, async move {
+            let _ = sweep.await;
+        })
     });
 
     match db::merge::load_persisted_collections(&coordinator).await {
@@ -377,7 +395,10 @@ where
                 pending_dag_resync_task,
                 pending_dag_retry_task,
                 governance_sweep_task,
-            ],
+            ]
+            .into_iter()
+            .chain(orphan_sweep)
+            .collect(),
             retry_loop_task,
             failure_recorder_task,
         ),

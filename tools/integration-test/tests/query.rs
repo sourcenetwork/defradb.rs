@@ -14,6 +14,8 @@ mod commits_immutable;
 mod continuous_rollup;
 #[path = "query/cross_runtime_indexes.rs"]
 mod cross_runtime_indexes;
+#[path = "query/cyclic_fragments.rs"]
+mod cyclic_fragments;
 #[path = "query/datetime_index_range.rs"]
 mod datetime_index_range;
 #[path = "query/default_values_v1.rs"]

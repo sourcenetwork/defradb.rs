@@ -78,6 +78,14 @@ RUNS=(
   "MC_SelectedPushIsolation_Red_hint.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_drain.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
+  "MC_PeerStreamCap_Green.cfg PeerStreamCap.tla GREEN"
+  "MC_PeerStreamCap_Red_NoCheck.cfg PeerStreamCap.tla RED"
+  "MC_PeerStreamCap_Red_Leak.cfg PeerStreamCap.tla RED"
+  "MC_ReceiveGate_Green.cfg ReceiveGate.tla GREEN" # a refused push stores and imports nothing, a kept one is merged
+  "MC_ReceiveGate_Red_StoreFirst.cfg ReceiveGate.tla RED" # the head is stored before the first check (INV_ArrivalRefusalStoresNothing)
+  "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
+  "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED" # the merge stops checking (INV_RefusedNeverMerged)
+  "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED" # a check refuses what it cannot see (INV_KeptIsKept)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
@@ -155,6 +163,29 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
+  "MC_Purge_Green_Prune.cfg Purge.tla GREEN" # a purge deletes the history only the purged documents own, keeps shared blocks, counts once on commit, and commits despite a sync re-storing a block
+  "MC_Purge_Green_Branchable.cfg Purge.tla GREEN" # a purge in a branchable collection keeps the whole history and drops the purged owner edges
+  "MC_Purge_Red_Blind.cfg Purge.tla RED" # the prune deletes a block another document owns (INV_OthersIntact)
+  "MC_Purge_Red_PruneBranchable.cfg Purge.tla RED" # the purge deletes a branchable collection's history (INV_CollectionIntact)
+  "MC_Purge_Red_KeepEdges.cfg Purge.tla RED" # a purge that keeps the blocks keeps owner edges of gone documents, as Go does (INV_NoStaleOwner)
+  "MC_Purge_Red_KeepIndex.cfg Purge.tla RED" # index entries survive the purge (INV_Gone)
+  "MC_Purge_Red_CountRequests.cfg Purge.tla RED" # a DocID named twice is counted twice (INV_Count)
+  "MC_Purge_Red_CountAttempt.cfg Purge.tla RED" # a conflicted attempt is counted (INV_Count)
+  "MC_Purge_Red_Fail.cfg Purge.tla RED" # a conflict fails the purge instead of re-running it (PROP_Commits)
+  "MC_Purge_Red_PlainScan.cfg Purge.tla RED" # a plain owner scan misses a merge adopting a block, which the prune deletes (INV_OthersIntact)
+  "MC_OrphanGc_Green.cfg OrphanGc.tla GREEN" # #2479: the orphan sweep reclaims an abandoned block and never a merged, owned or untimed one; merged blocks carry no mark
+  "MC_OrphanGc_Red_SnapshotRead.cfg OrphanGc.tla RED" # the decision trusts the nomination, so a merge committing in between loses its block (INV_NoMergedLoss)
+  "MC_OrphanGc_Red_NoOwnerCheck.cfg OrphanGc.tla RED" # an owned block with a stale mark is deleted (INV_NoOwnedLoss)
+  "MC_OrphanGc_Red_BlindRefresh.cfg OrphanGc.tla RED" # sending a merged block again marks it again (INV_MergedUnmarked)
+  "MC_OrphanGc_Red_ReclaimLegacy.cfg OrphanGc.tla RED" # a mark with no time is swept (INV_LegacyKept)
+  "MC_OrphanGc_Red_SigMarked.cfg OrphanGc.tla RED" # merging leaves the signature block marked (INV_MergedUnmarked)
+  "MC_OrphanGc_Red_SigUnowned.cfg OrphanGc.tla RED" # merging records no owner for the signature block (INV_SigOwned)
+  "MC_ReplicationFilter_Green.cfg ReplicationFilter.tla GREEN" # #2451: a refused document stores nothing, kept ones merge alone or in a batch
+  "MC_ReplicationFilter_Green_Branchable.cfg ReplicationFilter.tla GREEN" # #2451: a branchable collection is not filtered
+  "MC_ReplicationFilter_Red_AfterPersist.cfg ReplicationFilter.tla RED" # asked after phase 2 wrote the fields (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_WholeBatch.cfg ReplicationFilter.tla RED" # one refusal skips its batch (INV_KeptMerged)
+  "MC_ReplicationFilter_Red_Retry.cfg ReplicationFilter.tla RED" # a refused head is retried and stored later (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_FilterBranchable.cfg ReplicationFilter.tla RED" # a branchable collection is filtered per document (INV_BranchableUnfiltered)
   "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
   "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)

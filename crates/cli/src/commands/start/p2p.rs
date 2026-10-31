@@ -105,6 +105,11 @@ impl Node {
             ),
             max_connections_per_peer: config.net.max_connections_per_peer,
             access_mode,
+            resource_limits: p2p::ResourceLimits {
+                memory_mib: config.net.resource_memory_mib,
+                file_descriptors: config.net.resource_file_descriptors,
+                max_streams_per_peer: config.net.max_streams_per_peer,
+            },
         };
         let keypair = keypair.unwrap_or_else(p2p::Keypair::generate_ed25519);
         let (host, handle, events, replicators) =

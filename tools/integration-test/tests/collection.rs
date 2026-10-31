@@ -7,6 +7,7 @@
 
 mod collection {
     mod add_relation_with_collection;
+    mod deterministic_ids;
     mod refresh {
         mod list_actions;
     }

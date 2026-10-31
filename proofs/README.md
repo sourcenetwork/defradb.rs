@@ -75,6 +75,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Iroh solicited replies | TLA+ | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Index drop during backfill | TLA+ | db-index |
+| Purge by DocID | TLA+ | db |
+| Replication filter | TLA+ | db-merge |
 | Node startup | TLA+, Lean | embedded, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
@@ -83,6 +85,9 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Orphan block sweep | TLA+ & Lean | db, storage |
+| Per-peer stream cap | TLA+ | p2p |
+| Receive gate | TLA+ | p2p, db |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
