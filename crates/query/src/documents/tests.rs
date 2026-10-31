@@ -276,11 +276,18 @@ fn a_filter_that_is_neither_an_object_nor_text_is_refused_with_go_text() {
 #[test]
 fn an_updater_that_is_not_an_object_is_refused_with_go_text() {
     let filter = Filter::from(json!({"name": {"_eq": "Alice"}}));
-    let error = update_with_filter("Users", &filter, "[1]").unwrap_err();
+    let error = update_with_filter("Users", &filter, "1").unwrap_err();
     assert_eq!(
         error.to_string(),
         "the updater of a document is of invalid type"
     );
+}
+
+#[test]
+fn an_array_updater_is_go_s_unimplemented_patch_and_changes_nothing() {
+    let filter = Filter::from(json!({"name": {"_eq": "Alice"}}));
+    let mutation = update_with_filter("Users", &filter, r#"[{"name": "Eric"}]"#).unwrap();
+    assert!(mutation.contains("input: {}"), "{mutation}");
 }
 
 #[test]
