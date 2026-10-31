@@ -17,6 +17,7 @@ mod txn {
     mod list_encrypted_indexes;
     mod list_indexes;
     mod list_lenses;
+    mod neighbour;
     mod new_encrypted_index;
     mod new_index;
     mod patch_collection;

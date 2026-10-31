@@ -52,6 +52,7 @@ mod index {
     mod query_with_unique_composite_index_filter;
     mod query_with_unique_index_on_relation_filter;
     mod query_with_unique_index_only_filter;
+    mod range_filter;
     mod status;
     mod unique_writer;
     mod update_unique;
