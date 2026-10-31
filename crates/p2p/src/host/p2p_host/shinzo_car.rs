@@ -1,7 +1,8 @@
 //! Go Shinzo's CAR channel in the host: serving a Go `CARRequest` from the
 //! block store under the same access gate Bitswap applies, and asking a peer
-//! for a head's CAR in Go's shape. On only when `P2PHostConfig::shinzo_wire`
-//! is set; otherwise a Go request is ignored and CAR requests stay Rust's.
+//! for a head's CAR in Go's shape. Every node serves Go's request shape,
+//! whatever its own switch says; `P2PHostConfig::shinzo_wire` only picks what
+//! this node sends, so with it off this node's own CAR requests stay Rust's.
 
 use std::future::Future;
 use std::pin::Pin;
