@@ -168,7 +168,7 @@ RUNS=(
   "MC_OrphanGc_Green.cfg OrphanGc.tla GREEN" # #2479: the orphan sweep reclaims an abandoned block and never a merged, owned or untimed one; merged blocks carry no mark
   "MC_OrphanGc_Red_SnapshotRead.cfg OrphanGc.tla RED" # the decision trusts the nomination, so a merge committing in between loses its block (INV_NoMergedLoss)
   "MC_OrphanGc_Red_NoOwnerCheck.cfg OrphanGc.tla RED" # an owned block with a stale mark is deleted (INV_NoOwnedLoss)
-  "MC_OrphanGc_Red_BlindRefresh.cfg OrphanGc.tla RED" # a refresh re-marks a merged block (INV_MergedUnmarked)
+  "MC_OrphanGc_Red_BlindRefresh.cfg OrphanGc.tla RED" # sending a merged block again marks it again (INV_MergedUnmarked)
   "MC_OrphanGc_Red_ReclaimLegacy.cfg OrphanGc.tla RED" # a mark with no time is swept (INV_LegacyKept)
   "MC_OrphanGc_Red_SigMarked.cfg OrphanGc.tla RED" # merging leaves the signature block marked (INV_MergedUnmarked)
   "MC_OrphanGc_Red_SigUnowned.cfg OrphanGc.tla RED" # merging records no owner for the signature block (INV_SigOwned)

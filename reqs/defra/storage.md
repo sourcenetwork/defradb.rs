@@ -102,3 +102,58 @@ A purge commits successfully even when another transaction stores one of the blo
 - **Scenarios:** ["db::collection::purge::the_count_names_each_stored_document_once", "mutation::purge::purge_counts_each_stored_document_once", "mutation::purge::a_discarded_purge_removes_nothing", "mutation::purge::a_purge_in_a_transaction_lands_on_commit", "mutation::purge::a_purge_in_a_transaction_is_invisible_until_commit", "db::collection::purge::a_purge_in_a_transaction_conflicts_with_a_definition_change"]
 
 A DocID that names no document is not an error and is not counted: purging `[alice, bob, alice]` succeeds and counts 2. A purge run in a caller's transaction removes nothing until that transaction commits, and nothing at all if it is discarded; it validates the collection's definition as every write there does, so a definition change committed first makes the transaction's commit conflict.
+
+# `defra.orphan_gc`: Reclaiming fetched blocks that never merged
+
+- **Parents:** ["defra"]
+
+Blocks fetched during P2P sync whose merge never happened (an abandoned fetch, a refused or discarded merge) are reclaimed by a periodic sweep. A purge never reaches them, since it walks out from documents. `DB::reclaim_orphan_blocks` takes a cutoff time, a resume key and a scan limit, and reports `next_key`, `scanned`, `reclaimed`, `repaired`, `conflicts` and `unparsed`.
+
+# `defra.orphan_gc.reclaim`: Only unowned blocks fetched before the cutoff are reclaimed
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::block::orphan_gc::only_unowned_blocks_fetched_before_the_cutoff_are_reclaimed"]
+
+With one block fetched an hour before the cutoff, one fetched an hour after it, one fetched with no recorded time, and one merged block, a sweep deletes only the first (block and its waiting state), scans 3 (merged blocks are not scanned), reports 1 reclaimed, 0 repaired, 0 conflicts and no next key. A block past the cutoff that a document owns is kept and is marked merged instead (1 repaired). Three unowned and one owned expired block in one sweep give 3 reclaimed, 1 repaired, 4 scanned.
+
+# `defra.orphan_gc.race`: A merge committing during the sweep keeps its block
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::block::orphan_gc::a_merge_committing_after_the_nomination_keeps_its_block"]
+
+A block nominated by the sweep whose merge commits before the sweep deletes it is kept, and is not counted as reclaimed.
+
+# `defra.orphan_gc.resume`: The sweep resumes, and stops when cancelled
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::block::orphan_gc::the_sweep_resumes_across_calls_and_stops_when_cancelled"]
+
+With five expired blocks and a scan limit of 2, repeated sweeps, each starting from the previous next key, take more than one call, scan each block exactly once (5 in total), reclaim all 5, and end with no next key. A sweep that is already cancelled returns `context canceled`, scans nothing and deletes nothing.
+
+# `defra.orphan_gc.refetch`: Re-receiving a block changes nothing
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::block::orphan_gc::storing_a_block_again_leaves_its_mark_and_a_merged_one_stays_merged", "db::block::orphan_gc::a_merge_racing_a_refetch_always_leaves_the_block_merged"]
+
+A to-merge mark holds the time its block was first fetched. Storing again a block the node already holds writes nothing, as on main: a waiting block keeps its age and a merged one stays merged. A merge and a re-receive of the same block racing each other always leave it merged. A batch put holding one waiting and one merged block leaves both as they were. Go Shinzo renews the age of a waiting block on every re-receive; defradb.rs does not, so a re-put never writes a key the merge also writes and cannot add a conflict.
+
+# `defra.orphan_gc.signature_owner`: A skipped field's signature block is still owned
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::merge::signature_blocks::a_merged_document_owns_its_signature_blocks_and_they_read_as_merged"]
+
+With block signing on, a document `{"name":"John","age":30}` created on a node whose `User` has `age`, merged on a node whose `User` has only `name` (a rolling-upgrade schema skew), merges without error; on the receiver the signature block of the skipped `age` field block is owned by the document's DocID and reads as merged, so the orphan sweep never deletes it.
+
+# `defra.orphan_gc.signature_merged`: Merging a signed block marks its signature block merged
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::merge::signature_blocks::a_merged_document_owns_its_signature_blocks_and_they_read_as_merged"]
+
+A signature block received over P2P starts out marked to-merge. Merging a block whose `signature` link points at it clears that mark in the same transaction, so the orphan sweep never reclaims the signature of a merged block.
+
+# `defra.orphan_gc.config`: When the sweep runs
+
+- **Parents:** ["defra.orphan_gc"]
+- **Scenarios:** ["db::block::orphan_gc::the_sweep_is_off_by_default_and_runs_every_five_minutes_for_half_hour_marks", "db::block::orphan_gc::with_the_sweep_on_an_abandoned_fetch_goes_once_its_mark_ages"]
+
+The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep runs (off by default), the interval between sweeps (5 minutes by default) and how long a to-merge block is kept (30 minutes by default). The node runs it only on a persistent store; an in-memory store never sweeps. The first sweep waits one TTL; each sweep examines at most 100,000 marks and resumes where the previous one stopped. With the sweep on, a block put through the P2P blockstore and never merged is deleted once its mark ages past the TTL.

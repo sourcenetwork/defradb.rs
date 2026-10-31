@@ -240,22 +240,18 @@ where
     let governance_sweep_task = spawn_node_task(edge, async move {
         let _ = governance_sweep.await;
     });
-    // The orphan block sweep (#2479), on a persistent store only.
-    let orphan_sweep = config
-        .orphan_sweep
-        .then(|| {
-            db::block::orphan_gc::start_orphan_sweep(
-                database.clone(),
-                db::block::orphan_gc::OrphanSweepConfig::from_env(),
-                coordinator.shutdown_handle(),
-            )
+    // The orphan block sweep, which the node turns off on a store that does
+    // not persist.
+    let orphan_sweep = db::block::orphan_gc::start_orphan_sweep(
+        database.clone(),
+        config.orphan_sweep,
+        coordinator.shutdown_handle(),
+    )
+    .map(|sweep| {
+        spawn_node_task(edge, async move {
+            let _ = sweep.await;
         })
-        .flatten()
-        .map(|sweep| {
-            spawn_node_task(edge, async move {
-                let _ = sweep.await;
-            })
-        });
+    });
 
     match db::merge::load_persisted_collections(&coordinator).await {
         Ok(count) if count > 0 => tracing::debug!(count, "loaded persisted P2P collections"),

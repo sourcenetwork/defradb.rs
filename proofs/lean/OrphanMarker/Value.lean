@@ -4,8 +4,8 @@
 The story, in plain words. When a node stores a block a peer sent it, it
 writes a to-merge mark beside the block. The mark's value is the time the
 block was fetched: eight bytes, the unix seconds, most significant first.
-Go Shinzo writes this format, and defradb.rs writes the same. An older build
-of either wrote a single byte, 0xff, with no time in it. The orphan sweep
+Go DefraDB writes a single byte, 0xff, with no time in it, and so did older
+defradb.rs builds; Go only checks that a mark is there. The orphan sweep
 reads the time to tell a fetch still in flight from an abandoned one.
 
 What must never happen:

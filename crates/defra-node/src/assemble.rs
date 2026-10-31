@@ -201,8 +201,14 @@ where
         let setup = match (&transport, network.as_ref()) {
             #[cfg(feature = "libp2p")]
             (TransportConfig::Libp2p(libp2p), Some(network)) => {
+                // Nothing outlives a store that does not persist, so its
+                // abandoned fetches need no sweep.
                 let libp2p = &crate::config::Libp2pConfig {
-                    orphan_sweep: persistence == crate::Persistence::Persistent,
+                    orphan_sweep: db::block::orphan_gc::OrphanSweepConfig {
+                        enabled: libp2p.orphan_sweep.enabled
+                            && persistence == crate::Persistence::Persistent,
+                        ..libp2p.orphan_sweep
+                    },
                     ..libp2p.clone()
                 };
                 let schedule = libp2p.sync.retry_schedule()?;

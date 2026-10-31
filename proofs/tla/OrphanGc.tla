@@ -7,8 +7,8 @@
 \* periodic sweep reclaims blocks whose mark is older than a cutoff.
 \*
 \* Who acts:
-\*   - the fetcher, which stores a block with a fresh mark, and stores it
-\*     again when a peer sends it again (a refresh restarts the mark's age);
+\*   - the fetcher, which stores a block with a fresh mark; when a peer
+\*     sends a stored block again, the put finds it and writes nothing;
 \*   - the merger, which merges a block: it clears the block's mark and the
 \*     mark of the block's signature block, and records both as owned by
 \*     the document, all in one transaction;
@@ -34,10 +34,10 @@
 \* is unowned and whose mark expired is reclaimed.
 \*
 \* Code it models:
-\*   crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run (put,
-\*   refresh), marker_value, marker_time;
-\*   crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, nominate,
-\*   ReclaimBatch::run (the decision);
+\*   crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run (put),
+\*   marker_value, marker_time;
+\*   crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, nominate_orphans,
+\*   DB::decide_orphans (the decision);
 \*   crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership
 \*   and the merge's mark clearing (the signature block's owner and mark).
 EXTENDS Naturals, FiniteSets
@@ -46,7 +46,7 @@ CONSTANTS
   MaxActs,      \* how many refetches and adoptions may happen in all
   ReadMode,     \* "Validated": the decision re-reads mark and owners in its transaction | "Snapshot": it trusts the nomination
   OwnerMode,    \* "Checked": an owned block is repaired, not deleted | "Ignored": every expired block is deleted
-  RefreshMode,  \* "Checked": a refresh rewrites only a mark that is still there | "Blind": it always writes one
+  RefreshMode,  \* "None": sending a stored block again changes nothing | "Blind": it marks the block again
   LegacyMode,   \* "Skip": a mark with no time is never nominated | "Reclaim": it is treated as expired
   SigMarkMode,  \* "Clear": merging clears the signature block's mark | "Leave": it stays
   SigOwnerMode  \* "Owned": merging records the signature block's owner | "Unowned": it does not
@@ -55,7 +55,7 @@ CONSTANTS
 ASSUME MaxActs \in Nat
 ASSUME ReadMode \in {"Validated", "Snapshot"}
 ASSUME OwnerMode \in {"Checked", "Ignored"}
-ASSUME RefreshMode \in {"Checked", "Blind"}
+ASSUME RefreshMode \in {"None", "Blind"}
 ASSUME LegacyMode \in {"Skip", "Reclaim"}
 ASSUME SigMarkMode \in {"Clear", "Leave"}
 ASSUME SigOwnerMode \in {"Owned", "Unowned"}
@@ -105,14 +105,14 @@ Fetch(x) ==
        /\ mark' = [y \in Blocks |-> IF y \in new \ stored THEN "fresh" ELSE mark[y]]
   /\ UNCHANGED <<owned, merged, nominees, seen, acts>>
 
-\* A peer sends a stored block x again. Checked: if x is still marked, its
-\* mark becomes fresh again; if it merged, nothing changes. Blind: x is
-\* marked fresh whatever it was.
+\* A peer sends a stored block x again. None: the put finds x stored and
+\* writes nothing, so a merged block stays merged and a waiting one keeps
+\* its age. Blind: x is marked fresh whatever it was.
 Refetch(x) ==
   /\ acts < MaxActs
   /\ x \in stored \ {"l"}
-  /\ IF RefreshMode = "Checked"
-       THEN mark' = [mark EXCEPT ![x] = IF @ \in {"fresh", "old"} THEN "fresh" ELSE @]
+  /\ IF RefreshMode = "None"
+       THEN UNCHANGED mark
        ELSE mark' = [mark EXCEPT ![x] = "fresh"]
   /\ acts' = acts + 1
   /\ UNCHANGED <<stored, owned, merged, nominees, seen>>
