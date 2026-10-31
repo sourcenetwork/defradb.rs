@@ -345,6 +345,11 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    async fn wire_stats(&self) -> Result<std::sync::Arc<crate::sync::WireStats>> {
+        self.send_command(|reply| IrohCommand::WireStats { reply })
+            .await
+    }
+
     async fn peer_connection(
         &self,
         peer_id: &PeerId,

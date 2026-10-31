@@ -87,11 +87,14 @@ where
     pub(super) fn serve_shinzo_cars(&mut self, peer_id: PeerId, request: CarRequest) {
         let cars = self.shinzo_server.clone();
         let keypair = self.keypair.clone();
+        let wire_stats = std::sync::Arc::clone(&self.wire_stats);
         let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
             let heads: Vec<Vec<u8>> = request.cid_bytes().map(<[u8]>::to_vec).collect();
             let asked: Vec<&[u8]> = heads.iter().map(Vec::as_slice).collect();
             let entries = serve_cars(&asked, |head| cars.car_for(peer_id, head)).await;
+            wire_stats
+                .record_car_built(entries.iter().filter(|car| !car.is_empty()).count() as u64);
             let mut reply = CarReply::new(&request.message_id, entries);
             if let Err(error) = crate::signing::sign_message(&keypair, &mut reply) {
                 debug!(%peer_id, %error, "Failed to sign a Go CAR reply");

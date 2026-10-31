@@ -4,121 +4,11 @@
 //! view so integration tests can assert bounded retry behavior without
 //! scraping noisy logs (see issue #858).
 //!
-//! Most counters live on the `SyncDiagnostics` struct and are scoped to one
-//! `SyncManager`. Gossip decode failures are kept in a process-global static
-//! because the libp2p and iroh gossip paths run in the transport layer and do
-//! not have direct access to a `SyncManager`.
+//! Every counter is scoped to one `SyncManager`. Counters the transport keeps
+//! for its node (gossip decode failures, the Shinzo wire) live in
+//! [`WireStats`](crate::sync::WireStats).
 
-use std::{
-    collections::VecDeque,
-    sync::atomic::{AtomicU64, Ordering},
-};
-
-use kovan::Atom;
-use regolith::sync::Lazy;
-
-/// Process-global counter of gossip payload decode failures.
-///
-/// Both the libp2p and iroh gossip paths increment this via
-/// [`record_gossip_decode_failure`]. Exposed through every
-/// `SyncDiagnostics::snapshot()` so tests see the same number across all
-/// managers in the process.
-static GOSSIP_DECODE_FAILURES: AtomicU64 = AtomicU64::new(0);
-/// A bounded, deduplicated ring of at most `GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT`
-/// samples, replaced as a unit on every rare decode failure.
-static RECENT_GOSSIP_DECODE_FAILURES: Lazy<Atom<VecDeque<GossipDecodeFailureSample>>> =
-    Lazy::new(|| Atom::new(VecDeque::with_capacity(GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT)));
-
-const GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT: usize = 16;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GossipTransport {
-    Iroh,
-    Libp2p,
-}
-
-impl GossipTransport {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Iroh => "iroh",
-            Self::Libp2p => "libp2p",
-        }
-    }
-}
-
-impl std::fmt::Display for GossipTransport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GossipDecodeFailureSample {
-    pub transport: GossipTransport,
-    pub peer_id: String,
-    pub topic: String,
-    pub message_size: usize,
-    pub error: String,
-    pub payload_fingerprint: String,
-    pub payload_shape_hint: String,
-    pub occurrences: u64,
-}
-
-/// Record a gossip payload decode failure and return the new total count.
-///
-/// Return value lets callers apply exponential-backoff sampling (warn on
-/// 1st/2nd/4th/8th… occurrence, debug otherwise) without maintaining their
-/// own atomic.
-///
-/// Crate-internal: only the libp2p and iroh transport paths call this.
-/// Downstream consumers read the total via `SyncDiagnostics::snapshot()`
-/// rather than synthesizing failures.
-#[cfg_attr(
-    not(any(feature = "libp2p-transport", feature = "iroh-transport")),
-    allow(dead_code)
-)]
-pub(crate) fn record_gossip_decode_failure() -> u64 {
-    GOSSIP_DECODE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1
-}
-
-/// Record a gossip payload decode failure and retain a deduplicated sample.
-#[cfg_attr(
-    not(any(feature = "libp2p-transport", feature = "iroh-transport")),
-    allow(dead_code)
-)]
-pub(crate) fn record_gossip_decode_failure_sample(sample: GossipDecodeFailureSample) -> u64 {
-    let total = record_gossip_decode_failure();
-    RECENT_GOSSIP_DECODE_FAILURES.rcu(|current| {
-        let mut recent = current.clone();
-        let matched = recent.iter().position(|existing| {
-            existing.transport == sample.transport
-                && existing.peer_id == sample.peer_id
-                && existing.topic == sample.topic
-                && existing.payload_fingerprint == sample.payload_fingerprint
-                && existing.payload_shape_hint == sample.payload_shape_hint
-        });
-        match matched.and_then(|index| recent.remove(index)) {
-            Some(mut existing) => {
-                existing.message_size = sample.message_size;
-                existing.error = sample.error.clone();
-                existing.occurrences += 1;
-                recent.push_back(existing);
-            }
-            None => {
-                recent.push_back(GossipDecodeFailureSample {
-                    occurrences: 1,
-                    ..sample.clone()
-                });
-                while recent.len() > GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT {
-                    recent.pop_front();
-                }
-            }
-        }
-        recent
-    });
-
-    total
-}
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Default)]
 pub struct SyncDiagnostics {
@@ -175,11 +65,6 @@ pub struct SyncDiagnosticsSnapshot {
     /// Pending-DAG registrations moved to quarantine after a deterministic
     /// merge rejection (#1128). See `SyncManager::quarantine_pending_dag`.
     pub pending_dag_terminal_quarantined: u64,
-    /// Process-global; see [`record_gossip_decode_failure`].
-    pub gossip_decode_failures: u64,
-    /// Process-global recent samples captured by
-    /// [`record_gossip_decode_failure_sample`].
-    pub recent_gossip_decode_failures: Vec<GossipDecodeFailureSample>,
 }
 
 impl SyncDiagnostics {
@@ -221,9 +106,6 @@ impl SyncDiagnostics {
             pending_dag_terminal_quarantined: self
                 .pending_dag_terminal_quarantined
                 .load(Ordering::Relaxed),
-            gossip_decode_failures: GOSSIP_DECODE_FAILURES.load(Ordering::Relaxed),
-            recent_gossip_decode_failures: RECENT_GOSSIP_DECODE_FAILURES
-                .peek(|recent| recent.iter().cloned().collect()),
         }
     }
 
@@ -417,42 +299,6 @@ mod tests {
 
         assert_eq!(first.snapshot().provider_rotations, 1);
         assert_eq!(second.snapshot().provider_rotations, 0);
-    }
-
-    #[test]
-    fn record_gossip_decode_failure_returns_monotonic_total() {
-        // Global counter may already be non-zero from other tests in the
-        // process — only assert monotonicity.
-        let first = record_gossip_decode_failure();
-        let second = record_gossip_decode_failure();
-        assert_eq!(second, first + 1);
-        assert!(SyncDiagnostics::default().snapshot().gossip_decode_failures >= second);
-    }
-
-    #[test]
-    fn record_gossip_decode_failure_sample_surfaces_recent_metadata() {
-        let topic = format!("topic-{}", uuid::Uuid::new_v4());
-        let prefix = format!("deadbeef-{}", uuid::Uuid::new_v4());
-        let sample = GossipDecodeFailureSample {
-            transport: GossipTransport::Iroh,
-            peer_id: "peer-123".to_string(),
-            topic: topic.clone(),
-            message_size: 128,
-            error: "Hit the end of buffer".to_string(),
-            payload_fingerprint: prefix.clone(),
-            payload_shape_hint: "cbor_map(keys=[Unexpected])".to_string(),
-            occurrences: 0,
-        };
-
-        let total = record_gossip_decode_failure_sample(sample);
-        let snapshot = SyncDiagnostics::default().snapshot();
-        assert!(snapshot.gossip_decode_failures >= total);
-        assert!(snapshot.recent_gossip_decode_failures.iter().any(|entry| {
-            entry.transport == GossipTransport::Iroh
-                && entry.topic == topic
-                && entry.payload_fingerprint == prefix
-                && entry.occurrences >= 1
-        }));
     }
 
     #[test]

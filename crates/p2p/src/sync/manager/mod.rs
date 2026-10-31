@@ -27,11 +27,7 @@ pub use config::{
     DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
     DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST, DEFAULT_RATE_LIMIT_RATE,
 };
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
-pub(crate) use diagnostics::record_gossip_decode_failure_sample;
-pub use diagnostics::{
-    GossipDecodeFailureSample, GossipTransport, SyncDiagnostics, SyncDiagnosticsSnapshot,
-};
+pub use diagnostics::{SyncDiagnostics, SyncDiagnosticsSnapshot};
 pub use events::{SyncEvent, SyncEventReceiver};
 // Coordinator dispatch helper (#1116 stage 2) needs to name this type in its
 // signature; the `pending` module itself stays private.

@@ -117,6 +117,8 @@ enum Input {
 pub(super) struct GossipHandle {
     inbox: Arc<Inbox>,
     subscribed: Subscribed,
+    /// This node's transport counters; gossip decode failures land here.
+    wire_stats: Arc<crate::sync::WireStats>,
 }
 
 impl GossipHandle {
@@ -125,7 +127,13 @@ impl GossipHandle {
         Self {
             inbox: Arc::new(Inbox::new(RECEIVED_CAPACITY)),
             subscribed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            wire_stats: Arc::default(),
         }
+    }
+
+    /// This node's transport counters.
+    pub(super) fn wire_stats(&self) -> Arc<crate::sync::WireStats> {
+        Arc::clone(&self.wire_stats)
     }
 
     /// Starts the driver for this handle.
@@ -144,6 +152,7 @@ impl GossipHandle {
             event_tx,
             raw_topics,
             records,
+            wire_stats: Arc::clone(&self.wire_stats),
         };
         let driver = Driver::new(
             me,

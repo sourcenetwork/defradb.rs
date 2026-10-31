@@ -28,6 +28,8 @@ pub struct P2PHostHandle {
     keypair: Keypair,
     /// Optional explicit replay capabilities keyed by (peer_id, collection_id).
     explicit_replay_capabilities: ExplicitReplayCapabilityCache,
+    /// This node's transport counters, shared with its host.
+    wire_stats: std::sync::Arc<crate::sync::WireStats>,
 }
 
 impl P2PHostHandle {
@@ -75,6 +77,7 @@ impl P2PHostHandle {
         local_public_key_proto: Vec<u8>,
         local_peer_id: PeerId,
         keypair: Keypair,
+        wire_stats: std::sync::Arc<crate::sync::WireStats>,
     ) -> Self {
         Self {
             command_tx,
@@ -82,7 +85,14 @@ impl P2PHostHandle {
             local_peer_id,
             keypair,
             explicit_replay_capabilities: ExplicitReplayCapabilityCache::default(),
+            wire_stats,
         }
+    }
+
+    /// This node's transport counters: gossip decode failures and the Shinzo
+    /// wire's traffic.
+    pub fn wire_stats(&self) -> std::sync::Arc<crate::sync::WireStats> {
+        std::sync::Arc::clone(&self.wire_stats)
     }
 
     /// Get the local public key encoded as protobuf.

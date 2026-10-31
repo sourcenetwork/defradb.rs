@@ -331,6 +331,9 @@ pub struct P2PHost<S: Store> {
     /// Shinzo node asking a Rust peer with it off gets an answer, not a
     /// timeout. The switch picks what this node sends, never what it serves.
     pub(crate) shinzo_server: shinzo_car::ShinzoCars<S>,
+    /// This node's transport counters, read by the sync coordinator
+    /// through the handle.
+    pub(crate) wire_stats: Arc<crate::sync::WireStats>,
     /// CARs that came inline with Go Shinzo updates, until asked for.
     pub(crate) shinzo_inline: crate::sync::shinzo_batch::InlineCars,
     /// This node's collection-topic updates, batched as Go Shinzo does.
@@ -565,11 +568,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let (command_tx, command_rx) = mpsc::channel(256);
         let (event_tx, event_rx) = mpsc::channel(256);
 
+        let wire_stats: Arc<crate::sync::WireStats> = Arc::default();
         let handle = P2PHostHandle::new(
             command_tx,
             local_public_key_proto,
             local_peer_id,
             keypair.clone(),
+            Arc::clone(&wire_stats),
         );
 
         // Set up two-stream protocol for Go compatibility
@@ -628,7 +633,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 Error::Behaviour("Failed to register identity response protocol".into())
             })?;
 
-        let two_stream_handler = TwoStreamHandler::new(control);
+        let two_stream_handler =
+            TwoStreamHandler::with_wire_stats(control, Arc::clone(&wire_stats));
         let pending = two_stream_handler.pending_responses();
         let (two_stream_event_tx, two_stream_event_rx) = mpsc::channel(256);
 
@@ -684,6 +690,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             pubsub_rpc_topics: RapidHashSet::new(),
             shinzo,
             shinzo_server,
+            wire_stats,
             shinzo_inline: Default::default(),
             shinzo_batcher: Default::default(),
         };

@@ -21,6 +21,7 @@ pub(super) struct Delivery {
     pub(super) event_tx: EventSender,
     pub(super) raw_topics: RawTopics,
     pub(super) records: RecordsHandle,
+    pub(super) wire_stats: std::sync::Arc<crate::sync::WireStats>,
 }
 
 impl Delivery {
@@ -78,7 +79,13 @@ impl Delivery {
         {
             Ok(decoded) => decoded,
             Err(error) => {
-                record_decode_failure(&sender_peer_id, topic, &msg.content, error);
+                record_decode_failure(
+                    &self.wire_stats,
+                    &sender_peer_id,
+                    topic,
+                    &msg.content,
+                    error,
+                );
                 return Ok(());
             }
         };
@@ -124,6 +131,7 @@ impl Delivery {
 }
 
 fn record_decode_failure(
+    wire_stats: &crate::sync::WireStats,
     sender_peer_id: &crate::transport::PeerId,
     topic: &str,
     content: &[u8],
@@ -141,8 +149,8 @@ fn record_decode_failure(
         occurrences: 0,
     };
     // Warn on the 1st, 2nd, 4th, 8th... failure and log the rest at debug.
-    // The count is surfaced through SyncDiagnostics.
-    let count = crate::sync::record_gossip_decode_failure_sample(sample.clone());
+    // The count is this node's, read through `P2PTransport::wire_stats`.
+    let count = wire_stats.record_gossip_decode_failure(sample.clone());
     if count.is_power_of_two() {
         warn!(
             peer_id = %sender_peer_id,

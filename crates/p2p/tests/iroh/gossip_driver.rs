@@ -37,6 +37,7 @@ fn driver(dials: &Dials) -> (Driver<Dials>, Events) {
         event_tx,
         raw_topics: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
         records: crate::iroh::records::RecordsHandle::new(),
+        wire_stats: Arc::default(),
     };
     let driver = Driver::new(
         iroh::SecretKey::generate().public(),
@@ -154,6 +155,7 @@ async fn a_dial_that_lands_on_an_older_mux_ends_the_gossip_dial() {
     let handle = GossipHandle {
         inbox: Arc::clone(&driver.io.inbox),
         subscribed: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        wire_stats: Arc::default(),
     };
     handle.connected(peer, &connection);
     let input = tokio::time::timeout(Duration::from_secs(10), driver.io.inbox.next())

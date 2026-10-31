@@ -62,6 +62,8 @@ pub(super) struct EndpointResources {
     pub(super) admission: Arc<PeerAdmission>,
     pub(super) inbound_budget: Arc<InboundBudget>,
     pub(super) fetch_stats: Arc<FetchStats>,
+    /// This node's transport counters (gossip decode failures).
+    pub(super) wire_stats: Arc<crate::sync::WireStats>,
     pub(super) records: RecordsHandle,
     pub(super) solicited: Arc<Solicited>,
 }
@@ -195,6 +197,7 @@ async fn run_event_loop(
         admission,
         inbound_budget: Arc::default(),
         fetch_stats: Arc::default(),
+        wire_stats: gossip.wire_stats(),
         records: records.clone(),
         solicited: Arc::new(Solicited::new()),
     };

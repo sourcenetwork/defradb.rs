@@ -104,6 +104,14 @@ pub struct ArrivalReport {
     pub docs_merged: u64,
     pub docs_skipped: u64,
     pub docs_dropped: u64,
+    /// Inbound pushes this node received (`msgsIn`).
+    pub msgs_in: u64,
+    /// Inbound pushes refused because every request worker was busy
+    /// (`droppedQueueFull`).
+    pub dropped_queue_full: u64,
+    /// Further `p2p stats` fields, by Go name, from sources outside this
+    /// manager (the push queue, the inbound byte budget, the Shinzo wire).
+    pub extra: Vec<(&'static str, u64)>,
     /// Non-zero drop reasons, by Go name.
     pub drops: Vec<(&'static str, u64)>,
     /// Non-zero skip reasons, by Go name.
@@ -111,15 +119,28 @@ pub struct ArrivalReport {
 }
 
 impl ArrivalReport {
+    /// The `p2p stats` fields, by Go name, in Go's order where Go has one.
+    pub fn fields(&self) -> Vec<(&'static str, u64)> {
+        let mut fields = vec![
+            ("docsMerged", self.docs_merged),
+            ("docsDropped", self.docs_dropped),
+            ("docsSkipped", self.docs_skipped),
+            ("msgsIn", self.msgs_in),
+            ("droppedQueueFull", self.dropped_queue_full),
+        ];
+        fields.extend(self.extra.iter().copied());
+        fields
+    }
+
     /// Logs Go's `p2p stats` line, then `document drops` and `document skips`
     /// when they are non-empty.
     pub fn log(&self) {
-        tracing::info!(
-            docsMerged = self.docs_merged,
-            docsDropped = self.docs_dropped,
-            docsSkipped = self.docs_skipped,
-            "p2p stats"
-        );
+        let fields: Vec<String> = self
+            .fields()
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        tracing::info!(stats = %fields.join(" "), "p2p stats");
         if !self.drops.is_empty() {
             tracing::info!(reasons = ?self.drops, "document drops");
         }
@@ -133,11 +154,22 @@ impl ArrivalReport {
 #[derive(Debug, Default)]
 pub struct ArrivalStats {
     merged: AtomicU64,
+    msgs_in: AtomicU64,
+    dropped_queue_full: AtomicU64,
     drops: [AtomicU64; DropReason::ALL.len()],
     skips: [AtomicU64; SkipReason::ALL.len()],
 }
 
 impl ArrivalStats {
+    /// Count one inbound push; `admitted` is false when it was refused for
+    /// want of a request worker.
+    pub fn record_inbound(&self, admitted: bool) {
+        self.msgs_in.fetch_add(1, Ordering::Relaxed);
+        if !admitted {
+            self.dropped_queue_full.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     pub fn record(&self, result: &ReplicationResult) {
         match Arrival::of(result) {
             Some(Arrival::Merged) => self.merged.fetch_add(1, Ordering::Relaxed),
@@ -167,6 +199,9 @@ impl ArrivalStats {
             docs_merged: self.merged.swap(0, Ordering::Relaxed),
             docs_dropped: drops.iter().map(|(_, n)| n).sum(),
             docs_skipped: skips.iter().map(|(_, n)| n).sum(),
+            msgs_in: self.msgs_in.swap(0, Ordering::Relaxed),
+            dropped_queue_full: self.dropped_queue_full.swap(0, Ordering::Relaxed),
+            extra: Vec::new(),
             drops,
             skips,
         }
@@ -208,6 +243,21 @@ mod tests {
         assert_eq!(report.docs_skipped, 2);
         assert_eq!(report.drops, vec![("mergeFailed", 2)]);
         assert_eq!(report.skips, vec![("alreadyMerged", 1), ("noAccess", 1)]);
+        assert_eq!(stats.drain(), ArrivalReport::default());
+    }
+
+    #[test]
+    fn inbound_pushes_and_queue_full_refusals_are_reported_by_go_name() {
+        let stats = ArrivalStats::default();
+        stats.record_inbound(true);
+        stats.record_inbound(true);
+        stats.record_inbound(false);
+        let mut report = stats.drain();
+        report.extra.push(("queueDepth", 7));
+        let fields = report.fields();
+        assert!(fields.contains(&("msgsIn", 3)));
+        assert!(fields.contains(&("droppedQueueFull", 1)));
+        assert_eq!(fields.last(), Some(&("queueDepth", 7)));
         assert_eq!(stats.drain(), ArrivalReport::default());
     }
 }

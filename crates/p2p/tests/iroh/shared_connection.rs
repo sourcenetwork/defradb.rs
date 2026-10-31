@@ -115,6 +115,7 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     let resources = EndpointResources {
         endpoint: endpoint.clone(),
         gossip: gossip.clone(),
+        wire_stats: gossip.wire_stats(),
         peer_map: Arc::new(SharedPeerMap::new()),
         connection_cache: new_connection_cache(gossip),
         spawned_tasks: Arc::new(TaskRegistry::default()),

@@ -70,6 +70,9 @@ pub enum IrohCommand {
     FetchStats {
         reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::PeerFetchStats>>>,
     },
+    WireStats {
+        reply: oneshot::Sender<crate::error::Result<std::sync::Arc<crate::sync::WireStats>>>,
+    },
     PeerConnection {
         peer_id: PeerId,
         reply: oneshot::Sender<crate::error::Result<Option<crate::transport::PeerConnectionInfo>>>,
