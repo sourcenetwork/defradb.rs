@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/update/embeddings/embedding_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/update/embeddings/embedding_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
@@ -7,6 +7,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -55,6 +56,7 @@ fn mutation_update_fields_for_embedding_not_updated_does_not_trigger_generation_
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();
@@ -121,6 +123,7 @@ fn mutation_update_user_defined_vector_embedding_does_not_trigger_generation_sho
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();
@@ -214,6 +217,7 @@ fn mutation_update_with_multiple_embedding_fields_should_succeed() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();

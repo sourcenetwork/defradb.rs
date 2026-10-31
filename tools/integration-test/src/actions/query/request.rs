@@ -58,10 +58,11 @@ impl Op for Request {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
         state
-            .block_on(state.node_on(self.common.node())?.execute_request_as(
-                &state.context(self.txn),
-                QueryRequest::new(self.request.as_str()),
-            ))
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .execute_request_as(&state.context(self.txn), self.query_request()),
+            )
             .map(|response| {
                 envelope(
                     response.data,
@@ -69,17 +70,54 @@ impl Op for Request {
                 )
             })
             .map_err(|e| Failure::operation(e.to_string()))
+            .and_then(|envelope| self.typed(envelope))
     }
 }
 
 impl Request {
+    /// `envelope` when every `resultTypes` path holds a `float32Array`: an
+    /// array of numbers that are each a 32-bit float, written as its exact
+    /// value or as its shortest decimal (Go's and defradb.rs's Float32
+    /// rendering). That is the most a JSON answer can show of Go's
+    /// `[]float32` assignability check.
+    fn typed(&self, envelope: Value) -> Result<Value, Failure> {
+        let Some(types) = self.result_types.as_ref().and_then(Value::as_object) else {
+            return Ok(envelope);
+        };
+        for (pointer, kind) in types {
+            if kind != "float32Array" {
+                return Err(Failure::unsupported(format!("resultTypes type {kind}")));
+            }
+            let floats = envelope["data"]
+                .pointer(pointer)
+                .and_then(Value::as_array)
+                .is_some_and(|items| {
+                    items
+                        .iter()
+                        .all(|item| item.as_f64().is_some_and(is_float32))
+                });
+            if !floats {
+                return Err(Failure::operation(format!(
+                    "resultTypes: {pointer} is not a float32Array"
+                )));
+            }
+        }
+        Ok(envelope)
+    }
+
+    fn query_request(&self) -> QueryRequest {
+        let request = QueryRequest::new(self.request.as_str());
+        match &self.variables {
+            Some(variables) => request.with_variables(variables.clone()),
+            None => request,
+        }
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.plain(Self::name())?;
         let unsupported = [
-            ("variables", self.variables.is_some()),
             ("nonFiniteFloats", self.non_finite_floats.is_some()),
-            ("resultTypes", self.result_types.is_some()),
             ("operationName", self.operation_name.is_some()),
         ];
         match unsupported.iter().find(|(_, set)| *set) {
@@ -90,6 +128,12 @@ impl Request {
             None => Ok(()),
         }
     }
+}
+
+/// Whether `value` is a 32-bit float, exactly or as its shortest decimal.
+fn is_float32(value: f64) -> bool {
+    let single = value as f32;
+    f64::from(single) == value || single.to_string().parse::<f64>() == Ok(value)
 }
 
 /// A GraphQL response as the scenario compares it: its data, and the message
@@ -119,10 +163,11 @@ impl HttpRun for Request {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             let request = action.request.as_str().to_owned();
+            let variables = action.variables.clone();
             let txn = state.txn_id(action.txn);
             state
                 .http_on(action.common.node(), |client| async move {
-                    client.graphql(&request, None, txn).await
+                    client.graphql(&request, variables, txn).await
                 })?
                 .map(|response| {
                     envelope(
@@ -131,6 +176,7 @@ impl HttpRun for Request {
                     )
                 })
                 .map_err(|e| Failure::operation(e.to_string()))
+                .and_then(|envelope| action.typed(envelope))
         });
     }
 }
@@ -139,13 +185,29 @@ impl CliRun for Request {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            let variables = action.variables.as_ref().map(Value::to_string);
+            let mut args = vec!["query", action.request.as_str()];
+            if let Some(variables) = &variables {
+                args.extend(["--variables", variables.as_str()]);
+            }
             state
-                .defra_client_on(
-                    action.common.node(),
-                    action.txn,
-                    &["query", action.request.as_str()],
-                )
+                .defra_client_on(action.common.node(), action.txn, &args)
                 .map_err(Failure::operation)
+                .and_then(|envelope| action.typed(envelope))
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_float32;
+
+    #[test]
+    fn float32_exact_or_shortest() {
+        assert!(is_float32(0.1));
+        assert!(is_float32(f64::from(0.1_f32)));
+        assert!(is_float32(-3.0));
+        assert!(!is_float32(0.123_456_789_012_345));
+        assert!(!is_float32(1e300));
     }
 }

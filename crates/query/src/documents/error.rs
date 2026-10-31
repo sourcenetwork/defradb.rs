@@ -10,6 +10,12 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     Conflict,
+    /// The save named a document that has been deleted. Go's text.
+    #[error("a document with the given ID has been deleted. DocID: {0}")]
+    Deleted(String),
+    /// The write named the secondary side of a relation. Go's text.
+    #[error("cannot set relation from secondary side. Name: {0}")]
+    SecondaryRelation(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

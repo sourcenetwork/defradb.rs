@@ -525,7 +525,9 @@ fn cbor_value_to_json(value: &ciborium::Value) -> Result<serde_json::Value> {
                 }
             } else {
                 // NaN/Infinity can't be represented in JSON
-                Err(Error::NonFiniteFloat(format!("{}", f)))
+                Err(Error::NonFiniteFloat(
+                    crate::encoding::go_non_finite(*f).to_owned(),
+                ))
             }
         }
         ciborium::Value::Text(s) => Ok(serde_json::Value::String(s.clone())),

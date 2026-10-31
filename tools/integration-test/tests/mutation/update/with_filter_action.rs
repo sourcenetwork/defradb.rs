@@ -1,9 +1,10 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/update/with_filter_action_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/update/with_filter_action_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::Filter;
 use integration_test::actions::{AddCollection, AddDoc, NewNode, Request, UpdateWithFilter};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -134,6 +135,7 @@ fn update_with_invalid_filter_type_returns_error() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::RustHttp, ClientType::GoHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
@@ -170,6 +172,7 @@ fn update_with_invalid_filter_type_with_go_client_returns_error() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
         ..Default::default()
     }
     .execute();
@@ -314,6 +317,12 @@ fn update_with_map_filter_large_integer_straddling2_to53_updates_only_exact_matc
             }
             .into(),
         ],
+        client_types: Some(&[
+            ClientType::InProcess,
+            ClientType::RustHttp,
+            ClientType::GoHttp,
+            ClientType::Cli,
+        ]),
         ..Default::default()
     }
     .execute();

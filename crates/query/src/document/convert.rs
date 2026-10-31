@@ -132,6 +132,9 @@ pub(crate) fn matches_document_filter(
     collection: &schema::CollectionVersion,
     filter: &crate::mapper::Filter,
 ) -> Result<bool> {
+    let Some(filter) = filter.local_part() else {
+        return Ok(true);
+    };
     let mut mapping = DocumentMapping::new();
     for (index, field) in collection.fields.iter().enumerate() {
         mapping.add(index, &field.name);

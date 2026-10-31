@@ -190,6 +190,34 @@ pub struct TestCase {
     pub skip: Option<&'static str>,
     /// The scenario never opens the default `db` node.
     pub without_db: bool,
+    /// Why the Go scenario does not apply to defradb.rs; it is not run.
+    pub not_applying: Option<NotApplying>,
+    /// The only clients the test runs under, Go's `SupportedClientTypes`:
+    /// Go's in-process client is `InProcess`, its HTTP client `RustHttp` and
+    /// `GoHttp`, its CLI `Cli`. Unset, every client.
+    pub client_types: Option<&'static [ClientType]>,
+}
+
+/// Why a Go conformance scenario does not apply to defradb.rs. The scenario
+/// stays as Go wrote it, so the corpus round trip still checks it; what
+/// defradb.rs does instead is tested where the reason says.
+#[derive(Clone, Copy, Debug)]
+pub enum NotApplying {
+    /// What the scenario asserts cannot cross a client boundary, Go's own
+    /// included.
+    Interop(&'static str),
+    /// The scenario asserts what its requirement marks `Go-Bug-Suspect`;
+    /// defradb.rs does not copy it.
+    GoBugSuspect(&'static str),
+}
+
+impl std::fmt::Display for NotApplying {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interop(reason) => write!(f, "interop: {reason}"),
+            Self::GoBugSuspect(reason) => write!(f, "Go-Bug-Suspect: {reason}"),
+        }
+    }
 }
 
 impl TestCase {
@@ -220,11 +248,44 @@ impl TestCase {
             eprintln!("skipped: {reason}");
             return;
         }
-        for client_type in active_client_types() {
-            let actions = client_type.apply(&self.actions);
+        if let Some(reason) = self.not_applying {
+            eprintln!("not applying: {reason}");
+            return;
+        }
+        let clients: Vec<ClientType> = active_client_types()
+            .into_iter()
+            .filter(|client| self.client_types.is_none_or(|only| only.contains(client)))
+            .collect();
+        if clients.is_empty() {
+            eprintln!("skipped: runs only under {:?}", self.client_types);
+            return;
+        }
+        let actions = with_stub_embedder(&self.actions);
+        for client_type in clients {
+            let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
         }
     }
+}
+
+/// `actions` with every embedding provider URL pointed at the stub
+/// embedder, so tests that generate embeddings need no model server.
+fn with_stub_embedder(actions: &[ActionInstance<Actions>]) -> Vec<ActionInstance<Actions>> {
+    let route = |action: &Actions| {
+        let text = serde_json::to_string(action).expect("an action serializes");
+        let routed = crate::stub_embedder::route(&text);
+        match routed == text {
+            true => action.clone(),
+            false => serde_json::from_str(&routed).expect("a routed action deserializes"),
+        }
+    };
+    actions
+        .iter()
+        .map(|instance| match instance {
+            ActionInstance::Sync(action) => ActionInstance::Sync(route(action)),
+            ActionInstance::Async(action) => ActionInstance::Async(route(action)),
+        })
+        .collect()
 }
 
 impl TestCase {

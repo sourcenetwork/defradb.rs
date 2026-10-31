@@ -435,7 +435,11 @@ impl PlanNode for UpdateNode {
                     // separated by permission checks and other async work.
                     // Revalidate against the exact snapshot used for the
                     // update so a document that stopped matching is skipped.
-                    if let Some(ref filter) = self.filter {
+                    // Conditions on related documents were decided by the
+                    // select that resolved the IDs; only the document's own
+                    // conditions can be checked against it here.
+                    let local_filter = self.filter.as_ref().and_then(Filter::local_part);
+                    if let Some(ref filter) = local_filter {
                         let matches = if let Some(collection) = &self.collection {
                             crate::document::matches_document_filter(&doc, collection, filter)?
                         } else {

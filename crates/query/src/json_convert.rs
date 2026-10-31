@@ -160,12 +160,17 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
     }
 }
 
+/// Go's `encoding/json` error for a NaN or an infinity in a result.
+fn non_finite(f: f64) -> QueryError {
+    QueryError::execution(
+        document::Error::NonFiniteFloat(document::encoding::go_non_finite(f).to_owned())
+            .to_string(),
+    )
+}
+
 fn float64_to_json(f: f64) -> Result<JsonValue> {
     if !f.is_finite() {
-        return Err(QueryError::execution(format!(
-            "cannot serialize non-finite float64 value '{}' to JSON",
-            f
-        )));
+        return Err(non_finite(f));
     }
     // Match Go's json.Marshal behavior: whole-number floats serialize
     // without a decimal point (e.g., float64(21.0) → "21").
@@ -178,21 +183,13 @@ fn float64_to_json(f: f64) -> Result<JsonValue> {
     }
     serde_json::Number::from_f64(f)
         .map(JsonValue::Number)
-        .ok_or_else(|| {
-            QueryError::execution(format!(
-                "cannot serialize non-finite float64 value '{}' to JSON",
-                f
-            ))
-        })
+        .ok_or_else(|| non_finite(f))
 }
 
 fn float32_to_json(f: f32) -> Result<JsonValue> {
     let f64_val = document::encoding::widen_f32(f);
     if !f64_val.is_finite() {
-        return Err(QueryError::execution(format!(
-            "cannot serialize non-finite float32 value '{}' to JSON",
-            f
-        )));
+        return Err(non_finite(f64_val));
     }
     // Match Go's json.Marshal behavior for whole-number floats
     if f64_val.fract() == 0.0
@@ -204,12 +201,7 @@ fn float32_to_json(f: f32) -> Result<JsonValue> {
     }
     serde_json::Number::from_f64(f64_val)
         .map(JsonValue::Number)
-        .ok_or_else(|| {
-            QueryError::execution(format!(
-                "cannot serialize non-finite float32 value '{}' to JSON",
-                f
-            ))
-        })
+        .ok_or_else(|| non_finite(f64_val))
 }
 
 fn nillable_float64_to_json(opt: Option<f64>) -> Result<JsonValue> {
@@ -329,22 +321,28 @@ mod tests {
     #[test]
     fn test_float64_to_json_nan_returns_error() {
         let result = float64_to_json(f64::NAN);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-finite"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "json: unsupported value: NaN"
+        );
     }
 
     #[test]
     fn test_float64_to_json_infinity_returns_error() {
         let result = float64_to_json(f64::INFINITY);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-finite"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "json: unsupported value: +Inf"
+        );
     }
 
     #[test]
     fn test_float64_to_json_neg_infinity_returns_error() {
         let result = float64_to_json(f64::NEG_INFINITY);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-finite"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "json: unsupported value: -Inf"
+        );
     }
 
     #[test]
