@@ -95,25 +95,35 @@ pub extern "C" fn wait_subscription(
             Ok(rt) => rt,
             Err(_) => return PollSubscriptionResult::error(crate::helpers::ERR_RUNTIME_NOT_INITIALIZED),
         };
+        let limit = std::time::Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + limit;
+        // The timeout's timer is checked only when this future is pending, and
+        // a channel that always holds a filtered-out event never is: the skip
+        // loop checks the deadline itself.
         let next = async {
             loop {
-                let message = state.subscription.take().await?;
+                let Some(message) = state.subscription.take().await else {
+                    return Ok(None);
+                };
                 let filtered_out = match (&state.collection_filter, message.as_update()) {
                     (Some(filter), Some(update)) => !update.collection_id.contains(filter.as_str()),
                     _ => false,
                 };
                 if !filtered_out {
-                    return Some(message);
+                    return Ok(Some(message));
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(edge::EdgeError::Deadline(limit));
                 }
             }
         };
-        let waited = rt.block_on(rt.timeout(std::time::Duration::from_millis(timeout_ms), next));
+        let waited = rt.block_on(rt.timeout(limit, next)).and_then(|r| r).and_then(|r| r);
         let dropped = state.subscription.check_and_reset_dropped();
         match waited {
-            Ok(Ok(Some(message))) => PollSubscriptionResult::event(message_to_json(&message), dropped),
-            Ok(Ok(None)) => PollSubscriptionResult::closed(),
-            Ok(Err(edge::EdgeError::Deadline(_))) => PollSubscriptionResult::no_event(dropped),
-            Ok(Err(error)) | Err(error) => PollSubscriptionResult::error(format!("wait_subscription: {error}")),
+            Ok(Some(message)) => PollSubscriptionResult::event(message_to_json(&message), dropped),
+            Ok(None) => PollSubscriptionResult::closed(),
+            Err(edge::EdgeError::Deadline(_)) => PollSubscriptionResult::no_event(dropped),
+            Err(error) => PollSubscriptionResult::error(format!("wait_subscription: {error}")),
         }
     }
 }
