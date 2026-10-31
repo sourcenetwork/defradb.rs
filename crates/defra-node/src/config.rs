@@ -202,6 +202,10 @@ pub struct Libp2pConfig {
     /// pushes), so the node replicates with Go Shinzo nodes. Off keeps
     /// today's protocol.
     pub shinzo_wire: bool,
+    /// Send rooted CAR requests; off, every fetch walks the DAG block by
+    /// block. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub car_requests: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -217,6 +221,8 @@ impl Default for Libp2pConfig {
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
             shinzo_wire: false,
+            #[cfg(feature = "test-utils")]
+            car_requests: true,
         }
     }
 }

@@ -374,6 +374,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Send no rooted CAR requests, so every fetch walks the DAG block by
+    /// block, as with a peer that predates the exchange. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub fn without_car_requests(mut self) -> Self {
+        if let TransportConfig::Libp2p(config) = &mut self.config.transport {
+            config.car_requests = false;
+        }
+        self
+    }
+
     /// Keep the transport identity in an application-owned keyring.
     ///
     /// The backend must provide durable storage and its own namespace per node.
