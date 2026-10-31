@@ -62,9 +62,11 @@ func (n *Node) Options() *options.NodeOptions {
 // listen address, and Go DefraDB's HTTP API over it unless the API is
 // disabled.
 //
-// Of the options it honours the store path and in-memory store, the first
-// P2P listen address, DisableP2P, DisableAPI, the HTTP options, and the DB
-// identity, which signs the blocks the node writes when signing is on.
+// Of the options it honours the store path and in-memory store, DisableP2P,
+// DisableAPI, the HTTP options, the DB identity (which signs the blocks the
+// node writes when signing is on) and every P2P option but
+// EnableClearBackoffOnRetry. BadgerFileSize, BadgerEncryptionKey and
+// LensRuntime have no Rust equivalent and are ignored.
 func (n *Node) Start(ctx context.Context) error {
 	initFFI()
 	o := n.opts
@@ -109,7 +111,10 @@ func (n *Node) Start(ctx context.Context) error {
 
 	var r C.struct_NewNodeResult
 	if !o.DisableP2P && len(o.P2P.ListenAddresses) > 0 {
-		r = C.new_node_with_p2p(c, a.s(o.P2P.ListenAddresses[0]))
+		if err := p2pOptions(&c, &a, o.P2P); err != nil {
+			return err
+		}
+		r = C.new_node_with_p2p(c, nil)
 	} else {
 		r = C.new_node(c)
 	}
@@ -177,4 +182,41 @@ func (n *Node) freeHandles() {
 		h.Delete()
 	}
 	n.handles = nil
+}
+
+// p2pOptions puts Go DefraDB's P2P options into c: every listen address and
+// bootstrap peer, GossipSub and the relay as Go switches them (off unless
+// set), the peer key and the resource limits.
+func p2pOptions(c *C.struct_NodeInitOptions, a *cargs, o options.NodeP2POptions) error {
+	listen, err := a.json(o.ListenAddresses)
+	if err != nil {
+		return err
+	}
+	c.p2p_listen_addrs_json = listen
+	if len(o.BootstrapPeers) > 0 {
+		if c.p2p_bootstrap_peers_json, err = a.json(o.BootstrapPeers); err != nil {
+			return err
+		}
+	}
+	if !o.EnablePubSub {
+		c.p2p_disable_pubsub = 1
+	}
+	if !o.EnableRelay {
+		c.p2p_disable_relay = 1
+	}
+	if len(o.PrivateKey) > 0 {
+		c.p2p_private_key = (*C.uint8_t)(C.CBytes(o.PrivateKey))
+		a.p = append(a.p, unsafe.Pointer(c.p2p_private_key))
+		c.p2p_private_key_len = C.size_t(len(o.PrivateKey))
+	}
+	if o.ResourceMemoryMiB > 0 {
+		c.p2p_resource_memory_mib = C.uint64_t(o.ResourceMemoryMiB)
+	}
+	if o.ResourceFileDescriptors > 0 {
+		c.p2p_resource_file_descriptors = C.uint64_t(o.ResourceFileDescriptors)
+	}
+	if o.MaxStreamsPerPeer > 0 {
+		c.p2p_max_streams_per_peer = C.size_t(o.MaxStreamsPerPeer)
+	}
+	return nil
 }

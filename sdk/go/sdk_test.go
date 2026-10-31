@@ -3,6 +3,7 @@ package defra
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/sourcenetwork/defradb/client"
 	"github.com/sourcenetwork/defradb/client/options"
 	"github.com/sourcenetwork/defradb/event"
@@ -349,6 +352,10 @@ func TestReplicationThroughTheFilterAndTheRetentionRule(t *testing.T) {
 		n.ReplicationFilter = filter
 		n.RetentionRule = rule
 	})
+	merges, err := target.DB.Events().Subscribe(event.MergeCompleteName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	addresses, err := target.DB.PeerInfo(ctx)
 	if err != nil || len(addresses) == 0 {
 		t.Fatalf("peer info %v %v", addresses, err)
@@ -379,6 +386,14 @@ func TestReplicationThroughTheFilterAndTheRetentionRule(t *testing.T) {
 	if got := names(t, target.DB); got != want {
 		t.Fatal(got)
 	}
+	select {
+	case msg := <-merges.Message():
+		if merge, ok := msg.Data.(event.MergeComplete); !ok || merge.Merge.DocID == "" || !merge.Merge.Cid.Defined() {
+			t.Fatalf("%+v", msg)
+		}
+	default:
+		t.Fatal("no merge-complete event for the replicated documents")
+	}
 }
 
 func TestDecodeFieldsAsGoDecodesCBOR(t *testing.T) {
@@ -388,5 +403,69 @@ func TestDecodeFieldsAsGoDecodesCBOR(t *testing.T) {
 	}
 	if fields["n"] != uint64(5) || fields["m"] != int64(-5) || fields["f"] != 1.5 || fields["s"] != "x" {
 		t.Fatalf("%#v", fields)
+	}
+}
+
+func TestSetPrivateKeyGivesGosPeerID(t *testing.T) {
+	key, _, err := libp2pcrypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := key.Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := peer.IDFromPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := start(t, func(nb *options.NodeOptionsBuilder) {
+		nb.P2P().SetListenAddresses("/ip4/127.0.0.1/tcp/0").SetPrivateKey(raw)
+	}, nil)
+	addresses, err := n.DB.PeerInfo(context.Background())
+	if err != nil || len(addresses) == 0 {
+		t.Fatalf("peer info %v %v", addresses, err)
+	}
+	if !strings.HasSuffix(addresses[0], "/p2p/"+want.String()) {
+		t.Fatalf("%s is not peer %s", addresses[0], want)
+	}
+}
+
+func TestEveryListenAddressAndTheResourceLimits(t *testing.T) {
+	n := start(t, func(nb *options.NodeOptionsBuilder) {
+		nb.P2P().
+			SetListenAddresses("/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.2/tcp/0").
+			SetResourceMemoryMiB(256).
+			SetResourceFileDescriptors(512).
+			SetMaxStreamsPerPeer(64).
+			SetEnablePubSub(true)
+	}, nil)
+	addresses, err := n.DB.PeerInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(addresses, " ")
+	if !strings.Contains(joined, "/ip4/127.0.0.1/") || !strings.Contains(joined, "/ip4/127.0.0.2/") {
+		t.Fatalf("listening on %v", addresses)
+	}
+}
+
+func TestTheEventRelayParksWhileIdle(t *testing.T) {
+	n := start(t, nil, nil)
+	sub, err := n.DB.Events().Subscribe(event.UpdateName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := n.DB.waits.Load()
+	time.Sleep(1500 * time.Millisecond)
+	// A wait lasts up to a second, so an idle relay makes about two.
+	if idle := n.DB.waits.Load() - before; idle > 3 {
+		t.Fatalf("the idle relay waited %d times in 1.5s", idle)
+	}
+	query(t, n.DB, `mutation { add_User(input: {name: "Alice", age: 40}) { _docID } }`)
+	select {
+	case <-sub.Message():
+	case <-time.After(5 * time.Second):
+		t.Fatal("an event arrives while the relay is parked")
 	}
 }

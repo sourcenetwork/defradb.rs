@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -26,6 +27,7 @@ type DB struct {
 	sub    C.uintptr_t
 	stop   chan struct{}
 	done   chan struct{}
+	waits  atomic.Int64 // library waits the relay made, for its idle test
 }
 
 var (
@@ -38,7 +40,7 @@ var (
 func openDB(ptr C.uintptr_t) (*DB, error) {
 	var a cargs
 	defer a.free()
-	r := C.create_event_subscription(ptr, a.s(`["update","p2p-no-peers"]`))
+	r := C.create_event_subscription(ptr, a.s(relayedEvents))
 	if r.status != 0 {
 		message := C.GoString(r.error)
 		C.defra_free_string(r.error)
@@ -55,7 +57,12 @@ func openDB(ptr C.uintptr_t) (*DB, error) {
 	return d, nil
 }
 
-// Events is the database's event bus: update and p2p-no-peers events.
+// relayedEvents are the events of Go's bus the Rust node emits with the data
+// Go's event types carry.
+const relayedEvents = `["update","p2p-no-peers","merge-complete","topic-peer-event","se-artifact-received"]`
+
+// Events is the database's event bus: update, p2p-no-peers, merge-complete,
+// topic-peer-event and se-artifact-received events.
 func (d *DB) Events() event.Bus {
 	return d.events
 }
@@ -63,8 +70,8 @@ func (d *DB) Events() event.Bus {
 // Close stops the event relay and closes the database.
 func (d *DB) Close() {
 	close(d.stop)
-	<-d.done
 	_ = C.close_subscription(d.sub)
+	<-d.done
 	_, _ = result(C.node_close(d.ptr), "close")
 	d.events.Close()
 }
@@ -119,9 +126,8 @@ func (t *Txn) Discard() {
 	_, _ = result(C.rollback_txn(t.ptr, a.s(t.txn)), "discard")
 }
 
-// relay publishes the node's events on the Go bus until Close.
-//
-// ponytail: polls every 10ms while idle; a blocking FFI wait removes it.
+// relay publishes the node's events on the Go bus until Close, parked in
+// the library's wait between events: Close's close_subscription wakes it.
 func (d *DB) relay() {
 	defer close(d.done)
 	for {
@@ -130,7 +136,8 @@ func (d *DB) relay() {
 			return
 		default:
 		}
-		r := C.poll_subscription(d.sub)
+		d.waits.Add(1)
+		r := C.wait_subscription(d.sub, 1000)
 		switch r.status {
 		case 0:
 			raw := C.GoString(r.value)
@@ -139,11 +146,6 @@ func (d *DB) relay() {
 				d.events.Publish(msg)
 			}
 		case 2:
-			select {
-			case <-d.stop:
-				return
-			case <-time.After(10 * time.Millisecond):
-			}
 		default:
 			if r.error != nil {
 				C.defra_free_string(r.error)
@@ -164,13 +166,16 @@ func goEvent(raw string) (event.Message, bool) {
 		IsRetry      bool   `json:"is_retry"`
 		IsRelay      bool   `json:"is_relay"`
 		Topic        string `json:"topic"`
+		ByPeer       string `json:"by_peer"`
+		PeerID       string `json:"peer_id"`
+		EventType    string `json:"event_type"`
 	}
 	if err := json.Unmarshal([]byte(raw), &e); err != nil {
 		return event.Message{}, false
 	}
+	id, _ := cid.Decode(e.Cid)
 	switch e.Type {
 	case "update":
-		id, _ := cid.Decode(e.Cid)
 		block, _ := base64.StdEncoding.DecodeString(e.Block)
 		return event.NewMessage(event.UpdateName, event.Update{
 			DocID:        e.DocID,
@@ -186,6 +191,21 @@ func goEvent(raw string) (event.Message, bool) {
 			CollectionID: e.CollectionID,
 			Topic:        e.Topic,
 		}), true
+	case "merge_complete":
+		return event.NewMessage(event.MergeCompleteName, event.MergeComplete{Merge: event.Merge{
+			DocID:        e.DocID,
+			ByPeer:       e.ByPeer,
+			Cid:          id,
+			CollectionID: e.CollectionID,
+		}}), true
+	case "topic_peer_event":
+		return event.NewMessage(event.TopicPeerEventName, event.TopicPeerEvent{
+			PeerID:    e.PeerID,
+			Topic:     e.Topic,
+			EventType: e.EventType,
+		}), true
+	case "se_artifact_received":
+		return event.NewMessage(event.SEArtifactReceivedName, event.SEArtifactReceived{DocID: e.DocID}), true
 	}
 	return event.Message{}, false
 }
