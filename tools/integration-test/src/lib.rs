@@ -10,6 +10,7 @@ mod go_node;
 pub mod nodes;
 mod purge;
 pub mod scenario;
+mod stub_embedder;
 pub mod test_case;
 
 pub use scenario::m;
