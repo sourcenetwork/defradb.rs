@@ -22,7 +22,9 @@ pub struct RetentionFloor {
 /// `<reason>: refused by the retention rule`, as Go's wrapped errors do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RetentionRefusal {
-    #[error("replicated document is at or below the retention floor: refused by the retention rule")]
+    #[error(
+        "replicated document is at or below the retention floor: refused by the retention rule"
+    )]
     BelowFloor,
     #[error("replicated document has no valid retention height: refused by the retention rule")]
     NoHeight,
@@ -38,7 +40,7 @@ pub trait RetentionRule: Send + Sync {
 
 /// A rule from a fixed map of collection IDs to their floors, as a node's
 /// configuration gives it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StaticRetentionRule {
     floors: RapidHashMap<String, RetentionFloor>,
 }
