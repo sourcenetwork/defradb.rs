@@ -1,7 +1,11 @@
 //! Query structure limits to prevent denial-of-service via deeply nested or wide queries.
 
+use rapidhash::{HashSetExt, RapidHashSet};
+
 use crate::error::{QueryError, Result};
-use crate::limits::{QueryLimits, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH};
+use crate::limits::{
+    QueryLimits, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH,
+};
 use crate::mapper::{Requestable, Select};
 
 /// Maximum nesting depth for GraphQL selections.
@@ -16,22 +20,49 @@ pub const MAX_QUERY_DEPTH: usize = DEFAULT_MAX_QUERY_DEPTH;
 /// an unbounded number of fetches.
 pub const MAX_QUERY_WIDTH: usize = DEFAULT_MAX_QUERY_WIDTH;
 
-/// Maximum number of fragments one spread chain nests. Fragments flatten into
-/// the selection that spreads them, so a chain adds no nesting depth, but
-/// the parser expands it one fragment at a time; a chain longer than this is
-/// refused before it can exhaust a thread's stack (#2465). The same bound
+/// Default maximum number of fragments one spread chain nests; the same bound
 /// as a subscription's root fragments.
-pub const MAX_FRAGMENT_NESTING: usize = 32;
+pub const MAX_FRAGMENT_NESTING: usize = DEFAULT_MAX_FRAGMENT_NESTING;
 
-/// Refuse a spread that would nest more than `MAX_FRAGMENT_NESTING`
-/// fragments, given the `nesting` fragments already on its chain.
-pub(super) fn check_fragment_nesting(nesting: usize) -> Result<()> {
-    if nesting >= MAX_FRAGMENT_NESTING {
-        return Err(QueryError::parse(format!(
-            "query nests fragments more than {MAX_FRAGMENT_NESTING} deep"
-        )));
+/// The fragments on the spread chain being expanded, bounded by
+/// `QueryLimits::max_fragment_nesting` (`0` = unlimited).
+pub(super) struct FragmentPath {
+    names: RapidHashSet<String>,
+    max_nesting: usize,
+}
+
+impl FragmentPath {
+    pub(super) fn new(limits: QueryLimits) -> Self {
+        Self {
+            names: RapidHashSet::new(),
+            max_nesting: limits.max_fragment_nesting,
+        }
     }
-    Ok(())
+
+    pub(super) fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    pub(super) fn insert(&mut self, name: String) -> bool {
+        self.names.insert(name)
+    }
+
+    pub(super) fn remove(&mut self, name: &str) {
+        self.names.remove(name);
+    }
+
+    /// Refuse a spread that would nest more fragments than the limit, given
+    /// the fragments already on the chain.
+    pub(super) fn check_nesting(&self) -> Result<()> {
+        if self.max_nesting > 0 && self.names.len() >= self.max_nesting {
+            return Err(QueryError::parse(format!(
+                "query nests fragments more than {} deep; raise the node's \
+                 api.query_max_fragment_nesting (--query-max-fragment-nesting) to allow it",
+                self.max_nesting
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Validate a parsed Select tree against depth and width limits.
