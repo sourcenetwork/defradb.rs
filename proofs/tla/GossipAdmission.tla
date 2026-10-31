@@ -26,6 +26,7 @@
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   coordinator/event_handler/mod.rs     handle_transport_event, handle_transport_event_with_admission  (rate and saturation refusals)
+\*   event_dispatcher.rs                   run_event_dispatcher  (a saturated head waits for a refusal worker, never dropped)
 \*   coordinator/event_handler/gossip.rs  handle_gossip_message, defer_refused_gossip  (capacity refusal, durable deferral)
 \*   manager/process/gossip_deferral.rs   defer_gossip_head  (the budgets and the durable-only record)
 \*   manager/process/gossip_deferral.rs   drop_gossip_head  (the reported drop past a budget)
@@ -45,7 +46,8 @@ CONSTANTS
   TotalCap,    \* durable records all peers may hold together (the total budget)
   MaxCrashes,  \* how many times our node may crash in one run
   Mode,        \* "Durable" (the fix) | "SilentShed" | "Drop" (main) | "MemoryDefer"
-  Promote      \* TRUE: the resync sweep promotes durable records; FALSE: it never does
+  Promote,     \* TRUE: the resync sweep promotes durable records; FALSE: it never does
+  Lane         \* the dispatcher with every refusal worker busy: "Wait" | "WaitExpire" | "Drop" (main)
 
 \* There is something to announce, from somebody.
 ASSUME Docs # {} /\ Peers # {}
@@ -61,6 +63,9 @@ ASSUME MaxCrashes \in Nat
 ASSUME Mode \in {"Durable", "SilentShed", "Drop", "MemoryDefer"}
 \* Promotion is on or off.
 ASSUME Promote \in BOOLEAN
+\* The dispatcher waits for a refusal worker (and the wait never passes its
+\* deadline), waits and may pass its deadline, or drops the head (main).
+ASSUME Lane \in {"Wait", "WaitExpire", "Drop"}
 
 VARIABLES
   sent,      \* documents the peers have announced (never announced again)
@@ -157,6 +162,21 @@ Refuse(d) ==
   \* Nothing else moves.
   /\ UNCHANGED <<sent, mem, merged, crashes>>
 
+\* The fourth refusal site: every admission worker and every refusal worker
+\* is busy when the announcement reaches the dispatcher. The fix waits for a
+\* refusal worker, which then takes the Refuse step above; only a wait past
+\* its deadline ends here, reported. Main dropped the head here, unreported.
+LaneDrop(d) ==
+  \* The dispatcher can end a waiting head here only if it drops, or its wait can expire.
+  /\ Lane \in {"WaitExpire", "Drop"}
+  \* The announcement is waiting at the edge; the dispatcher lets it go.
+  /\ d \in inflight
+  /\ inflight' = inflight \ {d}
+  \* The fix reports it as a node event; main tells nobody.
+  /\ reported' = IF Lane = "WaitExpire" THEN reported \cup {d} ELSE reported
+  \* Nothing else moves.
+  /\ UNCHANGED <<sent, mem, durable, sideq, merged, crashes>>
+
 \* The resync sweep moves a durable record with no slot into a free slot.
 PromoteDurable(d) ==
   \* The sweep is in use.
@@ -221,7 +241,7 @@ Done == sent = Docs /\ inflight = {} /\ merged \cup reported = Docs
 Next ==
   \* Some document takes a step...
   \/ \E d \in Docs :
-       \/ Announce(d) \/ Admit(d) \/ Refuse(d)
+       \/ Announce(d) \/ Admit(d) \/ Refuse(d) \/ LaneDrop(d)
        \/ PromoteDurable(d) \/ PromoteSide(d) \/ Resolve(d)
   \* ...or the node crashes...
   \/ Crash
@@ -238,7 +258,7 @@ FairSpec ==
   /\ \A d \in Docs :
        \* Announcing and deciding keep happening.
        /\ WF_vars(Announce(d))
-       /\ WF_vars(Admit(d) \/ Refuse(d))
+       /\ WF_vars(Admit(d) \/ Refuse(d) \/ LaneDrop(d))
        \* Promotion and resolution keep happening.
        /\ WF_vars(PromoteDurable(d))
        /\ WF_vars(PromoteSide(d))

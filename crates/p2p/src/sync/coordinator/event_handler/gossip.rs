@@ -85,6 +85,32 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// Report a gossip head the dispatcher dropped with no refusal worker
+    /// free in time: the same checks a kept head passes, then the drop is
+    /// counted, logged and emitted as `p2p-gossip-head-dropped` (#2489).
+    pub(super) async fn report_dropped_gossip(
+        &self,
+        propagation_source: PeerId,
+        message: PushLogBroadcast,
+        topic: String,
+    ) {
+        let Ok(recovery_source) = self.authorize_gossip_hint(&propagation_source, &message, &topic)
+        else {
+            return;
+        };
+        if !self.gate_arrival(&message, Some(&recovery_source)).await {
+            return;
+        }
+        let _ = self
+            .manager
+            .report_dropped_gossip_head(
+                &message,
+                recovery_source.as_str(),
+                "refusal workers busy past the deadline",
+            )
+            .await;
+    }
+
     /// Check a gossip head hint against the replication policy and its
     /// authenticated origin; returns the origin as its recovery provider.
     fn authorize_gossip_hint(

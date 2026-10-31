@@ -45,7 +45,7 @@ where
                 async move {
                     publish_peer_lifecycle(&event, event_bus.as_ref(), &retry_peers).await;
 
-                    if admission == DispatchAdmission::Saturated {
+                    if admission != DispatchAdmission::Admitted {
                         if let Err(error) = coordinator
                             .handle_transport_event_with_admission(event, admission)
                             .await

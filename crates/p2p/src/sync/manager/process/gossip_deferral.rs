@@ -107,6 +107,26 @@ where
         }
     }
 
+    /// Report a refused gossip head that was dropped before it could be
+    /// kept (the dispatcher found no refusal worker in time). A descendant
+    /// block is not reported: its head is the obligation.
+    pub(crate) async fn report_dropped_gossip_head(
+        &self,
+        msg: &PushLogBroadcast,
+        origin: &str,
+        reason: &'static str,
+    ) -> Result<()> {
+        let cid = Cid::try_from(msg.cid.as_ref())
+            .map_err(|e| Error::InvalidCid(format!("Failed to parse CID: {}", e)))?;
+        if !matches!(
+            announced_block_kind(&msg.block),
+            AnnouncedBlockKind::Head(_)
+        ) {
+            return Ok(());
+        }
+        self.drop_gossip_head(cid, msg, origin, reason).await
+    }
+
     /// Drop a refused gossip head that cannot be kept, and say so: a counter,
     /// a WARN, and a node event naming the peer and the root.
     async fn drop_gossip_head(

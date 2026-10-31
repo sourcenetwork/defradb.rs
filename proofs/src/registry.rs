@@ -591,8 +591,8 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_HeardIsOwned / INV_HeardIsOwnedOrReported / INV_NothingDropped / LIVE_AllMerged / LIVE_AllSettled: a refused gossip head is kept durably, or reported past its budget",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_transport_event, handle_transport_event_with_admission; crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message, defer_refused_gossip; crates/p2p/src/sync/manager/process/gossip_deferral.rs defer_gossip_head, drop_gossip_head, pending_has_room_for; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; crates/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
-        model_ref: "MC_GossipAdmission_{Green,Green_PastCap,Red_SilentShed,Red_Drop,Red_MemoryDefer,Red_NoPromote}.cfg",
+        anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, kept_when_refused; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_transport_event, handle_transport_event_with_admission; crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message, defer_refused_gossip; crates/p2p/src/sync/manager/process/gossip_deferral.rs defer_gossip_head, drop_gossip_head, pending_has_room_for; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; crates/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_GossipAdmission_{Green,Green_PastCap,Red_SilentShed,Red_Drop,Red_MemoryDefer,Red_NoPromote,Red_LaneDrop}.cfg",
         tiers: &[Boundary],
     },
     Property {

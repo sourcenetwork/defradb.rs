@@ -21,6 +21,9 @@ use crate::transport::TransportEvent;
 pub enum DispatchAdmission {
     Admitted,
     Saturated,
+    /// A refused event that must be kept (a gossip head) waited past its
+    /// deadline for a refusal worker; the handler only reports it (#2489).
+    Dropped,
 }
 
 /// Fixed scheduling classes for all transport entrypoints.
@@ -76,11 +79,22 @@ pub(crate) use classify_p2p_event;
 /// Classifies an event once at the shared transport boundary.
 pub trait DispatchEvent {
     fn dispatch_class(&self) -> DispatchClass;
+
+    /// Whether a refusal of this event must be handled rather than dropped:
+    /// a gossip head, which no peer re-announces (#2489). A dropped request
+    /// closes its stream and the sender retries; a dropped gossip head is lost.
+    fn kept_when_refused(&self) -> bool {
+        false
+    }
 }
 
 impl<ResponseToken> DispatchEvent for TransportEvent<ResponseToken> {
     fn dispatch_class(&self) -> DispatchClass {
         self.dispatch_class()
+    }
+
+    fn kept_when_refused(&self) -> bool {
+        matches!(self, TransportEvent::GossipMessage { .. })
     }
 }
 
@@ -89,6 +103,10 @@ impl DispatchEvent for crate::host::HostEvent {
     fn dispatch_class(&self) -> DispatchClass {
         self.dispatch_class()
     }
+
+    fn kept_when_refused(&self) -> bool {
+        matches!(self, crate::host::HostEvent::GossipMessage { .. })
+    }
 }
 
 const MAX_ACTIVE_REQUESTS: usize = 32;
@@ -96,6 +114,15 @@ const MAX_ACTIVE_REQUESTS: usize = 32;
 // wait behind serialized PushLog admission on the provider.
 const MAX_ACTIVE_RECOVERY: usize = 8;
 const MAX_ACTIVE_REJECTIONS: usize = 8;
+// Refused gossip heads are kept durably by their own workers: local work
+// only, so the drain may wait for one without waiting on a remote peer.
+const MAX_ACTIVE_GOSSIP_REFUSALS: usize = 8;
+// How long the drain waits for a gossip refusal worker before it drops the
+// head, counted and logged.
+#[cfg(not(test))]
+const GOSSIP_REFUSAL_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(test)]
+const GOSSIP_REFUSAL_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
 // Receiver fetch admission is bounded below this value (four by default).
 // The extra slots cover terminal and reply events without allowing transport
 // tasks to grow with the event stream.
@@ -115,6 +142,7 @@ pub struct DispatchDiagnostics {
     saturated_total: AtomicU64,
     recovery_saturated_total: AtomicU64,
     rejection_dropped_total: AtomicU64,
+    gossip_refusals_dropped_total: AtomicU64,
 }
 
 /// Stable point-in-time scheduler diagnostics exposed through sync status.
@@ -135,6 +163,8 @@ pub struct DispatchSnapshot {
     pub saturated_total: u64,
     pub recovery_saturated_total: u64,
     pub rejection_dropped_total: u64,
+    /// Refused gossip heads dropped because no refusal worker freed in time.
+    pub gossip_refusals_dropped_total: u64,
 }
 
 impl DispatchDiagnostics {
@@ -157,6 +187,9 @@ impl DispatchDiagnostics {
             saturated_total: self.saturated_total.load(Ordering::Relaxed),
             recovery_saturated_total: self.recovery_saturated_total.load(Ordering::Relaxed),
             rejection_dropped_total: self.rejection_dropped_total.load(Ordering::Relaxed),
+            gossip_refusals_dropped_total: self
+                .gossip_refusals_dropped_total
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -227,6 +260,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
     let request_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REQUESTS));
     let recovery_slots = Arc::new(Semaphore::new(MAX_ACTIVE_RECOVERY));
     let rejection_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REJECTIONS));
+    let gossip_refusal_slots = Arc::new(regolith::sync::Semaphore::new(MAX_ACTIVE_GOSSIP_REFUSALS));
     let completion_slots = Arc::new(Semaphore::new(MAX_ACTIVE_COMPLETIONS));
     let mut tasks = JoinSet::new();
 
@@ -289,6 +323,47 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                             diagnostics
                                 .recovery_saturated_total
                                 .fetch_add(1, Ordering::Relaxed);
+                        }
+                        // A refused gossip head is kept durably on its own
+                        // workers. The drain waits for one rather than drop
+                        // the head: no peer re-announces it (#2489). Waiting
+                        // holds back the bounded transport queue.
+                        if event.kept_when_refused() {
+                            let waited = n0_future::time::timeout(
+                                GOSSIP_REFUSAL_WAIT,
+                                gossip_refusal_slots.acquire_owned(1),
+                            )
+                            .await;
+                            match waited {
+                                Ok(permit) => {
+                                    let refusal_handler = handler.clone();
+                                    let activity = diagnostics.enter(DispatchActivityKind::Rejection);
+                                    tasks.spawn(async move {
+                                        let _permit = permit;
+                                        let _activity = activity;
+                                        let _lease = lease;
+                                        refusal_handler(event, DispatchAdmission::Saturated).await;
+                                    });
+                                }
+                                Err(_) => {
+                                    diagnostics
+                                        .gossip_refusals_dropped_total
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    tracing::warn!(
+                                        wait_ms = GOSSIP_REFUSAL_WAIT.as_millis() as u64,
+                                        "Dropped a refused gossip head: no refusal worker freed in time"
+                                    );
+                                    // The report names the peer and root as a node
+                                    // event. At most one per deadline: the drain
+                                    // waited the whole deadline for this one.
+                                    let report_handler = handler.clone();
+                                    tasks.spawn(async move {
+                                        let _lease = lease;
+                                        report_handler(event, DispatchAdmission::Dropped).await;
+                                    });
+                                }
+                            }
+                            continue;
                         }
                         // A capacity nack is best effort: the remote peer may stop
                         // reading its response stream. Keep those writes off the
@@ -368,16 +443,123 @@ mod tests {
         Request(usize),
         Recovery(usize),
         Completion,
+        Gossip(usize),
     }
 
     impl DispatchEvent for TestEvent {
         fn dispatch_class(&self) -> DispatchClass {
             match self {
-                Self::Request(_) => DispatchClass::Admission,
+                Self::Request(_) | Self::Gossip(_) => DispatchClass::Admission,
                 Self::Recovery(_) => DispatchClass::Recovery,
                 Self::Completion => DispatchClass::Completion,
             }
         }
+
+        fn kept_when_refused(&self) -> bool {
+            matches!(self, Self::Gossip(_))
+        }
+    }
+
+    #[test]
+    fn a_head_with_no_refusal_worker_past_the_deadline_is_handed_over_as_dropped() {
+        let edge = edge::testing::edge();
+        edge.block_on(async {
+            let (tx, rx) = crate::sync::dispatch_queue::dispatch_queue::<TestEvent>(256);
+            let diagnostics = Arc::new(DispatchDiagnostics::default());
+            // Every request worker and every gossip refusal worker stays busy.
+            let (busy_tx, busy) = regolith::sync::unbounded::<()>();
+            let (dropped_tx, dropped) = regolith::sync::unbounded::<usize>();
+            let dispatcher = n0_future::task::spawn(run_event_dispatcher(
+                rx,
+                Arc::clone(&diagnostics),
+                move |event, admission| {
+                    let busy = busy.clone();
+                    let dropped_tx = dropped_tx.clone();
+                    async move {
+                        match (event, admission) {
+                            (TestEvent::Gossip(index), DispatchAdmission::Dropped) => {
+                                let _ = dropped_tx.try_send(index);
+                            }
+                            (TestEvent::Request(_) | TestEvent::Gossip(_), _) => {
+                                let _ = busy.recv_async().await;
+                            }
+                            _ => {}
+                        }
+                    }
+                },
+            ));
+            for index in 0..MAX_ACTIVE_REQUESTS {
+                tx.send(TestEvent::Request(index)).await.unwrap();
+            }
+            for index in 0..=MAX_ACTIVE_GOSSIP_REFUSALS {
+                tx.send(TestEvent::Gossip(index)).await.unwrap();
+            }
+            assert_eq!(
+                dropped.recv_async().await.unwrap(),
+                MAX_ACTIVE_GOSSIP_REFUSALS,
+                "the head past every refusal worker is handed over to be reported"
+            );
+            assert_eq!(diagnostics.snapshot().gossip_refusals_dropped_total, 1);
+            drop(busy_tx);
+            drop(tx);
+            dispatcher.await.unwrap();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn refused_gossip_waits_for_a_refusal_worker_instead_of_being_dropped() {
+        const HEADS: usize = 3 * MAX_ACTIVE_GOSSIP_REFUSALS;
+        let edge = edge::testing::edge();
+        edge.block_on(async {
+            let (tx, rx) = crate::sync::dispatch_queue::dispatch_queue::<TestEvent>(256);
+            let diagnostics = Arc::new(DispatchDiagnostics::default());
+            // Every request worker and every nack worker stays busy.
+            let (busy_tx, busy) = regolith::sync::unbounded::<()>();
+            let (refused_tx, refused) = regolith::sync::unbounded::<usize>();
+            let dispatcher = n0_future::task::spawn(run_event_dispatcher(
+                rx,
+                Arc::clone(&diagnostics),
+                move |event, admission| {
+                    let busy = busy.clone();
+                    let refused_tx = refused_tx.clone();
+                    async move {
+                        match (event, admission) {
+                            (TestEvent::Request(_), _) => {
+                                let _ = busy.recv_async().await;
+                            }
+                            (TestEvent::Gossip(index), DispatchAdmission::Saturated) => {
+                                let _ = refused_tx.try_send(index);
+                            }
+                            _ => {}
+                        }
+                    }
+                },
+            ));
+            for index in 0..MAX_ACTIVE_REQUESTS + MAX_ACTIVE_REJECTIONS {
+                tx.send(TestEvent::Request(index)).await.unwrap();
+            }
+            for index in 0..HEADS {
+                tx.send(TestEvent::Gossip(index)).await.unwrap();
+            }
+            let mut kept = Vec::new();
+            for _ in 0..HEADS {
+                kept.push(refused.recv_async().await.unwrap());
+            }
+            kept.sort_unstable();
+            assert_eq!(
+                kept,
+                (0..HEADS).collect::<Vec<_>>(),
+                "every refused head reaches a worker"
+            );
+            let snapshot = diagnostics.snapshot();
+            assert_eq!(snapshot.gossip_refusals_dropped_total, 0);
+            assert_eq!(snapshot.rejection_dropped_total, 0);
+            drop(busy_tx);
+            drop(tx);
+            dispatcher.await.unwrap();
+        })
+        .unwrap();
     }
 
     #[tokio::test]
@@ -738,7 +920,7 @@ mod tests {
                                 let _permit = release_completions.acquire(1).await;
                             }
                             TestEvent::Request(_) => request_observed.add_permits(1),
-                            TestEvent::Recovery(_) => {}
+                            TestEvent::Recovery(_) | TestEvent::Gossip(_) => {}
                         }
                     }
                 },

@@ -361,6 +361,7 @@ RUNS=(
   "MC_GossipAdmission_Red_Drop.cfg MC_GossipAdmission_Common.tla RED" # main: a refused gossip head is dropped and never re-announced (INV_HeardIsOwned)
   "MC_GossipAdmission_Red_MemoryDefer.cfg MC_GossipAdmission_Common.tla RED" # in-memory side queue: a crash loses it (INV_HeardIsOwned)
   "MC_GossipAdmission_Red_NoPromote.cfg MC_GossipAdmission_Common.tla RED" # durable records never promoted (LIVE_AllMerged)
+  "MC_GossipAdmission_Red_LaneDrop.cfg MC_GossipAdmission_Common.tla RED" # dispatcher drops a head with every refusal worker busy (INV_HeardIsOwnedOrReported)
   "MC_SenderBroadcast_Green.cfg MC_SenderBroadcast_Common.tla GREEN" # #2489: a committed write waits for room, its window holds no slot, a passed deadline is reported
   "MC_SenderBroadcast_Red_Shed.cfg MC_SenderBroadcast_Common.tla RED" # main: a full pool sheds a committed write's gossip (INV_CommittedIsOwnedOrReported)
   "MC_SenderBroadcast_Red_SilentExpiry.cfg MC_SenderBroadcast_Common.tla RED" # a deadline drops it without the event (INV_CommittedIsOwnedOrReported)

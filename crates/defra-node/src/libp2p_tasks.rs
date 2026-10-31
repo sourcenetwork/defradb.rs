@@ -84,7 +84,7 @@ where
             }
 
             let transport_event = p2p::convert_host_event(event);
-            if admission == p2p::sync::DispatchAdmission::Saturated {
+            if admission != p2p::sync::DispatchAdmission::Admitted {
                 if let Err(error) = coordinator
                     .handle_transport_event_with_admission(transport_event, admission)
                     .await

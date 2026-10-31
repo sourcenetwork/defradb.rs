@@ -230,3 +230,29 @@ fn a_repeated_gossip_head_writes_one_record() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_head_the_dispatcher_dropped_is_reported() {
+    workers::block_on(async {
+        let (manager, mut events) = manager_with(SyncConfig::default()).await;
+        let (dropped, msg) = head_with_missing_link(0);
+        assert!(matches!(
+            manager
+                .report_dropped_gossip_head(&msg, PEER, "refusal workers busy past the deadline")
+                .await,
+            Err(Error::GossipHeadDropped { .. })
+        ));
+        assert_eq!(manager.persisted_pending_count(), 0);
+        assert_eq!(manager.diagnostics().snapshot().gossip_heads_shed, 1);
+        match events.try_recv() {
+            Ok(SyncEvent::GossipHeadDropped {
+                root_cid, peer_id, ..
+            }) => {
+                assert_eq!(root_cid, dropped);
+                assert_eq!(peer_id, PEER);
+            }
+            other => panic!("expected a dropped-head report, got {other:?}"),
+        }
+    })
+    .unwrap();
+}

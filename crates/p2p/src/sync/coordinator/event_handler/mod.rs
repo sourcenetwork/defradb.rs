@@ -350,8 +350,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 ..
             } => {
                 let error = Self::saturated_error(&propagation_source);
-                self.defer_refused_gossip(propagation_source, message, topic)
-                    .await;
+                if admission == crate::sync::DispatchAdmission::Dropped {
+                    self.report_dropped_gossip(propagation_source, message, topic)
+                        .await;
+                } else {
+                    self.defer_refused_gossip(propagation_source, message, topic)
+                        .await;
+                }
                 Err(error)
             }
             TransportEvent::GossipRawMessage {
