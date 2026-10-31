@@ -1303,6 +1303,35 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Cursor pagination (#2481): Go Shinzo's token members, the backward
+        // boundary's hasNext, and the explain attributes. The tokens are
+        // pinned byte for byte by crates/cursor/tests/go_fixtures.rs and the
+        // rest by tools/integration-test/tests/shinzo/cursor.rs; no
+        // conformance-binary test reaches them. Boundary.
+        family: "Cursor pagination",
+        name: "encode_has_no_o / decode_encode / decode_legacy_o — a token is Go Shinzo's {d, k}",
+        axis: Lean,
+        anchor: "crates/cursor/src/lib.rs Cursor::encode, Cursor::decode",
+        model_ref: "CursorParity (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Cursor pagination",
+        name: "page_rows / page_has_next — an inclusive backward seek shows the rows below `before` and has a next page iff its row is still at its key",
+        axis: Lean,
+        anchor: "crates/query/src/plan/cursor.rs CursorNode::populate_backward_buffer_fast, at_before_boundary, populate_backward_buffer_slow; crates/query/src/planner/builder/cursor.rs configure_scan_for_cursor",
+        model_ref: "CursorParity (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Cursor pagination",
+        name: "first_last_one_side / cursor_value_iff_token — explain shows the page size under its direction and a cursor value iff a token was given",
+        axis: Lean,
+        anchor: "crates/query/src/plan/cursor.rs CursorNode::explain_inner",
+        model_ref: "CursorParity (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // The retention floor (#2450): the merge judges the merged, alive
         // document of a covered, non-branchable collection; a refusal is the
         // event's own Rejected outcome, never merged, relayed or counted as a
