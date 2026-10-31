@@ -173,6 +173,10 @@ impl TestNode {
 }
 
 fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
+    // Every Rust node runs in this process. Go's harness encrypts with its
+    // fixed test nonce, so expected `_commits` ciphertexts only match with it,
+    // the in-process form of DEFRA_DETERMINISTIC_TEST_NONCE=1.
+    crypto::encryption::nonce::set_deterministic_nonce(true);
     let mut builder = Node::builder();
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());

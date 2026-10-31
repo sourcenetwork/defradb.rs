@@ -126,6 +126,7 @@ path = "tests/http_contract.rs"
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
+crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = [
@@ -179,7 +180,6 @@ acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
 libc = "0.2"
 identity = { path = "../../crates/identity" }
-crypto = { path = "../../crates/crypto" }
 p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
 hex = "0.4"
 ciborium = { workspace = true }
