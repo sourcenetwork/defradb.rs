@@ -52,6 +52,7 @@ struct OwnedMetadata {
     verified_creator: Option<String>,
     is_recovery: bool,
     is_schema_block: bool,
+    is_restore: bool,
 }
 
 impl OwnedMetadata {
@@ -67,6 +68,7 @@ impl OwnedMetadata {
             verified_creator: metadata.verified_creator.clone(),
             is_recovery: metadata.is_recovery,
             is_schema_block: metadata.is_schema_block,
+            is_restore: metadata.is_restore,
         }
     }
 
@@ -81,6 +83,7 @@ impl OwnedMetadata {
             verified_creator: self.verified_creator.clone(),
             is_recovery: self.is_recovery,
             is_schema_block: self.is_schema_block,
+            is_restore: self.is_restore,
         }
     }
 }
@@ -325,6 +328,7 @@ mod tests {
             verified_creator: Some("did:key:b".into()),
             is_recovery: false,
             is_schema_block: true,
+            is_restore: true,
         };
         let owned = OwnedMetadata::of(&metadata);
         let back = owned.borrowed();
@@ -334,5 +338,6 @@ mod tests {
         assert_eq!(back.sender_peer, metadata.sender_peer);
         assert_eq!(back.verified_creator, metadata.verified_creator);
         assert!(back.is_explicit_replicator && back.is_schema_block && !back.is_recovery);
+        assert!(back.is_restore);
     }
 }
