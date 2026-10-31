@@ -42,6 +42,7 @@ impl DropCause {
     /// The cause of a merge that failed with `error`, or `None` when the
     /// failure is not a drop: a retention refusal is counted as a rejection.
     pub fn of(error: &MergeError) -> Option<Self> {
+        let error = error.cause();
         use crate::error::Error;
         let text = error.to_string();
         Some(match error {

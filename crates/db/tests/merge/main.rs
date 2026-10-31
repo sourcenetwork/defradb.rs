@@ -40,6 +40,7 @@ mod replicated;
 mod replication;
 mod replication_filter;
 mod retention;
+mod retry_exhaustion;
 mod se_artifact_gen;
 mod se_coordinator;
 mod se_receiver;

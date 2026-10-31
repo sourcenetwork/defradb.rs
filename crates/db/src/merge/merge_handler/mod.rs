@@ -32,7 +32,7 @@ pub mod se_merge;
 mod signature;
 pub(crate) use signature::verify_signature_data;
 
-pub use error::{HistoryRejection, MergeError};
+pub use error::{DroppedEvent, HistoryRejection, MergeError};
 pub use field::FieldMergeResult;
 
 use kovan_map::HopscotchMap;

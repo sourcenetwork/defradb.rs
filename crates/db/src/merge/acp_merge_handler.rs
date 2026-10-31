@@ -411,13 +411,25 @@ where
         block_data: &[u8],
         metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
-        self.inner.handle_block(cid, block_data, metadata).await
+        let doc_id = metadata.doc_id.unwrap_or_default().to_string();
+        self.inner
+            .handle_block(cid, block_data, metadata)
+            .await
+            .map_err(|error| error.dropped(&doc_id, cid))
     }
 
     async fn handle_block_batch(
         &self,
         blocks: &[MergeBlock],
     ) -> Vec<Result<MergeOutcome, Self::Error>> {
-        self.inner.handle_block_batch(blocks).await
+        self.inner
+            .handle_block_batch(blocks)
+            .await
+            .into_iter()
+            .zip(blocks)
+            .map(|(outcome, block)| {
+                outcome.map_err(|error| error.dropped(&block.doc_id, &block.cid))
+            })
+            .collect()
     }
 }

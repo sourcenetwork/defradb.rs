@@ -111,7 +111,8 @@ pub enum Error {
 
     /// The engine exhausted its own retry policy. Outer request retry loops
     /// must not repeat the exact same stale attempt body.
-    #[error("transaction retry attempts exhausted: {0}")]
+    /// The text is Go's `client.ErrMaxTxnRetries` (its spelling included).
+    #[error("reached maximum transaction reties: {0}")]
     TxnRetryExhausted(TransactionConflict),
 
     /// Unique index constraint violation.
@@ -249,7 +250,7 @@ mod tests {
         assert!(details.ends_with(&Error::TxnConflict.to_string()));
         assert_eq!(
             Error::TxnRetryExhausted(conflict).to_string(),
-            "transaction retry attempts exhausted: a read for update lost to a newer delete"
+            "reached maximum transaction reties: a read for update lost to a newer delete"
         );
     }
 
