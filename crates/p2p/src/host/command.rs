@@ -282,6 +282,14 @@ pub enum HostCommand {
         response: oneshot::Sender<Result<()>>,
     },
 
+    /// The CAR `peer_id` sent inline for `head`, if one is kept, left in
+    /// place for the fetch that may follow.
+    PeekInlineCar {
+        peer_id: PeerId,
+        head: Cid,
+        response: oneshot::Sender<Option<bytes::Bytes>>,
+    },
+
     /// Send a CAR response to a peer (CARv1 bytes).
     SendCarResponse {
         peer_id: PeerId,

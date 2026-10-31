@@ -34,6 +34,10 @@ pub struct NodeSpec {
     pub shinzo_wire: bool,
     /// A Rust node under every client, its wire off.
     pub rust: bool,
+    /// The node's retention floor, if any.
+    pub retention: Option<crate::actions::RetentionSpec>,
+    /// The node's replication filter cutoff, if any.
+    pub refuse_at_or_below: Option<crate::actions::CutoffSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -54,14 +58,17 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // A node that speaks Go Shinzo's wire, or is pinned to Rust, is a
-        // Rust node under every client; the Go clients reach it over HTTP,
-        // as rust-http does.
+        // A node that speaks Go Shinzo's wire, is pinned to Rust, or has a
+        // retention floor or a receive filter (Rust options) is a Rust node
+        // under every client; the Go clients reach it over HTTP, as rust-http
+        // does.
+        let rust = spec.shinzo_wire
+            || spec.rust
+            || spec.retention.is_some()
+            || spec.refuse_at_or_below.is_some();
         let client_type = match client_type {
             _ if spec.go_shinzo => ClientType::GoShinzo,
-            ClientType::GoHttp | ClientType::GoShinzo if spec.shinzo_wire || spec.rust => {
-                ClientType::RustHttp
-            }
+            ClientType::GoHttp | ClientType::GoShinzo if rust => ClientType::RustHttp,
             other => other,
         };
         match client_type {
@@ -212,6 +219,20 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     }
     if spec.shinzo_wire {
         builder = builder.with_shinzo_wire();
+    }
+    if let Some(retention) = &spec.retention {
+        let mut floors = rapidhash::RapidHashMap::default();
+        floors.insert(
+            retention.collection_id.clone(),
+            db::retention::RetentionFloor {
+                field: retention.field.clone(),
+                floor: retention.floor,
+            },
+        );
+        builder = builder.with_retention(db::retention::StaticRetentionRule::new(floors));
+    }
+    if let Some(cutoff) = &spec.refuse_at_or_below {
+        builder = builder.with_replication_filter(Arc::new(Cutoff(cutoff.clone())));
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
@@ -390,4 +411,22 @@ impl Events {
 /// The peer ID at the end of a `/p2p/<ID>` address.
 pub fn peer_id(address: &str) -> &str {
     address.rsplit("/p2p/").next().unwrap_or(address)
+}
+
+/// A replication filter refusing documents whose integer field is at or
+/// below a cutoff; a document without the field is kept.
+struct Cutoff(crate::actions::CutoffSpec);
+
+impl db::replication_filter::ReplicationFilter for Cutoff {
+    fn allow_replication(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+        fields: &db::replication_filter::FieldValues,
+    ) -> bool {
+        match fields.get(&self.0.field) {
+            Some(ciborium::Value::Integer(value)) => i128::from(*value) > i128::from(self.0.cutoff),
+            _ => true,
+        }
+    }
 }

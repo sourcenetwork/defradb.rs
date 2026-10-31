@@ -130,6 +130,11 @@ impl DbOptions {
         self
     }
 
+    /// Whether replicated documents are judged against a retention rule.
+    pub fn has_retention_rule(&self) -> bool {
+        self.retention_rule.is_some()
+    }
+
     /// The field and floor replicated documents of a collection are judged
     /// against, or `None` when it is not judged. A branchable collection
     /// never is: one of its heads commits many documents at once.

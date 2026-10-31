@@ -161,6 +161,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // it is not the explicit-replicator handshake. In particular, a
         // configured relay must not confer its merge authorization on a
         // different origin principal carried by the envelope.
+        if !self.gate_arrival(&message, Some(&recovery_source)).await {
+            return Ok(());
+        }
         if authenticated_origin == propagation_source.as_str() {
             self.manager
                 .process_pushlog_from_dag_provider(
