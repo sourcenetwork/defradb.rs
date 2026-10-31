@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use cid::Cid;
 use db::{AutoCommitMutator, DB};
 use document::{DocID, Document, NormalValue};
+use query::txn::TransactionRegistry;
 use query::DocMutator;
 use rapidhash::RapidHashSet;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
@@ -441,6 +442,94 @@ fn a_block_a_merge_adopts_during_the_purge_is_kept() {
         );
         assert!(held(&db, &adopted).await, "the adopted block is kept");
         assert_eq!(owners(&db, &adopted).await, vec![newcomer.to_string()]);
+    })
+    .unwrap()
+}
+
+async fn branchable_users() -> Arc<DB<RegolithStore>> {
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    db.create_collection(users_schema().as_branchable())
+        .await
+        .unwrap();
+    db
+}
+
+/// The document composites the branchable collection's DAG links, from its
+/// heads back through every collection block.
+async fn collection_linked<S>(db: &Arc<DB<S>>) -> RapidHashSet<Cid>
+where
+    S: Store + 'static,
+{
+    let collection = db.get_collection("Users").unwrap().unwrap();
+    let txn = db.new_txn(true).await.unwrap();
+    let heads = db::block::heads::live_collection_heads(
+        &txn.headstore().unwrap(),
+        collection.resolved_root_id(),
+    )
+    .await
+    .unwrap()
+    .live;
+    let blockstore = txn.blockstore().unwrap();
+    let mut stack = heads;
+    let mut seen = RapidHashSet::default();
+    let mut linked = RapidHashSet::default();
+    while let Some(cid) = stack.pop() {
+        if !seen.insert(cid) {
+            continue;
+        }
+        let bytes = blockstore.get(&cid.to_bytes()).await.unwrap().unwrap();
+        let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+        linked.extend(block.links.iter().flatten().map(|link| link.link));
+        stack.extend(block.heads.iter().flatten().copied());
+    }
+    drop(blockstore);
+    let _ = txn.discard();
+    linked
+}
+
+/// A branchable collection's DAG links every version of its documents, so
+/// pruning a document's history keeps each composite the collection DAG
+/// links, and every block those composites link: `_commits` of the
+/// collection stays whole and a peer syncing it finds every block.
+#[test]
+#[mantra_macros::req_test("go.shinzo.purge.prune_history")]
+fn prune_keeps_the_composites_a_branchable_collection_links() {
+    workers::block_on(async {
+        for in_txn in [false, true] {
+            let db = branchable_users().await;
+            let alice = create(&db, "Alice", 40).await;
+            set_age(&db, &alice, 41).await;
+            let blocks = history(&db, &alice).await;
+            let linked = collection_linked(&db).await;
+            assert_eq!(linked.len(), 2, "one collection block per version");
+            assert!(linked.is_subset(&blocks));
+
+            let purged = match in_txn {
+                false => db
+                    .purge_by_doc_ids("Users", std::slice::from_ref(&alice), true, None)
+                    .await
+                    .unwrap(),
+                true => {
+                    let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
+                    let handle = registry.begin(false).await.unwrap();
+                    let context = defra_core::RequestContext::default()
+                        .with_txn(Some(handle.as_str().parse().unwrap()));
+                    let purged = registry
+                        .purge_by_doc_ids_as(&context, "Users", std::slice::from_ref(&alice), true)
+                        .await
+                        .unwrap();
+                    registry.commit(&handle).await.unwrap();
+                    purged
+                }
+            };
+
+            assert_eq!(purged, 1);
+            for cid in &blocks {
+                assert!(held(&db, cid).await, "{cid} is linked by the collection DAG (txn {in_txn})");
+                assert!(owners(&db, cid).await.is_empty(), "{cid} no longer names Alice");
+            }
+            assert_eq!(collection_linked(&db).await, linked);
+        }
     })
     .unwrap()
 }

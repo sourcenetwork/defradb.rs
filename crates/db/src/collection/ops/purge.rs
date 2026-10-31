@@ -270,6 +270,7 @@ where
                     &systemstore,
                     &block_cids,
                     aliases,
+                    collection.schema().is_branchable,
                 )
                 .await?;
             } else {

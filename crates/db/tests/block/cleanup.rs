@@ -172,6 +172,7 @@ fn deleting_all_aliases_removes_the_owned_dag() {
             &systemstore,
             &[cid],
             &["doc-v0".to_string(), "doc-v1".to_string()],
+            false,
         )
         .await
         .unwrap();

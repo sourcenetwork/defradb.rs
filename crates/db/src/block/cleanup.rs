@@ -165,21 +165,28 @@ pub async fn delete_owned_dag(
     roots: &[Cid],
     doc_id: &str,
 ) -> Result<()> {
-    delete_owned_dag_for_owners(blockstore, systemstore, roots, &[doc_id.to_owned()]).await
+    delete_owned_dag_for_owners(blockstore, systemstore, roots, &[doc_id.to_owned()], false).await
 }
 
 /// Remove several aliases' ownership from every block reachable from `roots`.
-/// Shared blocks and everything they still reference remain intact.
+/// Shared blocks and everything they still reference remain intact. With
+/// `collection_dag`, the roots are a branchable collection's documents, whose
+/// collection DAG links every version's composite (one collection block per
+/// document commit): the collection DAG owns those composites, so they and
+/// everything they link are kept, and `_commits` of the collection and its
+/// sync stay whole.
 pub async fn delete_owned_dag_for_owners(
     blockstore: &NamespaceView,
     systemstore: &NamespaceView,
     roots: &[Cid],
     doc_ids: &[String],
+    collection_dag: bool,
 ) -> Result<()> {
     let DagWalk {
         visited,
         edges,
         signatures,
+        composites,
     } = DagWalk::from_roots(blockstore, roots).await?;
     let mut retained = RapidHashSet::new();
     for cid in &visited {
@@ -187,7 +194,9 @@ pub async fn delete_owned_dag_for_owners(
         for doc_id in doc_ids {
             crate::docid::map::delete_block_doc_id_mapping(systemstore, &key, doc_id).await?;
         }
-        if crate::docid::map::block_has_owners(systemstore, &key).await? {
+        if (collection_dag && composites.contains(cid))
+            || crate::docid::map::block_has_owners(systemstore, &key).await?
+        {
             retained.insert(*cid);
         }
     }
@@ -245,11 +254,12 @@ async fn drop_owners(systemstore: &NamespaceView, cid: &Cid, doc_ids: &[String])
 }
 
 /// The blocks reachable from some roots, with each one's links and
-/// signature block.
+/// signature block, and which of them are composites.
 struct DagWalk {
     visited: RapidHashSet<Cid>,
     edges: RapidHashMap<Cid, Vec<Cid>>,
     signatures: RapidHashMap<Cid, Cid>,
+    composites: RapidHashSet<Cid>,
 }
 
 impl DagWalk {
@@ -259,6 +269,7 @@ impl DagWalk {
             visited: RapidHashSet::new(),
             edges: RapidHashMap::new(),
             signatures: RapidHashMap::new(),
+            composites: RapidHashSet::new(),
         };
         while let Some(cid) = stack.pop() {
             if !walk.visited.insert(cid) {
@@ -273,6 +284,9 @@ impl DagWalk {
             }
             if let Some(signature_cid) = block.signature {
                 walk.signatures.insert(cid, signature_cid);
+            }
+            if matches!(block.delta, defra_core::CrdtDelta::Composite(_)) {
+                walk.composites.insert(cid);
             }
             stack.extend(children.iter().copied());
             walk.edges.insert(cid, children);
