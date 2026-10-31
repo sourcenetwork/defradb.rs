@@ -229,6 +229,10 @@ pub struct StartArgs {
     #[arg(long)]
     pub query_max_filter_depth: Option<usize>,
 
+    /// Max fragments one spread chain nests (0 = unlimited, default: 32)
+    #[arg(long, env = "DEFRA_QUERY_MAX_FRAGMENT_NESTING")]
+    pub query_max_fragment_nesting: Option<usize>,
+
     /// Per-peer rate limit burst capacity (max tokens). Default: 500.
     #[arg(long, env = "DEFRA_P2P_RATE_LIMIT_BURST")]
     pub p2p_rate_limit_burst: Option<u32>,
@@ -658,6 +662,9 @@ impl StartArgs {
         }
         if let Some(depth) = self.query_max_filter_depth {
             config.api.query_max_filter_depth = depth;
+        }
+        if let Some(nesting) = self.query_max_fragment_nesting {
+            config.api.query_max_fragment_nesting = nesting;
         }
         #[cfg(feature = "postgres")]
         if let Some(ref addr) = self.pg_address {

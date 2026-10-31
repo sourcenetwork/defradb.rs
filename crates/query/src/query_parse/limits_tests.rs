@@ -7,6 +7,7 @@ fn limits(max_query_depth: usize, max_query_width: usize, max_filter_depth: usiz
         max_query_depth,
         max_query_width,
         max_filter_depth,
+        ..QueryLimits::default()
     }
 }
 

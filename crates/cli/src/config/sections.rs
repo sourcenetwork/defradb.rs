@@ -5,7 +5,10 @@ use std::net::SocketAddr;
 use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT};
 use serde::{Deserialize, Serialize};
 
-use query::{DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH};
+use query::{
+    DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
+    DEFAULT_MAX_QUERY_WIDTH,
+};
 use storage::backends::DurabilityMode;
 
 use super::iroh_relay_server::IrohRelayServerConfig;
@@ -86,6 +89,9 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
+    /// Max fragments one spread chain nests (0 = unlimited). Default: 32.
+    #[serde(default = "default_query_max_fragment_nesting")]
+    pub query_max_fragment_nesting: usize,
     /// Cache the built introspection schema for the committed collection
     /// set, instead of rebuilding it per query. Default: true.
     #[serde(default = "default_introspection_cache")]
@@ -128,6 +134,10 @@ fn default_query_max_filter_depth() -> usize {
     DEFAULT_MAX_FILTER_DEPTH
 }
 
+fn default_query_max_fragment_nesting() -> usize {
+    DEFAULT_MAX_FRAGMENT_NESTING
+}
+
 fn default_introspection_cache() -> bool {
     true
 }
@@ -150,6 +160,7 @@ impl Default for ApiConfig {
             query_max_depth: default_query_max_depth(),
             query_max_width: default_query_max_width(),
             query_max_filter_depth: default_query_max_filter_depth(),
+            query_max_fragment_nesting: default_query_max_fragment_nesting(),
             introspection_cache: default_introspection_cache(),
             #[cfg(feature = "postgres")]
             pg_address: String::new(),

@@ -56,6 +56,7 @@ impl Node {
             max_query_depth: config.api.query_max_depth,
             max_query_width: config.api.query_max_width,
             max_filter_depth: config.api.query_max_filter_depth,
+            max_fragment_nesting: config.api.query_max_fragment_nesting,
         })
         .with_introspection_cache(config.api.introspection_cache);
 

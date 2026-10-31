@@ -2,7 +2,7 @@
 //!
 //! Mirrors Go's `internal/request/graphql/parser/cursor.go` semantics.
 
-use rapidhash::{RapidHashMap, RapidHashSet};
+use rapidhash::RapidHashMap;
 
 use graphql_parser::query::{Field, Selection, Value};
 use serde_json::Value as JsonValue;
@@ -10,6 +10,7 @@ use serde_json::Value as JsonValue;
 use crate::error::{QueryError, Result};
 use crate::mapper::{CursorAliases, CursorPageInfoFields, CursorParams, Select};
 
+use super::limits::FragmentPath;
 use super::parser::{parse_field_to_select, FragmentMap};
 use super::values::{parse_int_value, resolve_string_value};
 
@@ -21,7 +22,7 @@ pub(super) fn parse_cursor_wrapper<'a>(
     field: &'a Field<'a, String>,
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
-    visiting: &mut RapidHashSet<String>,
+    visiting: &mut FragmentPath,
 ) -> Result<Select> {
     let mut inner_field: Option<&'a Field<'a, String>> = None;
     let mut page_info_fields = CursorPageInfoFields::default();
