@@ -29,6 +29,26 @@ pub enum BatchSignError {
     SigningFailed(String),
 }
 
+/// Errors that can occur while verifying a batch signature.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BatchVerifyError {
+    #[error("invalid identity hex: {0}")]
+    InvalidIdentity(String),
+    #[error("invalid {key_type} public key: {reason}")]
+    InvalidPublicKey {
+        key_type: &'static str,
+        reason: String,
+    },
+    #[error("{key_type} verify failed: {reason}")]
+    VerifyFailed {
+        key_type: &'static str,
+        reason: String,
+    },
+    #[error("unsupported sig type: {0}")]
+    UnsupportedSigType(String),
+}
+
 /// A batch signature covering a set of CIDs via their Merkle root.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSignature {
@@ -119,7 +139,7 @@ pub fn sign_batch_with(
 /// Verify a batch signature against a set of CIDs, with Go Shinzo's Merkle
 /// tree and scope.
 pub fn verify_batch_signature(sig: &BatchSignature, cids: &[Cid]) -> Result<bool, String> {
-    verify_batch_signature_with(sig, cids, BatchOptions::default())
+    verify_batch_signature_with(sig, cids, BatchOptions::default()).map_err(|e| e.to_string())
 }
 
 /// Verify a batch signature against a set of CIDs, collected under
@@ -132,7 +152,7 @@ pub fn verify_batch_signature_with(
     sig: &BatchSignature,
     cids: &[Cid],
     options: BatchOptions,
-) -> Result<bool, String> {
+) -> Result<bool, BatchVerifyError> {
     if sig.merkle_scheme != options.scheme
         || sig.batch_scope != options.scope
         || sig.cid_count != cids.len()
@@ -171,7 +191,7 @@ pub fn verify_batch_inclusion(
     proof: &BatchProof,
     cid: &Cid,
     options: BatchOptions,
-) -> Result<bool, String> {
+) -> Result<bool, BatchVerifyError> {
     let sig = &proof.signature;
     if sig.merkle_scheme != options.scheme
         || sig.batch_scope != options.scope
@@ -186,31 +206,45 @@ pub fn verify_batch_inclusion(
 }
 
 /// Whether `root` is the signature's root and the signature over it holds.
-fn verify_signed_root(sig: &BatchSignature, root: &[u8; 32]) -> Result<bool, String> {
+fn verify_signed_root(sig: &BatchSignature, root: &[u8; 32]) -> Result<bool, BatchVerifyError> {
     if root.as_slice() != sig.merkle_root.as_slice() {
         return Ok(false);
     }
     let root = *root;
 
     let pub_bytes =
-        hex::decode(&sig.identity).map_err(|e| format!("invalid identity hex: {}", e))?;
+        hex::decode(&sig.identity).map_err(|e| BatchVerifyError::InvalidIdentity(e.to_string()))?;
 
     match sig.sig_type.as_str() {
         "EdDSA" => {
-            let pubkey = Ed25519PublicKey::from_bytes(&pub_bytes)
-                .map_err(|e| format!("invalid ed25519 public key: {}", e))?;
+            let pubkey = Ed25519PublicKey::from_bytes(&pub_bytes).map_err(|e| {
+                BatchVerifyError::InvalidPublicKey {
+                    key_type: "ed25519",
+                    reason: e.to_string(),
+                }
+            })?;
             pubkey
                 .verify(&root, &sig.value)
-                .map_err(|e| format!("ed25519 verify failed: {}", e))
+                .map_err(|e| BatchVerifyError::VerifyFailed {
+                    key_type: "ed25519",
+                    reason: e.to_string(),
+                })
         }
         "ES256K" => {
-            let pubkey = Secp256k1PublicKey::from_bytes(&pub_bytes)
-                .map_err(|e| format!("invalid secp256k1 public key: {}", e))?;
+            let pubkey = Secp256k1PublicKey::from_bytes(&pub_bytes).map_err(|e| {
+                BatchVerifyError::InvalidPublicKey {
+                    key_type: "secp256k1",
+                    reason: e.to_string(),
+                }
+            })?;
             pubkey
                 .verify(&root, &sig.value)
-                .map_err(|e| format!("secp256k1 verify failed: {}", e))
+                .map_err(|e| BatchVerifyError::VerifyFailed {
+                    key_type: "secp256k1",
+                    reason: e.to_string(),
+                })
         }
-        other => Err(format!("unsupported sig type: {}", other)),
+        other => Err(BatchVerifyError::UnsupportedSigType(other.to_string())),
     }
 }
 
