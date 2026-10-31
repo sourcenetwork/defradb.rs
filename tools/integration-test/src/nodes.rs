@@ -339,13 +339,17 @@ impl Events {
 
     /// The next push that found no peers.
     pub async fn no_peers(&self, deadline: Duration) -> Result<events::P2PNoPeersData, String> {
+        // One deadline for the whole wait: other events arriving meanwhile do
+        // not extend it.
+        let end = std::time::Instant::now() + deadline;
         loop {
             let mut log = self.log.load_clone();
             if let Some(event) = log.no_peers.pop_front() {
                 self.log.store(log);
                 return Ok(event);
             }
-            self.receive(deadline)
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left)
                 .await
                 .map_err(|reason| format!("no push found no peers: {reason}"))?;
         }

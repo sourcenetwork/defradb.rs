@@ -243,6 +243,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         let broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
             sync,
             bus,
+            &doc_id,
             &block_result,
             &collection_id,
             &collection_name,
@@ -270,6 +271,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             let collection_broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
                 sync,
                 bus,
+                &doc_id,
                 &col_block_result,
                 &collection_id,
                 &collection_name,

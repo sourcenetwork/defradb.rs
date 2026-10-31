@@ -541,9 +541,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
                     }
-                    Err(MergeError::RetentionRefused(refusal)) => {
-                        Ok(Some(MergeOutcome::rejected(refusal.to_string())))
-                    }
                     Err(e) => Err(e),
                 },
                 Err(MergeError::ImmutableFieldChanged(reason)) => {
@@ -987,9 +984,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     Ok(outcome) => Ok(outcome),
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
-                    }
-                    Err(MergeError::RetentionRefused(refusal)) => {
-                        Ok(Some(MergeOutcome::rejected(refusal.to_string())))
                     }
                     Err(e) => Err(e),
                 },

@@ -161,6 +161,7 @@ async fn broadcast<B, T>(
             &broadcast_with_retry_with_creator(
                 &gossip,
                 bus.as_ref(),
+                &doc_id,
                 &doc_block_result,
                 &collection_id,
                 &collection_name,
@@ -181,6 +182,7 @@ async fn broadcast<B, T>(
                 &broadcast_with_retry_with_creator(
                     &gossip,
                     bus.as_ref(),
+                    &doc_id,
                     &col_block_result,
                     &collection_id,
                     &collection_name,
