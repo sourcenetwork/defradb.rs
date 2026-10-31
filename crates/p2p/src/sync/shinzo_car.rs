@@ -242,3 +242,16 @@ impl CarPeerBackoff {
         }
     }
 }
+
+/// The creator a received Go Shinzo update may carry onward: the claimed
+/// `Creator` only when it is the peer that signed the gossip message, else
+/// that signer, else nobody. Go peers send their first CAR request to the
+/// creator, so an unchecked one would steer them to a peer of the sender's
+/// choosing.
+pub fn authenticated_creator(claimed: &str, signed_author: Option<&str>) -> String {
+    match signed_author {
+        Some(author) if author == claimed => claimed.to_string(),
+        Some(author) => author.to_string(),
+        None => String::new(),
+    }
+}
