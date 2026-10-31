@@ -1,6 +1,9 @@
 //! Broadcast helper functions for asynchronous P2P propagation.
 
+use std::sync::Arc;
+
 use blockstore::Blockstore;
+use events::{Bus, Message, P2PNoPeersData};
 use p2p::sync::{BroadcastResult, SyncCoordinator};
 use p2p::transport::P2PTransport;
 use query::mutator::BroadcastStatus;
@@ -16,6 +19,17 @@ fn is_expected_fire_and_forget_failure(err: &str) -> bool {
         || lower.contains("channel send error")
         || lower.contains("channel receive error")
         || p2p::error::Error::is_connection_loss_reason(&lower)
+}
+
+/// Tells subscribers a push reached no peer, as Go Shinzo's `P2PNoPeers` does.
+fn emit_no_peers(bus: Option<&Arc<dyn Bus>>, error: &str, doc_id: &str, collection_id: &str) {
+    if let Some(bus) = bus.filter(|_| error.contains("InsufficientPeers")) {
+        bus.publish(Message::p2p_no_peers(P2PNoPeersData {
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            topic: p2p::DefraTopic::collection(collection_id).to_string(),
+        }));
+    }
 }
 
 pub fn broadcast_retry_delay_ms(
@@ -72,6 +86,7 @@ pub(crate) fn log_broadcast_failure(status: &BroadcastStatus) {
 /// Broadcast via GossipSub with retry, optionally overriding the creator DID.
 pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T: P2PTransport>(
     sync: &SyncCoordinator<B, T>,
+    bus: Option<&Arc<dyn Bus>>,
     block_result: &BlockResult,
     collection_id: &str,
     collection_name: &str,
@@ -124,6 +139,7 @@ pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T
                     error = %collection_error,
                     "Partial broadcast: document topic succeeded, collection topic failed"
                 );
+                emit_no_peers(bus, &collection_error, &block_result.doc_id, collection_id);
                 return BroadcastStatus::Failed(format!(
                     "Partial: collection topic failed: {}",
                     collection_error
@@ -202,6 +218,7 @@ pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T
                     attempts = attempt,
                     "Failed to broadcast document to P2P network - local mutation succeeded"
                 );
+                emit_no_peers(bus, &err_str, &block_result.doc_id, collection_id);
                 return BroadcastStatus::Failed(e.to_string());
             }
         }
