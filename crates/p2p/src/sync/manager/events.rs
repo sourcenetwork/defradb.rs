@@ -37,6 +37,16 @@ pub enum SyncEvent {
     /// Failed to process a sync request.
     SyncError { cid: Cid, error: String },
 
+    /// The receive gate refused a document while its DAG was being fetched,
+    /// before it was walked block by block. The root is discharged as a
+    /// terminal skip, counted under `skip`.
+    GateRefused {
+        root_cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        skip: crate::sync::manager::arrival_stats::SkipReason,
+    },
+
     /// DAG has missing blocks that need to be fetched.
     ///
     /// The coordinator should:

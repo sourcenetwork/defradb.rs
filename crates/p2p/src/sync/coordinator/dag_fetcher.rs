@@ -18,7 +18,9 @@ use tracing::{debug, error, info, warn};
 
 use super::dag_context::DagFetchContext;
 use super::dag_retry::{retry_backoff, ProviderRotation, MAX_FETCH_ATTEMPTS};
+use super::height_gate::HeightGate;
 use super::DagFetchLimiter;
+use crate::sync::manager::arrival_stats::SkipReason;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
@@ -77,7 +79,11 @@ enum ProviderWindowOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FetchAttemptOutcome {
     Complete,
-    Incomplete { remaining: usize },
+    /// The receive gate refused the document before it was walked.
+    Refused,
+    Incomplete {
+        remaining: usize,
+    },
     Deferred,
     Unservable,
 }
@@ -190,7 +196,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         )
         .await
         {
-            FetchAttemptOutcome::Complete => return,
+            FetchAttemptOutcome::Complete | FetchAttemptOutcome::Refused => return,
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
@@ -516,6 +522,22 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         }
     }
 
+    if let Some(gate) = context.height_gate() {
+        let mut state = ProviderFetchState {
+            providers,
+            stall_budget: &mut stall_budget,
+            diagnostics,
+        };
+        match height_refusal(gate, transport, blockstore, root_cid, context, &mut state).await {
+            Ok(None) => {}
+            Ok(Some(skip)) => {
+                refuse(event_tx, root_cid, context, skip).await;
+                return FetchAttemptOutcome::Refused;
+            }
+            Err(outcome) => return outcome,
+        }
+    }
+
     // Walk DAG, fetching missing blocks level by level. The walk stops as soon
     // as an iteration makes no progress (`!made_progress` below); the iteration
     // ceiling is only a defensive backstop, not a functional depth limit.
@@ -611,6 +633,83 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         FetchAttemptOutcome::Incomplete {
             remaining: remaining.len(),
         }
+    }
+}
+
+/// Go's height-only fetch (#2464): before a create is walked block by
+/// block, fetch only the block it links under the retention field, once
+/// however many documents share it, and let the gate judge it. `Err` ends
+/// the attempt the way the fetch did.
+async fn height_refusal<B: Blockstore, T: P2PTransport>(
+    gate: &HeightGate,
+    transport: &T,
+    blockstore: &Arc<B>,
+    root_cid: Cid,
+    context: &DagFetchContext,
+    state: &mut ProviderFetchState<'_>,
+) -> Result<Option<SkipReason>, FetchAttemptOutcome> {
+    let Ok(Some(head)) = blockstore.get(&root_cid).await else {
+        return Ok(None);
+    };
+    let Some(link) = gate.height_link(&context.collection_id, &head).await else {
+        return Ok(None);
+    };
+    if !matches!(blockstore.has(&link).await, Ok(true)) {
+        match gate.fetches.try_acquire(&link) {
+            Ok(_owner) => {
+                let outcome = poll_fetch_blocks_rotating(
+                    &root_cid,
+                    std::slice::from_ref(&link),
+                    transport,
+                    blockstore,
+                    state,
+                    context,
+                )
+                .await;
+                if outcome == FetchBatchOutcome::Deferred {
+                    return Err(FetchAttemptOutcome::Deferred);
+                }
+                state
+                    .diagnostics
+                    .arrivals()
+                    .record_height_fetch(outcome == FetchBatchOutcome::Complete);
+            }
+            // Another document is fetching the same height block: wait for it
+            // rather than ask again.
+            Err(wait) => wait.released().await,
+        }
+    }
+    Ok(gate
+        .refusal(
+            blockstore.as_ref(),
+            &context.collection_id,
+            &context.doc_id,
+            &head,
+        )
+        .await)
+}
+
+/// Hand a refused root back to be discharged as a terminal skip.
+async fn refuse(
+    event_tx: &mpsc::Sender<SyncEvent>,
+    root_cid: Cid,
+    context: &DagFetchContext,
+    skip: SkipReason,
+) {
+    debug!(
+        root_cid = %root_cid,
+        doc_id = %context.doc_id,
+        ?skip,
+        "Fetched height block refused the document before it was walked"
+    );
+    let event = SyncEvent::GateRefused {
+        root_cid,
+        doc_id: context.doc_id.clone(),
+        collection_id: context.collection_id.clone(),
+        skip,
+    };
+    if event_tx.send(event).await.is_err() {
+        warn!(root_cid = %root_cid, "Failed to hand a refused root back");
     }
 }
 

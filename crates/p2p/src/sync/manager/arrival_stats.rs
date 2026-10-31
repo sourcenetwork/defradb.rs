@@ -24,6 +24,7 @@ pub enum SkipReason {
     FilteredAfterFetch,
     RetentionBeforeFetch,
     RetentionAfterCarFetch,
+    RetentionAfterHeightFetch,
     RetentionNoHeight,
     RejectedByCrdt,
     Other,
@@ -40,19 +41,20 @@ impl DropReason {
 }
 
 impl SkipReason {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::AlreadyMerged,
         Self::NoAccess,
         Self::Filtered,
         Self::FilteredAfterFetch,
         Self::RetentionBeforeFetch,
         Self::RetentionAfterCarFetch,
+        Self::RetentionAfterHeightFetch,
         Self::RetentionNoHeight,
         Self::RejectedByCrdt,
         Self::Other,
     ];
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::AlreadyMerged => "alreadyMerged",
             Self::NoAccess => "noAccess",
@@ -60,6 +62,7 @@ impl SkipReason {
             Self::FilteredAfterFetch => "filteredAfterFetch",
             Self::RetentionBeforeFetch => "retentionBeforeFetch",
             Self::RetentionAfterCarFetch => "retentionAfterCARFetch",
+            Self::RetentionAfterHeightFetch => "retentionAfterHeightFetch",
             Self::RetentionNoHeight => "retentionNoHeight",
             Self::RejectedByCrdt => "rejectedByCRDT",
             Self::Other => "other",
@@ -67,6 +70,10 @@ impl SkipReason {
     }
 
     fn of(reason: &str) -> Self {
+        // A skip the receive path names itself, by its Go name.
+        if let Some(named) = Self::ALL.iter().find(|named| named.name() == reason) {
+            return *named;
+        }
         let reason = reason.to_ascii_lowercase();
         if reason.contains("already merged") || reason.contains("already applied") {
             Self::AlreadyMerged
@@ -121,6 +128,10 @@ pub struct ArrivalReport {
     /// Inbound pushes refused because every request worker was busy
     /// (`droppedQueueFull`).
     pub dropped_queue_full: u64,
+    /// Height blocks the retention gate asked the network for
+    /// (`heightFetches`), and those no peer served (`heightFetchMissed`).
+    pub height_fetches: u64,
+    pub height_fetch_missed: u64,
     /// Further `p2p stats` fields, by Go name, from sources outside this
     /// manager (the push queue, the inbound byte budget, the Shinzo wire).
     pub extra: Vec<(&'static str, u64)>,
@@ -141,6 +152,8 @@ impl ArrivalReport {
             ("droppedQueueFull", self.dropped_queue_full),
         ];
         fields.extend(self.extra.iter().copied());
+        fields.push(("heightFetches", self.height_fetches));
+        fields.push(("heightFetchMissed", self.height_fetch_missed));
         fields
     }
 
@@ -168,6 +181,8 @@ pub struct ArrivalStats {
     merged: AtomicU64,
     msgs_in: AtomicU64,
     dropped_queue_full: AtomicU64,
+    height_fetches: AtomicU64,
+    height_fetch_missed: AtomicU64,
     drops: [AtomicU64; DropReason::ALL.len()],
     skips: [AtomicU64; SkipReason::ALL.len()],
 }
@@ -195,6 +210,15 @@ impl ArrivalStats {
         };
     }
 
+    /// Count one height block asked of the network; `served` is false when
+    /// no peer served it.
+    pub fn record_height_fetch(&self, served: bool) {
+        self.height_fetches.fetch_add(1, Ordering::Relaxed);
+        if !served {
+            self.height_fetch_missed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Count a document skipped before it reached the merge, by the receive
     /// gate.
     pub fn record_skip(&self, reason: SkipReason) {
@@ -219,6 +243,8 @@ impl ArrivalStats {
             docs_skipped: skips.iter().map(|(_, n)| n).sum(),
             msgs_in: self.msgs_in.swap(0, Ordering::Relaxed),
             dropped_queue_full: self.dropped_queue_full.swap(0, Ordering::Relaxed),
+            height_fetches: self.height_fetches.swap(0, Ordering::Relaxed),
+            height_fetch_missed: self.height_fetch_missed.swap(0, Ordering::Relaxed),
             extra: Vec::new(),
             drops,
             skips,
@@ -275,7 +301,11 @@ mod tests {
         let fields = report.fields();
         assert!(fields.contains(&("msgsIn", 3)));
         assert!(fields.contains(&("droppedQueueFull", 1)));
-        assert_eq!(fields.last(), Some(&("queueDepth", 7)));
+        let names: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names[names.len() - 3..],
+            ["queueDepth", "heightFetches", "heightFetchMissed"]
+        );
         assert_eq!(stats.drain(), ArrivalReport::default());
     }
 }
