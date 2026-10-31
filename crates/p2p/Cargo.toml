@@ -76,8 +76,8 @@ serde_ipld_dagcbor = { workspace = true }
 # Errors
 thiserror = { workspace = true }
 tracing = { workspace = true }
-rlimit = { version = "0.9", optional = true }
-sysinfo = { version = "0.33", optional = true }
+rlimit = { version = "0.11", optional = true }
+sysinfo = { version = "0.39", optional = true }
 
 # Bytes
 bytes = { workspace = true }

@@ -39,7 +39,7 @@ sha2 = { workspace = true, features = ["asm"] }
 hex = { workspace = true }
 libp2p = { workspace = true, features = ["tokio", "macros"] }
 libp2p-stream = { workspace = true }
-multistream-select = "0.13"
+multistream-select = "0.14"
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "io-util", "time", "test-util"] }
