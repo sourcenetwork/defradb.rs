@@ -83,6 +83,10 @@ pub struct BatchVerifyRequest {
     pub merkle_root: Vec<u8>,
     pub cid_count: usize,
     pub cids: Vec<String>,
+    /// The Merkle tree to check against: Go Shinzo's when absent, or
+    /// `RustLegacy` for a signature made before Go's became the default.
+    #[serde(default)]
+    pub merkle_scheme: defra_core::batch_signing::MerkleScheme,
 }
 
 /// POST /api/v0/batch/verify
@@ -102,11 +106,15 @@ pub async fn batch_verify(Json(req): Json<BatchVerifyRequest>) -> Result<Json<()
         value: req.value,
         merkle_root: req.merkle_root,
         cid_count: req.cid_count,
-        merkle_scheme: Default::default(),
+        merkle_scheme: req.merkle_scheme,
         batch_scope: Default::default(),
     };
+    let options = defra_core::batch_signing::BatchOptions {
+        scheme: req.merkle_scheme,
+        ..Default::default()
+    };
 
-    let valid = crypto::batch::verify_batch_signature(&sig, &cids)
+    let valid = crypto::batch::verify_batch_signature_with(&sig, &cids, options)
         .map_err(|e| HttpError::Internal(format!("batch verify failed: {}", e)))?;
 
     if valid {
