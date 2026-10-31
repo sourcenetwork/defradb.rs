@@ -972,10 +972,15 @@ where
     let txn_broadcaster = p2p_setup
         .as_ref()
         .map(|setup| setup.txn_broadcaster.clone());
-    let txn_registry = Arc::new(match txn_broadcaster {
-        Some(b) => db::DbTransactionRegistry::with_broadcaster(database.clone(), b),
-        None => db::DbTransactionRegistry::new(database.clone()),
-    });
+    // The embedding process is this node's only caller, so its transactions
+    // serve whichever identity a request acts as, as in Go.
+    let txn_registry = Arc::new(
+        match txn_broadcaster {
+            Some(b) => db::DbTransactionRegistry::with_broadcaster(database.clone(), b),
+            None => db::DbTransactionRegistry::new(database.clone()),
+        }
+        .with_ownership(db::TxnOwnership::Embedder),
+    );
 
     let mut query_runner = query::QueryRunner::with_arc_registry_and_provider(
         fetcher,

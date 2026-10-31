@@ -1,4 +1,6 @@
 mod exec;
+#[cfg(test)]
+mod identity_tests;
 mod lifecycle;
 
 pub use exec::{exec_request_in_txn, exec_request_in_txn_with_signing};

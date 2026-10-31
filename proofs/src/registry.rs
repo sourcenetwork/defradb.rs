@@ -858,6 +858,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A request reaches an explicit transaction when its owner key is the
+        // one the transaction began with. An HTTP registry keys a request by
+        // its identity; the embedded node's registry gives every request one
+        // key, since the embedding process is its only caller (#2335). Either
+        // way the work runs as the request's own identity.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/embedded/src/node.rs build_node",
+        model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
+        name: "embedder_admits_every / byIdentity_admits_iff / byIdentity_turns_away_stranger / admits_beginner / default_is_byIdentity",
+        axis: Lean,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller; crates/db/src/txn/owner/table.rs Table::admits",
+        model_ref: "TxnAdmission (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Transaction & merge-queue concurrency",
         name: "exactly_one_wins / one_lowering_per_raise / caller_win_means_owner_lowers / uncancelled_owner_wins: the two swaps settle each fence once",
         axis: Lean,

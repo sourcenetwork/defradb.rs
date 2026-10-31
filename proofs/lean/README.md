@@ -31,8 +31,11 @@ The model proves:
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
+| `TxnAdmission.embedder_admits_every` / `byIdentity_admits_iff` / `byIdentity_turns_away_stranger` / `admits_beginner` / `default_is_byIdentity` | An embedder registry lets every request into its transactions; an identity registry, the default, lets in exactly the identity that began one; the beginner always gets in. | `crates/db/src/txn/registry/mod.rs` |
 
 `#print axioms` status checked with Lean 4.18:
+
+Transaction admission (`TxnAdmission.Key`): every theorem depends on no axioms.
 
 Retry ladder (`RetrySchedule.Ladder`):
 

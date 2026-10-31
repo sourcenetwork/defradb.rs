@@ -278,6 +278,10 @@ RUNS=(
   "MC_CommitFence_Red_UndoNoWake.cfg CommitFence.tla RED" # caller's undo reaches zero without a wake: a reader sleeps forever (LIVE_ReaderProceeds)
   "MC_CommitFence_Red_SkipBegun.cfg CommitFence.tla RED" # owner abandons a commit that began at hand-off once its caller left (INV_BegunEndRuns)
   "MC_CommitFence_Red_RunAbandoned.cfg CommitFence.tla RED" # owner commits an end whose caller left before it began (INV_AbandonedEndDiscarded)
+  "MC_TxnAdmission_Green.cfg TxnAdmission.tla GREEN" # the embedder reaches its transactions as any identity; HTTP only its own
+  "MC_TxnAdmission_Red_IdentityOnFfi.cfg TxnAdmission.tla RED" # embedded registry keys by identity, #2335 (INV_FfiReaches)
+  "MC_TxnAdmission_Red_EmbedderOnHttp.cfg TxnAdmission.tla RED" # HTTP registry gives every request one key (INV_HttpOwnerOnly)
+  "MC_TxnAdmission_Red_ActsAsOwner.cfg TxnAdmission.tla RED" # work runs as the transaction's beginner (INV_ActsAsCaller)
   "MC_EngineTickers_Green.cfg EngineTickers.tla GREEN" # two reads race the close of one export: each count reaches the total once, the total and the mark never go back, every call ends
   "MC_EngineTickers_Green_TwoSources.cfg EngineTickers.tla GREEN" # one read walks two exports while both close: the same promises across the map
   "MC_EngineTickers_Red_Backward.cfg EngineTickers.tla RED" # loop runs while now != seen: a stale reading swaps the mark back and takes the total back (PROP_TotalNeverBack)

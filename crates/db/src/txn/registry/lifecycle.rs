@@ -58,7 +58,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         let opened = self
             .owners()
             .map_err(|error| TransactionError::execution(error.to_string()))?
-            .begin(caller(context), move |id| async move {
+            .begin(self.caller(context), move |id| async move {
                 report_slow_phase("begin", "queue", queued);
                 let started = Instant::now();
                 let result = db.new_txn(readonly).await;
@@ -103,7 +103,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         let queued = Instant::now();
         self.owners()
             .map_err(|error| unavailable(error, handle))?
-            .run(id, &caller(context), move |owned| {
+            .run(id, &self.caller(context), move |owned| {
                 Box::pin(async move {
                     report_slow_phase("run", "queue", queued);
                     let started = Instant::now();
@@ -183,7 +183,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         let queued = Instant::now();
         self.owners()
             .map_err(|error| unavailable(error, handle))?
-            .finish(id, &caller(context), move |owned| {
+            .finish(id, &self.caller(context), move |owned| {
                 Box::pin(async move {
                     report_slow_phase("commit", "queue", queued);
                     let started = Instant::now();
@@ -214,7 +214,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         let label = handle.to_string();
         self.owners()
             .map_err(|error| unavailable(error, handle))?
-            .finish(id, &caller(context), move |owned| {
+            .finish(id, &self.caller(context), move |owned| {
                 Box::pin(async move {
                     owned.discard().map_err(|error| {
                         TransactionError::execution(format!(

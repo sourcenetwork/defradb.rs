@@ -74,6 +74,21 @@ impl CleanupResult {
     }
 }
 
+/// Who may send requests to a transaction once it has begun.
+///
+/// Modeled by `proofs/tla/TxnAdmission.tla` and `proofs/lean/TxnAdmission`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TxnOwnership {
+    /// Only requests acting as the identity that began it, so one caller of a
+    /// shared node cannot reach another's transaction.
+    #[default]
+    ByIdentity,
+    /// Every request: the process embedding the node is its only caller, and
+    /// the identity a request acts as names the user it serves, as in Go. That
+    /// identity still decides access control inside the transaction.
+    Embedder,
+}
+
 /// Transaction registry that manages database transactions for query execution.
 ///
 /// Implements `query::TransactionRegistry`. The transactions live on the
@@ -86,6 +101,7 @@ pub struct DbTransactionRegistry<S: Store + 'static> {
     /// request then reports.
     owners: std::result::Result<Owners<OwnedTxn<S>, Caller>, workers::Error>,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
+    ownership: TxnOwnership,
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
@@ -129,6 +145,22 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             owners: owners_on(pool, db.commit_fences()),
             db,
             broadcaster,
+            ownership: TxnOwnership::default(),
+        }
+    }
+
+    /// This registry, admitting requests to its transactions as `ownership`
+    /// says.
+    pub fn with_ownership(mut self, ownership: TxnOwnership) -> Self {
+        self.ownership = ownership;
+        self
+    }
+
+    /// The owner key of the request `context` serves.
+    fn caller(&self, context: &RequestContext) -> Caller {
+        match self.ownership {
+            TxnOwnership::ByIdentity => context.identity().map(str::to_owned),
+            TxnOwnership::Embedder => None,
         }
     }
 
@@ -180,7 +212,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let ran = self
             .owners()
             .map_err(|error| Error::Other(error.to_string()))?
-            .run(id, &caller(context), move |owned| {
+            .run(id, &self.caller(context), move |owned| {
                 Box::pin(async move { scope.mirror(work(owned)).await })
             })
             .await;
@@ -192,13 +224,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     }
 }
 
-/// Who began a transaction, and so may use it: the request's identity.
+/// Who began a transaction, and so may use it: the request's identity, or
+/// nobody for every request of an [`TxnOwnership::Embedder`] registry.
 type Caller = Option<String>;
-
-/// The identity acting in `context`, the request calling.
-fn caller(context: &RequestContext) -> Caller {
-    context.identity().map(str::to_owned)
-}
 
 /// A registry error, as the query layer reports it.
 fn unavailable(error: Unavailable, handle: &query::txn::TransactionHandle) -> TransactionError {
