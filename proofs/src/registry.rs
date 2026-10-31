@@ -1267,6 +1267,20 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Purging documents by DocID (#2449): values, index entries, the
+        // primary key, heads and DocID aliases go in one transact attempt;
+        // with pruneHistory every block only the purged documents own goes
+        // too; without it the blocks stay but no owner edge names a purged
+        // document; the count is the distinct stored documents, taken at
+        // commit; a sync re-storing a walked block re-runs the attempt.
+        family: "Purge by DocID",
+        name: "INV_OthersIntact / INV_Gone / INV_NoStaleOwner / INV_Pruned / INV_Count / PROP_Commits",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, PurgeAttempt, purge_documents; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners",
+        model_ref: "MC_Purge_{Green_Prune,Green_NoPrune,Red_Blind,Red_KeepEdges,Red_KeepIndex,Red_CountRequests,Red_CountAttempt,Red_Fail,Red_PlainScan}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,
