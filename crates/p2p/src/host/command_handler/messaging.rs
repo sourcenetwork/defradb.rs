@@ -302,6 +302,10 @@ impl<S: Store> P2PHost<S> {
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
         if self.shinzo.is_some() {
+            // A CAR that came inline with the update answers without asking.
+            let Some(response) = self.answer_from_inline_car(peer_id, root_cid, response) else {
+                return;
+            };
             self.send_shinzo_car_request(peer_id, root_cid, response);
             return;
         }

@@ -31,6 +31,7 @@ mod queue;
 pub(crate) mod rate_limiter;
 pub mod receive_gate;
 mod replication;
+pub mod shinzo_batch;
 pub mod shinzo_car;
 
 pub use broadcaster::{BroadcastResult, Broadcaster};

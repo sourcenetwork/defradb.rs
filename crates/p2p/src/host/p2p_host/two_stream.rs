@@ -51,6 +51,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) async fn handle_two_stream_event(&mut self, event: TwoStreamEvent) {
         match event {
             TwoStreamEvent::InboundRequest { peer_id, request } => {
+                self.offer_inline_car(&request.cid.clone(), request.car.clone());
                 let explicit_replay_authorization = request
                     .explicit_replay_capability
                     .as_deref()

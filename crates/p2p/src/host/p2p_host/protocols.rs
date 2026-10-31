@@ -178,7 +178,9 @@ impl<S: Store> P2PHost<S> {
                     {
                         match documents {
                             Ok(documents) => {
-                                for (mut broadcast, _car) in documents {
+                                for (mut broadcast, car) in documents {
+                                    let head = broadcast.cid.clone();
+                                    self.offer_inline_car(&head, car);
                                     // Go peers ask a pushlog's Creator for the CAR
                                     // first; never relay a creator nobody signed.
                                     broadcast.creator =
