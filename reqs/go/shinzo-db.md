@@ -4,49 +4,6 @@
 
 `Collection.PurgeByDocIDs(docIDs, pruneHistory)` permanently removes documents from this node. Unlike a delete, it writes no CRDT operation and replicates nothing: the documents are gone from this node only. It is checked against the same node permission as `Truncate`.
 
-# `go.shinzo.purge.removes_document`: A purged document leaves nothing to find
-
-- **Parents:** ["go.shinzo.purge"]
-- **Go-Tests:** ["internal/db/collection_purge_test.go::TestPurgeByDocIDsRemovesPrimaryKey", "internal/db/collection_purge_test.go::TestPurgeByDocIDsRemovesIndexEntries"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-After `PurgeByDocIDs([alice], false)` on a `User { name: String, age: Int }` collection, a full scan of `User` returns no row for alice and no trace of a document that cannot be resolved. With a unique index on `name`, the purged document's index entries are gone too: adding a new document with `name: "alice"` afterwards succeeds instead of failing with `can not index a doc's field(s) that violates unique index`.
-
-# `go.shinzo.purge.mappings`: Purge removes every DocID alias of the document
-
-- **Parents:** ["go.shinzo.purge"]
-- **Go-Tests:** ["internal/db/collection_truncate_test.go::TestCollectionDeleteDocIDMappingsRemovesDocAliases"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Go-Bug-Suspect:** "Without pruneHistory Go keeps the block owner edges that name the purged DocID, so its blocks stay owned by a document that no longer exists and the orphan sweep (go.shinzo.orphan_gc) can never reclaim them. Decide whether a purge without pruning should drop the edges."
-
-Once a document is purged its DocID no longer resolves on this node, and neither does any other DocID that pointed at the same document (an older alias). Looking any of them up returns not-found. The record of which documents own the document's blocks is left as it was; only `pruneHistory` removes it (`go.shinzo.purge.prune_history`).
-
-# `go.shinzo.purge.prune_history`: `pruneHistory` deletes every block only the purged documents own
-
-- **Parents:** ["go.shinzo.purge"]
-- **Go-Tests:** ["internal/db/collection_purge_test.go::TestPurgeByDocIDsPruneHistoryKeepsBlockOwnedByAnotherDoc", "internal/db/collection_purge_test.go::TestPurgeByDocIDsPruneHistoryRemovesBlockWhenAllOwnersPurgedTogether", "internal/db/collection_purge_test.go::TestPurgeByDocIDsPruneHistoryVisitsEachBlockOnce"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Scope:** "TestPurgeByDocIDsPruneHistoryVisitsEachBlockOnce also counts Go store reads and owner scans per block (one each); those counts are Go internals and not part of this requirement, only the deletion of all five blocks is"
-
-With `pruneHistory: true`, every block reachable from the document's heads is deleted: for a document created as `{"name":"Alice","age":40}` and updated once, both composite blocks, both first-version field blocks and the updated field block (five blocks) are gone. A field block is content-addressed, so two documents with the same `name` share one `name` block. Purging one of them keeps the shared block; purging the other later removes it. Purging both in one call removes it as well, whether the shared block is a current head or is reached only through an older version.
-
-# `go.shinzo.purge.no_conflict`: Pruning history does not conflict with a concurrent block store
-
-- **Parents:** ["go.shinzo.purge"]
-- **Go-Tests:** ["internal/db/collection_purge_conflict_test.go::TestPurgeByDocIDsPruneHistoryReadsBlocksOutsideConflictSet"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Scope:** "the first subtest is a control that shows Badger conflicts when a write transaction reads the block itself; only the second subtest states the requirement"
-
-A `PurgeByDocIDs(..., true)` running in a transaction commits successfully even when another transaction stores one of the blocks the purge is walking (as a P2P sync recreating a block would) and commits first.
-
-# `go.shinzo.purge.count`: Purged documents are counted once they commit
-
-- **Parents:** ["go.shinzo.purge"]
-- **Go-Tests:** ["internal/db/collection_purge_test.go::TestPurgeByDocIDsCountsOnlyDocumentsThatExisted", "internal/db/collection_purge_test.go::TestPurgeByDocIDsCountsOnlyCommittedDeletions"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A DocID that names no document is not an error and is not counted: `PurgeByDocIDs([alice, bob, alice])` succeeds and counts 2. A purge run in a caller's transaction counts nothing until that transaction commits, and nothing at all if it is discarded. The count is reported on the periodic `purge stats` log line (`go.shinzo.telemetry.merge.report`).
-
 # `go.shinzo.retention`: Retention floor for replicated documents
 
 - **Parents:** ["go.shinzo"]
