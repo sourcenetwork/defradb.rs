@@ -142,6 +142,7 @@ fn save_many_documents_adds_and_updates_in_order() {
             collection.as_ptr(),
             docs.as_ptr(),
             null(),
+            null(),
         )
     })
     .unwrap();
@@ -156,6 +157,7 @@ fn save_many_documents_adds_and_updates_in_order() {
             null(),
             collection.as_ptr(),
             update.as_ptr(),
+            null(),
             null(),
         )
     })
@@ -178,6 +180,7 @@ fn save_many_documents_adds_and_updates_in_order() {
             collection.as_ptr(),
             docs.as_ptr(),
             bad.as_ptr(),
+            null(),
         )
     })
     .unwrap_err();
@@ -207,6 +210,12 @@ fn kv_export_and_import_move_documents_between_nodes() {
     .unwrap();
     assert!(exported["frames"].as_u64().unwrap() > 0);
     assert_eq!(exported["mapping"]["collectionName"], "User");
+    let mapping = take(unsafe { kv_field_mapping(source, null(), collection.as_ptr()) }).unwrap();
+    assert_eq!(mapping["fields"], exported["mapping"]["fields"]);
+    assert_eq!(
+        mapping["collectionShortID"],
+        exported["mapping"]["collectionShortID"]
+    );
 
     let mapping = cstr(&exported["mapping"].to_string());
     let imported =
