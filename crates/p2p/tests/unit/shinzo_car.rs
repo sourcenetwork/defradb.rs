@@ -171,3 +171,19 @@ fn backoff_passes_over_only_after_repeated_faults() {
     backoff.record("peer", Outcome::Answered, now);
     assert!(!backoff.passed_over("peer", now));
 }
+
+#[test]
+fn a_creator_must_be_the_signed_author() {
+    use super::authenticated_creator;
+    assert_eq!(
+        authenticated_creator("12D3KooWA", Some("12D3KooWA")),
+        "12D3KooWA"
+    );
+    // A forged creator is replaced by the peer that signed the message.
+    assert_eq!(
+        authenticated_creator("12D3KooWVictim", Some("12D3KooWA")),
+        "12D3KooWA"
+    );
+    // An unsigned message names no creator at all.
+    assert_eq!(authenticated_creator("12D3KooWVictim", None), "");
+}
