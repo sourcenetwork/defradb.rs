@@ -15,7 +15,7 @@ pub struct ComputedBlocks {
     pub block_result: BlockResult,
     /// The blocks a batch signing session collects once the write commits:
     /// every block that starts a field's history, and the composite.
-    pub batch_signed: Vec<Cid>,
+    pub batch_signed: Vec<(Cid, defra_core::batch_signing::BatchCid)>,
 }
 
 /// Compute all document blocks without any storage access.
@@ -332,8 +332,14 @@ pub(crate) fn compute_document_blocks_with_inputs(
         vec![],
     ));
 
-    let mut batch_signed = field_cids.clone();
-    batch_signed.push(composite_cid);
+    let mut batch_signed: Vec<_> = field_cids
+        .iter()
+        .map(|cid| (*cid, defra_core::batch_signing::BatchCid::Other))
+        .collect();
+    batch_signed.push((
+        composite_cid,
+        defra_core::batch_signing::BatchCid::Composite,
+    ));
     Ok(ComputedBlocks {
         blockstore_entries,
         headstore_entries,

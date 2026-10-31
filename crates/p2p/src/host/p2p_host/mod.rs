@@ -5,6 +5,8 @@
 
 mod connection_manager;
 mod protocols;
+mod shinzo_batch;
+mod shinzo_car;
 mod swarm;
 mod two_stream;
 
@@ -34,7 +36,8 @@ use tracing::{debug, info, warn};
 
 use crate::behaviour::DefraBehaviour;
 use crate::bitswap::{
-    AccessMode, BlockClassifier, DefaultBlockClassifier, LateBoundServeAcp, ReplicatorRegistry,
+    make_peer_block_access_filter, AccessMode, BlockClassifier, DefaultBlockClassifier,
+    LateBoundServeAcp, ReplicatorRegistry,
 };
 use crate::error::{Error, Result};
 use crate::message::PushLogReply;
@@ -217,6 +220,10 @@ pub struct P2PHostConfig {
     /// are filtered per-peer against the shared `ReplicatorRegistry`,
     /// matching Go's `WithPeerBlockRequestFilter` wiring. Default: `Open`.
     pub access_mode: AccessMode,
+    /// Speak Go `shinzo-develop`'s wire: serve and send its `CARRequest` on
+    /// the CAR protocols, and read its batched gossip pushes. Off keeps
+    /// today's protocol unchanged. Default: false.
+    pub shinzo_wire: bool,
 }
 
 impl Default for P2PHostConfig {
@@ -233,6 +240,7 @@ impl Default for P2PHostConfig {
             connection_manager_grace_period: DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD,
             max_connections_per_peer: 4,
             access_mode: AccessMode::Open,
+            shinzo_wire: false,
         }
     }
 }
@@ -288,6 +296,17 @@ pub struct P2PHost<S: Store> {
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
+    /// Go Shinzo's wire, when `P2PHostConfig::shinzo_wire` is on: Go-shaped
+    /// CAR requests, batched pushes and inline CARs.
+    pub(crate) shinzo: Option<shinzo_car::ShinzoCars<S>>,
+    /// Serves Go Shinzo's CAR requests whether or not the wire is on, so a
+    /// Shinzo node asking a Rust peer with it off gets an answer, not a
+    /// timeout. The switch picks what this node sends, never what it serves.
+    pub(crate) shinzo_server: shinzo_car::ShinzoCars<S>,
+    /// CARs that came inline with Go Shinzo updates, until asked for.
+    pub(crate) shinzo_inline: crate::sync::shinzo_batch::InlineCars,
+    /// This node's collection-topic updates, batched as Go Shinzo does.
+    pub(crate) shinzo_batcher: crate::sync::shinzo_batch::ShinzoBatcher,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -442,6 +461,19 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         // access filter (installed at behaviour construction time) needs
         // the same Arc that SyncCoordinator will later populate.
         let replicators = Arc::new(ReplicatorRegistry::new());
+
+        // Go Shinzo CARs are served under the same gate Bitswap applies.
+        let shinzo_server = shinzo_car::ShinzoCars::new(
+            bitswap_store.clone(),
+            Arc::new(make_peer_block_access_filter(
+                config.access_mode,
+                Arc::clone(&replicators),
+                bitswap_store.clone(),
+                Arc::clone(&classifier),
+                Arc::clone(&serve_acp),
+            )),
+        );
+        let shinzo = config.shinzo_wire.then(|| shinzo_server.clone());
 
         // Pass keypair and blockstore to behaviour for message signing and block exchange
         let mut behaviour = DefraBehaviour::new(
@@ -621,6 +653,10 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 config.connection_manager_grace_period,
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
+            shinzo,
+            shinzo_server,
+            shinzo_inline: Default::default(),
+            shinzo_batcher: Default::default(),
         };
 
         Ok((host, handle, event_rx, replicators))
@@ -696,6 +732,9 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         connection_prune_interval.tick().await;
 
         while !self.shutdown_requested {
+            // A busy loop never reaches the batch timer's arm; publish what
+            // is due on every pass as well.
+            self.flush_shinzo_batches(false);
             // Biased select: process swarm events before commands.
             // This ensures ConnectionEstablished events (which update peer_addrs)
             // are processed before PeerAddresses commands read them.
@@ -744,8 +783,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 _ = connection_prune_interval.tick() => {
                     self.prune_connections("periodic");
                 }
+                _ = time::sleep(crate::sync::shinzo_batch::BATCH_FLUSH_INTERVAL),
+                    if !self.shinzo_batcher.is_empty() => {
+                    self.flush_shinzo_batches(false);
+                }
             }
         }
+        self.flush_shinzo_batches(true);
 
         info!("P2P host shutdown complete");
     }

@@ -1,0 +1,150 @@
+use std::time::{Duration, Instant};
+
+use bytes::Bytes;
+use cid::Cid;
+use multihash_codetable::{Code, MultihashDigest};
+
+use super::{
+    encode_batch, Batch, InlineCars, ShinzoBatcher, BATCH_FLUSH_INTERVAL, BATCH_MAX_DOCS,
+    BATCH_MAX_PUBLISH_ATTEMPTS, BATCH_MAX_RETRY_DELAY, INLINE_CAR_TTL, MAX_BATCH_MESSAGE_BYTES,
+};
+use crate::message::{DocumentInfo, PushLogBroadcast};
+use crate::sync::car::encode_car;
+
+fn cid_of(data: &[u8]) -> Cid {
+    Cid::new_v1(0x71, Code::Sha2_256.digest(data))
+}
+
+fn car(root: Cid) -> Bytes {
+    Bytes::from(encode_car(&[root], &[]).unwrap())
+}
+
+fn document(i: usize, size: usize) -> DocumentInfo {
+    DocumentInfo {
+        doc_id: format!("doc-{i}"),
+        cid: Bytes::from(cid_of(&i.to_le_bytes()).to_bytes()),
+        block: Bytes::from(vec![0xa1; size]),
+        car: Bytes::new(),
+    }
+}
+
+#[test]
+fn inline_car_is_kept_for_its_own_head_and_used_once() {
+    let mut cars = InlineCars::default();
+    let (head, other) = (cid_of(b"head"), cid_of(b"other"));
+    let now = Instant::now();
+    assert!(
+        !cars.offer(head, "a", car(other), now),
+        "a CAR rooted elsewhere is refused"
+    );
+    assert!(cars.offer(head, "a", car(head), now));
+    assert_eq!(cars.take(&head, "a"), Some(car(head)));
+    assert_eq!(cars.take(&head, "a"), None);
+}
+
+#[test]
+fn inline_car_is_bound_to_the_peer_that_offered_it() {
+    let mut cars = InlineCars::default();
+    let head = cid_of(b"head");
+    let now = Instant::now();
+    assert!(cars.offer(head, "honest", car(head), now));
+    assert!(cars.offer(head, "attacker", car(head), now));
+    assert_eq!(
+        cars.take(&head, "other"),
+        None,
+        "a peer that offered nothing gets nothing"
+    );
+    assert_eq!(cars.take(&head, "attacker"), Some(car(head)));
+    assert_eq!(
+        cars.take(&head, "honest"),
+        Some(car(head)),
+        "the attacker's offer neither replaced nor spent the honest CAR"
+    );
+}
+
+#[test]
+fn inline_car_expires_after_its_ttl() {
+    let mut cars = InlineCars::default();
+    let (first, second) = (cid_of(b"first"), cid_of(b"second"));
+    let now = Instant::now();
+    assert!(cars.offer(first, "a", car(first), now));
+    assert!(cars.offer(second, "a", car(second), now + INLINE_CAR_TTL));
+    assert_eq!(cars.take(&first, "a"), None);
+    assert!(cars.take(&second, "a").is_some());
+}
+
+#[test]
+fn a_batch_is_published_full_or_after_the_flush_interval() {
+    let mut batcher = ShinzoBatcher::default();
+    let now = Instant::now();
+    for i in 0..BATCH_MAX_DOCS - 1 {
+        assert!(batcher.add("col", document(i, 1), now).is_none());
+    }
+    let full = batcher.add("col", document(99, 1), now).unwrap();
+    assert_eq!(full.documents.len(), BATCH_MAX_DOCS);
+    assert_eq!(full.failures, 0);
+    assert!(batcher.is_empty());
+
+    batcher.add("col", document(1, 1), now);
+    assert!(batcher.due(now + Duration::from_millis(10)).is_empty());
+    let due = batcher.due(now + BATCH_FLUSH_INTERVAL);
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].topic, "col");
+    assert!(batcher.is_empty());
+}
+
+#[test]
+fn an_encoded_batch_reads_back_as_go_reads_it() {
+    let documents: Vec<_> = (0..3).map(|i| document(i, 4)).collect();
+    let messages = encode_batch("col", "12D3KooWRust", documents.clone()).unwrap();
+    assert_eq!(messages.len(), 1);
+    let decoded = PushLogBroadcast::decode_gossip_documents(&messages[0].0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.len(), 3);
+    for ((broadcast, _), document) in decoded.iter().zip(&documents) {
+        assert_eq!(broadcast.doc_id, document.doc_id);
+        assert_eq!(broadcast.cid, document.cid);
+        assert_eq!(broadcast.collection_id, "col");
+        assert_eq!(broadcast.creator, "12D3KooWRust");
+    }
+}
+
+#[test]
+fn an_oversized_batch_is_split_in_halves() {
+    let size = MAX_BATCH_MESSAGE_BYTES / 3;
+    let documents: Vec<_> = (0..4).map(|i| document(i, size)).collect();
+    let messages = encode_batch("col", "creator", documents).unwrap();
+    assert_eq!(messages.len(), 2);
+    assert!(messages
+        .iter()
+        .all(|(data, _)| data.len() < MAX_BATCH_MESSAGE_BYTES));
+    assert_eq!(
+        messages.iter().map(|(_, docs)| docs.len()).sum::<usize>(),
+        4,
+        "each message names the documents it carries"
+    );
+}
+
+#[test]
+fn a_batch_that_failed_to_publish_comes_back_until_it_has_failed_too_often() {
+    let mut batcher = ShinzoBatcher::default();
+    let now = Instant::now();
+    let mut batch = Batch {
+        topic: "col".into(),
+        documents: vec![document(1, 1)],
+        failures: 0,
+    };
+    for attempt in 1..BATCH_MAX_PUBLISH_ATTEMPTS {
+        assert!(batcher.retry(batch, now), "attempt {attempt} is kept");
+        assert!(!batcher.is_empty());
+        assert!(batcher.due(now).is_empty(), "it waits out its backoff");
+        let mut due = batcher.due(now + BATCH_MAX_RETRY_DELAY);
+        assert_eq!(due.len(), 1);
+        batch = due.remove(0);
+        assert_eq!(batch.failures, attempt);
+        assert_eq!(batch.documents, vec![document(1, 1)]);
+    }
+    assert!(!batcher.retry(batch, now), "the last failure drops it");
+    assert!(batcher.is_empty());
+}

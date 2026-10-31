@@ -27,7 +27,8 @@ async fn read_stream(
 impl TwoStreamHandler {
     /// Handle an incoming CAR request stream.
     ///
-    /// The request is raw CID bytes (self-describing, no CBOR wrapper).
+    /// The request is raw CID bytes (self-describing, no CBOR wrapper), or a
+    /// signed Go Shinzo `CARRequest`, which is a CBOR map.
     pub async fn handle_car_request_stream(
         peer_id: PeerId,
         mut stream: Stream,
@@ -38,6 +39,11 @@ impl TwoStreamHandler {
             .await
             .map_err(|e| Error::Transport(format!("failed to read CAR request: {}", e)))?;
 
+        if crate::message::car_exchange::is_cbor_map(&buf) {
+            let request = super::shinzo_car::decode_request(&peer_id, &buf)?;
+            return Ok(TwoStreamEvent::ShinzoCarRequest { peer_id, request });
+        }
+
         let root_cid = Cid::read_bytes(std::io::Cursor::new(&buf))
             .map_err(|e| Error::InvalidCid(format!("invalid CID in CAR request: {}", e)))?;
 
@@ -47,8 +53,10 @@ impl TwoStreamHandler {
     /// Handle an incoming CAR response stream.
     ///
     /// The response is raw CARv1 bytes. The first root CID from the header
-    /// is extracted to identify which request this responds to.
-    pub async fn handle_car_response_stream(
+    /// is extracted to identify which request this responds to. A Go Shinzo
+    /// `CARReply` to a request this node has open becomes the same event.
+    pub(crate) async fn handle_car_response_stream(
+        pending: &super::PendingResponses,
         peer_id: PeerId,
         mut stream: Stream,
         max_car_size: u64,
@@ -57,6 +65,12 @@ impl TwoStreamHandler {
         let car_data = read_stream(&mut stream, max_car_size, stream_read_timeout)
             .await
             .map_err(|e| Error::Transport(format!("failed to read CAR response: {}", e)))?;
+
+        if crate::message::car_exchange::is_cbor_map(&car_data) {
+            if let Some(event) = super::shinzo_car::reply_event(pending, peer_id, &car_data) {
+                return Ok(event);
+            }
+        }
 
         // Extract the root CID from the CAR header for event routing
         let (roots, _) = crate::sync::car::decode_car(&car_data)?;

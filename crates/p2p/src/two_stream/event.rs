@@ -50,6 +50,11 @@ pub enum TwoStreamEvent {
     },
     /// Received a CAR fetch request (peer wants a DAG packaged as CARv1).
     CarFetchRequest { peer_id: PeerId, root_cid: Cid },
+    /// Received a signed Go Shinzo CAR request for some document heads.
+    ShinzoCarRequest {
+        peer_id: PeerId,
+        request: crate::message::car_exchange::CarRequest,
+    },
     /// Received a CAR fetch response (CARv1 bytes containing a DAG).
     CarFetchResponse {
         peer_id: PeerId,

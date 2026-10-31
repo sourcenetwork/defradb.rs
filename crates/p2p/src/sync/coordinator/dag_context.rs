@@ -225,3 +225,24 @@ impl DagFetchContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go Shinzo asks a pushlog's `Creator` for the head's CAR first, though
+    /// nothing authenticates that field. Rust fetches only from the peer the
+    /// transport authenticated and the alternates it chose: a forged creator
+    /// never becomes a provider.
+    #[test]
+    fn a_forged_creator_is_never_asked_for_blocks() {
+        let source = PeerId::new("12D3KooWSource".into());
+        let context = DagFetchContext::new(
+            "doc".into(),
+            "collection".into(),
+            "12D3KooWForgedCreator".into(),
+            source.clone(),
+        );
+        assert_eq!(context.providers(), vec![source]);
+    }
+}

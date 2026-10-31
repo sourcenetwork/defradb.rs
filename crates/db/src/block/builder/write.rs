@@ -379,7 +379,6 @@ pub(crate) async fn build_document_blocks(
 
     let mut field_links: Vec<DAGLink> = Vec::new();
     let mut field_cids: Vec<Cid> = Vec::new();
-    let mut initial_field_cids: Vec<Cid> = Vec::new();
     let mut encryption_cids: Vec<Cid> = Vec::new();
 
     let is_create = modified_fields.is_none();
@@ -647,9 +646,6 @@ pub(crate) async fn build_document_blocks(
 
             field_links.push(DAGLink::new(field_name.clone(), field_cid));
             field_cids.push(field_cid);
-            if field_priority == 1 {
-                initial_field_cids.push(field_cid);
-            }
         }
     }
     // The composite links every field block, so it waits for all of them.
@@ -669,7 +665,6 @@ pub(crate) async fn build_document_blocks(
         ));
         field_links.push(block.link());
         field_cids.push(block.cid);
-        initial_field_cids.push(block.cid);
     }
 
     let composite_payload = CompositeDeltaPayload {
@@ -747,8 +742,15 @@ pub(crate) async fn build_document_blocks(
         "Built composite block with field links"
     );
 
-    let mut batch_signed = initial_field_cids;
-    batch_signed.push(composite_cid);
+    let mut batch_signed: Vec<_> = field_cids
+        .iter()
+        .copied()
+        .map(|cid| (cid, defra_core::batch_signing::BatchCid::Other))
+        .collect();
+    batch_signed.push((
+        composite_cid,
+        defra_core::batch_signing::BatchCid::Composite,
+    ));
     Ok(ComputedBlocks {
         blockstore_entries,
         headstore_entries,
@@ -868,7 +870,15 @@ pub(crate) async fn write_delete_block_with_inputs(
         "Built delete composite block (status=2)"
     );
 
-    collect_on_commit(blockstore, batch_session, [composite_cid]).await?;
+    collect_on_commit(
+        blockstore,
+        batch_session,
+        [(
+            composite_cid,
+            defra_core::batch_signing::BatchCid::Composite,
+        )],
+    )
+    .await?;
 
     Ok(BlockResult {
         cid: composite_cid,

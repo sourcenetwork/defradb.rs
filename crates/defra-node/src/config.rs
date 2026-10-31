@@ -190,6 +190,10 @@ pub struct Libp2pConfig {
     pub stream_timeout_secs: Option<u64>,
     /// Sync limits and the replicator retry ladder.
     pub sync: SyncTuning,
+    /// Speak Go `shinzo-develop`'s wire (its CAR channel and batched
+    /// pushes), so the node replicates with Go Shinzo nodes. Off keeps
+    /// today's protocol.
+    pub shinzo_wire: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -202,6 +206,7 @@ impl Default for Libp2pConfig {
             enable_relay: true,
             stream_timeout_secs: None,
             sync: SyncTuning::default(),
+            shinzo_wire: false,
         }
     }
 }

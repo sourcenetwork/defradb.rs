@@ -51,6 +51,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) async fn handle_two_stream_event(&mut self, event: TwoStreamEvent) {
         match event {
             TwoStreamEvent::InboundRequest { peer_id, request } => {
+                self.offer_inline_car(&request.cid.clone(), Some(peer_id), request.car.clone());
                 let explicit_replay_authorization = request
                     .explicit_replay_capability
                     .as_deref()
@@ -217,6 +218,9 @@ impl<S: Store> P2PHost<S> {
                         warn!(peer_id = %peer_id, error = %error, "Failed to verify peer identity token");
                     }
                 }
+            }
+            TwoStreamEvent::ShinzoCarRequest { peer_id, request } => {
+                self.serve_shinzo_cars(peer_id, request);
             }
             TwoStreamEvent::CarFetchRequest { peer_id, root_cid } => {
                 debug!(

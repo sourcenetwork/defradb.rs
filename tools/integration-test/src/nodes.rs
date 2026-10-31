@@ -30,6 +30,10 @@ pub struct NodeSpec {
     /// A Go node built from the Shinzo pin, whatever the test's client: a
     /// mixed Rust and Go Shinzo cluster.
     pub go_shinzo: bool,
+    /// A Rust node that speaks Go Shinzo's wire, under every client.
+    pub shinzo_wire: bool,
+    /// A Rust node under every client, its wire off.
+    pub rust: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -50,9 +54,15 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        let client_type = match spec.go_shinzo {
-            true => ClientType::GoShinzo,
-            false => client_type,
+        // A node that speaks Go Shinzo's wire, or is pinned to Rust, is a
+        // Rust node under every client; the Go clients reach it over HTTP,
+        // as rust-http does.
+        let client_type = match client_type {
+            _ if spec.go_shinzo => ClientType::GoShinzo,
+            ClientType::GoHttp | ClientType::GoShinzo if spec.shinzo_wire || spec.rust => {
+                ClientType::RustHttp
+            }
+            other => other,
         };
         match client_type {
             ClientType::InProcess => {
@@ -198,6 +208,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     }
     if spec.network {
         builder = builder.with_libp2p(listen);
+    }
+    if spec.shinzo_wire {
+        builder = builder.with_shinzo_wire();
     }
     if let Some(config) = http {
         builder = builder.with_http(config);

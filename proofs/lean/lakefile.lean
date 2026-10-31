@@ -131,3 +131,9 @@ lean_lib LensListing where
 
 @[default_target]
 lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib ShinzoWire where
+
+@[default_target]
+lean_lib ShinzoBatch where

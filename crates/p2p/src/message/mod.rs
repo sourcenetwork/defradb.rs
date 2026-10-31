@@ -28,6 +28,7 @@
 
 mod branchable;
 mod car;
+pub mod car_exchange;
 mod cbor;
 mod docsync;
 mod identity;
@@ -48,7 +49,10 @@ pub use manage::{
     ManageQueryResult, ManageReply, ManageRequest,
 };
 pub use metadata::MetaData;
-pub use pushlog::{PushLogBroadcast, PushLogGossipPayloadEncoding, PushLogReply, PushLogRequest};
+pub use pushlog::{
+    DocumentInfo, PushLogBroadcast, PushLogGossipPayloadEncoding, PushLogReply, PushLogRequest,
+    MAX_INBOUND_DOCUMENTS,
+};
 pub use se::{
     PushSEArtifactsReply, PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
     SEArtifact, SEFieldQuery,

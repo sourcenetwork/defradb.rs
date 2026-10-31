@@ -171,6 +171,62 @@ impl<S: Store> P2PHost<S> {
                     return;
                 }
 
+                // A Go Shinzo batch carries many documents in one message.
+                if self.shinzo.is_some() {
+                    if let Some(documents) =
+                        PushLogBroadcast::decode_gossip_documents(&message.data)
+                    {
+                        match documents {
+                            Ok(documents) => {
+                                for (mut broadcast, car) in documents {
+                                    let head = broadcast.cid.clone();
+                                    self.offer_inline_car(&head, message.source, car);
+                                    // Go peers ask a pushlog's Creator for the CAR
+                                    // first; never relay a creator nobody signed.
+                                    broadcast.creator =
+                                        crate::sync::shinzo_car::authenticated_creator(
+                                            &broadcast.creator,
+                                            message
+                                                .source
+                                                .map(|source| source.to_string())
+                                                .as_deref(),
+                                        );
+                                    if let Some(source) = message.source {
+                                        let source = source.to_string();
+                                        broadcast.source_peer_id = Some(source.clone());
+                                        broadcast.authenticate_origin_peer(source);
+                                        broadcast.authenticate_source_peer(
+                                            propagation_source.to_string(),
+                                        );
+                                    }
+                                    if !self
+                                        .forward_event(HostEvent::GossipMessage {
+                                            propagation_source,
+                                            message_id: message_id.clone(),
+                                            topic: topic.clone(),
+                                            message: broadcast,
+                                        })
+                                        .await
+                                    {
+                                        error!(
+                                            peer_id = %propagation_source,
+                                            topic = %topic,
+                                            "Failed to forward a Go Shinzo batched document"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(error) => warn!(
+                                peer_id = %propagation_source,
+                                topic = %topic,
+                                %error,
+                                "Refused a Go Shinzo batched push"
+                            ),
+                        }
+                        return;
+                    }
+                }
+
                 match PushLogBroadcast::decode_gossip_payload(&message.data) {
                     Ok((mut broadcast, encoding)) => {
                         // libp2p signs the original author into Message::source.
