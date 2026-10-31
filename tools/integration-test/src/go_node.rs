@@ -27,11 +27,15 @@ pub enum GoNodeError {
 }
 
 /// How a Go node starts: with P2P listening on `p2p`, and its data in `dir`
-/// (else in memory).
+/// (else in memory, or in its own temporary directory when `on_disk`).
 #[derive(Clone, Debug, Default)]
 pub struct GoOptions {
     pub p2p: Option<String>,
     pub dir: Option<PathBuf>,
+    /// Keep the data on disk even without `dir`. Go Shinzo needs it: its
+    /// in-memory Badger keeps a 256-byte value threshold and refuses a
+    /// collection definition.
+    pub on_disk: bool,
 }
 
 /// A running Go node, killed when dropped.
@@ -62,9 +66,9 @@ impl GoNode {
             Some(dir) => dir.clone(),
             None => root.path().join("data"),
         };
-        let store = match options.dir {
-            Some(_) => "badger",
-            None => "memory",
+        let store = match options.dir.is_some() || options.on_disk {
+            true => "badger",
+            false => "memory",
         };
         let p2p = match &options.p2p {
             Some(address) => vec!["--p2paddr".to_owned(), address.clone()],

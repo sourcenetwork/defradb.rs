@@ -76,15 +76,32 @@ macro_rules! client_actions {
                 fn swap(&self, client: ClientType) -> Option<Self> {
                     match (client, self) {
                         $(
-                            (ClientType::RustHttp | ClientType::GoHttp, Self::$client(action)) => {
-                                Some(Self::[<Http $client>](Http(action.clone())))
-                            }
+                            (
+                                ClientType::RustHttp | ClientType::GoHttp | ClientType::GoShinzo,
+                                Self::$client(action),
+                            ) => Some(Self::[<Http $client>](Http(action.clone()))),
                             (ClientType::Cli, Self::$client(action)) => {
                                 Some(Self::[<Cli $client>](Cli(action.clone())))
                             }
                         )*
                         _ => None,
                     }
+                }
+
+                /// The node a per-client action runs against: its flattened
+                /// `node` field, else the default node.
+                pub(crate) fn target_node(&self) -> Option<String> {
+                    let value = match self {
+                        $(Self::$client(action) => serde_json::to_value(action).ok()?,)*
+                        _ => return None,
+                    };
+                    Some(
+                        value
+                            .get("node")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or(crate::scenario::DEFAULT_NODE)
+                            .to_owned(),
+                    )
                 }
 
                 /// The action a client's version wraps.
