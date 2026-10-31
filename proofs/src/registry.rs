@@ -1039,6 +1039,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral],
     },
     Property {
+        // A text, JSON or custom field's merge writes its merged value into
+        // the document before the composite updates the index, so the
+        // update starts from a read taken before the field merges.
+        family: "Index-maintenance consistency",
+        name: "INV_IndexMatchesValue — after a merge the index holds exactly the merged value",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MC_MergedFieldIndex_{Green,Red_ReadAfterPart}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
