@@ -35,14 +35,6 @@ With User `{name: String, age: Int @index}` holding Alice 25, Bob 30, Carol 35, 
 
 Forward pagination in the requested order.
 
-# `go.shinzo.cursor.forward.filter`: A filter applies before paging
-
-- **Parents:** ["go.shinzo.cursor.forward"]
-- **Go-Tests:** ["query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilteredSubset", "query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilteredFewResults", "query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilterInUsesCursorBoundary"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-`User(first: 2, filter: {age: {_geq: 40}}, order: {age: ASC})` over ages 15…75 returns [45, 55] then, with `after`, [65, 75] and `hasNext: false`; over ages 10…100 with `_geq: 80` it returns [80, 90] then [100]. With `filter: {age: {_in: [55, 25, 45, 35]}}` over ages 25…65 the pages are [25, 35] and [45, 55], so the cursor boundary holds even when the filter's values are unsorted, and 65 never appears.
-
 # `go.shinzo.cursor.backward`: `last` and `before`
 
 - **Parents:** ["go.shinzo.cursor"]

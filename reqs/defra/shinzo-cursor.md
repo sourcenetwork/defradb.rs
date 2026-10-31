@@ -94,3 +94,11 @@ On `User @index(includes: [{field: "name"}, {field: "age"}])` with (Addo 25), (A
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 `_cursor { users: User(first: 2, order: {age: ASC}) { name age } _pageInfo { hasNext hasPrev } }` returns the rows under `_cursor.users` (Alice 25, Bob 30, `hasNext: true`, `hasPrev: false`). `User(first: 10, groupBy: [age]) { age }` over ages 25, 25, 35, 45 returns the groups `{age: 25}`, `{age: 35}`, `{age: 45}` (in any order) with `hasNext: false`, `hasPrev: false`.
+
+# `go.shinzo.cursor.forward.filter`: A filter applies before paging
+
+- **Parents:** ["go.shinzo.cursor.forward"]
+- **Scenarios:** ["shinzo::cursor::shinzo_a_filter_applies_before_paging", "shinzo::cursor::shinzo_an_unsorted_in_filter_keeps_the_order_without_a_cursor"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+`User(first: 2, filter: {age: {_geq: 40}}, order: {age: ASC})` over ages 15…75 returns [45, 55] then, with `after`, [65, 75] and `hasNext: false`; over ages 10…100 with `_geq: 80` it returns [80, 90] then [100]. With `filter: {age: {_in: [55, 25, 45, 35]}}` over ages 25…65 the pages are [25, 35] and [45, 55], so the cursor boundary holds even when the filter's values are unsorted, and 65 never appears.
