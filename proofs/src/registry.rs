@@ -1267,6 +1267,43 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Purging documents by DocID: values, index entries, the primary
+        // key, heads and DocID aliases go in one transact attempt; outside a
+        // branchable collection every block only the purged documents own
+        // goes too, decided by a validated owner scan; in a branchable
+        // collection the history stays and no owner edge names a purged
+        // document; the count is the distinct stored documents, taken at
+        // commit; a sync re-storing a walked block re-runs the attempt.
+        family: "Purge by DocID",
+        name: "INV_OthersIntact / INV_CollectionIntact / INV_Gone / INV_NoStaleOwner / INV_Pruned / INV_Count / PROP_Commits",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, DB::purge_documents; crates/db/src/txn/attempt.rs DB::transact_db; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_filtered_chunk; crates/db/src/txn/registry/purge.rs DbTransactionRegistry::purge_by_doc_ids_as; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners; crates/db/src/docid/map.rs block_has_owners",
+        model_ref: "MC_Purge_{Green_Prune,Green_Branchable,Red_Blind,Red_PruneBranchable,Red_KeepEdges,Red_KeepIndex,Red_CountRequests,Red_CountAttempt,Red_Fail,Red_PlainScan}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The orphan block sweep (#2479): a fetched block's to-merge mark
+        // holds its fetch time and a refetch renews it; the sweep nominates
+        // expired marks from a snapshot and decides each in a transaction
+        // that reads the mark and the owners again, deleting an unowned
+        // block, clearing the mark of an owned one, and never touching an
+        // untimed mark; a merge clears and owns its signature block too.
+        family: "Orphan block sweep",
+        name: "INV_NoMergedLoss / INV_NoOwnedLoss / INV_MergedUnmarked / INV_SigOwned / INV_LegacyKept / PROP_Reclaims",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run, marker_value, marker_time; crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, DB::decide_orphans; crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership",
+        model_ref: "MC_OrphanGc_{Green,Red_SnapshotRead,Red_NoOwnerCheck,Red_BlindRefresh,Red_ReclaimLegacy,Red_SigMarked,Red_SigUnowned}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Orphan block sweep",
+        name: "time_value / time_short / time_long / time_legacy",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/blockstore.rs marker_value, marker_time",
+        model_ref: "OrphanMarker (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,

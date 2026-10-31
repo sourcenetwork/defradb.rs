@@ -201,6 +201,10 @@ where
         let setup = match (&transport, network.as_ref()) {
             #[cfg(feature = "libp2p")]
             (TransportConfig::Libp2p(libp2p), Some(network)) => {
+                let libp2p = &crate::config::Libp2pConfig {
+                    orphan_sweep: persistence == crate::Persistence::Persistent,
+                    ..libp2p.clone()
+                };
                 let schedule = libp2p.sync.retry_schedule()?;
                 crate::libp2p_runtime::setup_libp2p(
                     store.clone(),

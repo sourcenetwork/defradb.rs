@@ -38,6 +38,7 @@ mod se_coordinator;
 mod se_receiver;
 mod se_storage;
 mod se_validate;
+mod signature_blocks;
 mod single_root_batch;
 mod synced_definition_cache;
 mod text_merge;
