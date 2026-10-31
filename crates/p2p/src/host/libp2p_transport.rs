@@ -229,6 +229,11 @@ impl P2PTransport for Libp2pTransport {
         Ok(self.handle.wire_stats())
     }
 
+    async fn peek_inline_car(&self, peer_id: &PeerId, head: &Cid) -> Result<Option<bytes::Bytes>> {
+        let pid = parse_libp2p_peer_id(peer_id)?;
+        self.handle.peek_inline_car(pid, *head).await
+    }
+
     async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
         self.handle.send_car_response(pid, car_data).await

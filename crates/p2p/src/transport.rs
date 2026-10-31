@@ -399,6 +399,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         Ok(Vec::new())
     }
 
+    /// The CAR `peer_id` sent inline for `head`, kept for the fetch that may
+    /// follow. Only Go Shinzo's wire carries inline CARs.
+    async fn peek_inline_car(
+        &self,
+        _peer_id: &PeerId,
+        _head: &Cid,
+    ) -> Result<Option<bytes::Bytes>> {
+        Ok(None)
+    }
+
     /// This node's transport counters (gossip decode failures, the Shinzo
     /// wire). A transport that keeps none hands back an empty set.
     async fn wire_stats(&self) -> Result<std::sync::Arc<crate::sync::WireStats>> {

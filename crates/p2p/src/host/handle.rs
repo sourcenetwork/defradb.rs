@@ -850,6 +850,24 @@ impl P2PHostHandle {
         response_rx.await.map_err(|_| Error::ChannelReceive)?
     }
 
+    /// The CAR `peer_id` sent inline for `head`, if this node keeps one.
+    pub async fn peek_inline_car(
+        &self,
+        peer_id: PeerId,
+        head: Cid,
+    ) -> Result<Option<bytes::Bytes>> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(HostCommand::PeekInlineCar {
+                peer_id,
+                head,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| Error::ChannelSend)?;
+        response_rx.await.map_err(|_| Error::ChannelReceive)
+    }
+
     /// Send a CAR request to a peer (request DAG as CARv1).
     pub async fn send_car_request(&self, peer_id: PeerId, root_cid: Cid) -> Result<()> {
         let (response_tx, response_rx) = oneshot::channel();

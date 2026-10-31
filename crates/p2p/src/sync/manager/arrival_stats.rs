@@ -21,6 +21,10 @@ pub enum SkipReason {
     AlreadyMerged,
     NoAccess,
     Filtered,
+    FilteredAfterFetch,
+    RetentionBeforeFetch,
+    RetentionAfterCarFetch,
+    RetentionNoHeight,
     RejectedByCrdt,
     Other,
 }
@@ -36,10 +40,14 @@ impl DropReason {
 }
 
 impl SkipReason {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 9] = [
         Self::AlreadyMerged,
         Self::NoAccess,
         Self::Filtered,
+        Self::FilteredAfterFetch,
+        Self::RetentionBeforeFetch,
+        Self::RetentionAfterCarFetch,
+        Self::RetentionNoHeight,
         Self::RejectedByCrdt,
         Self::Other,
     ];
@@ -49,6 +57,10 @@ impl SkipReason {
             Self::AlreadyMerged => "alreadyMerged",
             Self::NoAccess => "noAccess",
             Self::Filtered => "filtered",
+            Self::FilteredAfterFetch => "filteredAfterFetch",
+            Self::RetentionBeforeFetch => "retentionBeforeFetch",
+            Self::RetentionAfterCarFetch => "retentionAfterCARFetch",
+            Self::RetentionNoHeight => "retentionNoHeight",
             Self::RejectedByCrdt => "rejectedByCRDT",
             Self::Other => "other",
         }
@@ -181,6 +193,12 @@ impl ArrivalStats {
             }
             None => 0,
         };
+    }
+
+    /// Count a document skipped before it reached the merge, by the receive
+    /// gate.
+    pub fn record_skip(&self, reason: SkipReason) {
+        self.skips[reason as usize].fetch_add(1, Ordering::Relaxed);
     }
 
     /// This interval's counts; every counter starts again from zero.

@@ -233,6 +233,14 @@ impl<S: Store> P2PHost<S> {
             } => {
                 self.handle_send_car_request(peer_id, root_cid, response);
             }
+            HostCommand::PeekInlineCar {
+                peer_id,
+                head,
+                response,
+            } => {
+                let car = self.shinzo_inline.peek(&head, &peer_id.to_string());
+                let _ = response.send(car);
+            }
             HostCommand::SendCarResponse {
                 peer_id,
                 car_data,

@@ -53,6 +53,13 @@ impl InlineCars {
         true
     }
 
+    /// The CAR `peer` offered for `head`, left in place.
+    pub fn peek(&self, head: &Cid, peer: &str) -> Option<Bytes> {
+        self.cars
+            .get(&(*head, peer.to_string()))
+            .map(|(car, _)| car.clone())
+    }
+
     /// The CAR `peer` offered for `head`, removed so it is used once.
     pub fn take(&mut self, head: &Cid, peer: &str) -> Option<Bytes> {
         let (car, _) = self.cars.remove(&(*head, peer.to_string()))?;
