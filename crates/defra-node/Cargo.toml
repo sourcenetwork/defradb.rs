@@ -142,3 +142,8 @@ tar = "0.4"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "height_fetch_bench"
+path = "tests/height_fetch_bench.rs"
+required-features = ["test-utils"]
