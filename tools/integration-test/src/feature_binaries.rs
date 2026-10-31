@@ -22,9 +22,57 @@ pub fn vera_cli_binary() -> PathBuf {
         .clone()
 }
 
-/// Build and snapshot a CLI feature variant without racing other test processes.
+/// Where the running test binary was built: its target directory, the
+/// profile, and that profile's output directory. Cargo puts a test binary in
+/// `<target>/<profile dir>/deps/`, and the `dev` profile's directory is `debug`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestBuild {
+    pub target_dir: PathBuf,
+    pub profile: String,
+    pub out_dir: PathBuf,
+}
+
+impl TestBuild {
+    /// The build of the running test, or `dev` under `<workspace>/target`
+    /// when the executable is not in a cargo `deps` directory.
+    pub fn current(workspace: &Path) -> Self {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| Self::of(&exe))
+            .unwrap_or_else(|| Self {
+                target_dir: workspace.join("target"),
+                profile: "dev".into(),
+                out_dir: workspace.join("target/debug"),
+            })
+    }
+
+    fn of(exe: &Path) -> Option<Self> {
+        let deps = exe.parent().filter(|dir| dir.ends_with("deps"))?;
+        let out_dir = deps.parent()?;
+        let profile = match out_dir.file_name()?.to_str()? {
+            "debug" => "dev",
+            name => name,
+        };
+        Some(Self {
+            target_dir: out_dir.parent()?.to_path_buf(),
+            profile: profile.into(),
+            out_dir: out_dir.to_path_buf(),
+        })
+    }
+}
+
+/// Whether the harness was started only to list its tests (`nextest list`,
+/// `--list`), which must not build anything.
+pub fn listing_tests() -> bool {
+    std::env::args().any(|arg| arg == "--list")
+}
+
+/// Build and snapshot a CLI feature variant without racing other test
+/// processes, on the profile and into the target directory the tests were
+/// built with.
 pub fn build_cli_variant(workspace: &Path, features: &[&str], output_name: &str) -> PathBuf {
-    let target_dir = workspace.join("target/debug");
+    let build = TestBuild::current(workspace);
+    let target_dir = build.out_dir.clone();
     fs::create_dir_all(&target_dir).expect("failed to create target directory");
 
     let build_lock = OpenOptions::new()
@@ -39,7 +87,8 @@ pub fn build_cli_variant(workspace: &Path, features: &[&str], output_name: &str)
         .expect("failed to acquire defra build lock");
 
     let mut command = Command::new("cargo");
-    command.args(["build", "-p", "cli"]);
+    command.args(["build", "-p", "cli", "--profile", &build.profile]);
+    command.arg("--target-dir").arg(&build.target_dir);
     if !features.is_empty() {
         command.args(["--features", &features.join(",")]);
     }
@@ -88,6 +137,23 @@ fn publish_snapshot(temporary: PathBuf, destination: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_test_binary_names_its_profile_and_target_dir() {
+        let custom = TestBuild::of(Path::new("/w/target/super-dev/deps/p2p-1a2b")).unwrap();
+        assert_eq!(
+            custom,
+            TestBuild {
+                target_dir: "/w/target".into(),
+                profile: "super-dev".into(),
+                out_dir: "/w/target/super-dev".into(),
+            }
+        );
+        let dev = TestBuild::of(Path::new("/shared/debug/deps/p2p-1a2b")).unwrap();
+        assert_eq!(dev.profile, "dev");
+        assert_eq!(dev.target_dir, PathBuf::from("/shared"));
+        assert_eq!(TestBuild::of(Path::new("/usr/bin/defra")), None);
+    }
 
     #[test]
     fn snapshot_paths_are_unique_within_a_process() {
