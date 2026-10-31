@@ -9,6 +9,7 @@
 
 mod event;
 mod handler;
+mod peer_streams;
 mod runner;
 
 pub use event::TwoStreamEvent;

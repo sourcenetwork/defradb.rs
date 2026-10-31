@@ -195,6 +195,9 @@ pub struct Libp2pConfig {
     /// pushes), so the node replicates with Go Shinzo nodes. Off keeps
     /// today's protocol.
     pub shinzo_wire: bool,
+    /// libp2p resource budget overrides (Go Shinzo's `net.resourceMemoryMiB`,
+    /// `net.resourceFileDescriptors`, `net.maxStreamsPerPeer`).
+    pub resource_limits: p2p::ResourceLimits,
 }
 
 #[cfg(feature = "libp2p")]
@@ -208,6 +211,7 @@ impl Default for Libp2pConfig {
             stream_timeout_secs: None,
             sync: SyncTuning::default(),
             shinzo_wire: false,
+            resource_limits: p2p::ResourceLimits::default(),
         }
     }
 }

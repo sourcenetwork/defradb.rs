@@ -78,6 +78,23 @@ const GO_RESOURCE_MANAGER_SYSTEM_MEMORY_DIVISOR: u64 = 2;
 /// Go's transient ResourceManager scope is capped at 25% of the system scope.
 const GO_RESOURCE_MANAGER_TRANSIENT_MEMORY_DIVISOR: u64 = 4;
 
+/// Go Shinzo's file descriptor budget when a memory budget is set without one.
+const GO_SHINZO_DEFAULT_RESOURCE_FILE_DESCRIPTORS: u64 = 512;
+
+/// Operator overrides for the libp2p resource budget: Go Shinzo's
+/// `net.resourceMemoryMiB`, `net.resourceFileDescriptors` and
+/// `net.maxStreamsPerPeer`. `None` keeps the detected default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceLimits {
+    /// The whole memory budget in MiB, in place of half of system memory,
+    /// which inside a container is the host's and not the container's.
+    pub memory_mib: Option<u64>,
+    /// The file descriptor budget with a memory budget; 512 when unset.
+    pub file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset.
+    pub max_streams_per_peer: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResourceManagerRuntimeLimits {
     fd_limit: u64,
@@ -85,7 +102,15 @@ struct ResourceManagerRuntimeLimits {
 }
 
 impl ResourceManagerRuntimeLimits {
-    fn detect() -> Result<Self> {
+    fn detect(limits: ResourceLimits) -> Result<Self> {
+        if let Some(mib) = limits.memory_mib {
+            return Ok(Self {
+                fd_limit: limits
+                    .file_descriptors
+                    .unwrap_or(GO_SHINZO_DEFAULT_RESOURCE_FILE_DESCRIPTORS),
+                system_memory_budget_bytes: mib.saturating_mul(1024 * 1024),
+            });
+        }
         let fd_limit = current_fd_limit()?;
         let system_memory_budget_bytes =
             total_system_memory_bytes() / GO_RESOURCE_MANAGER_SYSTEM_MEMORY_DIVISOR;
@@ -224,6 +249,8 @@ pub struct P2PHostConfig {
     /// the CAR protocols, and read its batched gossip pushes. Off keeps
     /// today's protocol unchanged. Default: false.
     pub shinzo_wire: bool,
+    /// Resource budget overrides. Default: none, the detected budget.
+    pub resource_limits: ResourceLimits,
 }
 
 impl Default for P2PHostConfig {
@@ -241,6 +268,7 @@ impl Default for P2PHostConfig {
             max_connections_per_peer: 4,
             access_mode: AccessMode::Open,
             shinzo_wire: false,
+            resource_limits: ResourceLimits::default(),
         }
     }
 }
@@ -448,7 +476,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
 
         info!("Local peer ID: {}", local_peer_id);
 
-        let resource_limits = ResourceManagerRuntimeLimits::detect()?;
+        let resource_limits = ResourceManagerRuntimeLimits::detect(config.resource_limits)?;
         info!(
             fd_limit = resource_limits.fd_limit,
             system_memory_budget_mib = resource_limits.system_memory_budget_bytes / 1024 / 1024,
@@ -627,6 +655,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             config.max_car_size,
             config.stream_timeout,
             config.max_p2p_tasks,
+            config.resource_limits.max_streams_per_peer,
         );
         tokio::spawn(runner.run());
 
@@ -940,6 +969,25 @@ mod tests {
             GO_RESOURCE_MANAGER_MIN_MEMORY_BYTES,
         )
         .expect("Go minimum FD and memory limits must be accepted");
+    }
+
+    #[test]
+    fn a_configured_memory_budget_replaces_the_detected_one() {
+        let limits = ResourceManagerRuntimeLimits::detect(ResourceLimits {
+            memory_mib: Some(64),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(limits.system_memory_budget_bytes, 64 * 1024 * 1024);
+        assert_eq!(limits.fd_limit, GO_SHINZO_DEFAULT_RESOURCE_FILE_DESCRIPTORS);
+
+        let limits = ResourceManagerRuntimeLimits::detect(ResourceLimits {
+            memory_mib: Some(2048),
+            file_descriptors: Some(4096),
+            max_streams_per_peer: None,
+        })
+        .unwrap();
+        assert_eq!(limits.fd_limit, 4096);
     }
 
     /// `sysinfo::total_memory` reports bytes; a unit or refresh-kind regression

@@ -109,6 +109,7 @@ where
                 enable_pubsub: config.enable_pubsub,
                 enable_relay: config.enable_relay,
                 shinzo_wire: config.shinzo_wire,
+                resource_limits: config.resource_limits,
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),

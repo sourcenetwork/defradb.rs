@@ -1376,4 +1376,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ShinzoBatch (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Per-peer stream cap",
+        name: "INV_WithinCap / INV_SlotsFollowStreams",
+        axis: Tla,
+        anchor: "crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit, StreamAdmission; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run",
+        model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
 ];
