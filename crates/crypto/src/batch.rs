@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::keys::{PrivateKey, PublicKey};
 use crate::{Ed25519PrivateKey, Ed25519PublicKey, Secp256k1PrivateKey, Secp256k1PublicKey};
-use defra_core::batch_signing::{compute_merkle_root_with, BatchOptions, BatchScope, MerkleScheme};
+use defra_core::batch_signing::{
+    compute_merkle_root_with, merkle_path, root_from_path, BatchOptions, BatchScope, MerklePath,
+    MerkleScheme,
+};
 use defra_core::signing::SigningConfig;
 
 /// Errors that can occur during batch signing.
@@ -137,10 +140,57 @@ pub fn verify_batch_signature_with(
         return Ok(false);
     }
     let root = compute_merkle_root_with(cids, options.scheme);
+    verify_signed_root(sig, &root)
+}
 
+/// One CID of a signed batch and the path that shows it is in the batch,
+/// so a block can carry its batch signature without the whole batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchProof {
+    pub signature: BatchSignature,
+    pub path: MerklePath,
+}
+
+/// A proof that `cid` is in the batch `signature` covers.
+pub fn prove_inclusion(
+    signature: &BatchSignature,
+    cids: &[Cid],
+    cid: &Cid,
+    options: BatchOptions,
+) -> Option<BatchProof> {
+    Some(BatchProof {
+        signature: signature.clone(),
+        path: merkle_path(cids, cid, options.scheme)?,
+    })
+}
+
+/// Verify that `cid` is in the batch `proof.signature` signed. As for a
+/// whole batch, the options are the verifier's, and the path must be for a
+/// batch of exactly the signed count.
+pub fn verify_batch_inclusion(
+    proof: &BatchProof,
+    cid: &Cid,
+    options: BatchOptions,
+) -> Result<bool, String> {
+    let sig = &proof.signature;
+    if sig.merkle_scheme != options.scheme
+        || sig.batch_scope != options.scope
+        || sig.cid_count != proof.path.count
+    {
+        return Ok(false);
+    }
+    match root_from_path(cid, &proof.path, options.scheme) {
+        Some(root) => verify_signed_root(sig, &root),
+        None => Ok(false),
+    }
+}
+
+/// Whether `root` is the signature's root and the signature over it holds.
+fn verify_signed_root(sig: &BatchSignature, root: &[u8; 32]) -> Result<bool, String> {
     if root.as_slice() != sig.merkle_root.as_slice() {
         return Ok(false);
     }
+    let root = *root;
 
     let pub_bytes =
         hex::decode(&sig.identity).map_err(|e| format!("invalid identity hex: {}", e))?;
@@ -321,6 +371,54 @@ mod tests {
         assert!(!serde_json::to_string(&go)
             .unwrap()
             .contains("merkle_scheme"));
+    }
+
+    /// Every CID of batches of 1 to 9 has a path to the signed root, under
+    /// either tree; a CID outside the batch, or a path for another count,
+    /// does not.
+    #[test]
+    fn every_cid_of_a_batch_proves_its_inclusion() {
+        let config = test_ed25519_config();
+        let outsider = make_cid(b"outsider");
+        for scheme in [MerkleScheme::GoShinzo, MerkleScheme::DomainSeparated] {
+            let options = BatchOptions {
+                scheme,
+                ..BatchOptions::default()
+            };
+            for count in 1..=9 {
+                let cids: Vec<Cid> = (0..count)
+                    .map(|i| make_cid(format!("doc{i}").as_bytes()))
+                    .collect();
+                let sig = sign_batch_with(&cids, &config, options).unwrap();
+                for cid in &cids {
+                    let proof = prove_inclusion(&sig, &cids, cid, options).unwrap();
+                    assert!(
+                        verify_batch_inclusion(&proof, cid, options).unwrap(),
+                        "{scheme:?} {count}"
+                    );
+                    assert!(!verify_batch_inclusion(&proof, &outsider, options).unwrap());
+                    let mut longer = proof.clone();
+                    longer.path.count += 1;
+                    assert!(!verify_batch_inclusion(&longer, cid, options).unwrap());
+                }
+                assert!(prove_inclusion(&sig, &cids, &outsider, options).is_none());
+            }
+        }
+    }
+
+    /// Go's tree gives `[a, b, c]` and `[a, b, c, c]` one root; a path that
+    /// claims the fourth leaf of a batch signed with three is refused.
+    #[test]
+    fn a_path_into_the_duplicated_leaf_is_refused() {
+        let config = test_ed25519_config();
+        let mut cids = [make_cid(b"a"), make_cid(b"b"), make_cid(b"c")];
+        cids.sort_by_key(Cid::to_bytes);
+        let sig = sign_batch(&cids, &config).unwrap();
+        let options = BatchOptions::default();
+        let mut forged = prove_inclusion(&sig, &cids, &cids[2], options).unwrap();
+        forged.path.index = 3;
+        forged.path.count = 4;
+        assert!(!verify_batch_inclusion(&forged, &cids[2], options).unwrap());
     }
 
     #[test]

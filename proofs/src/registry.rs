@@ -1253,9 +1253,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Shinzo CAR exchange",
-        name: "decode_encode_request / decode_encode_reply / verify_bytes_request / verify_bytes_reply / decode_encode_document / empty_car_not_written / up_length / up_hashes_every_entry / go_odd_leaf_collides / upDS_leaves / climb_leaves / root_determines_cids",
+        name: "decode_encode_request / decode_encode_reply / verify_bytes_request / verify_bytes_reply / decode_encode_document / empty_car_not_written / up_length / up_hashes_every_entry / go_odd_leaf_collides / upDS_leaves / climb_leaves / root_determines_cids / rebuild_keeps_leaf / path_proves_membership",
         axis: Lean,
-        anchor: "crates/p2p/src/message/car_exchange.rs CarRequest, CarReply; crates/p2p/src/message/pushlog.rs DocumentInfo; crates/defra-core/src/batch_signing.rs compute_merkle_root, compute_merkle_root_with; crates/crypto/src/batch.rs verify_batch_signature_with",
+        anchor: "crates/p2p/src/message/car_exchange.rs CarRequest, CarReply; crates/p2p/src/message/pushlog.rs DocumentInfo; crates/defra-core/src/batch_signing.rs compute_merkle_root, compute_merkle_root_with, merkle_path, root_from_path; crates/crypto/src/batch.rs verify_batch_signature_with, verify_batch_inclusion",
         model_ref: "ShinzoWire (lake build)",
         tiers: &[Boundary],
     },
