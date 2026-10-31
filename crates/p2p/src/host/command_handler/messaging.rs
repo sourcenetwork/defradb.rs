@@ -301,6 +301,10 @@ impl<S: Store> P2PHost<S> {
         root_cid: Cid,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
+        if self.shinzo.is_some() {
+            self.send_shinzo_car_request(peer_id, root_cid, response);
+            return;
+        }
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
             let result = h.send_car_request(peer_id, root_cid).await;
