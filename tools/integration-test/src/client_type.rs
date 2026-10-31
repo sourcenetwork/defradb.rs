@@ -105,8 +105,11 @@ impl Multiplier<Actions> for ClientType {
 
 /// `action` as the client of the node it targets runs it: go-shinzo for a
 /// node that is a Go Shinzo node at this point, `client` otherwise. Each
-/// child of a parallel group is routed on its own. `go_shinzo` holds the
-/// names that are Go Shinzo nodes now; a `NewNode` updates it.
+/// child of a parallel group is routed on its own, from the nodes as they
+/// were before the group: testo runs the children on clones of the state,
+/// so a child's `NewNode` reaches neither its siblings nor what follows the
+/// group. `go_shinzo` holds the names that are Go Shinzo nodes now; a
+/// `NewNode` updates it.
 fn route(action: &Actions, client: ClientType, go_shinzo: &mut RapidHashSet<String>) -> Actions {
     match action {
         Actions::NewNode(node) => {
@@ -122,7 +125,7 @@ fn route(action: &Actions, client: ClientType, go_shinzo: &mut RapidHashSet<Stri
             actions: group
                 .actions
                 .iter()
-                .map(|child| route(child, client, go_shinzo))
+                .map(|child| route(child, client, &mut go_shinzo.clone()))
                 .collect(),
             ..group.clone()
         }),
@@ -271,5 +274,28 @@ mod tests {
             !is_http(&group.actions[1]),
             "the Rust child stays in-process"
         );
+    }
+
+    /// A child's NewNode reaches neither its siblings nor what follows the
+    /// group: testo runs the children on clones of the state.
+    #[test]
+    fn a_child_node_stays_inside_its_parallel_group() {
+        let parallel = Actions::Parallel(Parallel {
+            actions: vec![go_shinzo("db"), request("db")],
+            ..Default::default()
+        });
+        let actions: Vec<ActionInstance<Actions>> = vec![parallel.into(), request("db").into()];
+        let routed = ClientType::InProcess.apply(&actions);
+        let (ActionInstance::Sync(Actions::Parallel(group))
+        | ActionInstance::Async(Actions::Parallel(group))) = &routed[1]
+        else {
+            panic!("the group stays a group");
+        };
+        assert!(
+            !is_http(&group.actions[1]),
+            "a sibling keeps the pre-group node"
+        );
+        let (ActionInstance::Sync(after) | ActionInstance::Async(after)) = &routed[2];
+        assert!(!is_http(after), "the group's node does not outlive it");
     }
 }
