@@ -117,3 +117,40 @@ fn a_replicated_create_then_update_count_once_each_on_the_merging_node() {
     })
     .unwrap()
 }
+
+/// A merge that stores nothing is a drop, counted by cause: a replicated
+/// create whose field blocks never arrived is a missingBlock drop. The other
+/// causes are mapped in `db::stats`' unit test.
+#[test]
+#[mantra_macros::req_test("go.shinzo.telemetry.merge.drops")]
+fn a_merge_that_stores_nothing_counts_a_drop_by_cause() {
+    workers::block_on(async {
+        let (source, source_blocks, _) = make_handler_with_schema_and_bus().await;
+        let (target, target_blocks, _) = make_handler_with_schema_and_bus().await;
+        let mutator = db::AutoCommitMutator::new(source.db().clone());
+        let doc =
+            Document::from_json_str(r#"{"name": "Ann", "age": 30}"#, users_collection()).unwrap();
+        let created = mutator.create("Users", doc).await.unwrap();
+        let cid = created.commit_cid.unwrap();
+        let block = created.commit_block.unwrap();
+        let doc_id = created.doc_id.to_string();
+        let data = source_blocks.get(&cid).await.unwrap().unwrap();
+        target_blocks.put(&cid, &data).await.unwrap();
+
+        let outcome = target
+            .handle_block(
+                &cid,
+                &block,
+                BlockMetadata::normal(&doc_id, "col-users", "did:key:z6Mkr", None, false),
+            )
+            .await;
+        assert!(
+            !matches!(outcome, Ok(MergeOutcome::Merged)),
+            "nothing to merge without the field blocks: {outcome:?}"
+        );
+        let report = target.db().merge_stats().drain();
+        assert_eq!(report.drops, vec![("missingBlock", 1)], "{report:?}");
+        assert_eq!((report.creates, report.updates), (0, 0));
+    })
+    .unwrap()
+}
