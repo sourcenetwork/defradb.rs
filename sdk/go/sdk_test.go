@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-
+	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,21 +14,38 @@ import (
 
 	"github.com/sourcenetwork/defradb/client"
 	"github.com/sourcenetwork/defradb/client/options"
+	"github.com/sourcenetwork/defradb/event"
+	"github.com/sourcenetwork/defradb/node"
 )
 
 const users = "type User { name: String @index age: Int }"
 
-func open(t *testing.T, opts Options) *Node {
+// start starts a node built as Shinzo builds one, with set applied to its
+// options and before to the node ahead of Start, and adds the User
+// collection.
+func start(t *testing.T, set func(*options.NodeOptionsBuilder), before func(*Node)) *Node {
 	t.Helper()
-	node, err := Open(context.Background(), opts)
+	ctx := context.Background()
+	nb := options.Node()
+	nb.SetDisableAPI(true)
+	if set != nil {
+		set(nb)
+	}
+	n, err := New(ctx, nb)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(node.Close)
-	if _, err := node.AddCollection(context.Background(), users); err != nil {
+	if before != nil {
+		before(n)
+	}
+	if err := n.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return node
+	t.Cleanup(func() { _ = n.Close(context.Background()) })
+	if _, err := n.DB.AddCollection(ctx, users); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 type execer interface {
@@ -51,7 +70,7 @@ func names(t *testing.T, s execer) string {
 	return query(t, s, `query { User(order: {name: ASC}) { name age } }`)
 }
 
-func docs(t *testing.T, collection *Collection, values ...string) []*client.Document {
+func docs(t *testing.T, collection client.Collection, values ...string) []*client.Document {
 	t.Helper()
 	var out []*client.Document
 	for _, value := range values {
@@ -64,9 +83,7 @@ func docs(t *testing.T, collection *Collection, values ...string) []*client.Docu
 	return out
 }
 
-func collectionOf(t *testing.T, s interface {
-	GetCollectionByName(context.Context, client.CollectionName, ...options.Enumerable[options.GetCollectionByNameOptions]) (*Collection, error)
-}) *Collection {
+func collectionOf(t *testing.T, s client.Store) client.Collection {
 	t.Helper()
 	collection, err := s.GetCollectionByName(context.Background(), "User")
 	if err != nil {
@@ -76,9 +93,9 @@ func collectionOf(t *testing.T, s interface {
 }
 
 func TestExecRequestAndSaveManyDocuments(t *testing.T) {
-	node := open(t, Options{})
+	n := start(t, nil, nil)
 	ctx := context.Background()
-	collection := collectionOf(t, node)
+	collection := collectionOf(t, n.DB)
 	if collection.Name() != "User" {
 		t.Fatalf("name %q", collection.Name())
 	}
@@ -86,7 +103,7 @@ func TestExecRequestAndSaveManyDocuments(t *testing.T) {
 	if err := collection.SaveManyDocuments(ctx, saved); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, node); got != `{"User":[{"age":40,"name":"Alice"},{"age":7,"name":"Bob"}]}` {
+	if got := names(t, n.DB); got != `{"User":[{"age":40,"name":"Alice"},{"age":7,"name":"Bob"}]}` {
 		t.Fatal(got)
 	}
 	if !saved[0].ID().IsValid() {
@@ -99,118 +116,202 @@ func TestExecRequestAndSaveManyDocuments(t *testing.T) {
 	if err := collection.SaveDocument(ctx, saved[0]); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, node); got != `{"User":[{"age":41,"name":"Alice"},{"age":7,"name":"Bob"}]}` {
+	if got := names(t, n.DB); got != `{"User":[{"age":41,"name":"Alice"},{"age":7,"name":"Bob"}]}` {
 		t.Fatal(got)
 	}
-	result := node.ExecRequest(ctx, `query { Nope { name } }`)
+	result := n.DB.ExecRequest(ctx, `query { Nope { name } }`)
 	if len(result.GQL.Errors) == 0 {
 		t.Fatal("an unknown collection is an error")
 	}
 }
 
-func TestTransactionsAndPurgeByDocIDs(t *testing.T) {
-	node := open(t, Options{})
+func TestDocumentsThroughTheCollection(t *testing.T) {
+	n := start(t, nil, nil)
 	ctx := context.Background()
-	saved := docs(t, collectionOf(t, node), `{"name": "Alice", "age": 40}`, `{"name": "Bob", "age": 7}`)
-	if err := collectionOf(t, node).SaveManyDocuments(ctx, saved); err != nil {
+	collection := collectionOf(t, n.DB)
+	alice := docs(t, collection, `{"name": "Alice", "age": 40}`)[0]
+	if err := collection.AddDocument(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	if err := collection.AddDocument(ctx, docs(t, collection, `{"name": "Alice", "age": 40}`)[0]); err == nil {
+		t.Fatal("adding a document that exists is an error")
+	}
+	if err := collection.AddManyDocuments(ctx, docs(t, collection, `{"name": "Bob", "age": 7}`, `{"name": "Carol", "age": 3}`)); err != nil {
 		t.Fatal(err)
 	}
 
-	txn, err := node.NewTxn(false)
+	got, err := collection.GetDocument(ctx, alice.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, _ := got.Get("name"); name != "Alice" || got.ID() != alice.ID() {
+		t.Fatalf("got %v %v", name, got.ID())
+	}
+	if err := got.Set(ctx, "age", 41); err != nil {
+		t.Fatal(err)
+	}
+	if err := collection.UpdateDocument(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := collection.DeleteDocumentsWithFilter(ctx, map[string]any{"age": map[string]any{"_lt": 5}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Count != 1 {
+		t.Fatalf("deleted %+v", deleted)
+	}
+	if got := names(t, n.DB); got != `{"User":[{"age":41,"name":"Alice"},{"age":7,"name":"Bob"}]}` {
+		t.Fatal(got)
+	}
+
+	all, err := n.DB.GetCollections(ctx, options.GetCollections().SetCollectionID(collection.CollectionID()))
+	if err != nil || len(all) != 1 || all[0].Name() != "User" {
+		t.Fatalf("collections %v %v", all, err)
+	}
+	if err := collection.Truncate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(t, n.DB); got != `{"User":[]}` {
+		t.Fatal(got)
+	}
+	if _, err := n.DB.ListReplicators(ctx); !errors.Is(err, ErrNotSupported) {
+		t.Fatalf("an unoffered method says so: %v", err)
+	}
+}
+
+func TestTransactionsAndPurgeByDocIDs(t *testing.T) {
+	n := start(t, nil, nil)
+	ctx := context.Background()
+	saved := docs(t, collectionOf(t, n.DB), `{"name": "Alice", "age": 40}`, `{"name": "Bob", "age": 7}`)
+	if err := collectionOf(t, n.DB).SaveManyDocuments(ctx, saved); err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err := n.DB.NewTxn(false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := collectionOf(t, txn).PurgeByDocIDs(ctx, []client.DocID{saved[0].ID()}, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, node); !strings.Contains(got, "Alice") {
+	if got := names(t, n.DB); !strings.Contains(got, "Alice") {
 		t.Fatalf("the purge lands only on commit: %s", got)
 	}
 	if err := txn.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, node); got != `{"User":[{"age":7,"name":"Bob"}]}` {
+	if got := names(t, n.DB); got != `{"User":[{"age":7,"name":"Bob"}]}` {
 		t.Fatal(got)
 	}
 
-	discarded, err := node.NewTxn(false)
+	discarded, err := n.DB.NewTxn(false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	query(t, discarded, `mutation { add_User(input: {name: "Carol", age: 1}) { _docID } }`)
 	discarded.Discard()
-	if got := names(t, node); strings.Contains(got, "Carol") {
+	if got := names(t, n.DB); strings.Contains(got, "Carol") {
 		t.Fatalf("a discarded transaction stores nothing: %s", got)
 	}
 }
 
 func TestExportAndImportDocKVs(t *testing.T) {
-	source, target := open(t, Options{}), open(t, Options{})
+	source, target := start(t, nil, nil), start(t, nil, nil)
 	ctx := context.Background()
-	saved := docs(t, collectionOf(t, source), `{"name": "Alice", "age": 40}`, `{"name": "Bob", "age": 7}`)
-	if err := collectionOf(t, source).SaveManyDocuments(ctx, saved); err != nil {
+	saved := docs(t, collectionOf(t, source.DB), `{"name": "Alice", "age": 40}`, `{"name": "Bob", "age": 7}`)
+	if err := collectionOf(t, source.DB).SaveManyDocuments(ctx, saved); err != nil {
 		t.Fatal(err)
 	}
 	var snapshot bytes.Buffer
-	frames, err := source.ExportDocKVs(ctx, "User", nil, &snapshot, false)
+	frames, err := source.DB.ExportDocKVs(ctx, "User", nil, &snapshot, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapping, err := source.ExportFieldMapping(ctx, "User")
+	mapping, err := source.DB.ExportFieldMapping(ctx, "User")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(mapping), `"collectionName":"User"`) {
 		t.Fatal(string(mapping))
 	}
-	imported, err := target.ImportRawKVsWithMapping(ctx, &snapshot, mapping)
+	imported, err := target.DB.ImportRawKVsWithMapping(ctx, &snapshot, mapping)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if imported != frames {
 		t.Fatalf("imported %d of %d frames", imported, frames)
 	}
-	if err := target.RebuildCollectionIndexes(ctx, "User"); err != nil {
+	if err := target.DB.RebuildCollectionIndexes(ctx, "User"); err != nil {
 		t.Fatal(err)
 	}
 	ids := `query { User(order: {name: ASC}) { _docID } }`
-	if a, b := query(t, source, ids), query(t, target, ids); a != b {
+	if a, b := query(t, source.DB, ids), query(t, target.DB, ids); a != b {
 		t.Fatalf("%s != %s", a, b)
 	}
-	if got := query(t, target, `query { User(filter: {name: {_eq: "Bob"}}) { age } }`); got != `{"User":[{"age":7}]}` {
+	if got := query(t, target.DB, `query { User(filter: {name: {_eq: "Bob"}}) { age } }`); got != `{"User":[{"age":7}]}` {
 		t.Fatal(got)
 	}
 }
 
-func TestBatchSigning(t *testing.T) {
-	node := open(t, Options{EnableSigning: true})
-	collector, err := node.NewBatchCIDCollector(BatchFull)
-	if err != nil {
+func TestGoBatchCollectorGetsEachComposite(t *testing.T) {
+	n := start(t, nil, nil)
+	collector := node.NewBatchCIDCollector()
+	ctx := node.ContextWithBatchSigning(context.Background(), collector)
+	collection := collectionOf(t, n.DB)
+	if err := collection.AddManyDocuments(ctx, docs(t, collection, `{"name": "Alice", "age": 40}`, `{"name": "Bob", "age": 7}`)); err != nil {
 		t.Fatal(err)
 	}
-	ctx := ContextWithBatchSigning(context.Background(), collector)
-	saved := docs(t, collectionOf(t, node), `{"name": "Alice", "age": 40}`)
-	if err := collectionOf(t, node).SaveManyDocuments(ctx, saved); err != nil {
-		t.Fatal(err)
+	query(t, n.DB, `mutation { add_User(input: {name: "Carol", age: 1}) { _docID } }`)
+	if collector.Len() != 2 {
+		t.Fatalf("one composite per document written with the collector: %v", collector.GetCIDs())
 	}
-	signature, err := SignBatch(ctx, collector, MerkleDomainSeparated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if signature.MerkleScheme != "DomainSeparated" || signature.CIDCount < 2 {
-		t.Fatalf("%+v", signature)
-	}
-	if _, err := node.NewBatchCIDCollector("Nope"); err == nil {
-		t.Fatal("an unknown scope is refused")
+	if len(node.ComputeMerkleRoot(collector.GetCIDs())) == 0 {
+		t.Fatal("no merkle root")
 	}
 }
 
-func TestOpenWithRetentionFloors(t *testing.T) {
-	_, err := Open(context.Background(), Options{
-		RetentionFloors: map[string]RetentionFloor{"col": {Field: "blockNumber", Floor: 100}},
-	})
+func TestEventsCarryEachUpdate(t *testing.T) {
+	n := start(t, nil, nil)
+	sub, err := n.DB.Events().Subscribe(event.UpdateName)
 	if err != nil {
 		t.Fatal(err)
+	}
+	collection := collectionOf(t, n.DB)
+	alice := docs(t, collection, `{"name": "Alice", "age": 40}`)[0]
+	if err := collection.AddDocument(context.Background(), alice); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-sub.Message():
+		update, ok := msg.Data.(event.Update)
+		if !ok || update.DocID != alice.ID().String() || update.CollectionID != collection.CollectionID() ||
+			update.IsRelay || !update.Cid.Defined() || len(update.Block) == 0 {
+			t.Fatalf("%+v", msg)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no update event")
+	}
+}
+
+func TestStartServesGoDefraDBsHTTPAPI(t *testing.T) {
+	n := start(t, func(nb *options.NodeOptionsBuilder) {
+		nb.SetDisableAPI(false)
+		nb.HTTP().SetAddress("127.0.0.1:0")
+	}, nil)
+	if n.APIURL == "" {
+		t.Fatal("no API URL")
+	}
+	query(t, n.DB, `mutation { add_User(input: {name: "Alice", age: 40}) { _docID } }`)
+	body := strings.NewReader(`{"query": "query { User { name } }"}`)
+	resp, err := http.Post(n.APIURL+"/api/v0/graphql", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Alice") {
+		t.Fatalf("%d %s", resp.StatusCode, raw)
 	}
 }
 
@@ -225,40 +326,59 @@ func (f *refuseName) AllowReplication(ctx context.Context, collectionID, docID s
 	return fields["name"] != f.name
 }
 
-func TestReplicatorWithAFilterRefusingOneDocument(t *testing.T) {
+// ageFloor is a retention rule on every collection's age field, asked as
+// documents arrive, as Shinzo's host resolves its collections only once the
+// node has started.
+type ageFloor struct {
+	floor int64
+	calls atomic.Int64
+}
+
+func (r *ageFloor) RetentionFloor(collectionID string) (string, int64, bool) {
+	r.calls.Add(1)
+	return "age", r.floor, true
+}
+
+func TestReplicationThroughTheFilterAndTheRetentionRule(t *testing.T) {
 	ctx := context.Background()
 	filter := &refuseName{name: "Mallory"}
-	source := open(t, Options{ListenAddress: "/ip4/127.0.0.1/tcp/0"})
-	target := open(t, Options{ListenAddress: "/ip4/127.0.0.1/tcp/0", ReplicationFilter: filter})
-	addresses, err := target.PeerInfo(ctx)
+	rule := &ageFloor{floor: 3}
+	listen := func(nb *options.NodeOptionsBuilder) { nb.P2P().SetListenAddresses("/ip4/127.0.0.1/tcp/0") }
+	source := start(t, listen, nil)
+	target := start(t, listen, func(n *Node) {
+		n.ReplicationFilter = filter
+		n.RetentionRule = rule
+	})
+	addresses, err := target.DB.PeerInfo(ctx)
 	if err != nil || len(addresses) == 0 {
 		t.Fatalf("peer info %v %v", addresses, err)
 	}
-	if err := source.AddReplicator(ctx, addresses[:1], options.AddReplicator().SetCollectionNames([]string{"User"})); err != nil {
+	if err := source.DB.AddReplicator(ctx, addresses[:1], options.AddReplicator().SetCollectionNames([]string{"User"})); err != nil {
 		t.Fatal(err)
 	}
-	saved := docs(t, collectionOf(t, source), `{"name": "Alice", "age": 40}`, `{"name": "Mallory", "age": 1}`, `{"name": "Bob", "age": 7}`)
-	if err := collectionOf(t, source).SaveManyDocuments(ctx, saved); err != nil {
+	saved := docs(t, collectionOf(t, source.DB),
+		`{"name": "Alice", "age": 40}`, `{"name": "Mallory", "age": 9}`, `{"name": "Bob", "age": 7}`, `{"name": "Tiny", "age": 2}`)
+	if err := collectionOf(t, source.DB).SaveManyDocuments(ctx, saved); err != nil {
 		t.Fatal(err)
 	}
 	want := `{"User":[{"age":40,"name":"Alice"},{"age":7,"name":"Bob"}]}`
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		got := names(t, target)
-		if got == want && filter.calls.Load() >= 3 {
+		got := names(t, target.DB)
+		if got == want && filter.calls.Load() >= 1 && rule.calls.Load() >= 1 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the target holds %s after %d filter calls; want %s", got, filter.calls.Load(), want)
+			t.Fatalf("the target holds %s after %d filter and %d rule calls; want %s",
+				got, filter.calls.Load(), rule.calls.Load(), want)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Mallory was refused, not just late.
+	// Mallory and Tiny were refused, not just late.
 	time.Sleep(time.Second)
-	if got := names(t, target); got != want {
+	if got := names(t, target.DB); got != want {
 		t.Fatal(got)
 	}
-
 }
 
 func TestDecodeFieldsAsGoDecodesCBOR(t *testing.T) {

@@ -5,234 +5,176 @@ package defra
 #include "defra.h"
 extern int defraSDKReplicationFilterShim(uintptr_t context, const char *collection_id,
                                          const char *doc_id, const char *fields_json);
+extern int defraSDKRetentionRuleShim(uintptr_t context, const char *collection_id,
+                                     char *field_out, size_t field_capacity, int64_t *floor_out);
 */
 import "C"
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
+	gohttp "net/http"
 	"runtime/cgo"
-	"strconv"
+	"unsafe"
 
+	"github.com/sourcenetwork/defradb/acp/identity"
 	"github.com/sourcenetwork/defradb/client"
 	"github.com/sourcenetwork/defradb/client/options"
+	defrahttp "github.com/sourcenetwork/defradb/http"
+	"github.com/sourcenetwork/defradb/node"
 )
 
-// Node is a defradb.rs node opened in this process: Go Shinzo's `node.Node`
-// with its `DB`. It is safe for concurrent use.
+// Node is a defradb.rs node in this process, shaped as Go DefraDB's
+// `node.Node`: build it with New, set ReplicationFilter and RetentionRule,
+// then Start it. DB is set once it has started.
 type Node struct {
-	store
-	ptr    C.uintptr_t
-	filter cgo.Handle
+	// DB is the database; nil until Start.
+	DB *DB
+	// APIURL is where Go DefraDB's HTTP API serves DB, once started, unless
+	// the API is disabled.
+	APIURL string
+	// ReplicationFilter refuses replicated documents before anything of them
+	// is stored. Set it between New and Start.
+	ReplicationFilter client.ReplicationFilter
+	// RetentionRule refuses replicated documents by height. Set it between
+	// New and Start.
+	RetentionRule client.RetentionRule
+
+	opts    *options.NodeOptions
+	handles []cgo.Handle
+	server  *defrahttp.Server
+	handler *defrahttp.Handler
 }
 
-// Open opens a node with opts.
-func Open(ctx context.Context, opts Options) (*Node, error) {
+// New resolves opts over Go DefraDB's defaults; nothing opens until Start.
+func New(ctx context.Context, opts ...options.Enumerable[options.NodeOptions]) (*Node, error) {
+	resolved := node.DefaultNodeOptions()
+	applyOptions(&resolved, opts...)
+	return &Node{opts: &resolved}, nil
+}
+
+// Options are the node's resolved options.
+func (n *Node) Options() *options.NodeOptions {
+	return n.opts
+}
+
+// Start opens the database, its P2P system when P2P is enabled and given a
+// listen address, and Go DefraDB's HTTP API over it unless the API is
+// disabled.
+//
+// Of the options it honours the store path and in-memory store, the first
+// P2P listen address, DisableP2P, DisableAPI, the HTTP options, and the DB
+// identity, which signs the blocks the node writes when signing is on.
+func (n *Node) Start(ctx context.Context) error {
 	initFFI()
+	o := n.opts
 	var a cargs
 	defer a.free()
 
 	var c C.struct_NodeInitOptions
-	if opts.Path != "" {
-		c.db_path = a.s(opts.Path)
+	if o.Store.Path != "" && !o.Store.BadgerInMemory && o.Store.Store != options.NodeMemoryStore {
+		c.db_path = a.s(o.Store.Path)
 	} else {
 		c.in_memory = 1
 	}
 	c.iroh_discovery = 1
-	if opts.EnableSigning {
-		c.enable_signing = 1
-	}
-	if opts.ShinzoWire {
-		c.shinzo_wire = 1
-	}
-	if len(opts.RetentionFloors) > 0 {
-		floors, err := a.json(opts.RetentionFloors)
-		if err != nil {
-			return nil, err
+	c.shinzo_wire = 1
+	if o.DB.Identity.HasValue() {
+		full, ok := o.DB.Identity.Value().(identity.FullIdentity)
+		if !ok {
+			return errors.New("defra: the node identity has no private key")
 		}
-		c.retention_json = floors
+		key := full.PrivateKey()
+		raw := key.Raw()
+		c.signing_key_type = a.s(string(key.Type()))
+		c.signing_private_key = (*C.uint8_t)(C.CBytes(raw))
+		a.p = append(a.p, unsafe.Pointer(c.signing_private_key))
+		c.signing_private_key_len = C.size_t(len(raw))
+		if o.DB.EnableSigning {
+			c.enable_signing = 1
+		}
 	}
-	var filter cgo.Handle
-	if opts.ReplicationFilter != nil {
-		filter = cgo.NewHandle(opts.ReplicationFilter)
+	if n.ReplicationFilter != nil {
+		h := cgo.NewHandle(n.ReplicationFilter)
+		n.handles = append(n.handles, h)
 		c.replication_filter = (*[0]byte)(C.defraSDKReplicationFilterShim)
-		c.replication_filter_context = C.uintptr_t(filter)
+		c.replication_filter_context = C.uintptr_t(h)
+	}
+	if n.RetentionRule != nil {
+		h := cgo.NewHandle(n.RetentionRule)
+		n.handles = append(n.handles, h)
+		c.retention_rule = (*[0]byte)(C.defraSDKRetentionRuleShim)
+		c.retention_rule_context = C.uintptr_t(h)
 	}
 
 	var r C.struct_NewNodeResult
-	if opts.ListenAddress != "" {
-		r = C.new_node_with_p2p(c, a.s(opts.ListenAddress))
+	if !o.DisableP2P && len(o.P2P.ListenAddresses) > 0 {
+		r = C.new_node_with_p2p(c, a.s(o.P2P.ListenAddresses[0]))
 	} else {
 		r = C.new_node(c)
 	}
 	if r.status != 0 {
 		message := C.GoString(r.error)
 		C.defra_free_string(r.error)
-		if filter != 0 {
-			filter.Delete()
+		n.freeHandles()
+		return ffiError("start", message)
+	}
+	db, err := openDB(r.node_ptr)
+	if err != nil {
+		_, _ = result(C.node_close(r.node_ptr), "close")
+		n.freeHandles()
+		return err
+	}
+	n.DB = db
+	if o.DisableAPI {
+		return nil
+	}
+	return n.startAPI()
+}
+
+// startAPI serves Go DefraDB's HTTP handler over DB.
+func (n *Node) startAPI() error {
+	handler, err := defrahttp.NewHandler(n.DB, n.opts)
+	if err != nil {
+		return err
+	}
+	server, err := defrahttp.NewServer(handler, options.NodeHTTP().SetAll(n.opts.HTTP))
+	if err != nil {
+		handler.Close()
+		return err
+	}
+	if err := server.SetListener(); err != nil {
+		handler.Close()
+		return err
+	}
+	go func() {
+		if err := server.Serve(); err != nil && !errors.Is(err, gohttp.ErrServerClosed) {
+			return
 		}
-		return nil, ffiError("open", message)
+	}()
+	n.handler, n.server, n.APIURL = handler, server, server.Address()
+	return nil
+}
+
+// Close stops the API and closes the database.
+func (n *Node) Close(ctx context.Context) error {
+	var err error
+	if n.server != nil {
+		err = n.server.Shutdown(ctx)
 	}
-	n := &Node{ptr: r.node_ptr, filter: filter}
-	n.store = store{node: n}
-	return n, nil
-}
-
-// Close closes the node.
-func (n *Node) Close() {
-	_, _ = result(C.node_close(n.ptr), "close")
-	if n.filter != 0 {
-		n.filter.Delete()
-		n.filter = 0
+	if n.handler != nil {
+		n.handler.Close()
 	}
-}
-
-// NewTxn begins a transaction; its writes land when it commits.
-func (n *Node) NewTxn(readOnly bool) (*Txn, error) {
-	readonly := C.int32_t(0)
-	if readOnly {
-		readonly = 1
+	if n.DB != nil {
+		n.DB.Close()
 	}
-	r := C.begin_txn(n.ptr, readonly)
-	if r.status != 0 {
-		message := C.GoString(r.error)
-		C.defra_free_string(r.error)
-		return nil, ffiError("new_txn", message)
-	}
-	id := C.GoString(r.txn_id)
-	C.defra_free_string(r.txn_id)
-	t := &Txn{id: id}
-	t.store = store{node: n, txn: id}
-	return t, nil
-}
-
-// Txn is a transaction: Go's `client.Txn`, a store whose writes land when
-// it commits.
-type Txn struct {
-	store
-	id string
-}
-
-// ID is the transaction's identifier.
-func (t *Txn) ID() uint64 {
-	id, _ := strconv.ParseUint(t.id, 10, 64)
-	return id
-}
-
-// Commit commits the transaction.
-func (t *Txn) Commit() error {
-	var a cargs
-	defer a.free()
-	_, err := result(C.commit_txn(t.node.ptr, a.s(t.id)), "commit")
+	n.freeHandles()
 	return err
 }
 
-// Discard discards the transaction: nothing it wrote lands.
-func (t *Txn) Discard() {
-	var a cargs
-	defer a.free()
-	_, _ = result(C.rollback_txn(t.node.ptr, a.s(t.id)), "discard")
-}
-
-// store is what a node and a transaction both offer: Go's `client.Store`
-// methods Shinzo calls, in the transaction `txn` names when it is set.
-type store struct {
-	node *Node
-	txn  string
-}
-
-// AddCollection adds the collections the GraphQL SDL describes.
-func (s *store) AddCollection(
-	ctx context.Context,
-	sdl string,
-	opts ...options.Enumerable[options.AddCollectionOptions],
-) ([]client.CollectionVersion, error) {
-	o := newOptions(opts...)
-	var a cargs
-	defer a.free()
-	var raw string
-	var err error
-	if s.txn != "" {
-		raw, err = result(C.add_schema_in_txn(s.node.ptr, a.s(s.txn), a.opt(did(o.Identity)), a.s(sdl)), "add_collection")
-	} else {
-		raw, err = result(C.add_schema(s.node.ptr, a.opt(did(o.Identity)), a.s(sdl)), "add_collection")
+func (n *Node) freeHandles() {
+	for _, h := range n.handles {
+		h.Delete()
 	}
-	if err != nil {
-		return nil, err
-	}
-	var versions []client.CollectionVersion
-	if err := json.Unmarshal([]byte(raw), &versions); err != nil {
-		return nil, fmt.Errorf("defra: add_collection: %w", err)
-	}
-	return versions, nil
-}
-
-// ExecRequest runs a GraphQL request. A batch-signing collector on ctx
-// collects the blocks it writes.
-func (s *store) ExecRequest(
-	ctx context.Context,
-	request string,
-	opts ...options.Enumerable[options.ExecRequestOptions],
-) *client.RequestResult {
-	o := newOptions(opts...)
-	var a cargs
-	defer a.free()
-	var operation, variables *C.char
-	if o.OperationName.HasValue() {
-		operation = a.s(o.OperationName.Value())
-	}
-	if len(o.Variables) > 0 {
-		vars, err := a.json(o.Variables)
-		if err != nil {
-			return &client.RequestResult{GQL: client.GQLResult{Errors: []error{err}}}
-		}
-		variables = vars
-	}
-	raw, err := result(C.exec_request(
-		s.node.ptr,
-		a.opt(s.txn),
-		a.opt(did(o.Identity)),
-		a.s(request),
-		operation,
-		variables,
-		a.opt(batchSession(ctx)),
-	), "exec_request")
-	if err != nil {
-		return &client.RequestResult{GQL: client.GQLResult{Errors: []error{err}}}
-	}
-	var response struct {
-		Data   any `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.Unmarshal([]byte(raw), &response); err != nil {
-		return &client.RequestResult{GQL: client.GQLResult{Errors: []error{err}}}
-	}
-	out := &client.RequestResult{GQL: client.GQLResult{Data: response.Data}}
-	for _, e := range response.Errors {
-		out.GQL.Errors = append(out.GQL.Errors, fmt.Errorf("%s", e.Message))
-	}
-	return out
-}
-
-// GetCollectionByName is the collection named name, in this store.
-func (s *store) GetCollectionByName(
-	ctx context.Context,
-	name client.CollectionName,
-	opts ...options.Enumerable[options.GetCollectionByNameOptions],
-) (*Collection, error) {
-	o := newOptions(opts...)
-	var a cargs
-	defer a.free()
-	raw, err := result(C.get_collection_by_name(s.node.ptr, a.opt(did(o.Identity)), a.s(string(name))), "get_collection_by_name")
-	if err != nil {
-		return nil, err
-	}
-	var version client.CollectionVersion
-	if err := json.Unmarshal([]byte(raw), &version); err != nil {
-		return nil, fmt.Errorf("defra: get_collection_by_name: %w", err)
-	}
-	return &Collection{store: *s, version: version}, nil
+	n.handles = nil
 }

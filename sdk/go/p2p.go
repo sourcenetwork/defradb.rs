@@ -8,34 +8,41 @@ import "C"
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/sourcenetwork/defradb/client/options"
 )
 
 // PeerInfo is the node's full P2P addresses, each ending in its peer ID.
-func (n *Node) PeerInfo(ctx context.Context, opts ...options.Enumerable[options.PeerInfoOptions]) ([]string, error) {
+func (s *store) PeerInfo(ctx context.Context, opts ...options.Enumerable[options.PeerInfoOptions]) ([]string, error) {
 	o := newOptions(opts...)
 	var a cargs
 	defer a.free()
-	raw, err := result(C.p2p_peer_info(n.ptr, a.opt(did(o.Identity))), "peer_info")
+	raw, err := result(C.p2p_peer_info(s.ptr, a.opt(did(o.Identity))), "peer_info")
 	if err != nil {
 		return nil, err
 	}
-	var addresses []string
-	if err := json.Unmarshal([]byte(raw), &addresses); err != nil {
-		return nil, fmt.Errorf("defra: peer_info: %w", err)
+	return decode[[]string](raw, "peer_info")
+}
+
+// ActivePeers is the peers the node is connected to.
+func (s *store) ActivePeers(ctx context.Context, opts ...options.Enumerable[options.ActivePeersOptions]) ([]string, error) {
+	o := newOptions(opts...)
+	var a cargs
+	defer a.free()
+	raw, err := result(C.p2p_active_peers(s.ptr, a.opt(did(o.Identity))), "active_peers")
+	if err != nil {
+		return nil, err
 	}
-	return addresses, nil
+	return decode[[]string](raw, "active_peers")
 }
 
 // Connect connects to the peers at addresses.
-func (n *Node) Connect(ctx context.Context, addresses []string, opts ...options.Enumerable[options.ConnectOptions]) error {
+func (s *store) Connect(ctx context.Context, addresses []string, opts ...options.Enumerable[options.ConnectOptions]) error {
 	o := newOptions(opts...)
 	for _, address := range addresses {
 		var a cargs
-		_, err := result(C.p2p_connect(n.ptr, a.opt(did(o.Identity)), a.s(address)), "connect")
+		_, err := result(C.p2p_connect(s.ptr, a.opt(did(o.Identity)), a.s(address)), "connect")
 		a.free()
 		if err != nil {
 			return err
@@ -46,7 +53,7 @@ func (n *Node) Connect(ctx context.Context, addresses []string, opts ...options.
 
 // AddReplicator pushes the collections the options name (every collection
 // when none) to the peers at addresses.
-func (n *Node) AddReplicator(
+func (s *store) AddReplicator(
 	ctx context.Context,
 	addresses []string,
 	opts ...options.Enumerable[options.AddReplicatorOptions],
@@ -59,7 +66,7 @@ func (n *Node) AddReplicator(
 		var a cargs
 		collections, err := a.json(o.CollectionNames)
 		if err == nil {
-			_, err = result(C.p2p_add_replicator(n.ptr, a.opt(did(o.Identity)), a.s(address), collections), "add_replicator")
+			_, err = result(C.p2p_add_replicator(s.ptr, a.opt(did(o.Identity)), a.s(address), collections), "add_replicator")
 		}
 		a.free()
 		if err != nil {
@@ -67,4 +74,39 @@ func (n *Node) AddReplicator(
 		}
 	}
 	return nil
+}
+
+// AddP2PCollections subscribes the node to the named collections' topics.
+func (s *store) AddP2PCollections(
+	ctx context.Context,
+	collectionNames []string,
+	opts ...options.Enumerable[options.AddP2PCollectionsOptions],
+) error {
+	o := newOptions(opts...)
+	var a cargs
+	defer a.free()
+	names, err := a.json(collectionNames)
+	if err != nil {
+		return err
+	}
+	_, err = result(C.p2p_add_collections(s.ptr, a.opt(did(o.Identity)), names), "add_p2p_collections")
+	return err
+}
+
+// DeleteP2PCollections unsubscribes the node from the named collections'
+// topics.
+func (s *store) DeleteP2PCollections(
+	ctx context.Context,
+	collectionNames []string,
+	opts ...options.Enumerable[options.DeleteP2PCollectionsOptions],
+) error {
+	o := newOptions(opts...)
+	var a cargs
+	defer a.free()
+	names, err := a.json(collectionNames)
+	if err != nil {
+		return err
+	}
+	_, err = result(C.p2p_delete_collections(s.ptr, a.opt(did(o.Identity)), names), "delete_p2p_collections")
+	return err
 }
