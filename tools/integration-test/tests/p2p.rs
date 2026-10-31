@@ -30,6 +30,8 @@ mod replication;
 mod replication_advanced;
 #[path = "p2p/resilience.rs"]
 mod resilience;
+#[path = "p2p/shinzo_interop.rs"]
+mod shinzo_interop;
 #[path = "p2p/shinzo_mixed.rs"]
 mod shinzo_mixed;
 #[path = "p2p/sync.rs"]
