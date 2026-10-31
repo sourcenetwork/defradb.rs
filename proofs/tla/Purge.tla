@@ -23,6 +23,10 @@
 \*     so the block can never be reclaimed (Go keeps these when pruneHistory
 \*     is off; defradb.rs drops them);
 \*   - with pruneHistory, a block only purged documents owned survives;
+\*   - in a @branchable collection, a block the collection DAG reaches is
+\*     deleted: the collection DAG links every version's composite, so it
+\*     owns them and everything they link (its `_commits` and its sync need
+\*     them);
 \*   - the count is wrong: a DocID named twice, or one that names nothing,
 \*     is counted, or an attempt that did not commit is counted;
 \*   - a block stored again by a sync makes the purge fail instead of
@@ -31,7 +35,8 @@
 \* Code it models (crates/db/src/collection/ops/purge.rs):
 \*   DB::purge_by_doc_ids_as, PurgeAttempt (one transact_retry attempt),
 \*   purge_documents (values, index entries, primary key, heads, mappings),
-\*   crate::block::cleanup::delete_owned_dag_for_owners (prune: a validated
+\*   crate::block::cleanup::delete_owned_dag_for_owners (prune: its collection_dag
+\*   flag keeps a branchable collection's composites; a validated
 \*   owner scan decides each delete) and crate::block::cleanup::drop_dag_owners
 \*   (no prune: blind deletes of the purged owner edges).
 EXTENDS Naturals, FiniteSets, Sequences
@@ -44,7 +49,9 @@ CONSTANTS
   IndexMode,    \* "Delete": index entries go with the document | "Keep": they stay behind
   CountMode,    \* "Distinct": count distinct found documents at commit | "Requests": every DocID named | "Attempt": every attempt
   RetryMode,    \* "Retry": a conflicted attempt runs again | "Fail": it fails the purge
-  ScanMode      \* "Validated": the owner scan that decides a delete is validated | "Plain": it is not
+  ScanMode,     \* "Validated": the owner scan that decides a delete is validated | "Plain": it is not
+  Branchable,   \* TRUE: the collection is @branchable, so its collection DAG links every composite
+  CollectionMode \* "Owner": the collection DAG owns the composites it links | "Ignored": it does not
 
 \* Each switch takes one of its values.
 ASSUME Prune \in BOOLEAN
@@ -55,6 +62,8 @@ ASSUME IndexMode \in {"Delete", "Keep"}
 ASSUME CountMode \in {"Distinct", "Requests", "Attempt"}
 ASSUME RetryMode \in {"Retry", "Fail"}
 ASSUME ScanMode \in {"Validated", "Plain"}
+ASSUME Branchable \in BOOLEAN
+ASSUME CollectionMode \in {"Owner", "Ignored"}
 
 \* The documents: a and b get purged, c stays, x was never stored.
 Docs == {"a", "b", "c"}
@@ -84,6 +93,13 @@ Step(s) == s \cup UNION {Links(blk) : blk \in s}
 Reach(roots) == Step(Step(Step(roots)))
 \* The blocks a set of documents reaches from its heads.
 DocReach(ds) == Reach(UNION {Heads(d) : d \in ds})
+\* The document composites: every version of every document.
+Composites == {"a1", "a0", "b1", "c1"}
+\* The composites a branchable collection's DAG links: one collection block
+\* per document commit, so all of them. A purge leaves the collection DAG.
+CollectionLinked == IF Branchable THEN Composites ELSE {}
+\* Every block the collection DAG reaches through the composites it links.
+CollectionReach == Reach(CollectionLinked)
 
 VARIABLES
   live,      \* documents with a value, a primary key and DocID aliases
@@ -161,11 +177,15 @@ Without(own) == [blk \in Blocks |-> IF blk \in Walked THEN own[blk] \ Found ELSE
 \* off; the Keep switch reproduces that.
 NewOwners == IF ~Prune /\ EdgeMode = "Keep" THEN owners ELSE Without(owners)
 \* The blocks a prune deletes: walked blocks nobody else owns in the
-\* attempt's snapshot, or, with the Blind switch, every walked block.
+\* attempt's snapshot, or, with the Blind switch, every walked block. A
+\* composite the collection DAG links is owned by it, and so is everything
+\* that composite reaches; the Ignored switch forgets that owner.
 Doomed ==
   IF ~Prune THEN {}
   ELSE IF OwnerMode = "Blind" THEN Walked
-  ELSE {blk \in Walked : Without(snap)[blk] = {}}
+  ELSE {blk \in Walked :
+          /\ Without(snap)[blk] = {}
+          /\ (CollectionMode = "Ignored" \/ blk \notin CollectionReach)}
 \* A validated owner scan of a walked block saw a record change: the commit
 \* must conflict.
 ScanBroken == Prune /\ ScanMode = "Validated" /\ touched \cap Walked # {}
@@ -215,6 +235,10 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Begin \/ Commit)
 \* document adopted, is still held.
 INV_OthersIntact == (DocReach(Docs \ Named) \cup adopted) \subseteq present
 
+\* Invariant: every block the collection DAG reaches is still held, so the
+\* collection's `_commits` stays whole and a peer syncing it finds them.
+INV_CollectionIntact == CollectionReach \subseteq present
+
 \* Invariant: a committed purge leaves no value, index entry or alias.
 INV_Gone == phase = "done" => (Named \cap (live \cup indexed)) = {}
 
@@ -225,7 +249,8 @@ INV_NoStaleOwner == phase = "done" => \A blk \in Blocks : owners[blk] \cap Named
 \* purged documents reached.
 INV_Pruned ==
   (phase = "done" /\ Prune) =>
-    (DocReach(Named \cap Docs) \ (DocReach(Docs \ Named) \cup adopted)) \cap present = {}
+    (DocReach(Named \cap Docs) \ (DocReach(Docs \ Named) \cup adopted \cup CollectionReach))
+      \cap present = {}
 
 \* Invariant: the count is the number of distinct stored documents named,
 \* and nothing is counted before the purge commits.

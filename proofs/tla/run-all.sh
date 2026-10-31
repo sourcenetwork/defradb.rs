@@ -169,6 +169,8 @@ RUNS=(
   "MC_Purge_Red_CountAttempt.cfg Purge.tla RED" # a conflicted attempt is counted (INV_Count)
   "MC_Purge_Red_Fail.cfg Purge.tla RED" # a conflict fails the purge instead of re-running it (PROP_Commits)
   "MC_Purge_Red_PlainScan.cfg Purge.tla RED" # a plain owner scan misses a merge adopting a block, which the prune deletes (INV_OthersIntact)
+  "MC_Purge_Green_Branchable.cfg Purge.tla GREEN" # #2459 review: a branchable collection's DAG keeps every composite it links
+  "MC_Purge_Red_IgnoreCollection.cfg Purge.tla RED" # the prune ignores the collection DAG as an owner (INV_CollectionIntact)
   "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
   "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
