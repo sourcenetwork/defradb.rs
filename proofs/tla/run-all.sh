@@ -185,6 +185,13 @@ RUNS=(
   "MC_ReplicationFilter_Red_WholeBatch.cfg ReplicationFilter.tla RED" # one refusal skips its batch (INV_KeptMerged)
   "MC_ReplicationFilter_Red_Retry.cfg ReplicationFilter.tla RED" # a refused head is retried and stored later (INV_RefusedNothingStored)
   "MC_ReplicationFilter_Red_FilterBranchable.cfg ReplicationFilter.tla RED" # a branchable collection is filtered per document (INV_BranchableUnfiltered)
+  "MC_KvImport_Green.cfg KvImport.tla GREEN" # #2440: a Go snapshot imports what it can name, reports the rest, keeps live writes across a rerun
+  "MC_KvImport_Green_History.cfg KvImport.tla GREEN" # #2440: a snapshot with history imports every document
+  "MC_KvImport_Red_StoreAfter.cfg KvImport.tla RED" # heads merged before their blocks are stored (INV_MergedHasBlocks)
+  "MC_KvImport_Red_NoGenesisCheck.cfg KvImport.tla RED" # a document merged without its first version (INV_NoDocWithoutFirst)
+  "MC_KvImport_Red_Overwrite.cfg KvImport.tla RED" # a raw write, as Go imports, loses a live write (INV_NoLostLiveWrite)
+  "MC_KvImport_Red_Judged.cfg KvImport.tla RED" # the filter judges the restore (INV_Complete)
+  "MC_KvImport_Red_Silent.cfg KvImport.tla RED" # an unnamed document dropped unreported (INV_Complete)
   "MC_Retention_Green.cfg Retention.tla GREEN" # #2450: the merge refuses only what the rule refuses, alone, never relayed, counted
   "MC_Retention_Green_ZeroFloor.cfg Retention.tla GREEN" # #2450: a floor of 0 refuses nothing by height
   "MC_Retention_Green_Branchable.cfg Retention.tla GREEN" # #2450: a branchable collection is not judged

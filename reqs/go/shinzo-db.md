@@ -180,62 +180,11 @@ A dropped event (one not stored) is counted under one cause: `missingBlock` (a b
 - **Parents:** ["go.shinzo"]
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
-`DB.ExportDocKVs(collection, docIDs, w, datastoreOnly)` writes the named documents of one collection to a byte stream; `DB.ExportFieldMapping(collection)` writes the JSON that lets another node read it; `DB.ImportRawKVs(r)` and `DB.ImportRawKVsWithMapping(r, mapping)` load a stream into a node; `DB.RebuildCollectionIndexes(collection)` restores that collection's secondary indexes afterwards. Short IDs are local to a node, so a snapshot moves between nodes only through the field mapping. Go reaches these only in-process and through `defradb client kv export|import` against a local node; its HTTP client refuses all five. Go has no tests for them, and these requirements are written from `internal/db/kv_export.go`, `internal/db/kv_import.go` and `cli/kv_export.go`, `cli/kv_import.go`.
-
-# `go.shinzo.kv_snapshot.format`: The snapshot stream is length-prefixed frames ending in a zero length
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "a stream written by either runtime is read by the other, frame for frame"
-
-A snapshot is a sequence of frames `[key length: u32 big-endian][key][value length: u32 big-endian][value]`, ended by a key length of 0. A key's first byte names its store: `d` the datastore, `h` the headstore, `b` the blockstore; the rest is the key inside that store, in Go's encoding. A `b` key is the block's CID bytes and its value is the block's bytes. Reading a stream that ends cleanly before the sentinel is accepted as complete; a stream that ends inside a frame fails with an error and imports nothing past the last whole frame. Decoding a stream and encoding the frames again gives the same bytes.
-
-# `go.shinzo.kv_snapshot.export`: Export writes each named document's values, heads and history
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "the `b` and `h` frames match a Go Shinzo export of the same documents byte for byte; `d` frames match once each node's document short IDs are accounted for"
-
-For each DocID, in the order given, the export writes the document's datastore entries (its field values, field priorities and deletion marker, as Go stores them under `/<collection short ID>/{v,p,d}/<doc short ID>/<field short ID>`), then its headstore entries (`/<doc short ID>/<field>/<CID>`), then every block reachable from those heads through block links, each block once. A DocID this node does not have is skipped, not an error. With `datastoreOnly`, only the datastore entries are written. It returns the number of frames written, not counting the sentinel. A collection that does not exist fails with `collection not found`, and an empty name with `collection name can't be empty`. The export reads one snapshot and writes nothing.
-
-- **Go-Bug-Suspect:** "`kv export` documents `--doc-ids` as 'exports all if omitted', but `ExportDocKVs` with no DocIDs writes only the sentinel; defradb.rs exports every document of the collection when no DocID is given"
-
-# `go.shinzo.kv_snapshot.field_mapping`: The field mapping names the collection and every stored field's short ID
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "the JSON is the shape Go writes and reads"
-
-`ExportFieldMapping(collection)` returns `{"collectionName": <name>, "collectionShortID": <this node's collection short ID>, "fields": [{"name": <field>, "fieldID": <global field ID>, "shortID": <this node's field short ID>}, …]}`, one entry per field of the collection's current version that has a field ID, in the version's field order. Virtual fields (the secondary side of a relation) have no field ID and are left out. `client.CollectionFieldMapping` (snake-case keys, a short-ID-to-field-ID map) is declared in Go but nothing reads or writes it, so it is not part of the format.
-
-# `go.shinzo.kv_snapshot.import`: Import loads a snapshot and the documents read back the same
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "a snapshot exported from a Go Shinzo node imports into a Rust node, and one exported from a Rust node imports into a fresh Go Shinzo node, and a query of the collection returns the same documents and values on both"
-
-Importing a full snapshot (not `datastoreOnly`) with the source's field mapping into a node that defines the same collection makes every exported document readable there, with the same DocID, field values and version history (`_commits`) as on the source. Collection and field short IDs are translated from the source's to this node's through the mapping. It returns the number of frames read, not counting the sentinel. A mapping that is not valid JSON fails before anything is written; a mapping that names a collection this node does not have fails with `collection not found`. Importing the same snapshot twice leaves the same documents as importing it once.
-
-- **Go-Bug-Suspect:** "Go writes the frames into the rootstore verbatim and exports no DocID-to-short-ID mappings, so on a node whose document short IDs differ from the source's (any node that already holds documents of the collection) the imported entries resolve to no DocID or land on another document's short ID; defradb.rs gives each imported document its own short ID on the destination"
-- **Go-Bug-Suspect:** "a mapped field whose field ID the destination does not have keeps the source's field short ID, so its value is written under whatever field owns that short ID locally; defradb.rs refuses the import with an error naming the field"
-
-# `go.shinzo.kv_snapshot.batches`: A failed import keeps what it committed, and a re-run completes it
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-Go commits an import in transactions of 1000 frames, so an import that fails part-way (a truncated stream, a storage error) keeps the frames it committed before the failure. Re-running the import of the whole snapshot then finishes it, with the same result as one uninterrupted import. Writes made to the collection on the node while an import runs are kept as well.
-
-# `go.shinzo.kv_snapshot.indexes`: Secondary indexes cover the imported documents
-
-- **Parents:** ["go.shinzo.kv_snapshot"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-After an import, a query that uses a secondary index of the collection finds the imported documents, and a unique index rejects a new document that repeats an imported document's value with `can not index a doc's field(s) that violates unique index`. In Go this holds once `RebuildCollectionIndexes(collection)` (`kv import --rebuild-indexes`) has dropped and recreated every index of the collection, keeping each index's name and fields; that call fails with `collection not found` for an unknown collection.
+`DB.ExportDocKVs(collection, docIDs, w, datastoreOnly)` writes the named documents of one collection to a byte stream; `DB.ExportFieldMapping(collection)` writes the JSON that lets another node read it; `DB.ImportRawKVs(r)` and `DB.ImportRawKVsWithMapping(r, mapping)` load a stream into a node; `DB.RebuildCollectionIndexes(collection)` restores that collection's secondary indexes afterwards. Short IDs are local to a node, so a snapshot moves between nodes only through the field mapping. Go reaches these only in-process: its CLI `client kv export|import` always runs through the HTTP client, which refuses all five with `ErrNotSupportedViaHTTP`. Go has no tests for them, and these requirements are written from `internal/db/kv_export.go`, `internal/db/kv_import.go`, `cli/kv_export.go` and `cli/kv_import.go`. defradb.rs offers `DB::export_kv_snapshot_as` and `DB::import_kv_snapshot_as`; `tools/go-shinzo-kv` runs Go's side in-process for the interop tests.
 
 # `go.shinzo.kv_snapshot.store_options`: Shinzo's Badger tuning on regolith
 
 - **Parents:** ["go.shinzo.kv_snapshot"]
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
-Go Shinzo hard-codes three Badger options in `node/store_badger.go`, none of them configurable: `ValueThreshold = 256` (values of 256 bytes or more go to the value log), `Compression = ZSTD` and `ZSTDCompressionLevel = 1`. regolith 0.2.3 has no key-value separation, so the value threshold has no equivalent and is dropped. Its block compression is `Options::compression`, whose codecs are none, Snappy and LZ4 (the default); with no ZSTD codec and no level setting, both stay at regolith's LZ4 default and are dropped. None of the three changes what a node stores or returns.
+Go Shinzo hard-codes three Badger options in `node/store_badger.go`, none of them configurable: `ValueThreshold = 256` (values of 256 bytes or more go to the value log), `Compression = ZSTD` and `ZSTDCompressionLevel = 1`. All three are dropped. regolith 0.2.3 keeps values in its SSTables, with no key-value separation, so the value threshold has nothing to set. Its block compression is `Options::compression`, whose codecs are none, Snappy and LZ4 (the default), with no ZSTD codec and no level setting, so compression stays at regolith's LZ4 default. None of the three changes what a node stores or returns.

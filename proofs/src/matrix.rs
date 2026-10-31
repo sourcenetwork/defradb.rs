@@ -64,6 +64,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Purge by DocID",
     "Retention floor",
     "Replication filter",
+    "KV snapshot",
     "Node startup",
     "Text CRDT convergence",
     "JSON CRDT per-path merge",

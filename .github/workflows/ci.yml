@@ -470,7 +470,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/defra-shinzo
-          key: go-shinzo-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-shinzo-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs', 'tools/go-shinzo-kv/main.go') }}
       - name: Prepare Go Shinzo binary
         if: matrix.suite == 'go-shinzo'
         run: |
@@ -480,14 +480,20 @@ jobs:
           test -n "$SHINZO_BRANCH"
           CACHE_DIR="$HOME/.cache/defra-shinzo/${SHINZO_REF}"
           mkdir -p "$CACHE_DIR"
-          if [ ! -x "$CACHE_DIR/defradb" ]; then
+          # kvsnap runs Go Shinzo's KV snapshot export and import, which Go
+          # reaches only in-process; it is built inside the pinned checkout.
+          if [ ! -x "$CACHE_DIR/defradb" ] || [ ! -x "$CACHE_DIR/kvsnap" ]; then
             WORK_DIR="$RUNNER_TEMP/defradb-shinzo-${SHINZO_REF}"
             git clone --filter=blob:none --branch "$SHINZO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
             git -C "$WORK_DIR" checkout "$SHINZO_REF"
             make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-            chmod +x "$CACHE_DIR/defradb"
+            mkdir -p "$WORK_DIR/cmd/kvsnap"
+            cp tools/go-shinzo-kv/main.go "$WORK_DIR/cmd/kvsnap/main.go"
+            (cd "$WORK_DIR" && go build -o "$CACHE_DIR/kvsnap" ./cmd/kvsnap)
+            chmod +x "$CACHE_DIR/defradb" "$CACHE_DIR/kvsnap"
           fi
           "$CACHE_DIR/defradb" version --format json
+          echo "DEFRA_GO_SHINZO_KVSNAP=$CACHE_DIR/kvsnap" >> "$GITHUB_ENV"
           echo "DEFRA_GO_SHINZO_BINARY=$CACHE_DIR/defradb" >> "$GITHUB_ENV"
 
           # The drift check finds `defradb` on the PATH. This one is Go Shinzo,

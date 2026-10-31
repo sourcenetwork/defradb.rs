@@ -111,3 +111,69 @@ A document whose DocID names a document that was deleted fails the batch with `a
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 Saved in a caller's transaction, the documents are not visible outside it until it commits, and are never stored if it is discarded. An empty batch succeeds and stores nothing.
+
+# `go.shinzo.kv_snapshot.format`: The snapshot stream is length-prefixed frames ending in a zero length
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::shinzo_kv_go_and_rust_write_the_same_snapshot", "db::merge::kv_snapshot::frames_read_back_and_a_cut_frame_is_an_error"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "a stream written by either runtime is read by the other, frame for frame"
+
+A snapshot is a sequence of frames `[key length: u32 big-endian][key][value length: u32 big-endian][value]`, ended by a key length of 0. A key's first byte names its store: `d` the datastore, `h` the headstore, `b` the blockstore; the rest is Go's key inside that store, its integers in Go's ascending uvarint (short ID 1 is the byte `0x89`). A `b` key is the block's CID bytes and its value is the block's bytes. A stream that ends cleanly before the end mark is complete; one that ends inside a frame fails with `the KV snapshot ends inside a frame`. Writing frames and reading them back gives the same frames in order, and reading stops at the end mark whatever follows it (`proofs/lean/KvSnapshot/Frames.lean`).
+
+# `go.shinzo.kv_snapshot.export`: Export writes each readable document's values, heads and blocks
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::shinzo_kv_go_and_rust_write_the_same_snapshot", "shinzo::kv_snapshot::kv_export_without_doc_ids_exports_every_document", "db::merge::kv_snapshot::an_export_leaves_out_documents_its_caller_cannot_read"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "without history, a Rust export of documents a Go Shinzo node holds equally is Go's export byte for byte"
+
+For each DocID, in the order given, the export writes the document's datastore entries (each field's value as CBOR under `/<collection short ID>/v/<doc short ID>/<field short ID>`, the collection version under field `v`, then each field's priority under `/p/`), then its heads (`/<doc short ID>/<field short ID or C>/<CID>`, the priority as the value), then its blocks: from each head, the head and every block it links, each once, depth first. With history (the default) the walk also follows each block's earlier versions and its signature and encryption blocks, so another node can replay the document; without it the blocks are Go's. With `datastoreOnly`, only the datastore entries are written. The export reads one snapshot, as the caller: a document the caller cannot read under document access control is left out, as one this node does not have, or has deleted, is. It returns the frames written, not counting the end mark, and the field mapping. A collection that does not exist fails with `collection not found`, and an empty name with `collection name can't be empty`.
+
+- **Go-Bug-Suspect:** "`kv export` documents `--doc-ids` as 'exports all if omitted', but `ExportDocKVs` with no DocIDs writes only the end mark; defradb.rs exports every document of the collection the caller can read, a case the comparison with Go leaves out"
+- **Go-Bug-Suspect:** "Go's export follows a block's field links only, never its earlier versions or its signature, so an updated document's first version, which names its DocID, is not in the snapshot; defradb.rs exports history unless asked not to"
+
+# `go.shinzo.kv_snapshot.field_mapping`: The field mapping names the collection and every stored field's short ID
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::shinzo_kv_go_and_rust_write_the_same_snapshot"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "the JSON is the shape Go writes and reads"
+
+The mapping is `{"collectionName": <name>, "collectionShortID": <the source's collection short ID>, "fields": [{"name": <field>, "fieldID": <global field ID>, "shortID": <the snapshot's field short ID>}, …]}`, one entry per field of the collection's current version that has a field ID, in the version's field order; virtual fields (the secondary side of a relation) have none and are left out. defradb.rs keeps no per-node field short IDs, so it numbers the fields from 1 in that order, as Go numbers a new collection's. It adds `"documents": [{"docID": …, "shortID": …}]`, each exported document's DocID; Go's decoder ignores members it does not know. `client.CollectionFieldMapping` (snake-case keys) is declared in Go but nothing reads or writes it, so it is not part of the format.
+
+# `go.shinzo.kv_snapshot.import`: Import replays each document's blocks, and the documents read back the same
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::shinzo_kv_a_go_snapshot_imports_into_rust", "shinzo::kv_snapshot::shinzo_kv_a_go_snapshot_of_an_updated_document_has_no_history", "shinzo::kv_snapshot::shinzo_kv_a_rust_snapshot_imports_into_a_fresh_go_node", "shinzo::kv_snapshot::kv_snapshot_round_trips_between_rust_nodes", "shinzo::kv_snapshot::kv_import_refuses_a_field_this_node_lacks", "shinzo::kv_snapshot::kv_a_datastore_only_snapshot_is_refused"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "a Go Shinzo snapshot imports into a Rust node; a Rust snapshot imports into a fresh Go Shinzo node"
+
+defradb.rs imports a document by storing its blocks and merging its composite heads, as a local replay of a replicated document: the first version names its DocID, the merge gives it this node's short IDs and its values, and the document reads back with the same DocID and values as on the source. A document whose versions do not reach its first one (a Go snapshot of an updated document) cannot be named: the others are imported, and the import fails with `… so their DocIDs cannot be recovered and they were not imported (N other documents were); export them with history`. A snapshot with no heads for a document (`datastoreOnly`) fails with `a datastore-only snapshot carries no DocIDs or history, so it cannot be imported`. With the source's mapping, the collection it names must exist (`collection not found`) with every field it names (`the field mapping names field <name> (<field ID>), which collection <collection> does not have: add the field before importing`), checked before anything is written. It runs as the caller, under the update-document node permission, and returns the frames read. `proofs/tla/KvImport.tla` models it.
+
+- **Go-Bug-Suspect:** "Go writes the frames into the rootstore verbatim and exports no DocID-to-short-ID mappings, so its imported documents read back with an empty `_docID`, and on a node that already holds documents of the collection they land on other documents' short IDs; defradb.rs gives each imported document its DocID and its own short ID"
+- **Go-Bug-Suspect:** "a mapped field whose field ID the destination does not have keeps the source's field short ID, so its value is written under whatever field owns that short ID locally; defradb.rs refuses the import"
+
+# `go.shinzo.kv_snapshot.restore`: An import is a restore, not judged as a peer's push
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["db::merge::kv_snapshot::an_import_restores_what_the_floor_and_the_filter_refuse_from_peers"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+The replication filter (`go.shinzo.p2p.replication_filter`) and the retention floor (`go.shinzo.retention`) judge what peers send. A snapshot import is the node's operator restoring documents, so neither judges it: a document at height 5 under a floor of 100, in a collection a filter refuses everything of, is imported. Go's import writes raw keys and passes through neither.
+
+# `go.shinzo.kv_snapshot.batches`: An interrupted import is completed by running it again, and live writes are kept
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["db::merge::kv_snapshot::live_writes_during_an_import_are_kept", "shinzo::kv_snapshot::kv_snapshot_round_trips_between_rust_nodes"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Go commits an import in transactions of 1000 frames, so one that fails part-way keeps what it committed. defradb.rs commits each document's merge on its own, so the same holds per document; running the whole import again finishes it, and importing a snapshot again changes nothing. A write made to an imported document after the import, or while it runs, is kept when the import runs again: the import merges, it never writes over.
+
+# `go.shinzo.kv_snapshot.indexes`: Secondary indexes cover the imported documents
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::shinzo_kv_a_go_snapshot_imports_into_rust", "shinzo::kv_snapshot::shinzo_kv_a_rust_snapshot_imports_into_a_fresh_go_node", "shinzo::kv_snapshot::kv_snapshot_round_trips_between_rust_nodes"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+After an import, a query that uses a secondary index of the collection finds the imported documents. defradb.rs's merge maintains the indexes as it writes each document, so nothing more is needed. Go keeps them only once `RebuildCollectionIndexes(collection)` (`kv import --rebuild-indexes`) has dropped and recreated every index of the collection, keeping each index's name and fields; it fails with `collection not found` for an unknown collection.

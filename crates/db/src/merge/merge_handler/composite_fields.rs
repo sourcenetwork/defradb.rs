@@ -166,7 +166,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // The embedder's filter decides before anything of the commit is
         // stored. A refusal is final, so the head is not merged again. A
         // branchable collection's head commits many documents at once, so
-        // its documents are not filtered one by one.
+        // its documents are not filtered one by one. A restore an import
+        // replays is no peer's push, so it is not filtered either.
         let branchable = context
             .collection
             .as_ref()
@@ -176,7 +177,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .options()
             .replication_filter
             .as_ref()
-            .filter(|_| !branchable)
+            .filter(|_| !branchable && !context.metadata.is_restore)
         {
             let collection_id = context
                 .collection

@@ -95,6 +95,7 @@ crates/
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
 ├── ffi-test/               # FFI compatibility testing against Go
+├── go-shinzo-kv/           # kvsnap: Go Shinzo's KV snapshot export/import, run in-process for interop tests
 ├── hf_embedding_server.py  # Local HuggingFace embedding server for embedding benchmarks
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
@@ -445,7 +446,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 | Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
-| Shinzo | `--test shinzo` | purge, save_many (`shinzo_` cases also run under `DEFRA_CLIENT=go-shinzo`) |
+| Shinzo | `--test shinzo` | kv_snapshot, purge, save_many (`shinzo_` cases also run under `DEFRA_CLIENT=go-shinzo`; `shinzo_kv_` cases need `DEFRA_GO_SHINZO_KVSNAP`, built from `tools/go-shinzo-kv`) |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
 

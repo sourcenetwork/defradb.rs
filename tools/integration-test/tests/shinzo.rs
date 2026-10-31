@@ -7,3 +7,6 @@ mod purge;
 
 #[path = "shinzo/save_many.rs"]
 mod save_many;
+
+#[path = "shinzo/kv_snapshot.rs"]
+mod kv_snapshot;

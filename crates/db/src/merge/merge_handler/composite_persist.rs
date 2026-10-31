@@ -127,9 +127,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
-        // The retention rule judges the document as merged, alive ones only;
+        // The retention rule judges the document as merged, alive ones only,
+        // and not a restore an import replays;
         // a refusal discards the attempt, so nothing of it is stored.
-        if !doc_is_tombstoned {
+        if !doc_is_tombstoned && !context.metadata.is_restore {
             if let Some(refusal) = self
                 .db
                 .options()
