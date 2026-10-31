@@ -220,6 +220,12 @@ impl TestCase {
             eprintln!("skipped: {reason}");
             return;
         }
+        if self.generates_embeddings() && !vector_embedding_tests_enabled() {
+            eprintln!(
+                "skipped: test involves vector embedding generation (DEFRA_VECTOR_EMBEDDING)"
+            );
+            return;
+        }
         for client_type in active_client_types() {
             let actions = client_type.apply(&self.actions);
             drop(testo::action::execute(State::default(), &actions));
@@ -227,7 +233,22 @@ impl TestCase {
     }
 }
 
+/// Whether tests that generate vector embeddings run. They need a model
+/// server (Ollama with nomic-embed-text), so, as in Go's suite, they run
+/// only when `DEFRA_VECTOR_EMBEDDING` is true.
+fn vector_embedding_tests_enabled() -> bool {
+    std::env::var("DEFRA_VECTOR_EMBEDDING").is_ok_and(|value| value.trim() == "true")
+}
+
 impl TestCase {
+    /// Whether a collection the test adds generates embeddings, the rule
+    /// Go's `skipIfVectorEmbeddingTest` applies.
+    fn generates_embeddings(&self) -> bool {
+        self.actions().iter().any(|action| {
+            matches!(action, Actions::AddCollection(add) if add.sdl.as_str().contains("@embedding"))
+        })
+    }
+
     fn export(&self, dir: &std::path::Path) {
         let steps: Vec<_> = self.actions().iter().flat_map(Actions::wires).collect();
         let id = self.id.split("::").skip(1).collect::<Vec<_>>().join(".");

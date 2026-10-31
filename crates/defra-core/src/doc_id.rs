@@ -187,6 +187,18 @@ fn varint_size(x: u64) -> usize {
     size
 }
 
+/// Parse a DocID's UUID part, refusing it with gofrs/uuid's message, which
+/// Go's `NewDocIDFromString` returns: a length gofrs never accepts names the
+/// length, any other refusal the format.
+fn parse_uuid(text: &str) -> Result<Uuid, DocIdFormatError> {
+    Uuid::parse_str(text).map_err(|_| {
+        DocIdFormatError::Uuid(match text.len() {
+            32 | 36 | 38 | 41 | 45 => format!("uuid: incorrect UUID format in string {text:?}"),
+            length => format!("uuid: incorrect UUID length {length} in string {text:?}"),
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,16 +243,4 @@ mod tests {
             "uuid: incorrect UUID length 30 in string \"35953ca-518d-9e6b-9ce6cd00eff5\""
         );
     }
-}
-
-/// Parse a DocID's UUID part, refusing it with gofrs/uuid's message, which
-/// Go's `NewDocIDFromString` returns: a length gofrs never accepts names the
-/// length, any other refusal the format.
-fn parse_uuid(text: &str) -> Result<Uuid, DocIdFormatError> {
-    Uuid::parse_str(text).map_err(|_| {
-        DocIdFormatError::Uuid(match text.len() {
-            32 | 36 | 38 | 41 | 45 => format!("uuid: incorrect UUID format in string {text:?}"),
-            length => format!("uuid: incorrect UUID length {length} in string {text:?}"),
-        })
-    })
 }
