@@ -131,6 +131,8 @@ impl ReplicationLoop {
                             "Block quarantined: merge deterministically rejected, will not be re-driven locally"
                         );
                     }
+                    // Logged at WARN where it was dropped; the bus carries the report.
+                    ReplicationResult::GossipHeadDropped { .. } => {}
                     ReplicationResult::Failed { cid, error } => {
                         tracing::error!(cid = %cid, error = %error, "Block merge failed");
                         if !config.continue_on_error {

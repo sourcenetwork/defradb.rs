@@ -6,6 +6,8 @@ mod document;
 mod feature_binaries;
 #[path = "p2p/filtered_replication.rs"]
 mod filtered_replication;
+#[path = "p2p/gossip_admission.rs"]
+mod gossip_admission;
 #[path = "p2p/idempotent_replay.rs"]
 mod idempotent_replay;
 #[path = "p2p/json_crdt.rs"]

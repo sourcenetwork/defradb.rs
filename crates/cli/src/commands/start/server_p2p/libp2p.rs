@@ -305,7 +305,7 @@ impl Node {
                 // Intercept SE events: the CLI must store inbound artifacts and
                 // serve/route SE queries itself (the coordinator does not). #976.
                 let transport_event = p2p::convert_host_event(event);
-                if admission == p2p::sync::DispatchAdmission::Saturated {
+                if admission != p2p::sync::DispatchAdmission::Admitted {
                     if let Err(error) = coordinator_for_events
                         .handle_transport_event_with_admission(transport_event, admission)
                         .await

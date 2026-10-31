@@ -56,7 +56,8 @@ pub use event_dispatcher::{DispatchAdmission, DispatchClass, DispatchEvent, Disp
 pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 pub use manager::{
     default_rate_limit_backoff, SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent,
-    SyncEventReceiver, SyncManager, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+    SyncEventReceiver, SyncManager, DEFAULT_BROADCAST_PENDING_BYTES,
+    DEFAULT_BROADCAST_WAIT_DEADLINE, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
     DEFAULT_MAX_CONCURRENT_DAG_FETCHES, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
     DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS, DEFAULT_MAX_PENDING_DAGS,
     DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,

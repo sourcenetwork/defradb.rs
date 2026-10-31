@@ -13,6 +13,7 @@
 //! This matches Go's architecture where p2p calls db.Merge().
 
 mod bitswap;
+mod gossip_deferral;
 mod join;
 mod pending_dag;
 mod pushlog;
@@ -88,6 +89,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
 
+    /// Wakes the resync loop when a durable-only record may now fit a slot.
+    pub(super) durable_only_ready: regolith::sync::Notify,
+
     /// Maps Bitswap QueryId → root CID for tracking completions.
     pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
 
@@ -110,6 +114,10 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
+
+    /// Byte budgets for deferred gossip heads, per source peer and in all.
+    pub(super) gossip_deferral_peer_bytes: u64,
+    pub(super) gossip_deferral_total_bytes: u64,
 
     /// Durable backing for push-originated pending registrations (#1099).
     /// Empty until the embedding layer installs a store; process-local
@@ -220,6 +228,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
+            durable_only_ready: regolith::sync::Notify::new(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
@@ -231,6 +240,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
+            gossip_deferral_peer_bytes: config.gossip_deferral_peer_bytes,
+            gossip_deferral_total_bytes: config.gossip_deferral_total_bytes,
             pending_store: regolith::sync::OnceCell::new(),
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
@@ -443,7 +454,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             return false;
         };
         match store.remove(root_cid, &self.persisted).await {
-            Ok(removed) => removed,
+            Ok(removed) => {
+                if removed && self.persisted.len() > self.pending_dag_count() {
+                    self.durable_only_ready.notify_one();
+                }
+                removed
+            }
             Err(error) => {
                 tracing::warn!(
                     root_cid = %root_cid,

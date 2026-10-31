@@ -584,6 +584,31 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A gossip announcement refused for rate, saturation or capacity is
+        // written as a durable pending record and promoted into a free slot
+        // later; gossip has no retry, so dropping it loses the document.
+        // Past a per-peer or total byte budget it is dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_HeardIsOwned / INV_HeardIsOwnedOrReported / INV_NothingDropped / LIVE_AllMerged / LIVE_AllSettled: a refused gossip head is kept durably, or reported past its budget",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, kept_when_refused; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_transport_event, handle_transport_event_with_admission; crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message, defer_refused_gossip; crates/p2p/src/sync/manager/process/gossip_deferral.rs defer_gossip_head, drop_gossip_head, pending_has_room_for; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; crates/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_GossipAdmission_{Green,Green_PastCap,Red_SilentShed,Red_Drop,Red_MemoryDefer,Red_NoPromote,Red_LaneDrop}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A committed write's gossip waits for room in a byte-bounded pending
+        // set instead of being shed; only replicators hold a durable marker,
+        // so a shed announcement never reaches a gossip-only peer. Its
+        // coalescing window holds no publish slot. Past a wait deadline it is
+        // dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_CommittedIsOwnedOrReported / INV_PendingBounded / INV_WindowHoldsNoSlot / LIVE_AllSettled: a committed write's gossip is published, or reported past a wait deadline",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_retry_with_creator",
+        model_ref: "MC_SenderBroadcast_{Green,Red_Shed,Red_SilentExpiry,Red_SlotAcrossWindow,Red_UnboundedPending}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "acquire_exclusive / join_acks_only_durable / join_processes_only_unowned: the CID guard is exclusive and a join acks only a safe block",
         axis: Lean,

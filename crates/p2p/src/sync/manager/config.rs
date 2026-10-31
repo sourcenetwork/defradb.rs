@@ -54,12 +54,28 @@ pub const DEFAULT_RATE_LIMIT_BACKOFF_SECS: &[u64] = &[
 /// Default timeout for one outbound PushLog send to a replicator peer.
 pub const DEFAULT_PUSH_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default wait of a committed write's gossip for room in the pending set or
+/// for a publish slot, past which it is dropped and reported (#2489).
+pub const DEFAULT_BROADCAST_WAIT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Default byte budget for committed writes' gossip waiting to be published
+/// (their blocks, in the coalescing window or waiting for a slot, #2489).
+pub const DEFAULT_BROADCAST_PENDING_BYTES: usize = 64 * 1024 * 1024;
+
 /// Default maximum number of entries in the pending DAGs map.
 ///
 /// Prevents unbounded memory growth when many DAGs arrive faster than they
 /// can be resolved via Bitswap. Overflow is nacked back to the pusher with
 /// `RATE_LIMITED_MESSAGE` (#1088 W1) so its retry ladder keeps the doc queued.
 pub const DEFAULT_MAX_PENDING_DAGS: usize = 1000;
+
+/// Default byte budget for one peer's deferred gossip heads: room for a
+/// million Shinzo Log heads, measured at 653 bytes each (record key and value
+/// plus its sender scope's head entry, #2489).
+pub const DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES: u64 = 640 * 1024 * 1024;
+
+/// Default byte budget for every peer's deferred gossip heads together.
+pub const DEFAULT_GOSSIP_DEFERRAL_TOTAL_BYTES: u64 = 4 * DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES;
 
 /// Default rate-limit backoff ladder as durations.
 pub fn default_rate_limit_backoff() -> Vec<Duration> {
@@ -121,6 +137,24 @@ pub struct SyncConfig {
     /// Values below 1 are normalized to 1 (a zero cap would reject every
     /// missing-link push forever).
     pub max_pending_dags: usize,
+
+    /// Bytes of durable pending records one source peer may hold for gossip
+    /// heads refused at admission (#2489). Past it a refused head is dropped,
+    /// counted, logged and reported as a node event.
+    pub gossip_deferral_peer_bytes: u64,
+
+    /// Bytes of durable pending records all peers together may hold for
+    /// refused gossip heads; keeps many peers from filling the disk.
+    pub gossip_deferral_total_bytes: u64,
+
+    /// How long a committed write's gossip waits for room in the pending set
+    /// or for a publish slot. Past it the announcement is dropped, counted
+    /// and reported as a node event (#2489).
+    pub broadcast_wait_deadline: Duration,
+
+    /// Bytes of committed writes' gossip that may wait to be published at
+    /// once. A writer that finds it full waits for room (#2489).
+    pub broadcast_pending_bytes: usize,
 }
 
 impl Default for SyncConfig {
@@ -138,6 +172,10 @@ impl Default for SyncConfig {
             rate_limit_backoff: default_rate_limit_backoff(),
             push_send_timeout: DEFAULT_PUSH_SEND_TIMEOUT,
             max_pending_dags: DEFAULT_MAX_PENDING_DAGS,
+            gossip_deferral_peer_bytes: DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES,
+            gossip_deferral_total_bytes: DEFAULT_GOSSIP_DEFERRAL_TOTAL_BYTES,
+            broadcast_wait_deadline: DEFAULT_BROADCAST_WAIT_DEADLINE,
+            broadcast_pending_bytes: DEFAULT_BROADCAST_PENDING_BYTES,
         }
     }
 }

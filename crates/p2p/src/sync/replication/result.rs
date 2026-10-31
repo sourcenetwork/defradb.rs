@@ -40,6 +40,14 @@ pub enum ReplicationResult {
         collection_id: String,
         reason: String,
     },
+    /// A gossip head refused at admission was dropped with its deferral
+    /// budget full (#2489).
+    GossipHeadDropped {
+        cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        peer_id: String,
+    },
     /// Merge failed
     Failed { cid: Cid, error: String },
     /// Merge succeeded but failed to mark as merged (will be reprocessed on restart)

@@ -84,7 +84,7 @@ where
             }
 
             let transport_event = p2p::convert_host_event(event);
-            if admission == p2p::sync::DispatchAdmission::Saturated {
+            if admission != p2p::sync::DispatchAdmission::Admitted {
                 if let Err(error) = coordinator
                     .handle_transport_event_with_admission(transport_event, admission)
                     .await
@@ -189,7 +189,12 @@ where
                 .handle_transport_event_with_admission(transport_event, admission)
                 .await
             {
-                tracing::error!(error = %error, "error handling libp2p event");
+                if error.is_admission_refusal() {
+                    // Counted, and answered, kept or reported where it was refused.
+                    tracing::debug!(error = %error, "libp2p event refused at admission");
+                } else {
+                    tracing::error!(error = %error, "error handling libp2p event");
+                }
             }
             }
         })

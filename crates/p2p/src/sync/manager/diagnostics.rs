@@ -28,6 +28,8 @@ pub struct SyncDiagnostics {
     single_flight_suppressed: AtomicU64,
     already_merged_fast_path: AtomicU64,
     pending_dag_capacity_shed: AtomicU64,
+    gossip_heads_deferred: AtomicU64,
+    gossip_heads_shed: AtomicU64,
     pending_dag_retry_dispatched: AtomicU64,
     pending_dag_retry_suppressed: AtomicU64,
     pending_dag_fetch_deferred_unavailable: AtomicU64,
@@ -56,6 +58,10 @@ pub struct SyncDiagnosticsSnapshot {
     pub single_flight_suppressed: u64,
     pub already_merged_fast_path: u64,
     pub pending_dag_capacity_shed: u64,
+    /// Gossip heads refused at the edge and kept as durable-only records (#2489).
+    pub gossip_heads_deferred: u64,
+    /// Gossip heads refused with the durable store full: counted losses (#2489).
+    pub gossip_heads_shed: u64,
     pub pending_dag_retry_dispatched: u64,
     pub pending_dag_retry_suppressed: u64,
     pub pending_dag_fetch_deferred_unavailable: u64,
@@ -93,6 +99,8 @@ impl SyncDiagnostics {
             single_flight_suppressed: self.single_flight_suppressed.load(Ordering::Relaxed),
             already_merged_fast_path: self.already_merged_fast_path.load(Ordering::Relaxed),
             pending_dag_capacity_shed: self.pending_dag_capacity_shed.load(Ordering::Relaxed),
+            gossip_heads_deferred: self.gossip_heads_deferred.load(Ordering::Relaxed),
+            gossip_heads_shed: self.gossip_heads_shed.load(Ordering::Relaxed),
             pending_dag_retry_dispatched: self.pending_dag_retry_dispatched.load(Ordering::Relaxed),
             pending_dag_retry_suppressed: self.pending_dag_retry_suppressed.load(Ordering::Relaxed),
             pending_dag_fetch_deferred_unavailable: self
@@ -177,6 +185,14 @@ impl SyncDiagnostics {
     pub fn record_pending_dag_capacity_shed(&self) {
         self.pending_dag_capacity_shed
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_gossip_head_deferred(&self) {
+        self.gossip_heads_deferred.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_gossip_head_shed(&self) {
+        self.gossip_heads_shed.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_pending_dag_retry_dispatched(&self) {

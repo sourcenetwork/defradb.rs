@@ -42,6 +42,7 @@ use crate::error::{Error, Result};
 use crate::ExplicitReplayAuthorization;
 
 pub use pooled::pooled_pending_store;
+pub(crate) use store::footprint as record_footprint;
 pub use store::PendingDagStore;
 pub use view::PersistedView;
 
@@ -151,8 +152,9 @@ impl PersistedQuarantinedDag {
 pub struct Registration<'a> {
     pub root: Cid,
     pub record: &'a PersistedPendingDag,
-    /// Durable registrations allowed at once: the number of slots.
-    pub capacity: usize,
+    /// Durable registrations allowed at once: the number of slots. `None`
+    /// takes no slot: a deferred gossip head, bounded by bytes instead.
+    pub capacity: Option<usize>,
 }
 
 /// How a registration ended.

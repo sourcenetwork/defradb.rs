@@ -147,3 +147,8 @@ workspace = true
 name = "height_fetch_bench"
 path = "tests/height_fetch_bench.rs"
 required-features = ["test-utils"]
+
+[[test]]
+name = "broadcast_slot_bench"
+path = "tests/broadcast_slot_bench.rs"
+required-features = ["test-utils"]

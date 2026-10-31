@@ -86,6 +86,21 @@ pub fn publish_replication_result(
                 },
             ));
         }
+        ReplicationResult::GossipHeadDropped {
+            cid,
+            doc_id,
+            collection_id,
+            peer_id,
+        } => {
+            event_bus.publish(events::Message::p2p_gossip_head_dropped(
+                events::P2PGossipHeadDroppedData {
+                    peer_id: peer_id.clone(),
+                    cid: *cid,
+                    doc_id: doc_id.clone(),
+                    collection_id: collection_id.clone(),
+                },
+            ));
+        }
         _ => {}
     }
 }

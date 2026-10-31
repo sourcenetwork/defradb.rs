@@ -6,7 +6,7 @@ use blockstore::Blockstore;
 use cid::Cid;
 
 use super::super::SyncCoordinator;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::message::PushLogBroadcast;
 use crate::transport::{P2PTransport, PeerId};
 
@@ -17,6 +17,108 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         message: PushLogBroadcast,
         topic: String,
     ) -> Result<()> {
+        let recovery_source = self.authorize_gossip_hint(&propagation_source, &message, &topic)?;
+        if !self.gate_arrival(&message, Some(&recovery_source)).await {
+            return Ok(());
+        }
+
+        // Gossip authenticates the propagation hop and the signed origin, but
+        // it is not the explicit-replicator handshake. In particular, a
+        // configured relay must not confer its merge authorization on a
+        // different origin principal carried by the envelope.
+        let outcome = if recovery_source.as_str() == propagation_source.as_str() {
+            self.manager
+                .process_pushlog_from_dag_provider(
+                    &message,
+                    Some(recovery_source.as_str()),
+                    false,
+                    None,
+                )
+                .await
+        } else {
+            self.manager
+                .process_pushlog(&message, Some(recovery_source.as_str()), false, None)
+                .await
+        };
+        // Gossip has no reply for a capacity nack and the origin never
+        // re-announces, so the refusal is kept durably instead (#2489).
+        match outcome {
+            Err(Error::PendingDagCapacity { .. }) => {
+                self.manager
+                    .defer_gossip_head(&message, recovery_source.as_str())
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    /// Keep a gossip head the edge refused for rate or worker saturation:
+    /// the same checks an admitted hint passes, then a durable-only pending
+    /// record the resync sweep promotes later (#2489). The caller still
+    /// reports the refusal itself; only a failure to keep the head is logged
+    /// here, and a full durable store is also counted by the manager.
+    pub(super) async fn defer_refused_gossip(
+        &self,
+        propagation_source: PeerId,
+        message: PushLogBroadcast,
+        topic: String,
+    ) {
+        let kept = match self.authorize_gossip_hint(&propagation_source, &message, &topic) {
+            // A head the receive gate refuses is not an obligation to keep.
+            Ok(recovery_source) if !self.gate_arrival(&message, Some(&recovery_source)).await => {
+                Ok(())
+            }
+            Ok(recovery_source) => {
+                self.manager
+                    .defer_gossip_head(&message, recovery_source.as_str())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = kept {
+            tracing::debug!(
+                peer_id = %propagation_source,
+                doc_id = %message.doc_id,
+                error = %error,
+                "Refused gossip head was not kept"
+            );
+        }
+    }
+
+    /// Report a gossip head the dispatcher dropped with no refusal worker
+    /// free in time: the same checks a kept head passes, then the drop is
+    /// counted, logged and emitted as `p2p-gossip-head-dropped` (#2489).
+    pub(super) async fn report_dropped_gossip(
+        &self,
+        propagation_source: PeerId,
+        message: PushLogBroadcast,
+        topic: String,
+    ) {
+        let Ok(recovery_source) = self.authorize_gossip_hint(&propagation_source, &message, &topic)
+        else {
+            return;
+        };
+        if !self.gate_arrival(&message, Some(&recovery_source)).await {
+            return;
+        }
+        let _ = self
+            .manager
+            .report_dropped_gossip_head(
+                &message,
+                recovery_source.as_str(),
+                "refusal workers busy past the deadline",
+            )
+            .await;
+    }
+
+    /// Check a gossip head hint against the replication policy and its
+    /// authenticated origin; returns the origin as its recovery provider.
+    fn authorize_gossip_hint(
+        &self,
+        propagation_source: &PeerId,
+        message: &PushLogBroadcast,
+        topic: &str,
+    ) -> Result<PeerId> {
         tracing::debug!(
             peer_id = %propagation_source,
             source_peer_id = ?message.source_peer_id,
@@ -157,26 +259,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
-        // Gossip authenticates the propagation hop and the signed origin, but
-        // it is not the explicit-replicator handshake. In particular, a
-        // configured relay must not confer its merge authorization on a
-        // different origin principal carried by the envelope.
-        if !self.gate_arrival(&message, Some(&recovery_source)).await {
-            return Ok(());
-        }
-        if authenticated_origin == propagation_source.as_str() {
-            self.manager
-                .process_pushlog_from_dag_provider(
-                    &message,
-                    Some(recovery_source.as_str()),
-                    false,
-                    None,
-                )
-                .await
-        } else {
-            self.manager
-                .process_pushlog(&message, Some(recovery_source.as_str()), false, None)
-                .await
-        }
+        Ok(recovery_source)
     }
 }

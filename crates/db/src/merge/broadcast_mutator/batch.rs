@@ -204,6 +204,52 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         Ok(())
     }
 
+    /// Gossip a committed batch's heads, waiting for room in the pending-gossip
+    /// budget rather than shedding them; past the wait deadline each head is
+    /// reported. The heads coalesce and publish together, not one after
+    /// another: one at a time, each waited out its own coalescing window.
+    async fn spawn_batch_gossip(&self, pending_broadcasts: Vec<PendingBroadcast>) {
+        let roots = pending_broadcasts
+            .iter()
+            .flat_map(|pending| {
+                let collection = pending
+                    .broadcast_cid
+                    .zip(pending.broadcast_block.as_ref())
+                    .map(|(cid, block)| {
+                        (
+                            cid,
+                            String::new(),
+                            pending.collection_id.clone(),
+                            block.len(),
+                        )
+                    });
+                std::iter::once((
+                    pending.cid,
+                    pending.doc_id.clone(),
+                    pending.collection_id.clone(),
+                    pending.block.len(),
+                ))
+                .chain(collection)
+            })
+            .collect();
+        let bus = self.db.event_bus().cloned();
+        let sync = self.sync.clone();
+        let gossip_bus = bus.clone();
+        super::broadcast::spawn_gossip_or_report(
+            &self.sync,
+            bus.as_ref(),
+            "broadcast_mutation_batch",
+            roots,
+            async move {
+                futures::future::join_all(pending_broadcasts.into_iter().map(|pending| {
+                    Self::broadcast_pending_static(&sync, gossip_bus.as_ref(), pending)
+                }))
+                .await;
+            },
+        )
+        .await;
+    }
+
     async fn broadcast_pending_static(
         sync: &SyncCoordinator<B, T>,
         bus: Option<&Arc<dyn events::Bus>>,
@@ -645,16 +691,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
                     marker_errors.push(error.to_string());
                 }
             }
-            let bus = self.db.event_bus().cloned();
-            let sync = self.sync.clone();
-            self.sync.spawn_non_authoritative_broadcast_task(
-                "broadcast_mutation_batch",
-                async move {
-                    for pending in pending_broadcasts {
-                        Self::broadcast_pending_static(&sync, bus.as_ref(), pending).await;
-                    }
-                },
-            );
+            self.spawn_batch_gossip(pending_broadcasts).await;
             if !marker_errors.is_empty() {
                 return Err(query::error::QueryError::execution(format!(
                     "committed batch has undurable P2P head markers: {}",
@@ -683,16 +720,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
                     marker_errors.push(error.to_string());
                 }
             }
-            let bus = self.db.event_bus().cloned();
-            let sync = self.sync.clone();
-            self.sync.spawn_non_authoritative_broadcast_task(
-                "broadcast_mutation_batch",
-                async move {
-                    for pending in pending_broadcasts {
-                        Self::broadcast_pending_static(&sync, bus.as_ref(), pending).await;
-                    }
-                },
-            );
+            self.spawn_batch_gossip(pending_broadcasts).await;
             if !marker_errors.is_empty() {
                 return Err(query::error::QueryError::execution(format!(
                     "committed batch has undurable P2P head markers: {}",

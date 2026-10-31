@@ -67,16 +67,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     fn rate_limited_error(peer_id: &PeerId) -> Error {
-        Error::AccessDenied {
+        Error::RateLimited {
             peer_id: peer_id.to_string(),
-            collection_id: "rate-limited".into(),
         }
     }
 
     fn saturated_error(peer_id: &PeerId) -> Error {
-        Error::AccessDenied {
+        Error::RequestWorkersSaturated {
             peer_id: peer_id.to_string(),
-            collection_id: "request-worker-saturated".into(),
         }
     }
 
@@ -343,10 +341,25 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 let error = Self::saturated_error(&peer_id);
                 Err(self.reject_car_fetch(&peer_id, token, error).await)
             }
+            // A head hint has no reply and is never re-announced: keep it
+            // durably rather than drop it with the workers saturated (#2489).
             TransportEvent::GossipMessage {
-                propagation_source, ..
+                propagation_source,
+                message,
+                topic,
+                ..
+            } => {
+                let error = Self::saturated_error(&propagation_source);
+                if admission == crate::sync::DispatchAdmission::Dropped {
+                    self.report_dropped_gossip(propagation_source, message, topic)
+                        .await;
+                } else {
+                    self.defer_refused_gossip(propagation_source, message, topic)
+                        .await;
+                }
+                Err(error)
             }
-            | TransportEvent::GossipRawMessage {
+            TransportEvent::GossipRawMessage {
                 propagation_source, ..
             } => Err(Self::saturated_error(&propagation_source)),
             TransportEvent::SEQueryRequest {
@@ -448,11 +461,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 topic,
                 ..
             } => {
-                self.check_rate_limit(
+                // Over the rate, the hint skips processing but is kept
+                // durably: gossip never re-announces it (#2489).
+                if let Err(error) = self.check_rate_limit(
                     &self.runtime.rate_limiter,
                     &propagation_source,
                     "GossipMessage",
-                )?;
+                ) {
+                    self.defer_refused_gossip(propagation_source, message, topic)
+                        .await;
+                    return Err(error);
+                }
                 self.handle_gossip_message(propagation_source, message, topic)
                     .await?;
             }
