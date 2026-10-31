@@ -89,7 +89,8 @@ fi
 
 # TLC extracts bundled standard modules into java.io.tmpdir. Parallel JVMs
 # need distinct directories or one can read another's partially written module.
+java_args=("-Xmx${TLA_JAVA_HEAP:-1g}" -XX:+UseParallelGC)
 if [ -n "${TLA_JAVA_TMPDIR:-}" ]; then
-  exec "$JAVA" "-Djava.io.tmpdir=$TLA_JAVA_TMPDIR" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+  java_args+=("-Djava.io.tmpdir=$TLA_JAVA_TMPDIR")
 fi
-exec "$JAVA" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+exec "$JAVA" "${java_args[@]}" -cp "$JAR" tlc2.TLC "$@"

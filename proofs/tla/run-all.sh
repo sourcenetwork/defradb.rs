@@ -479,7 +479,8 @@ fi
 trap 'rm -rf "$workdir"' EXIT
 
 run_model() {
-  local index="$1" row="$2" cfg mod want out got
+  local index="$1" row="$2" cfg mod want out got started elapsed
+  started=$SECONDS
   read -r cfg mod want <<<"$row"
   mkdir -p "$workdir/java-$index"
   out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
@@ -488,14 +489,16 @@ run_model() {
   if grep -q "No error has been found" <<<"$out"; then got=GREEN
   elif grep -qE "is violated|was violated|properties were violated|Deadlock reached|Deadlock" <<<"$out"; then got=RED
   else got=ERROR; fi
+  elapsed=$((SECONDS - started))
   if [ "$got" = "$want" ]; then
-    printf "  ok   %-6s %-34s %s\n" "$got" "$cfg" "$mod"
+    printf "  ok   %-6s %-34s %s (%ss)\n" "$got" "$cfg" "$mod" "$elapsed"
   else
     printf "  FAIL want=%s got=%s  %-30s %s\n%s\n" "$want" "$got" "$cfg" "$mod" "$out"
     return 1
   fi
 }
 
+suite_started=$SECONDS
 fails=0; n=0
 pids=(); indices=()
 finish_batch() {
@@ -516,5 +519,6 @@ done
 if [ "${#pids[@]}" -gt 0 ]; then finish_batch; fi
 
 echo "----"
+printf "TLA suite elapsed: %ss\n" "$((SECONDS - suite_started))"
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
 exit "$((fails > 0))"
