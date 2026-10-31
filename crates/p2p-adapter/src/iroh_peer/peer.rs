@@ -260,6 +260,13 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .run_pending_dag_resync(std::time::Duration::from_secs(60))
                 .await;
         });
+        let stats_coordinator = Arc::clone(&coordinator);
+        coordinator.spawn_background_task("p2p_stats_report", async move {
+            stats_coordinator
+                .run_stats_report(std::time::Duration::from_secs(30))
+                .await;
+        });
+
         let retry_clock_coordinator = Arc::clone(&coordinator);
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             retry_clock_coordinator

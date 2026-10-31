@@ -221,6 +221,13 @@ where
 
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
+    let stats_coordinator = coordinator.clone();
+    coordinator.spawn_background_task("p2p_stats_report", async move {
+        stats_coordinator
+            .run_stats_report(std::time::Duration::from_secs(30))
+            .await;
+    });
+
     let coordinator_for_retry_clock = coordinator.clone();
     let pending_dag_retry_task = spawn_node_task(edge, async move {
         coordinator_for_retry_clock
