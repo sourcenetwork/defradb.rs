@@ -29,7 +29,7 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '982a617e7626a855bc9edce63d85385f74824129' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Check qualification driver
@@ -39,13 +39,13 @@ jobs:
         run: |
           revision="$(python3 .github/scripts/native-consumer.py --vera-ref --runtime-ref "$VERA_RUNTIME_REVISION")"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: sourcenetwork/vera.rs
           ref: ${{ steps.vera.outputs.revision }}
           path: .native/vera
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: clippy
           targets: wasm32-unknown-unknown
@@ -62,7 +62,7 @@ jobs:
           workspaces: . -> .native/consumer-cache/defra-target
       - name: Restore pinned Vera release runtime
         id: runtime
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .native/consumer-cache/vera-runtime
           key: native-consumer-vera-ubuntu24-rust1.99-${{ steps.vera.outputs.revision }}-${{ hashFiles('.github/scripts/native-consumer.py') }}
@@ -70,13 +70,13 @@ jobs:
         run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION" --cache-dir "$GITHUB_WORKSPACE/.native/consumer-cache"
       - name: Save successfully built Vera runtime
         if: always() && steps.runtime.outputs.cache-hit != 'true' && hashFiles('.native/consumer-cache/vera-runtime/manifest.json') != ''
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .native/consumer-cache/vera-runtime
           key: ${{ steps.runtime.outputs.cache-primary-key }}
       - name: Retain numeric qualification results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-consumer-summary
           path: ${{ runner.temp }}/native-consumer-summary.json
