@@ -38,3 +38,50 @@ pub(super) fn one(response: QueryResponse, op: &str, collection: &str) -> Result
 pub(super) fn single(ids: Vec<String>) -> Result<String> {
     ids.into_iter().next().ok_or(Error::DocumentNotFound)
 }
+
+/// The `_docID` each of `count` aliased fields `s0`, `s1`, … saved, in
+/// order, or the request's first error with its text unchanged.
+pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec<String>> {
+    if let Some(error) = response.errors.first() {
+        return Err(match error.code() == Some(TXN_CONFLICT_ERROR_CODE) {
+            true => Error::Conflict,
+            false => Error::Request(error.message.clone()),
+        });
+    }
+    (0..count)
+        .map(|index| {
+            response
+                .data
+                .as_ref()
+                .and_then(|data| data.get(format!("s{index}")))
+                .and_then(Value::as_array)
+                .and_then(|docs| docs.first())
+                .and_then(|doc| doc.get("_docID"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(Error::DocumentNotFound)
+        })
+        .collect()
+}
+
+/// Success unless the read found a deleted document; Go's
+/// `a document with the given ID has been deleted` otherwise.
+pub(super) fn none_deleted(response: QueryResponse, collection: &str) -> Result<()> {
+    if let Some(error) = response.errors.first() {
+        return Err(Error::Request(error.message.clone()));
+    }
+    let deleted = response
+        .data
+        .as_ref()
+        .and_then(|data| data.get(collection))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|doc| doc.get("_deleted").and_then(Value::as_bool) == Some(true));
+    match deleted {
+        true => Err(Error::Request(
+            "a document with the given ID has been deleted".to_owned(),
+        )),
+        false => Ok(()),
+    }
+}
