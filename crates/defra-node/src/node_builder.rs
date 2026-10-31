@@ -340,6 +340,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Speak Go `shinzo-develop`'s wire on the libp2p transport, so the node
+    /// replicates with Go Shinzo nodes. Applies after [`Self::with_libp2p`].
+    #[cfg(feature = "libp2p")]
+    pub fn with_shinzo_wire(mut self) -> Self {
+        if let TransportConfig::Libp2p(config) = &mut self.config.transport {
+            config.shinzo_wire = true;
+        }
+        self
+    }
+
     /// Keep the transport identity in an application-owned keyring.
     ///
     /// The backend must provide durable storage and its own namespace per node.
