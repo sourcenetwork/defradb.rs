@@ -43,11 +43,7 @@ impl ParsedDocId {
             return Err(DocIdFormatError::InvalidVersion(version as u16));
         }
 
-        // Go's gofrs/uuid accepts these lengths and names any other one.
-        if ![32, 36, 38, 41, 45].contains(&uuid_str.len()) {
-            return Err(DocIdFormatError::UuidLength(uuid_str.to_string()));
-        }
-        let uuid = Uuid::parse_str(uuid_str)?;
+        let uuid = parse_uuid(uuid_str)?;
 
         Ok(Self {
             version: version as u16,
@@ -124,11 +120,9 @@ pub enum DocIdFormatError {
     #[error("multibase decode error: {0}")]
     Multibase(#[from] multibase::Error),
 
-    #[error("UUID parse error: {0}")]
-    Uuid(#[from] uuid::Error),
-
-    #[error("uuid: incorrect UUID length {} in string {:?}", .0.len(), .0)]
-    UuidLength(String),
+    /// The UUID part did not parse; gofrs/uuid's text, as Go reports it.
+    #[error("{0}")]
+    Uuid(String),
 }
 
 fn read_uvarint(buf: &[u8]) -> Option<u64> {
@@ -198,6 +192,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_bad_uuid_is_refused_in_gofrs_words() {
+        let error = ParsedDocId::from_string("bae-35953ca-518d-9e6b-9ce6cd00eff5").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            r#"uuid: incorrect UUID length 30 in string "35953ca-518d-9e6b-9ce6cd00eff5""#
+        );
+        let error =
+            ParsedDocId::from_string("bae-z94acbfa-dd53-40d0-97f3-29ce16c333fc").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            r#"uuid: incorrect UUID format in string "z94acbfa-dd53-40d0-97f3-29ce16c333fc""#
+        );
+    }
+
+    #[test]
     fn test_parse_valid_doc_id() {
         let parsed = ParsedDocId::from_string("bae-c94acbfa-dd53-40d0-97f3-29ce16c333fc").unwrap();
 
@@ -222,4 +231,16 @@ mod tests {
             "uuid: incorrect UUID length 30 in string \"35953ca-518d-9e6b-9ce6cd00eff5\""
         );
     }
+}
+
+/// Parse a DocID's UUID part, refusing it with gofrs/uuid's message, which
+/// Go's `NewDocIDFromString` returns: a length gofrs never accepts names the
+/// length, any other refusal the format.
+fn parse_uuid(text: &str) -> Result<Uuid, DocIdFormatError> {
+    Uuid::parse_str(text).map_err(|_| {
+        DocIdFormatError::Uuid(match text.len() {
+            32 | 36 | 38 | 41 | 45 => format!("uuid: incorrect UUID format in string {text:?}"),
+            length => format!("uuid: incorrect UUID length {length} in string {text:?}"),
+        })
+    })
 }
