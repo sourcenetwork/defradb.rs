@@ -284,6 +284,11 @@ where
             }
             crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await?;
         }
+        let stats = Arc::clone(self.merge_stats());
+        let purged = targets.len() as u64;
+        txn.on_commit(storage::corekv::OnCommit::Sync(Box::new(move || {
+            stats.record_purged(purged)
+        })))?;
         Ok(targets.len())
     }
 }

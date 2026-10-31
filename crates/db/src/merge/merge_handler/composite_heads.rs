@@ -17,6 +17,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .heads(headstore, context.doc_short_id)
             .await
             .map_err(storage_error)?;
+        self.merge_kinds.push(set.live().next().is_none());
         let mut write = storage::merge::head_set::Write::default();
         let head = HeadstoreDocKey::new(context.doc_short_id, "C", *context.cid);
         crate::block::heads::document::publish(
