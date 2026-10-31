@@ -65,9 +65,6 @@ pub enum Error {
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
 
-    #[error("filtered truncate is not supported for branchable collections")]
-    FilteredTruncateBranchableCollection,
-
     #[error("database is closed")]
     DatabaseClosed,
 

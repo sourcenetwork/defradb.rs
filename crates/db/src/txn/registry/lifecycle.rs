@@ -247,6 +247,18 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&query::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.db
+            .truncate_collection_as(context, name, filter)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,

@@ -83,7 +83,7 @@ pub use collection::acp::{
 };
 pub use collection::cache::CollectionCache;
 pub use collection::name::CollectionName;
-pub use collection::ops::AddCollectionError;
+pub use collection::ops::{AddCollectionError, TruncateError};
 pub use collection::provider::DbCollectionProvider;
 pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
 pub use collection::snapshot::CollectionSnapshot;

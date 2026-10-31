@@ -360,7 +360,7 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
 
 /// Trait for collection management operations beyond basic CRUD.
 ///
-/// Provides schema patching, version activation, and truncation operations
+/// Provides action listing, purge, collection lookups and collection drops,
 /// that operate at the collection level rather than the document level.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -369,13 +369,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 
     /// List actions that have not completed successfully.
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String>;
-
-    /// Truncate a collection, optionally limiting removal to matching documents.
-    async fn truncate_collection(
-        &self,
-        name: &str,
-        filter: Option<serde_json::Value>,
-    ) -> Result<(), String>;
 
     /// Purge all data from all collections.
     async fn purge(&self) -> Result<(), String>;

@@ -2,14 +2,11 @@
 
 use async_trait::async_trait;
 use kovan::Atom;
-use kovan_queue::seg_queue::SegQueue;
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::mock::update_vec;
 use crate::router::CollectionManagementOperations;
-
-type TruncateCall = (String, Option<serde_json::Value>);
 
 fn mock_collection_version(name: &str) -> schema::CollectionVersion {
     serde_json::from_value(json!({
@@ -27,7 +24,6 @@ pub struct MockCollectionManagementOperations {
     /// document delete from a collection drop. A no-op mock cannot: it lets a
     /// route wired back to the drop keep every assertion green.
     dropped_collections: Arc<Atom<Vec<String>>>,
-    truncated_collections: Arc<SegQueue<TruncateCall>>,
 }
 
 impl MockCollectionManagementOperations {
@@ -39,30 +35,12 @@ impl MockCollectionManagementOperations {
     pub fn dropped_collections(&self) -> Vec<String> {
         self.dropped_collections.load_clone()
     }
-
-    /// Drains the recorded truncate calls, oldest first.
-    pub fn truncated_collections(&self) -> Vec<TruncateCall> {
-        let mut calls = Vec::new();
-        while let Some(call) = self.truncated_collections.pop() {
-            calls.push(call);
-        }
-        calls
-    }
 }
 
 #[async_trait]
 impl CollectionManagementOperations for MockCollectionManagementOperations {
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String> {
         Ok(Vec::new())
-    }
-
-    async fn truncate_collection(
-        &self,
-        name: &str,
-        filter: Option<serde_json::Value>,
-    ) -> Result<(), String> {
-        self.truncated_collections.push((name.to_string(), filter));
-        Ok(())
     }
 
     async fn purge(&self) -> Result<(), String> {

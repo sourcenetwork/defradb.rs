@@ -1,25 +1,25 @@
 //! Collection HTTP client methods
 
+use reqwest::Method;
 use urlencoding::encode;
 
 use super::HttpClient;
 use crate::error::Result;
 
 impl HttpClient {
+    /// Remove the documents of collection `name` that `filter` matches, or
+    /// all of them, in transaction `txn`. Go's `Collection.Truncate`.
     pub async fn collection_truncate(
         &self,
+        txn: Option<&str>,
         name: &str,
         filter: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let url = format!(
-            "{}/api/v0/collections/{}/truncate",
-            self.base_url,
-            encode(name)
-        );
-        let body = filter
-            .map(|filter| serde_json::to_string(&serde_json::json!({ "filter": filter })))
-            .transpose()?;
-        self.request_void("DELETE", &url, body.as_deref()).await
+        let path = format!("collections/{}/truncate", encode(name));
+        let body = filter.map(|filter| serde_json::json!({ "filter": filter }).to_string());
+        self.send(Method::DELETE, &path, &[], body, txn)
+            .await
+            .map(drop)
     }
 
     /// Delete one or more collections by name via Go-compatible

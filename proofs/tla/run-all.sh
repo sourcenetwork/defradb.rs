@@ -172,6 +172,11 @@ RUNS=(
   "MC_AddCollection_Red_Validate.cfg AddCollection.tla RED" # schema validation left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_Policy.cfg AddCollection.tla RED" # @policy check left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_OneByOne.cfg AddCollection.tla RED" # collections created one at a time: a later failure leaves earlier ones (INV_AllOrNone)
+  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
+  "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
+  "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
+  "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
+  "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)

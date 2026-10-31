@@ -240,7 +240,8 @@ pub unsafe extern "C" fn patch_collection(
 /// Truncate a collection: delete all documents while preserving the schema.
 ///
 /// This removes all document data, CRDT heads, blocks, and index entries
-/// for the collection. The collection schema remains intact.
+/// for the collection. The collection schema remains intact. Go's
+/// `Collection.Truncate`; the core checks `CollectionTruncate`.
 ///
 /// # Arguments
 ///
@@ -261,25 +262,23 @@ pub unsafe extern "C" fn truncate_collection(
     identity_did: *const std::ffi::c_char,
     name: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionTruncate,
-        name => name_str: "name";
-        {
-        database
-            .truncate_collection_as(&context, &name_str)
-            .await
-            .map_err(|e| format!("failed to truncate collection: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let name = try_ffi!(require_c_str(name, "name"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .truncate_collection_as(&context, &name, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
-/// Truncate documents matching a JSON filter while preserving the collection schema.
+/// Truncate documents matching a JSON filter while preserving the collection
+/// schema. The filter is any JSON value; the core refuses one that is not a
+/// filter with Go's words.
 ///
 /// # Safety
 ///
@@ -291,29 +290,23 @@ pub unsafe extern "C" fn truncate_collection_with_filter(
     name: *const std::ffi::c_char,
     filter_json: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionTruncate,
-        name => name_str: "name",
-        filter_json => filter_str: "filter_json";
-        {
-        let filter: serde_json::Value = serde_json::from_str(&filter_str)
-            .map_err(|error| format!("invalid filter JSON: {error}"))?;
-        let conditions = filter
-            .as_object()
-            .cloned()
-            .ok_or_else(|| "filter must be a non-null JSON object".to_string())?;
-
-        database
-            .truncate_collection_with_filter_as(&context, &name_str, query::Filter::from_conditions(conditions))
-            .await
-            .map_err(|e| format!("failed to truncate collection: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let name = try_ffi!(require_c_str(name, "name"));
+        let filter = try_ffi!(require_c_str(filter_json, "filter_json"));
+        let filter: query::documents::Filter =
+            try_ffi!(serde_json::from_str::<serde_json::Value>(&filter).map_err(|error| {
+                crate::types::FfiResult::error(format!("invalid filter JSON: {error}"))
+            }))
+            .into();
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .truncate_collection_as(&context, &name, Some(&filter))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
@@ -419,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_collection_with_filter_validates_json_object() {
+    fn test_truncate_collection_with_filter_refuses_what_is_not_a_filter() {
         assert!(crate::runtime::init_runtime());
 
         let result = new_node(NodeInitOptions::default());
@@ -438,7 +431,11 @@ mod tests {
         assert_eq!(result.status, 0);
         unsafe { crate::types::defra_free_string(result.value) };
 
-        for invalid in ["null", "[]"] {
+        for (invalid, expected) in [
+            ("null", "unsupported filter type"),
+            ("[]", "unsupported filter type"),
+            ("{", "invalid filter JSON: "),
+        ] {
             let filter = CString::new(invalid).unwrap();
             let result = unsafe {
                 truncate_collection_with_filter(
@@ -449,6 +446,8 @@ mod tests {
                 )
             };
             assert_eq!(result.status, 1);
+            let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
+            assert!(error.starts_with(expected), "{error}");
             unsafe { crate::types::defra_free_string(result.error) };
         }
 

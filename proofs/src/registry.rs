@@ -1244,6 +1244,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Collection truncate",
+        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        model_ref: "MC_Truncate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,

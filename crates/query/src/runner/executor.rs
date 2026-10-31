@@ -312,6 +312,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .truncate_collection_as(context, name, filter)
+            .await
+    }
+
     async fn set_migration_as(
         &self,
         context: &RequestContext,
