@@ -34,12 +34,32 @@ fn inline_car_is_kept_for_its_own_head_and_used_once() {
     let (head, other) = (cid_of(b"head"), cid_of(b"other"));
     let now = Instant::now();
     assert!(
-        !cars.offer(head, car(other), now),
+        !cars.offer(head, "a", car(other), now),
         "a CAR rooted elsewhere is refused"
     );
-    assert!(cars.offer(head, car(head), now));
-    assert_eq!(cars.take(&head), Some(car(head)));
-    assert_eq!(cars.take(&head), None);
+    assert!(cars.offer(head, "a", car(head), now));
+    assert_eq!(cars.take(&head, "a"), Some(car(head)));
+    assert_eq!(cars.take(&head, "a"), None);
+}
+
+#[test]
+fn inline_car_is_bound_to_the_peer_that_offered_it() {
+    let mut cars = InlineCars::default();
+    let head = cid_of(b"head");
+    let now = Instant::now();
+    assert!(cars.offer(head, "honest", car(head), now));
+    assert!(cars.offer(head, "attacker", car(head), now));
+    assert_eq!(
+        cars.take(&head, "other"),
+        None,
+        "a peer that offered nothing gets nothing"
+    );
+    assert_eq!(cars.take(&head, "attacker"), Some(car(head)));
+    assert_eq!(
+        cars.take(&head, "honest"),
+        Some(car(head)),
+        "the attacker's offer neither replaced nor spent the honest CAR"
+    );
 }
 
 #[test]
@@ -47,10 +67,10 @@ fn inline_car_expires_after_its_ttl() {
     let mut cars = InlineCars::default();
     let (first, second) = (cid_of(b"first"), cid_of(b"second"));
     let now = Instant::now();
-    assert!(cars.offer(first, car(first), now));
-    assert!(cars.offer(second, car(second), now + INLINE_CAR_TTL));
-    assert_eq!(cars.take(&first), None);
-    assert!(cars.take(&second).is_some());
+    assert!(cars.offer(first, "a", car(first), now));
+    assert!(cars.offer(second, "a", car(second), now + INLINE_CAR_TTL));
+    assert_eq!(cars.take(&first, "a"), None);
+    assert!(cars.take(&second, "a").is_some());
 }
 
 #[test]
