@@ -204,7 +204,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         Ok(())
     }
 
-    async fn broadcast_pending_static(sync: &SyncCoordinator<B, T>, pending: PendingBroadcast) {
+    async fn broadcast_pending_static(
+        sync: &SyncCoordinator<B, T>,
+        bus: Option<&Arc<dyn events::Bus>>,
+        pending: PendingBroadcast,
+    ) {
         let PendingBroadcast {
             cid,
             block,
@@ -238,6 +242,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         };
         let broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
             sync,
+            bus,
             &block_result,
             &collection_id,
             &collection_name,
@@ -264,6 +269,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             };
             let collection_broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
                 sync,
+                bus,
                 &col_block_result,
                 &collection_id,
                 &collection_name,
@@ -637,12 +643,13 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
                     marker_errors.push(error.to_string());
                 }
             }
+            let bus = self.db.event_bus().cloned();
             let sync = self.sync.clone();
             self.sync.spawn_non_authoritative_broadcast_task(
                 "broadcast_mutation_batch",
                 async move {
                     for pending in pending_broadcasts {
-                        Self::broadcast_pending_static(&sync, pending).await;
+                        Self::broadcast_pending_static(&sync, bus.as_ref(), pending).await;
                     }
                 },
             );
@@ -674,12 +681,13 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
                     marker_errors.push(error.to_string());
                 }
             }
+            let bus = self.db.event_bus().cloned();
             let sync = self.sync.clone();
             self.sync.spawn_non_authoritative_broadcast_task(
                 "broadcast_mutation_batch",
                 async move {
                     for pending in pending_broadcasts {
-                        Self::broadcast_pending_static(&sync, pending).await;
+                        Self::broadcast_pending_static(&sync, bus.as_ref(), pending).await;
                     }
                 },
             );
