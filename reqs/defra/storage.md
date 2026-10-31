@@ -157,3 +157,30 @@ A signature block received over P2P starts out marked to-merge. Merging a block 
 - **Scenarios:** ["db::block::orphan_gc::the_sweep_is_off_by_default_and_runs_every_five_minutes_for_half_hour_marks", "db::block::orphan_gc::with_the_sweep_on_an_abandoned_fetch_goes_once_its_mark_ages"]
 
 The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep runs (off by default), the interval between sweeps (5 minutes by default) and how long a to-merge block is kept (30 minutes by default). The node runs it only on a persistent store; an in-memory store never sweeps. The first sweep waits one TTL; each sweep examines at most 100,000 marks and resumes where the previous one stopped. With the sweep on, a block put through the P2P blockstore and never merged is deleted once its mark ages past the TTL.
+
+# `defra.replication_filter`: An embedder's filter on replicated documents
+
+- **Parents:** ["defra"]
+
+An embedder may give a node a `db::replication_filter::ReplicationFilter` (`DbOptions::with_replication_filter`, `NodeBuilder::with_replication_filter`), asked `allow_replication(collection_id, doc_id, fields)` for every replicated document; refusing discards it. A node without one keeps every document, as before.
+
+# `defra.replication_filter.field_values`: The fields the filter is given
+
+- **Parents:** ["defra.replication_filter"]
+- **Scenarios:** ["db::merge::replication_filter::the_filter_is_given_the_values_the_commit_writes", "db::merge::replication_filter::an_encrypted_or_undecodable_value_is_left_out"]
+
+`fields` maps each field written in the head commit to its CBOR-decoded value, read from the head block itself and from the field blocks it links. A non-negative integer decodes as an unsigned 64-bit integer: a head linking `blockNumber` = 25951718 and `address` = `"0xabc"` gives `{blockNumber: 25951718 (uint64), address: "0xabc"}`. A field whose block is encrypted, whose value does not decode, or that has not arrived is left out rather than failing the document, so a filter keeps a document whose deciding field is missing.
+
+# `defra.replication_filter.refusal`: A refused document stores nothing
+
+- **Parents:** ["defra.replication_filter"]
+- **Scenarios:** ["db::merge::replication_filter::a_refused_document_is_not_stored", "db::merge::replication_filter::a_refusal_in_a_batch_refuses_only_that_document"]
+
+The merge asks the filter once the commit's blocks are local and before anything of the document is stored. A refusal is the head's terminal skip `refused by the replication filter`: nothing of the document is stored and the head is not merged again. In a batch only the refused event is skipped.
+
+# `defra.replication_filter.branchable`: A branchable collection is not filtered
+
+- **Parents:** ["defra.replication_filter"]
+- **Scenarios:** ["db::merge::replication_filter::a_branchable_collection_is_not_filtered"]
+
+A branchable collection's head commits many documents at once, so its documents are not filtered one by one: they merge whatever the filter says.

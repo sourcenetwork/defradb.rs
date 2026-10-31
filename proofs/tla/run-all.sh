@@ -175,6 +175,12 @@ RUNS=(
   "MC_OrphanGc_Red_ReclaimLegacy.cfg OrphanGc.tla RED" # a mark with no time is swept (INV_LegacyKept)
   "MC_OrphanGc_Red_SigMarked.cfg OrphanGc.tla RED" # merging leaves the signature block marked (INV_MergedUnmarked)
   "MC_OrphanGc_Red_SigUnowned.cfg OrphanGc.tla RED" # merging records no owner for the signature block (INV_SigOwned)
+  "MC_ReplicationFilter_Green.cfg ReplicationFilter.tla GREEN" # #2451: a refused document stores nothing, kept ones merge alone or in a batch
+  "MC_ReplicationFilter_Green_Branchable.cfg ReplicationFilter.tla GREEN" # #2451: a branchable collection is not filtered
+  "MC_ReplicationFilter_Red_AfterPersist.cfg ReplicationFilter.tla RED" # asked after phase 2 wrote the fields (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_WholeBatch.cfg ReplicationFilter.tla RED" # one refusal skips its batch (INV_KeptMerged)
+  "MC_ReplicationFilter_Red_Retry.cfg ReplicationFilter.tla RED" # a refused head is retried and stored later (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_FilterBranchable.cfg ReplicationFilter.tla RED" # a branchable collection is filtered per document (INV_BranchableUnfiltered)
   "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
   "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
