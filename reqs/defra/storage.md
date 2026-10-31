@@ -237,3 +237,10 @@ A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[D
 - **Scenarios:** ["collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id"]
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
+
+# `defra.replication_filter.receive_gate`: A refused push is not fetched or stored
+
+- **Parents:** ["defra.replication_filter"]
+- **Scenarios:** ["db::merge::receive_gate::the_filter_sees_the_values_at_hand_and_keeps_a_head_alone", "db::merge::receive_gate::a_node_without_a_filter_has_no_gate", "p2p::sync::coordinator::access_tests::a_push_the_gate_refuses_on_arrival_stores_nothing", "p2p::sync::coordinator::access_tests::a_fetched_car_the_gate_refuses_is_not_imported", "p2p::sync::coordinator::access_tests::a_two_stream_push_the_gate_refuses_stores_nothing"]
+
+A node with a replication filter also asks it in the P2P receive path. On arrival (gossip, pushlog and a replicator's direct push), before the head is stored or a fetch registered, the filter sees the values of the blocks the head links that the node already stores; a composite head alone gives `{}`, so the filter keeps it. A refusal stores nothing and registers no pending DAG. On a fetched CAR, after CID verification and before import, the filter sees the CAR's values; a refusal imports nothing and discharges the root, so it is not fetched again. The merge asks again as the backstop. A node without a filter installs no gate, and its receive path is unchanged.

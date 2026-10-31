@@ -81,6 +81,11 @@ RUNS=(
   "MC_PeerStreamCap_Green.cfg PeerStreamCap.tla GREEN"
   "MC_PeerStreamCap_Red_NoCheck.cfg PeerStreamCap.tla RED"
   "MC_PeerStreamCap_Red_Leak.cfg PeerStreamCap.tla RED"
+  "MC_ReceiveGate_Green.cfg ReceiveGate.tla GREEN" # a refused push stores and imports nothing, a kept one is merged
+  "MC_ReceiveGate_Red_StoreFirst.cfg ReceiveGate.tla RED" # the head is stored before the first check (INV_ArrivalRefusalStoresNothing)
+  "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
+  "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED" # the merge stops checking (INV_RefusedNeverMerged)
+  "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED" # a check refuses what it cannot see (INV_KeptIsKept)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
