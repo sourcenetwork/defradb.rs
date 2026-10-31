@@ -16,14 +16,14 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
+pub(super) type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
 const BELOW: &str =
     "replicated document is at or below the retention floor: refused by the retention rule";
 const NO_HEIGHT: &str =
     "replicated document has no valid retention height: refused by the retention rule";
 
-fn logs(collection_id: &str) -> CollectionVersion {
+pub(super) fn logs(collection_id: &str) -> CollectionVersion {
     CollectionVersion::new(
         "Log",
         "v1",
@@ -76,7 +76,7 @@ async fn node(
 }
 
 /// A replicated create of a Log whose `blockNumber` is `height`, or unset.
-async fn log(
+pub(super) async fn log(
     blockstore: &Arc<DefraBlockstore<RegolithStore>>,
     schema: &CollectionVersion,
     address: &str,
@@ -109,7 +109,7 @@ async fn log(
     }
 }
 
-async fn merge(handler: &Handler, block: &MergeBlock) -> MergeOutcome {
+pub(super) async fn merge(handler: &Handler, block: &MergeBlock) -> MergeOutcome {
     let metadata = BlockMetadata::normal(
         &block.doc_id,
         &block.collection_id,
@@ -123,7 +123,7 @@ async fn merge(handler: &Handler, block: &MergeBlock) -> MergeOutcome {
         .unwrap()
 }
 
-async fn stored(handler: &Handler, collection_id: &str, doc_id: &str) -> bool {
+pub(super) async fn stored(handler: &Handler, collection_id: &str, doc_id: &str) -> bool {
     let collection = handler
         .db()
         .find_collection_by_id(collection_id)

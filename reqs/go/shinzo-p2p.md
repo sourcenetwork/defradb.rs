@@ -189,14 +189,6 @@ A failed DAG walk is counted under `syncDAG failures` by the step that failed: s
 
 A node may be given a `ReplicationFilter`, asked `AllowReplication(collectionID, docID, fields)` for every pushed document before any of its blocks are stored; returning false discards the document.
 
-# `go.shinzo.p2p.replication_filter.field_values`: The fields the filter is given
-
-- **Parents:** ["go.shinzo.p2p.replication_filter"]
-- **Go-Tests:** ["internal/db/p2p/replication_filter_test.go::TestExtractFieldsFromBlock_ReadsValuesFromTheLinkedFieldBlocks", "internal/db/p2p/replication_filter_test.go::TestExtractFieldsFromBlock_SkipsAnEncryptedFieldBlock", "internal/db/p2p/replication_filter_test.go::TestExtractFieldsFromBlock_SkipsAValueThatDoesNotDecode"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-`fields` maps each field written in the head commit to its CBOR-decoded value, read from the head block itself and from the field blocks it links that are present in the document's CAR. A non-negative integer decodes as an unsigned 64-bit integer: a head linking `blockNumber` = 25951718 and `address` = `"0xabc"` gives `{blockNumber: 25951718 (uint64), address: "0xabc"}`. A field whose block is encrypted, whose value does not decode, or that has not arrived is left out rather than failing the document.
-
 # `go.shinzo.p2p.replication_filter.after_fetch`: A document without its CAR is filtered twice
 
 - **Parents:** ["go.shinzo.p2p.replication_filter"]
