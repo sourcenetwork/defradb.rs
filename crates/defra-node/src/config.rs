@@ -198,6 +198,10 @@ pub struct Libp2pConfig {
     /// libp2p resource budget overrides: the memory and file descriptor
     /// budgets and the per-peer inbound stream cap.
     pub resource_limits: p2p::ResourceLimits,
+    /// Speak Go `shinzo-develop`'s wire (its CAR channel and batched
+    /// pushes), so the node replicates with Go Shinzo nodes. Off keeps
+    /// today's protocol.
+    pub shinzo_wire: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -212,6 +216,7 @@ impl Default for Libp2pConfig {
             sync: SyncTuning::default(),
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
+            shinzo_wire: false,
         }
     }
 }

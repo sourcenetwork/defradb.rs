@@ -15,6 +15,7 @@ mod inbound;
 mod manage;
 mod pushlog;
 mod se_query;
+mod shinzo_car;
 
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
@@ -122,6 +123,10 @@ pub(crate) struct PendingResponses {
     doc_sync_requests: RequestTable,
     /// Fire-and-forget BranchableSync requests awaiting an async response event.
     branchable_sync_requests: RequestTable,
+    /// Go Shinzo CAR requests awaiting a reply: the head asked, and when.
+    shinzo_cars: HopscotchMap<PendingResponseKey, (cid::Cid, Instant), RandomState>,
+    /// Peers whose Go Shinzo CAR requests keep failing.
+    car_backoff: crate::sync::shinzo_car::CarPeerBackoff,
 }
 
 impl Default for PendingResponses {
@@ -132,6 +137,8 @@ impl Default for PendingResponses {
             doc_sync_channels: HopscotchMap::with_hasher(RandomState::default()),
             doc_sync_requests: HopscotchMap::with_hasher(RandomState::default()),
             branchable_sync_requests: HopscotchMap::with_hasher(RandomState::default()),
+            shinzo_cars: HopscotchMap::with_hasher(RandomState::default()),
+            car_backoff: Default::default(),
         }
     }
 }

@@ -358,6 +358,11 @@ pub struct NetConfig {
     /// Default: unset, no cap.
     #[serde(default)]
     pub max_streams_per_peer: Option<usize>,
+    /// Speak Go `shinzo-develop`'s wire over libp2p (its CAR channel and
+    /// batched pushes), so this node replicates with Go Shinzo nodes.
+    /// Default: false.
+    #[serde(default)]
+    pub shinzo_wire: bool,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -522,6 +527,7 @@ impl Default for NetConfig {
             resource_memory_mib: None,
             resource_file_descriptors: None,
             max_streams_per_peer: None,
+            shinzo_wire: false,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,

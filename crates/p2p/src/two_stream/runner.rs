@@ -589,6 +589,7 @@ impl TwoStreamRunner {
                         tracing::debug!(peer_id = %peer_id, "Inbound stream over the per-peer cap; reset");
                         continue;
                     };
+                    let pending = self.pending.clone();
                     let event_tx = self.event_tx.clone();
                     let sem = self.semaphore.clone();
                     let max_car_size = self.max_car_size;
@@ -596,7 +597,7 @@ impl TwoStreamRunner {
                     tokio::spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         let _admission = admission;
-                        match TwoStreamHandler::handle_car_response_stream(peer_id, stream, max_car_size, stream_read_timeout).await {
+                        match TwoStreamHandler::handle_car_response_stream(&pending, peer_id, stream, max_car_size, stream_read_timeout).await {
                             Ok(event) => {
                                 if event_tx.send(event).await.is_err() {
                                     tracing::warn!(peer_id = %peer_id, "Failed to send CAR response event");

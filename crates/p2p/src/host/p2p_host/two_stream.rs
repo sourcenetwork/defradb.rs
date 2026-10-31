@@ -218,6 +218,9 @@ impl<S: Store> P2PHost<S> {
                     }
                 }
             }
+            TwoStreamEvent::ShinzoCarRequest { peer_id, request } => {
+                self.serve_shinzo_cars(peer_id, request);
+            }
             TwoStreamEvent::CarFetchRequest { peer_id, root_cid } => {
                 debug!(
                     peer_id = %peer_id,
