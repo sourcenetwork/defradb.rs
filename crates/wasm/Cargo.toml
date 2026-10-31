@@ -69,7 +69,7 @@ acp = { path = "../acp", default-features = false }
 defra-p2p-adapter = { path = "../p2p-adapter", default-features = false, features = ["iroh"] }
 p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
 iroh.workspace = true
-hkdf = "0.12"
+hkdf = "0.13"
 
 # IPLD
 cid.workspace = true
@@ -82,7 +82,7 @@ wasm-bindgen-test = "0.3"
 # The relay end-to-end test drives a native node's HTTP API with fetch and
 # waits on replication with browser timers.
 web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 # The browser benchmark reports through the same contract the native suite
 # does, so the two describe a measurement identically.
 defra-perf = { path = "../../tools/perf" }

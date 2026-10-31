@@ -49,7 +49,7 @@ hex.workspace = true
 # Wasmtime runtime (optional for wasm32). `async` runs a lens call on a fiber
 # its caller polls. `parallel-compilation` stays out, so wasmtime starts no
 # thread of its own.
-wasmtime = { version = "49.0.2", optional = true, default-features = false, features = [
+wasmtime = { version = "50.0.0", optional = true, default-features = false, features = [
     "async",
     "runtime",
     "cranelift",
