@@ -60,6 +60,7 @@ pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
 pub mod merge;
 pub mod nac;
 pub mod read;
+pub mod receive_gate;
 pub(crate) mod remote_inputs;
 pub mod replication_filter;
 pub mod retention;

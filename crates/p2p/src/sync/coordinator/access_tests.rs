@@ -4324,6 +4324,165 @@ async fn live_connection_allows_pull_before_lifecycle_notification_without_grant
         .is_err());
 }
 
+/// A receive gate that refuses every document it is asked about.
+struct RefuseAll(crate::sync::receive_gate::GateRefusal);
+
+#[async_trait::async_trait]
+impl crate::sync::receive_gate::ReceiveGate for RefuseAll {
+    async fn judge(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+        _head: &[u8],
+        _blocks: &dyn crate::sync::receive_gate::GateBlocks,
+    ) -> Option<crate::sync::receive_gate::GateRefusal> {
+        Some(self.0)
+    }
+}
+
+/// A one-field document: its composite head and the field block it links.
+fn gated_document() -> ((Cid, Vec<u8>), (Cid, Vec<u8>)) {
+    use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+    let field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "blockNumber".to_string(),
+            priority: 1,
+            collection_version_id: "v1".to_string(),
+            data: vec![0x18, 100],
+        }),
+        vec![],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    let head = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "v1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("blockNumber", field_cid)],
+    );
+    (
+        (head.generate_cid().unwrap(), head.to_dag_cbor().unwrap()),
+        (field_cid, field.to_dag_cbor().unwrap()),
+    )
+}
+
+fn arrival_skips<B, T>(coordinator: &SyncCoordinator<B, T>) -> Vec<(&'static str, u64)>
+where
+    B: Blockstore + 'static,
+    T: crate::transport::P2PTransport,
+{
+    coordinator.manager().diagnostics().arrivals().drain().skips
+}
+
+/// A push the gate refuses on arrival stores nothing and asks for nothing.
+#[tokio::test]
+async fn a_push_the_gate_refuses_on_arrival_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll(
+        crate::sync::receive_gate::GateRefusal::Filtered,
+    )));
+    let ((head_cid, head), _) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+
+    assert!(!coordinator.gate_arrival(&broadcast, None).await);
+    assert_eq!(arrival_skips(&coordinator), vec![("filtered", 1)]);
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+}
+
+/// A CAR fetched for a root the gate then refuses is not imported, and the
+/// root is discharged so it is not fetched again.
+#[tokio::test]
+async fn a_fetched_car_the_gate_refuses_is_not_imported() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let ((head_cid, head), (field_cid, field)) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head.clone()),
+    );
+    // Kept on arrival (no gate yet): the head is stored and its field block
+    // is to be fetched.
+    coordinator
+        .manager()
+        .process_pushlog(&broadcast, Some("peer-1"), false, None)
+        .await
+        .unwrap();
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_some());
+
+    coordinator.set_receive_gate(Arc::new(RefuseAll(
+        crate::sync::receive_gate::GateRefusal::BelowFloor,
+    )));
+    let car = crate::sync::car::encode_car(
+        &[head_cid],
+        &[(&head_cid, head.as_slice()), (&field_cid, field.as_slice())],
+    )
+    .unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: random_peer_id(),
+            root_cid: head_cid,
+            car_data: car,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        arrival_skips(&coordinator),
+        vec![("retentionAfterCARFetch", 1)]
+    );
+    assert!(
+        !coordinator
+            .manager()
+            .blockstore()
+            .has(&field_cid)
+            .await
+            .unwrap(),
+        "nothing of the refused CAR was imported"
+    );
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+    assert!(coordinator
+        .manager()
+        .blockstore()
+        .is_merged(&head_cid)
+        .await
+        .unwrap());
+}
+
 /// A pushlog arriving as a two-stream request counts in `msgsIn`, and in
 /// `droppedQueueFull` when every request worker is busy.
 #[tokio::test]
@@ -4354,4 +4513,42 @@ async fn a_two_stream_push_refused_at_capacity_counts_as_inbound_and_dropped() {
         .await;
     let report = coordinator.manager().diagnostics().arrivals().drain();
     assert_eq!((report.msgs_in, report.dropped_queue_full), (1, 1));
+}
+
+/// A replicator's direct push meets the receive gate too, as in Go: refused,
+/// it is skipped and nothing of it is stored.
+#[tokio::test]
+async fn a_two_stream_push_the_gate_refuses_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll(
+        crate::sync::receive_gate::GateRefusal::Filtered,
+    )));
+    let ((head_cid, head), _) = gated_document();
+    let request = PushLogRequest::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+    let _ = coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: random_peer_id(),
+            request,
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await;
+    assert_eq!(arrival_skips(&coordinator), vec![("filtered", 1)]);
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
 }
