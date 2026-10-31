@@ -522,12 +522,13 @@ jobs:
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
           -- --skip ::go_
-      - name: Run rust integration tests (purge, save-many, unique-index writer)
+      - name: Run rust integration tests (scenarios landed from the Shinzo stack)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test
-          --test mutation --test index
-          -- mutation::purge:: mutation::save_many:: index::unique_writer::
+          --test mutation --test index --test txn --test collection
+          -- mutation::purge:: mutation::save_many:: index::unique_writer:: index::range_filter::
+          txn::neighbour:: collection::deterministic_ids:: mutation::add::field_kinds::typed_nillable_arrays::
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:

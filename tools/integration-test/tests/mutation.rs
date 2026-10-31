@@ -25,6 +25,7 @@ mod mutation {
             mod field_kind_int;
             mod field_kind_json;
             mod field_kind_string;
+            mod typed_nillable_arrays;
             mod one_to_many {
                 mod with_alias;
                 mod with_simple;
