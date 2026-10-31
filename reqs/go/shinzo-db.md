@@ -10,46 +10,6 @@
 
 A node configured with a `client.RetentionRule` refuses replicated documents below a per-collection height. `RetentionFloor(collectionID) (field string, floor int64, ok bool)` names the integer height field and the floor for a covered collection. The rule applies only to documents arriving by P2P merge, never to local writes.
 
-# `go.shinzo.retention.rule`: The merge refuses what the rule refuses
-
-- **Parents:** ["go.shinzo.retention"]
-- **Go-Tests:** ["internal/db/retention_merge_test.go::TestMergeAppliesTheRetentionRule"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-For `type Log { blockNumber: Int address: String }` with field `blockNumber` and floor 100, merging a replicated document:
-
-- `blockNumber: 100` (at the floor) is refused with `replicated document is at or below the retention floor`;
-- `blockNumber: 101` is stored;
-- no `blockNumber`, or `blockNumber: -5`, is refused with `replicated document has no valid retention height` (a null, non-integer or negative value has no valid height);
-- with a floor of 0 or less, nothing is refused by height (`blockNumber: 0` is stored), but a document with no valid height is still refused;
-- a collection the rule does not cover, or a node with no rule, stores everything.
-
-Both refusals are `refused by the retention rule` errors (`errors.Is` matches either). A refused document is not stored (`document not found or not authorized to access`), its head is not marked merged, and the refusal is counted under `rejectedBelowFloor` or `rejectedNoHeight`, never as a dropped event.
-
-# `go.shinzo.retention.scope`: Branchable and unknown collections are not judged
-
-- **Parents:** ["go.shinzo.retention"]
-- **Go-Tests:** ["internal/db/retention_merge_test.go::TestRetentionFloorOf"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A covered collection resolves to its field and floor (`blockNumber`, 100). A `@branchable` collection is never judged, because one of its heads commits many documents at once. A collection ID this node does not hold, or a node with no rule, is not judged either.
-
-# `go.shinzo.retention.delete`: A delete is applied below the floor
-
-- **Parents:** ["go.shinzo.retention"]
-- **Go-Tests:** ["internal/db/retention_merge_test.go::TestMergeAppliesADeleteBelowTheFloor"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-With floor 100, a replicated delete of a document whose `blockNumber` is 5 merges without error and its head is marked merged: deleted documents are not judged.
-
-# `go.shinzo.retention.batch`: A refusal in a batch refuses only that document
-
-- **Parents:** ["go.shinzo.retention"]
-- **Go-Tests:** ["internal/db/retention_merge_test.go::TestMergeBatchRejectsOnlyTheRefusedEvent"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-Merging a batch of three Logs at heights 101, 100 and 150 against floor 100 returns no error and the outcomes `[MergeCommitted, MergeRejected, MergeCommitted]`; the 101 and 150 documents are stored, the 100 one is not, one `rejectedBelowFloor` is counted, and no drop is recorded.
-
 # `go.shinzo.merge`: Merging replicated documents
 
 - **Parents:** ["go.shinzo"]
