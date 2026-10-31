@@ -113,16 +113,25 @@ impl fmt::Display for FfiP2PError {
     }
 }
 
-impl From<defra_http::router::P2PError> for FfiP2PError {
-    fn from(error: defra_http::router::P2PError) -> Self {
+impl From<defra_p2p_adapter::P2PError> for FfiP2PError {
+    fn from(error: defra_p2p_adapter::P2PError) -> Self {
         match error {
-            defra_http::router::P2PError::InvalidInput(message) => Self::invalid_input(message),
-            defra_http::router::P2PError::NotFound(message) => Self::not_found(message),
-            defra_http::router::P2PError::Unauthorized(message) => Self::unauthorized(message),
-            defra_http::router::P2PError::Unsupported(message) => Self::unsupported(message),
-            defra_http::router::P2PError::Transport(message) => Self::transport(message),
-            defra_http::router::P2PError::Internal(message) => Self::internal(message),
-            _ => Self::internal(error.to_string()),
+            defra_p2p_adapter::P2PError::InvalidInput(message) => Self::invalid_input(message),
+            defra_p2p_adapter::P2PError::NotFound(message) => Self::not_found(message),
+            defra_p2p_adapter::P2PError::Unauthorized(message) => Self::unauthorized(message),
+            defra_p2p_adapter::P2PError::Unsupported(message) => Self::unsupported(message),
+            defra_p2p_adapter::P2PError::Transport(message) => Self::transport(message),
+            defra_p2p_adapter::P2PError::Internal(message) => Self::internal(message),
+        }
+    }
+}
+
+impl From<defra_p2p_adapter::peer::Error> for FfiP2PError {
+    fn from(error: defra_p2p_adapter::peer::Error) -> Self {
+        match error {
+            defra_p2p_adapter::peer::Error::NotAuthorized(message) => Self::unauthorized(message),
+            defra_p2p_adapter::peer::Error::NoP2P => Self::no_p2p_system(),
+            other => Self::invalid_input(other.to_string()),
         }
     }
 }
@@ -177,12 +186,12 @@ pub(crate) fn parse_collections_json(json_str: &str) -> FfiP2PResult<Vec<String>
 /// accepted shape mirrors the HTTP `"Filters"` field (`ReplicationFilters`).
 pub(crate) fn parse_filters_json(
     json_str: &str,
-) -> FfiP2PResult<defra_http::router::ReplicationFilters> {
+) -> FfiP2PResult<defra_p2p_adapter::ReplicationFilters> {
     if json_str.is_empty() {
-        return Ok(defra_http::router::ReplicationFilters::new());
+        return Ok(defra_p2p_adapter::ReplicationFilters::new());
     }
 
-    let opt: Option<defra_http::router::ReplicationFilters> = serde_json::from_str(json_str)
+    let opt: Option<defra_p2p_adapter::ReplicationFilters> = serde_json::from_str(json_str)
         .map_err(|e| FfiP2PError::invalid_input(format!("invalid filters JSON: {}", e)))?;
     Ok(opt.unwrap_or_default())
 }
@@ -199,19 +208,19 @@ mod tests {
 
     #[test]
     fn maps_http_error_variants() {
-        let error = FfiP2PError::from(defra_http::router::P2PError::InvalidInput(
+        let error = FfiP2PError::from(defra_p2p_adapter::P2PError::InvalidInput(
             "bad addr".to_string(),
         ));
         assert_eq!(error.code, FfiP2PErrorCode::InvalidInput);
         assert_eq!(error.message, "bad addr");
 
-        let error = FfiP2PError::from(defra_http::router::P2PError::Transport(
+        let error = FfiP2PError::from(defra_p2p_adapter::P2PError::Transport(
             "dial failed".to_string(),
         ));
         assert_eq!(error.code, FfiP2PErrorCode::Transport);
         assert_eq!(error.message, "dial failed");
 
-        let error = FfiP2PError::from(defra_http::router::P2PError::Unauthorized(
+        let error = FfiP2PError::from(defra_p2p_adapter::P2PError::Unauthorized(
             "permission denied".to_string(),
         ));
         assert_eq!(error.code, FfiP2PErrorCode::Unauthorized);

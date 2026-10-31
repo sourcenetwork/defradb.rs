@@ -14,6 +14,8 @@ use identity::Did;
 pub(super) struct DocumentAcpSetup {
     pub(super) document_acp: Arc<dyn acp::DocumentACP>,
     pub(super) http_adapter: Option<Arc<dyn defra_http::router::AcpOperations>>,
+    /// Where `@policy` directives are checked when a collection is added.
+    pub(super) policy_lookup: Arc<dyn acp::PolicyLookup>,
 }
 
 impl Node {
@@ -85,16 +87,17 @@ impl Node {
                     .map_err(|e| Error::InvalidConfig(format!("Vera event subscriber: {}", e)))?
             };
             let document_acp = Arc::new(document_acp);
-            let http_adapter = crate::vera_acp_adapter::VeraAcpAdapter::new_arc(
+            let adapter = Arc::new(crate::vera_acp_adapter::VeraAcpAdapter::new(
                 document_acp.clone(),
                 zanzibar_store,
                 nac_checker,
-            );
+            ));
 
             info!("Document ACP configured (Vera)");
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store),
-                http_adapter: Some(http_adapter),
+                http_adapter: Some(adapter.clone()),
+                policy_lookup: adapter,
             });
         }
 
@@ -161,16 +164,17 @@ impl Node {
             );
 
             let document_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
-            let http_adapter = crate::vera_acp_adapter::VeraAcpAdapter::new_arc(
+            let adapter = Arc::new(crate::vera_acp_adapter::VeraAcpAdapter::new(
                 document_acp.clone(),
                 zanzibar_store,
                 nac_checker,
-            );
+            ));
 
             info!("Document ACP configured (vera.rs)");
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store),
-                http_adapter: Some(http_adapter),
+                http_adapter: Some(adapter.clone()),
+                policy_lookup: adapter,
             });
         }
 
@@ -179,9 +183,10 @@ impl Node {
         Ok(DocumentAcpSetup {
             document_acp,
             http_adapter: Some(crate::acp_adapter::AcpAdapter::new_arc(
-                zanzibar_store,
+                zanzibar_store.clone(),
                 nac_checker,
             )),
+            policy_lookup: Arc::new(acp::StorePolicies(zanzibar_store)),
         })
     }
 

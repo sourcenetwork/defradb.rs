@@ -455,7 +455,12 @@ impl GroupByNode {
         JsonValue::Array(array)
     }
 
-    fn build_group_key_for_fields(&self, buf: &mut String, fields: &[String], doc: &Doc) {
+    pub(super) fn build_group_key_for_fields(
+        &self,
+        buf: &mut String,
+        fields: &[String],
+        doc: &Doc,
+    ) {
         buf.clear();
         for field_name in fields {
             if let Some(index) = self.document_mapping.first_index_of_name(field_name) {

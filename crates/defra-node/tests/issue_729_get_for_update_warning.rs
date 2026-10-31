@@ -2,7 +2,7 @@ use kovan::Atom;
 use std::io;
 use std::sync::Arc;
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use defra_node::Result;
 use tracing::Level;
 
@@ -66,7 +66,7 @@ fn embedded_upsert_does_not_warn_when_discarding_get_for_update_txn() -> Result<
         let subscriber = warning_capture_subscriber(&log_buffer);
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let inserted = node

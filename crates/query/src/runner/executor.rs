@@ -215,7 +215,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 runner.registry.run_as(&context, handle, deadline, job)
             })
             .await;
-        answered(Some(handle), outcome)
+        answered(outcome)
     }
 
     async fn observe_document_owners_in_txn(
@@ -273,6 +273,113 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
         self.registry.discard_as(context, handle).await
+    }
+
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.add_collection_as(context, sdl).await
+    }
+
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.get_collections_as(context, selector).await
+    }
+
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .patch_collection_as(context, patch, migration)
+            .await
+    }
+
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .set_active_collection_version_as(context, version_id)
+            .await
+    }
+
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .truncate_collection_as(context, name, filter)
+            .await
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.set_migration_as(context, config).await
+    }
+
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_lens_as(context, config).await
+    }
+
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.list_lenses_as(context).await
+    }
+
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .delete_collections_as(context, targets, active_only)
+            .await
+    }
+
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        self.registry
+            .set_collection_active_as(context, version_id, is_active)
+            .await
+    }
+
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .verify_block_signature_as(context, document_acp, cid, public_key, key_type, caller)
+            .await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {
@@ -347,7 +454,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             {
                 Err(TransactionError::NotSupported(_)) => {}
                 Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
-                    return answered(None, Err(error));
+                    return answered(Err(error));
                 }
                 Err(error) => {
                     return QueryResponse::error(format!(
@@ -355,7 +462,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         error
                     ));
                 }
-                outcome => return answered(None, outcome),
+                outcome => return answered(outcome),
             }
         }
 

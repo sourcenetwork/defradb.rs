@@ -279,11 +279,11 @@ impl TransformStore for WasmTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>> {
         let result = self
             .configs
             .iter()
-            .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
+            .map(|(id, config)| (id.to_string(), config.lenses.clone()))
             .collect();
         Ok(result)
     }

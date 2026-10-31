@@ -16,6 +16,7 @@ impl Collection {
     ) -> Result<DocID> {
         // Validate document against schema
         self.validate_document(doc)?;
+        self.validate_relation_ids(doc, None)?;
 
         let doc_id = doc
             .id()
@@ -141,6 +142,7 @@ impl Collection {
             }
         }
 
+        self.validate_relation_ids(doc, Some(&old_doc))?;
         match modified {
             Some(changed) => self.validate_modified_immutable_fields(&old_doc, doc, changed)?,
             None => self.validate_immutable_fields_unchanged(&old_doc, doc)?,

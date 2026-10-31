@@ -81,7 +81,7 @@ pub unsafe extern "C" fn p2p_peer_details(
         let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
         let peer_id = try_ffi!(require_c_str(peer_id, "peer_id"));
 
-        let result = defra_http::router::TransportPeerId::new(peer_id)
+        let result = defra_p2p_adapter::TransportPeerId::new(peer_id)
             .map_err(FfiP2PError::from)
             .and_then(|peer_id| {
                 NODES

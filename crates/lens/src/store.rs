@@ -70,8 +70,8 @@ pub trait TransformStore: Send + Sync {
 
     /// List all registered transforms.
     ///
-    /// Returns a map of transform IDs to their lens modules.
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>>;
+    /// Returns a map of transform IDs to their lenses' modules, in order.
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>>;
 
     /// Transform documents using a registered lens.
     ///
@@ -176,11 +176,11 @@ impl TransformStore for MemoryTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>> {
         let result = self
             .transforms
             .iter()
-            .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
+            .map(|(id, config)| (id.to_string(), config.lenses.clone()))
             .collect();
 
         Ok(result)

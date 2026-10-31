@@ -1,22 +1,32 @@
 //! Mock query executor for testing HTTP routes.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use kovan::Atom;
 use serde_json::json;
 
+use query::documents::Filter;
 use query::error::{QueryError, Result, TransactionError};
 use query::executor::{QueryExecutor, QueryRequest, QueryResponse};
 use query::TransactionHandle;
+
+/// A truncate the mock was asked for: the collection and its filter.
+type TruncateCall = (String, Option<Filter>);
 
 /// Mock executor for testing HTTP routes with pattern-matched query responses.
 #[derive(Debug, Clone)]
 pub struct MockQueryExecutor {
     schema_sdl: String,
+    /// Each truncate asked for: the collection and its filter.
+    truncated: Arc<Atom<Vec<TruncateCall>>>,
 }
 
 /// Mock executor for testing error paths. Schema errors are optional.
 #[derive(Debug, Clone)]
 pub struct FailingMockExecutor {
     schema_error: Option<String>,
+    finished_txn: bool,
 }
 
 impl FailingMockExecutor {
@@ -24,6 +34,22 @@ impl FailingMockExecutor {
     pub fn with_schema_error(msg: impl Into<String>) -> Self {
         Self {
             schema_error: Some(msg.into()),
+            finished_txn: false,
+        }
+    }
+
+    /// Create a mock whose every transaction is already finalized.
+    pub fn with_finished_txn() -> Self {
+        Self {
+            schema_error: None,
+            finished_txn: true,
+        }
+    }
+
+    fn txn_error(&self) -> TransactionError {
+        match self.finished_txn {
+            true => TransactionError::AlreadyFinalized("mock transaction".to_owned()),
+            false => TransactionError::not_supported("mock executor does not support transactions"),
         }
     }
 }
@@ -31,6 +57,22 @@ impl FailingMockExecutor {
 #[async_trait]
 impl QueryExecutor for FailingMockExecutor {
     fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn add_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Err(self.txn_error())
+    }
+
+    async fn set_migration_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        Err(self.txn_error())
+    }
 
     async fn execute(&self, _request: QueryRequest) -> QueryResponse {
         QueryResponse::error("execution failed")
@@ -82,16 +124,20 @@ impl QueryExecutor for FailingMockExecutor {
 impl MockQueryExecutor {
     /// Create a mock executor with default schema.
     pub fn new() -> Self {
-        Self {
-            schema_sdl: default_mock_schema(),
-        }
+        Self::with_schema(default_mock_schema())
     }
 
     /// Create with custom schema.
     pub fn with_schema(schema: impl Into<String>) -> Self {
         Self {
             schema_sdl: schema.into(),
+            truncated: Arc::default(),
         }
+    }
+
+    /// The truncates asked for, oldest first.
+    pub fn truncated_collections(&self) -> Vec<TruncateCall> {
+        self.truncated.load_clone()
     }
 }
 
@@ -101,9 +147,54 @@ impl Default for MockQueryExecutor {
     }
 }
 
+fn mock_collection_version(name: &str) -> schema::CollectionVersion {
+    serde_json::from_value(json!({
+        "Name": name,
+        "VersionID": "mock-version-id",
+        "CollectionID": "mock-collection-id",
+    }))
+    .expect("mock collection version should deserialize")
+}
+
 #[async_trait]
 impl QueryExecutor for MockQueryExecutor {
     fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn truncate_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        name: &str,
+        filter: Option<&Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        crate::mock::update_vec(&self.truncated, |calls| {
+            calls.push((name.to_owned(), filter.cloned()))
+        });
+        Ok(())
+    }
+
+    async fn add_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Ok(vec![mock_collection_version("MockCollection")])
+    }
+
+    async fn get_collections_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        Ok(vec![mock_collection_version("MockCollection")])
+    }
+
+    async fn set_migration_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        Ok("mock-transform-id".to_string())
+    }
 
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
         let query = request.query.to_lowercase();

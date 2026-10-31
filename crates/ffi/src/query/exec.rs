@@ -26,6 +26,7 @@ use super::{
 /// # Arguments
 ///
 /// * `node_ptr` - Handle to the node
+/// * `txn_id` - Optional transaction ID from `begin_txn` (null to commit on its own)
 /// * `identity_did` - Optional DID string for ACP permission checks (null for anonymous)
 /// * `request_query` - GraphQL query string (required)
 /// * `operation_name` - Optional operation name for multi-operation documents (null if not used)
@@ -39,6 +40,7 @@ use super::{
 #[no_mangle]
 pub unsafe extern "C" fn exec_request(
     node_ptr: usize,
+    txn_id: *const c_char,
     identity_did: *const c_char,
     request_query: *const c_char,
     operation_name: *const c_char,
@@ -48,6 +50,7 @@ pub unsafe extern "C" fn exec_request(
     unsafe {
         exec_request_with_signing(
             node_ptr,
+            txn_id,
             identity_did,
             request_query,
             operation_name,
@@ -69,6 +72,7 @@ pub unsafe extern "C" fn exec_request(
 #[no_mangle]
 pub unsafe extern "C" fn exec_request_with_signing(
     node_ptr: usize,
+    txn_id: *const c_char,
     identity_did: *const c_char,
     request_query: *const c_char,
     operation_name: *const c_char,
@@ -79,6 +83,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
     ffi_entry! {
         let args = try_ffi!(ExecArgs::read(
             node_ptr,
+            txn_id,
             identity_did,
             request_query,
             operation_name,
@@ -88,7 +93,9 @@ pub unsafe extern "C" fn exec_request_with_signing(
         ));
         call::wait(async move {
             Ok(match prepare(args).await {
-                Ok((runner, request)) => FfiResult::from(respond(runner.execute(request).await)),
+                Ok((runner, request, txn)) => {
+                    FfiResult::from(respond(run(&runner, request, txn).await))
+                }
                 Err(decided) => decided,
             })
         })
@@ -112,6 +119,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn exec_request_async(
     node_ptr: usize,
+    txn_id: *const c_char,
     identity_did: *const c_char,
     request_query: *const c_char,
     operation_name: *const c_char,
@@ -126,6 +134,7 @@ pub unsafe extern "C" fn exec_request_async(
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         match ExecArgs::read(
             node_ptr,
+            txn_id,
             identity_did,
             request_query,
             operation_name,
@@ -135,9 +144,13 @@ pub unsafe extern "C" fn exec_request_async(
         ) {
             Ok(args) => call::detach(async move {
                 match prepare(args).await {
-                    Ok((runner, request)) => {
+                    Ok((runner, request, None)) => {
                         let done = move |response| reply.send(FfiResult::from(respond(response)));
                         runner.execute_then(request, Box::new(done)).await
+                    }
+                    Ok((runner, request, txn)) => {
+                        let response = run(&runner, request, txn).await;
+                        reply.send(FfiResult::from(respond(response)))
                     }
                     Err(decided) => reply.send(decided),
                 }
@@ -145,6 +158,42 @@ pub unsafe extern "C" fn exec_request_async(
             Err(decided) => reply.send(decided),
         }
     }));
+}
+
+/// The request path FFI's document writes run on: an exec call of
+/// `mutation` as `identity`, with the node's signing and `batch_session`.
+pub(crate) async fn run_mutation(
+    node_ptr: usize,
+    identity: Option<String>,
+    batch_session: Option<String>,
+    mutation: String,
+) -> query::QueryResponse {
+    let args = ExecArgs {
+        node_ptr,
+        txn: None,
+        identity,
+        query: mutation,
+        operation_name: None,
+        variables: None,
+        batch_session,
+        signing_override: -1,
+    };
+    match prepare(args).await {
+        Ok((runner, request, txn)) => run(&runner, request, txn).await,
+        Err(decided) => query::QueryResponse::error(decided.into_error().unwrap_or_default()),
+    }
+}
+
+/// Runs `request` in the transaction it names, or on its own.
+async fn run(
+    runner: &std::sync::Arc<dyn query::QueryExecutor>,
+    request: query::QueryRequest,
+    txn: Option<query::txn::TransactionHandle>,
+) -> query::QueryResponse {
+    match txn {
+        Some(handle) => runner.execute_in_txn(request, &handle).await,
+        None => runner.execute(request).await,
+    }
 }
 
 /// The response's GraphQL JSON.
@@ -156,6 +205,7 @@ fn respond(response: query::QueryResponse) -> Result<String, String> {
 /// returns.
 struct ExecArgs {
     node_ptr: usize,
+    txn: Option<String>,
     identity: Option<String>,
     query: String,
     operation_name: Option<String>,
@@ -168,8 +218,10 @@ impl ExecArgs {
     /// # Safety
     ///
     /// As for [`exec_request_with_signing`].
+    #[allow(clippy::too_many_arguments)]
     unsafe fn read(
         node_ptr: usize,
+        txn_id: *const c_char,
         identity_did: *const c_char,
         request_query: *const c_char,
         operation_name: *const c_char,
@@ -179,6 +231,7 @@ impl ExecArgs {
     ) -> Result<Self, FfiResult> {
         Ok(Self {
             node_ptr,
+            txn: c_str_to_string(txn_id).filter(|id| !id.is_empty()),
             identity: c_str_to_string(identity_did),
             query: require_c_str(request_query, "request_query")?,
             operation_name: c_str_to_string(operation_name).filter(|name| !name.is_empty()),
@@ -198,11 +251,13 @@ async fn prepare(
     (
         std::sync::Arc<dyn query::QueryExecutor>,
         query::QueryRequest,
+        Option<query::txn::TransactionHandle>,
     ),
     FfiResult,
 > {
     let ExecArgs {
         node_ptr,
+        txn,
         identity: identity_str,
         query: query_str,
         operation_name: op_name,
@@ -247,7 +302,15 @@ async fn prepare(
 
     // The caller acts in the request's context, so DB-layer NAC checks
     // resolve it; a NAC admin/owner can read all documents.
+    let txn_id = match txn.as_deref() {
+        Some(id) => Some(
+            id.parse::<defra_core::TxnId>()
+                .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e)))?,
+        ),
+        None => None,
+    };
     let context = defra_core::RequestContext::default()
+        .with_txn(txn_id)
         .with_identity(identity_str.as_ref().filter(|s| !s.is_empty()).cloned())
         .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
         .with_signing(signing)
@@ -413,5 +476,6 @@ async fn prepare(
             .map_err(|e| FfiResult::error(format!("failed to parse variables: {}", e)))?;
         request = request.with_variables(vars_json);
     }
-    Ok((runner, request))
+    let handle = txn_id.map(|id| query::txn::TransactionHandle::new(id.to_string()));
+    Ok((runner, request, handle))
 }

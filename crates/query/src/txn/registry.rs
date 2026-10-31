@@ -142,6 +142,154 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.discard(handle)).await
     }
 
+    /// Create the collections `sdl` defines in the transaction `context`
+    /// carries. They are visible to requests in it, and to others once it
+    /// commits.
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported in this configuration",
+        ))
+    }
+
+    /// The collection versions `selector` picks for the caller `context`
+    /// names, in the transaction it carries if it carries one (its own
+    /// uncommitted writes included), ordered by name then version ID.
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, selector);
+        Err(TransactionError::not_supported(
+            "collection reads are not supported in this configuration",
+        ))
+    }
+
+    /// Apply the Go collection patch `patch`, with `migration` as the
+    /// migration to the version it adds, for the caller `context` names.
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "collection patches are not supported in this configuration",
+        ))
+    }
+
+    /// Make collection version `version_id` its collection's active one, for
+    /// the caller `context` names, in the transaction it carries if any.
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "collection activation is not supported in this configuration",
+        ))
+    }
+
+    /// Remove the documents of collection `name` that `filter` matches, or
+    /// all of them, for the caller `context` names. Go's
+    /// `Collection.Truncate`, which is not transactional.
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "collection truncate is not supported in this configuration",
+        ))
+    }
+
+    /// Register the lens migration `config` (JSON) in the transaction
+    /// `context` carries, if any; the transform ID.
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported in this configuration",
+        ))
+    }
+
+    /// Register the standalone lens `config` in the transaction `context` carries, if any; the transform ID.
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// The lenses the transaction `context` carries sees, as the JSON map from transform ID to module.
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Delete the collections `targets` names in the transaction `context` carries.
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, targets, active_only);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Set whether collection version `version_id` is active, in the transaction `context` carries.
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        let _ = (context, version_id, is_active);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Verify the signature of block `cid` against `public_key` in the transaction `context` carries. `key_type` is `ed25519`, `secp256k1` or `secp256r1`.
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, document_acp, cid, public_key, key_type, caller);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
     /// Let go of a transaction without committing its writes, at once and
     /// without waiting: no later request finds it, and it ends after the
     /// requests already queued for it. Must be idempotent and work without

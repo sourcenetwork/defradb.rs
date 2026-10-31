@@ -69,10 +69,9 @@ crates/
 │                       #   search/. src/ holds only lib.rs; every test
 │                       #   lives in db/tests/.
 ├── defra-core/         # Core types and traits
-├── defra-node/         # Reusable embedded node builder
+├── defra-node/         # The node assembly: NodeBuilder, libp2p/iroh, FFI base
 ├── defra-version/      # Version metadata and Go compat tracking
 ├── document/           # Document handling
-├── embedded/           # Embedded/mobile node assembly
 ├── events/             # Pub/sub event bus (subscriptions)
 ├── ffi/                # C-compatible FFI bindings
 ├── http/               # HTTP API server
@@ -82,7 +81,7 @@ crates/
 ├── lens/               # Schema migration via WASM transforms
 ├── orbis/              # Threshold BLS signing (Orbis ring client)
 ├── p2p/                # P2P networking (libp2p + optional Iroh)
-├── p2p-adapter/        # P2P adapters for HTTP-facing operations
+├── p2p-adapter/        # The P2P operation surface every edge calls, and its adapters
 ├── pg-compat/          # Postgres wire protocol compatibility
 ├── query/              # Query engine (GraphQL, BM25)
 ├── replication-filter/ # Query-filter-backed replication matcher
@@ -404,7 +403,7 @@ that is correct but slower is not done.
 - **Rust** (1.99+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
-- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` keeps tests that start nodes serial
+- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defra` binaries node tests launch once per run, then runs those tests in parallel
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.10`
 
 ## Common Commands
@@ -433,7 +432,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Area | Binary | Modules |
 |------|--------|---------|
 | Basic | `--test basic` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
-| Query | `--test query` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
+| Query | `--test query` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
 | ACP | `--test acp` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
 | P2P Iroh | `--test p2p_iroh` | acp, connection, peer, replication, schema, sync |
 | NAC | `--test nac` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
@@ -556,8 +555,11 @@ feature flag selecting one.
 | `memory` | A regolith database kept in memory, which nothing outlives. |
 
 The names of the backends regolith replaced (`lark`, `redb`, `fjall`, `rocksdb`,
-`badger`) are still accepted and resolve to `regolith`, so an existing config
-file keeps loading.
+`leveldb`) are refused: a store written by one of them is in a format regolith
+cannot read, so opening its directory anyway would fail deeper in or open
+something the operator did not ask for. `badger` is accepted as `regolith`,
+because it is Go's name for its store and the cross-runtime tests pass one
+`--store` value to both binaries.
 
 Profiles come from regolith itself: `Options::default()` for a server,
 `Options::embedded()` for a 1-4 MiB working set, and `Options::wasm()` for a

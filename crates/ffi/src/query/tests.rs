@@ -52,6 +52,7 @@ fn test_exec_request() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             query_str.as_ptr(),
             ptr::null(),
@@ -91,6 +92,7 @@ fn test_exec_mutation() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             mutation.as_ptr(),
             ptr::null(),
@@ -111,6 +113,7 @@ fn test_exec_mutation() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             query_str.as_ptr(),
             ptr::null(),
@@ -144,6 +147,7 @@ fn test_exec_request_null_query() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             ptr::null(),
             ptr::null(),
@@ -170,6 +174,7 @@ fn test_exec_request_invalid_handle() {
     let result = unsafe {
         exec_request(
             0,
+            std::ptr::null(),
             ptr::null(),
             query_str.as_ptr(),
             ptr::null(),
@@ -207,6 +212,7 @@ fn test_exec_request_invalid_variables_json() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             query_str.as_ptr(),
             ptr::null(),

@@ -364,6 +364,7 @@ fn a_write_signs_its_blocks_through_the_async_callback() {
         let result = unsafe {
             crate::query::exec_request_with_signing(
                 node,
+                std::ptr::null(),
                 did.as_ptr(),
                 query.as_ptr(),
                 ptr::null(),

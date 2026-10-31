@@ -123,9 +123,13 @@ pub unsafe extern "C" fn block_verify_signature_in_txn(
 
         // The caller acts in the call's context, so the NAC checks the body
         // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()))
+            .with_txn(Some(txn));
         let key_type_str = match c_str_to_string(key_type) {
             Some(s) if !s.is_empty() => s,
             _ => "secp256k1".to_string(),
@@ -134,18 +138,10 @@ pub unsafe extern "C" fn block_verify_signature_in_txn(
         let pub_key_str = try_ffi!(require_c_str(public_key, "public_key"));
         let cid_str = try_ffi!(require_c_str(block_cid, "block_cid"));
 
-        let (registry, document_acp) = match NODES.get(node_ptr, |state| {
-            (state.txn_registry.clone(), state.document_acp.clone())
-        }) {
-            Some((registry, document_acp)) => (registry, document_acp),
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let document_acp = match NODES.get(node_ptr, |state| state.document_acp.clone()) {
+            Some(document_acp) => document_acp,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        let crypto_key_type = match key_type_str.as_str() {
-            "ed25519" => crypto::KeyType::Ed25519,
-            "secp256k1" => crypto::KeyType::Secp256k1,
-            "secp256r1" => crypto::KeyType::Secp256r1,
-            other => return FfiResult::error(format!("unsupported key type: {}", other)),
         };
 
         let identity_did_str = c_str_to_string(identity_did);
@@ -155,14 +151,13 @@ pub unsafe extern "C" fn block_verify_signature_in_txn(
             .into();
 
         ffi_async!(caller, {
-            registry
-                .verify_block_signature_in_txn_as(
+            runner
+                .verify_block_signature_as(
                     &context,
-                    &txn_str,
                     document_acp.clone(),
                     &cid_str,
                     &pub_key_str,
-                    crypto_key_type,
+                    &key_type_str,
                     &caller_identity,
                 )
                 .await

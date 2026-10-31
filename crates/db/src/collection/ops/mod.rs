@@ -6,11 +6,14 @@
 //! - Querying and listing collections
 //! - Managing collection versions and active states
 
+mod add;
 mod create;
 mod delete;
 mod lookup;
 mod resolve;
-mod truncate_filtered;
+mod select;
+pub(crate) use select::select;
+mod truncate;
 mod version;
 
 use crate::collection::name::CollectionName;
@@ -18,6 +21,7 @@ use crate::collection::snapshot::CollectionSnapshot;
 use crate::collection::{populate_collection_root_id, Collection};
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
+pub use add::AddCollectionError;
 use datastore::NamespaceView;
 use rapidhash::HashMapExt;
 use schema::CollectionVersion;
@@ -26,6 +30,7 @@ use storage::keys::systemstore::{
     CollectionKey, CollectionNameKey, CollectionVersionKey, IndexIDSequenceKey,
 };
 use tracing::instrument;
+pub use truncate::TruncateError;
 
 /// Helper to delete all keys with a given prefix from a namespace view.
 pub(super) async fn delete_prefix(store: &NamespaceView, prefix: Vec<u8>) -> Result<()> {

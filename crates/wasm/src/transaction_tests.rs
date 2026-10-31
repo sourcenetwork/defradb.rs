@@ -20,8 +20,12 @@ mod tests {
         let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
         let handle = registry.begin(false).await.unwrap();
 
+        let id = handle.as_str().parse().unwrap();
         registry
-            .add_collection_in_txn(handle.as_str(), "type TxnOnly { value: Int }")
+            .add_collection_as(
+                &defra_core::RequestContext::default().with_txn(Some(id)),
+                "type TxnOnly { value: Int }",
+            )
             .await
             .unwrap();
 

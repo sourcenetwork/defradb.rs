@@ -254,7 +254,7 @@ where
                     } else {
                         if txn_ctx.is_readonly() {
                             return Err(QueryError::execution(
-                                "cannot execute mutation in read-only transaction",
+                                "No sets or deletes are allowed in a read-only transaction",
                             ));
                         }
                         let mutator = txn_ctx.doc_mutator().ok_or_else(|| {
@@ -318,17 +318,11 @@ where
 
 /// A registry's answer to a run, as the response its caller gets.
 pub(super) fn answered(
-    handle: Option<&crate::txn::TransactionHandle>,
     outcome: std::result::Result<QueryResponse, TransactionError>,
 ) -> QueryResponse {
     match outcome {
         Ok(response) => response,
-        Err(TransactionError::NotFound(_)) => match handle {
-            Some(handle) => QueryResponse::error(format!(
-                "transaction '{handle}' not found or has been committed/rolled back"
-            )),
-            None => QueryResponse::error("transaction not found"),
-        },
+        Err(TransactionError::NotFound(_)) => QueryResponse::error("transaction not found"),
         Err(TransactionError::Execution(message)) => QueryResponse::error(
             QueryResponseError::from_query_error(QueryError::execution(message)),
         ),
@@ -350,7 +344,7 @@ mod storage_failure_tests {
             "localized storage failure",
         )));
         assert!(!error.is_retryable());
-        let response = answered(None, Err(error));
+        let response = answered(Err(error));
         assert_eq!(
             response.errors[0].code(),
             Some(crate::executor::STORAGE_FULL_ERROR_CODE)

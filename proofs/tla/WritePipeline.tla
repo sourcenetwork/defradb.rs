@@ -42,10 +42,15 @@
 \*   doc.rs                 DbDocMutator::update_as
 \*   ../block/builder/compute.rs  compute_document_blocks_with_inputs (requires_kms_keys asks the memo)
 \*   ../block/builder/write.rs    build_document_blocks (builds an update, stores nothing; encrypt_with_new_key asks with get_or_want and the call sites note the miss and go on)
+\*   prepare.rs             prepare_keys_with_stores (one KMS key per scope, kept in its `generated` memo)
+\*
+\* A "field" here is a key scope: a field with a dedicated key is its own scope,
+\* and every field under document encryption shares the one document scope,
+\* so it shares that scope's single mint. DocKeyScopes.lean proves the sharing.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-  Fields,       \* the document's fields, each needing a KMS key
+  Fields,       \* the document's key scopes, each needing a KMS key
   MaxAttempts,  \* how many attempts the model lets a write start
   StoreMode,    \* "AfterCompute" (store once the composite exists) | "AsComputed" (store each block as made)
   IdMode,       \* "Once" (one short ID for every attempt) | "PerAttempt" (a fresh one each attempt)

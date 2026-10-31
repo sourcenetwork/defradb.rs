@@ -121,7 +121,7 @@ pub enum Error {
     /// Attempted a write operation on a read-only transaction.
     ///
     /// Read-only transactions cannot perform Set or Delete operations.
-    #[error("write attempted on read-only transaction")]
+    #[error("No sets or deletes are allowed in a read-only transaction")]
     ReadOnlyTxn,
 
     /// I/O error occurred during storage operation.

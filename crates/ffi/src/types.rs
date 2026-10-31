@@ -53,6 +53,21 @@ impl FfiResult {
         }
     }
 
+    /// The text of an error result, freeing the result; `None` when it is not
+    /// an error.
+    pub(crate) fn into_error(self) -> Option<String> {
+        if !self.value.is_null() {
+            // SAFETY: `value` came from `CString::into_raw` and is freed once.
+            drop(unsafe { std::ffi::CString::from_raw(self.value) });
+        }
+        if self.error.is_null() {
+            return None;
+        }
+        // SAFETY: `error` came from `CString::into_raw` and is freed once.
+        let error = unsafe { std::ffi::CString::from_raw(self.error) };
+        Some(error.to_string_lossy().into_owned())
+    }
+
     /// Create a subscription result (status=2) with the subscription ID in value.
     pub fn subscription(id: impl Into<String>) -> Self {
         Self {

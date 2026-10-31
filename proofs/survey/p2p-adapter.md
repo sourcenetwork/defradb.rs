@@ -1,7 +1,7 @@
 # Survey: `crates/p2p-adapter` (defra-p2p-adapter)
 
 ## Purpose
-HTTP-facing adapter layer. Implements the `defra_http::router::P2POperations` trait
+Owns the P2P operation surface every edge calls (`P2POperations` and `peer`, `src/operations.rs` and `src/peer.rs`) and implements it
 (get/connect peers, add/remove replicators, collections, documents, republish, sync)
 by delegating to the `p2p`, `db`, `db-merge`, and `blockstore` crates. One impl per
 transport: `P2PAdapter` (libp2p) and `IrohP2PAdapter` (iroh), plus `VersionSyncer` /

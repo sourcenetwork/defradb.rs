@@ -20,7 +20,7 @@ use super::explain::{
     check_field_explain_directive, parse_exhaustive_directive, parse_explain_directive,
 };
 use super::filters::parse_filter_value;
-use super::limits::{validate_requestable_limits_with, validate_select_limits_with};
+use super::limits::{validate_requestable_limits_with, validate_select_limits_with, FragmentPath};
 use super::mutations::{parse_bm25_field, parse_field_to_mutation, parse_similarity_field};
 use super::ordering::parse_order_value;
 use super::values::{
@@ -94,7 +94,7 @@ fn parse_selection_to_selects<'a>(
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
     selects: &mut Vec<Select>,
-    visiting: &mut RapidHashSet<String>,
+    visiting: &mut FragmentPath,
 ) -> Result<()> {
     match selection {
         Selection::Field(field) => {
@@ -136,6 +136,7 @@ fn parse_selection_to_selects<'a>(
                 QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
             })?;
 
+            visiting.check_nesting()?;
             // Mark this fragment as being visited
             visiting.insert(spread.fragment_name.clone());
 
@@ -214,7 +215,7 @@ fn parse_selection_to_mutations<'a>(
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
     mutations: &mut Vec<Mutation>,
-    visiting: &mut RapidHashSet<String>,
+    visiting: &mut FragmentPath,
     visited: &mut RapidHashSet<String>,
 ) -> Result<()> {
     match selection {
@@ -232,6 +233,7 @@ fn parse_selection_to_mutations<'a>(
             {
                 return Ok(());
             }
+            visiting.check_nesting()?;
             if !visiting.insert(spread.fragment_name.clone()) {
                 return Err(QueryError::parse(format!(
                     "circular fragment reference detected: '{}'",
@@ -510,7 +512,7 @@ pub fn parse_request_with_limits(
                             None
                         };
 
-                        let mut visiting = RapidHashSet::new();
+                        let mut visiting = FragmentPath::new(limits);
                         for selection in &q.selection_set.items {
                             parse_selection_to_selects(
                                 selection,
@@ -524,7 +526,7 @@ pub fn parse_request_with_limits(
                     OperationDefinition::SelectionSet(ss) => {
                         // Bare selection set is treated as query
                         has_query = true;
-                        let mut visiting = RapidHashSet::new();
+                        let mut visiting = FragmentPath::new(limits);
                         for selection in &ss.items {
                             parse_selection_to_selects(
                                 selection,
@@ -554,7 +556,7 @@ pub fn parse_request_with_limits(
                             None
                         };
 
-                        let mut visiting = RapidHashSet::new();
+                        let mut visiting = FragmentPath::new(limits);
                         let mut visited = RapidHashSet::new();
                         for selection in &m.selection_set.items {
                             parse_selection_to_mutations(
@@ -581,7 +583,7 @@ pub fn parse_request_with_limits(
                         };
 
                         // Parse selections (same as Query)
-                        let mut visiting = RapidHashSet::new();
+                        let mut visiting = FragmentPath::new(limits);
                         for selection in &s.selection_set.items {
                             parse_selection_to_selects(
                                 selection,
@@ -698,7 +700,7 @@ pub(super) fn parse_field_to_select(
     field: &Field<'_, String>,
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'_>,
-    visiting: &mut RapidHashSet<String>,
+    visiting: &mut FragmentPath,
 ) -> Result<Select> {
     let (collection_name, is_encrypted) = if field.name.starts_with("encrypted_") {
         (field.name["encrypted_".len()..].to_string(), true)
@@ -891,22 +893,18 @@ pub(super) fn parse_field_to_select(
     // are allowed at the group level (nested selects like _group are fine).
     if let Some(ref group_by) = select.group_by {
         for field in &select.fields {
-            if let Requestable::Field(f) = field {
+            let allowed = match field {
                 // Allow special meta-fields at group level
-                if f.name == "_docID" || f.name == "GROUP" || f.name == "__typename" {
-                    continue;
+                Requestable::Field(f) => {
+                    matches!(f.name.as_str(), "_docID" | "GROUP" | "__typename")
+                        || group_by.allows_field(&f.name)
                 }
-                if group_by.fields.contains(&f.name) {
-                    continue;
+                Requestable::Select(s) => {
+                    s.field.name == "GROUP" || group_by.allows_select(&s.field.name)
                 }
-                // Allow FK fields for relation groupBy fields (e.g. _authorID for author)
-                let is_fk_for_group = group_by
-                    .fields
-                    .iter()
-                    .any(|gb_field| f.name == format!("_{}ID", gb_field));
-                if is_fk_for_group {
-                    continue;
-                }
+                _ => true,
+            };
+            if !allowed {
                 return Err(QueryError::parse(
                     "cannot select a non-group-by field at group-level",
                 ));
@@ -966,7 +964,7 @@ pub(super) fn parse_selection_set(
     _collection_name: &str,
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'_>,
-    visiting: &mut RapidHashSet<String>,
+    visiting: &mut FragmentPath,
 ) -> Result<(Vec<Requestable>, DocumentMapping)> {
     let mut fields = Vec::new();
     let mut mapping = DocumentMapping::new();
@@ -1047,6 +1045,7 @@ pub(super) fn parse_selection_set(
                     QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
                 })?;
 
+                visiting.check_nesting()?;
                 // Mark this fragment as being visited
                 visiting.insert(spread.fragment_name.clone());
 

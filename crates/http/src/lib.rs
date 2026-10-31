@@ -17,7 +17,6 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
-//! - `POST /api/v1/tx/concurrent` - Begin a concurrent transaction
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!
@@ -130,10 +129,8 @@ pub use router::{
 };
 pub use router::{
     AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
-    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
-    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
-    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations,
+    NodePermission, PolicyInfo, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
@@ -146,6 +143,6 @@ pub use mock::{
     FailingMockIndexOperations, FailingMockNodeAcpOperations, FailingMockP2POperations,
     FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
     MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
-    MockIndexOperations, MockLensOperations, MockNodeAcpOperations, MockP2POperations,
-    MockQueryExecutor, MockRestOperations, MockTransactionOperations,
+    MockIndexOperations, MockNodeAcpOperations, MockP2POperations, MockQueryExecutor,
+    MockRestOperations,
 };

@@ -9,7 +9,7 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 
 use crate::encoding::{
     canonical_cbor_key_order, cbor_to_normal_value, json_to_normal_value, normal_value_to_cbor,
-    normal_value_to_json,
+    normal_value_to_json, retype_stored_float32,
 };
 use crate::error::{Error, Result};
 use crate::field::special::DOC_ID;
@@ -280,7 +280,12 @@ impl Document {
     /// current definition lacks (data written under an older schema version);
     /// such a field is kept by name with no CRDT type.
     pub fn load(&mut self, field: String, value: NormalValue) {
-        let crdt_type = self.crdt_type(&field).unwrap_or(CType::None);
+        let definition = self.collection.field_by_name(&field);
+        let crdt_type = definition.map_or(CType::None, |f| f.crdt_type);
+        let value = match definition {
+            Some(definition) => retype_stored_float32(value, &definition.kind),
+            None => value,
+        };
         self.values
             .insert(field, FieldValue::loaded(crdt_type, value));
     }

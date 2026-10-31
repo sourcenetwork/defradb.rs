@@ -224,7 +224,6 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             Method::GET => RoutePermission::Required(NodePermission::LensList),
             _ => RoutePermission::Required(NodePermission::LensList),
         },
-        "/api/v0/lens/reload" => RoutePermission::Required(NodePermission::CollectionPatch),
 
         // =====================================================================
         // Batch signing

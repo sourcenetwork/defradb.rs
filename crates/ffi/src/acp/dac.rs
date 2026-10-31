@@ -694,6 +694,7 @@ resources:
         let add_doc_result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 owner_did.as_ptr(),
                 add_doc.as_ptr(),
                 std::ptr::null(),
@@ -709,6 +710,7 @@ resources:
         let denied_read_result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 viewer_did.as_ptr(),
                 read_query.as_ptr(),
                 std::ptr::null(),
@@ -759,6 +761,7 @@ resources:
         let allowed_read_result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 viewer_did.as_ptr(),
                 read_query.as_ptr(),
                 std::ptr::null(),
@@ -778,6 +781,7 @@ resources:
         let denied_update_result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 viewer_did.as_ptr(),
                 update_mutation.as_ptr(),
                 std::ptr::null(),

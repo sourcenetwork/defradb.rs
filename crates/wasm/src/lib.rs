@@ -52,6 +52,8 @@
 //! await client.close();
 //! ```
 
+#[cfg(target_arch = "wasm32")]
+mod add_collection_tests;
 pub mod bindings;
 #[cfg(target_arch = "wasm32")]
 pub mod client;

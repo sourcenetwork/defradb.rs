@@ -2,13 +2,12 @@
 
 use axum::{extract::State, Json};
 
-use super::{map_p2p_bad_request, map_p2p_internal};
-use crate::error::HttpError;
+use super::map_p2p_internal;
+use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission, SyncBranchableRequest, SyncVersionsRequest};
-use crate::validation::validate_collection_name;
+use crate::router::{peer, AppState, NodePermission, SyncBranchableRequest, SyncVersionsRequest};
 
 /// List P2P collections.
 ///
@@ -20,82 +19,38 @@ pub async fn list_collections(
     identity: ExtractIdentity,
 ) -> Result<Json<Vec<String>>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pCollectionList).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    let collections = p2p.get_collections().await.map_err(map_p2p_internal)?;
-
-    Ok(Json(collections))
+    Ok(Json(
+        peer::list_p2p_collections(&*p2p)
+            .await
+            .map_err(peer_refused)?,
+    ))
 }
 
-/// Add collections to P2P (Go-compatible).
-///
-/// POST /api/v0/p2p/collections
-///
-/// Go DefraDB accepts raw array: `["collection1", "collection2"]`
-///
-/// Requires `P2pCollectionAdd` permission when NAC is enabled.
+/// Go's `POST /p2p/collections`.
 pub async fn add_collections(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(collections): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pCollectionAdd).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    if collections.is_empty() {
-        return Err(HttpError::BadRequest(
-            "at least one collection is required".into(),
-        ));
-    }
-
-    // Validate collection names
-    for col in &collections {
-        validate_collection_name(col)?;
-    }
-
-    p2p.add_collections(collections)
+    peer::add_p2p_collections(&*p2p, &collections)
         .await
-        .map_err(map_p2p_bad_request)?;
-
-    // Go returns 200 OK with empty body
-    Ok(())
+        .map_err(peer_refused)
 }
 
-/// Remove collections from P2P (Go-compatible).
-///
-/// DELETE /api/v0/p2p/collections
-///
-/// Go DefraDB accepts body JSON: `["collection1", "collection2"]`
-///
-/// Requires `P2pCollectionDelete` permission when NAC is enabled.
+/// Go's `DELETE /p2p/collections`.
 pub async fn remove_collections(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(collections): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pCollectionDelete).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    if collections.is_empty() {
-        return Err(HttpError::BadRequest(
-            "at least one collection is required".into(),
-        ));
-    }
-
-    // Validate collection names
-    for col in &collections {
-        validate_collection_name(col)?;
-    }
-
-    p2p.remove_collections(collections)
+    peer::delete_p2p_collections(&*p2p, &collections)
         .await
-        .map_err(map_p2p_bad_request)?;
-
-    // Go returns 200 OK with empty body
-    Ok(())
+        .map_err(peer_refused)
 }
 
 /// Sync a branchable collection from connected peers.
