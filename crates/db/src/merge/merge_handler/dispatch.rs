@@ -393,6 +393,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 }
             }
         }
+        if let Err(error) = &result {
+            self.db.merge_stats().record_drop(error);
+        }
         match result {
             Err(MergeError::RetryRejected(reason)) => Ok(MergeOutcome::rejected(reason)),
             Err(error) if error.disposition() == MergeErrorDisposition::Terminal => {

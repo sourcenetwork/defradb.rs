@@ -5,7 +5,61 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::merge::merge_handler::MergeError;
 use crate::retention::RetentionRefusal;
+
+/// Why a merge dropped an event (stored nothing), by Go's `merge drops`
+/// names. Go's `contextDone` has no counterpart: a Rust merge is not
+/// cancelled midway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropCause {
+    MissingBlock,
+    UniqueIndex,
+    RetryExhausted,
+    CollectionNotFound,
+    Other,
+}
+
+impl DropCause {
+    const ALL: [Self; 5] = [
+        Self::MissingBlock,
+        Self::UniqueIndex,
+        Self::RetryExhausted,
+        Self::CollectionNotFound,
+        Self::Other,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::MissingBlock => "missingBlock",
+            Self::UniqueIndex => "uniqueIndex",
+            Self::RetryExhausted => "retryExhausted",
+            Self::CollectionNotFound => "collectionNotFound",
+            Self::Other => "other",
+        }
+    }
+
+    /// The cause of a merge that failed with `error`, or `None` when the
+    /// failure is not a drop: a retention refusal is counted as a rejection.
+    pub fn of(error: &MergeError) -> Option<Self> {
+        use crate::error::Error;
+        let text = error.to_string();
+        Some(match error {
+            MergeError::RetentionRefused(_) => return None,
+            MergeError::UniqueConstraintViolation(_) => Self::UniqueIndex,
+            MergeError::RetryRejected(reason) if reason.contains("unique") => Self::UniqueIndex,
+            MergeError::Database(Error::Storage(storage::corekv::Error::TxnRetryExhausted(_))) => {
+                Self::RetryExhausted
+            }
+            MergeError::Database(Error::CollectionNotFound(_)) => Self::CollectionNotFound,
+            MergeError::MissingMetadata(_) if text.contains("Collection not found") => {
+                Self::CollectionNotFound
+            }
+            _ if text.contains("not found in blockstore") => Self::MissingBlock,
+            _ => Self::Other,
+        })
+    }
+}
 
 /// One node's merge and purge counters.
 #[derive(Debug, Default)]
@@ -16,6 +70,7 @@ pub struct MergeStats {
     rejected_below_floor: AtomicU64,
     rejected_no_height: AtomicU64,
     deleted: AtomicU64,
+    drops: [AtomicU64; DropCause::ALL.len()],
 }
 
 /// One interval's counts, by Go name.
@@ -27,6 +82,8 @@ pub struct MergeReport {
     pub rejected_below_floor: u64,
     pub rejected_no_height: u64,
     pub deleted: u64,
+    /// Non-zero drop causes, by Go name.
+    pub drops: Vec<(&'static str, u64)>,
 }
 
 impl MergeStats {
@@ -54,6 +111,13 @@ impl MergeStats {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// A merge dropped its event: it failed, storing nothing.
+    pub fn record_drop(&self, error: &MergeError) {
+        if let Some(cause) = DropCause::of(error) {
+            self.drops[cause as usize].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// A purge committed, removing `count` documents.
     pub fn record_purged(&self, count: u64) {
         self.deleted.fetch_add(count, Ordering::Relaxed);
@@ -68,13 +132,24 @@ impl MergeStats {
             rejected_below_floor: self.rejected_below_floor.swap(0, Ordering::Relaxed),
             rejected_no_height: self.rejected_no_height.swap(0, Ordering::Relaxed),
             deleted: self.deleted.swap(0, Ordering::Relaxed),
+            drops: DropCause::ALL
+                .iter()
+                .map(|cause| {
+                    (
+                        cause.name(),
+                        self.drops[*cause as usize].swap(0, Ordering::Relaxed),
+                    )
+                })
+                .filter(|(_, n)| *n > 0)
+                .collect(),
         }
     }
 }
 
 impl MergeReport {
-    /// Logs Go's `merge stats` line when any merge count is non-zero, and
-    /// its `purge stats` line when anything was purged.
+    /// Logs Go's `merge stats` line when any merge count is non-zero, its
+    /// `purge stats` line when anything was purged, and its `merge drops`
+    /// error line when any event was dropped.
     pub fn log(&self) {
         if self.creates
             + self.updates
@@ -95,12 +170,51 @@ impl MergeReport {
         if self.deleted > 0 {
             tracing::info!(deleted = self.deleted, "purge stats");
         }
+        if !self.drops.is_empty() {
+            tracing::error!(causes = ?self.drops, "merge drops");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_failures_map_to_go_drop_causes() {
+        let cause = |error: MergeError| DropCause::of(&error);
+        assert_eq!(
+            cause(MergeError::UniqueConstraintViolation("taken".into())),
+            Some(DropCause::UniqueIndex)
+        );
+        assert_eq!(
+            cause(MergeError::Storage(
+                "Linked block bafy not found in blockstore".into()
+            )),
+            Some(DropCause::MissingBlock)
+        );
+        assert_eq!(
+            cause(MergeError::MissingMetadata(
+                "Collection not found for collection_version_id: v9".into()
+            )),
+            Some(DropCause::CollectionNotFound)
+        );
+        assert_eq!(
+            cause(MergeError::Database(
+                crate::error::Error::CollectionNotFound("Users".into())
+            )),
+            Some(DropCause::CollectionNotFound)
+        );
+        assert_eq!(
+            cause(MergeError::BlockDecode("bad".into())),
+            Some(DropCause::Other)
+        );
+        assert_eq!(
+            cause(MergeError::RetentionRefused(RetentionRefusal::BelowFloor)),
+            None,
+            "a retention refusal is a rejection, not a drop"
+        );
+    }
 
     #[test]
     fn counts_go_under_their_names_and_reset_each_interval() {
@@ -122,6 +236,7 @@ mod tests {
                 rejected_below_floor: 1,
                 rejected_no_height: 2,
                 deleted: 4,
+                drops: Vec::new(),
             }
         );
         assert_eq!(stats.drain(), MergeReport::default());
