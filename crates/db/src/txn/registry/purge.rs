@@ -3,10 +3,14 @@
 
 use super::*;
 
-impl<S: Store + 'static> DbTransactionRegistry<S> {
+impl<S> DbTransactionRegistry<S>
+where
+    S: Store + 'static,
+{
     /// [`DB::purge_by_doc_ids_as`], run in the transaction `context` carries
     /// when it carries one: nothing is removed until that transaction
-    /// commits, and nothing at all if it is discarded.
+    /// commits, and nothing at all if it is discarded. A definition change
+    /// that commits first conflicts with it, as with any other write there.
     pub async fn purge_by_doc_ids_as(
         &self,
         context: &RequestContext,
@@ -33,6 +37,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     .get_collection(&name)
                     .await?
                     .ok_or_else(|| Error::CollectionNotFound(name.clone()))?;
+                txn.validate_collection_for_write(&collection).await?;
                 db.purge_documents(txn, &collection, &doc_ids, prune_history)
                     .await
             })
