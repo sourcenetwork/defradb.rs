@@ -26,3 +26,29 @@ impl PolicyLookup for StorePolicies {
             .map_err(|e| e.to_string())
     }
 }
+
+/// A remote ACP that owns the node's DAC policies (Vera): it creates them and
+/// answers for them. A node keeps a local copy of each one it uses.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait RemotePolicies: MaybeSendSync {
+    /// Create the YAML `policy` on the remote ACP for `creator`, a DID, and
+    /// return the ID the remote ACP gave it.
+    async fn add_policy(&self, creator: &str, policy: &str) -> Result<String, String>;
+
+    /// The remote ACP's policy `policy_id`; `Ok(None)` when it has none.
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String>;
+
+    /// Where the node's light client of the remote ACP stands.
+    fn light_client_status(&self) -> Result<LightClientStatus, String>;
+}
+
+/// The state of a node's light client of its remote ACP.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LightClientStatus {
+    pub height: u64,
+    pub module_state_root: String,
+    pub cache_entries: usize,
+    pub last_invalidation_height: u64,
+    pub connected: bool,
+}

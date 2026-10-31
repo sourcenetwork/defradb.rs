@@ -58,7 +58,7 @@ pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
-pub use policy_lookup::{PolicyLookup, StorePolicies};
+pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,

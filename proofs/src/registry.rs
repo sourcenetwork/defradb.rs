@@ -1291,6 +1291,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Add DAC policy",
+        name: "INV_NoPolicyWithoutPermission / INV_NoPolicyWithoutCreator / INV_NoInvalidPolicy / INV_NoPolicyWithoutAcp / INV_ReturnedIsKeptLocally / INV_NoSilentFailure / INV_GoOrder",
+        axis: Tla,
+        anchor: "crates/db/src/access/dac/mod.rs DB::add_dac_policy_as, DB::add_policy, parse, build; crates/db/src/access/dac/policies.rs DacPolicies::keep, DacPolicies::get; crates/acp/src/policy_lookup.rs RemotePolicies::add_policy",
+        model_ref: "MC_DacPolicyAdd_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,

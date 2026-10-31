@@ -23,9 +23,8 @@ pub(crate) use routes::{create_router_with_state_and_body_limits, BodyLimits};
 #[cfg(feature = "server")]
 pub use state::{AppState, AppStateBuilder};
 pub use traits::{
-    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations,
-    CollectionManagementOperations, CollectionOperations, DocumentAcpOperations, DumpOperations,
-    EncryptedIndexInfo, EncryptedIndexOperations, ImportResult, IndexFieldInfo, IndexInfo,
-    IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, PolicyInfo,
-    ViewOperations,
+    BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations,
+    ImportResult, IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NacStatusInfo,
+    NodeAcpOperations, NodePermission, ViewOperations,
 };

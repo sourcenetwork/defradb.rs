@@ -2,7 +2,6 @@
 
 use kovan::Atom;
 
-mod acp;
 mod backup;
 mod block;
 mod collections;
@@ -14,7 +13,6 @@ mod p2p;
 mod query;
 mod rest;
 
-pub use acp::{FailingMockAcpOperations, MockAcpOperations};
 pub use backup::{FailingMockBackupOperations, MockBackupOperations};
 pub use block::MockBlockOperations;
 pub use collections::MockCollectionManagementOperations;

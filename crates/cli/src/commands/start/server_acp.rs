@@ -13,9 +13,8 @@ use identity::Did;
 
 pub(super) struct DocumentAcpSetup {
     pub(super) document_acp: Arc<dyn acp::DocumentACP>,
-    pub(super) http_adapter: Option<Arc<dyn defra_http::router::AcpOperations>>,
-    /// Where `@policy` directives are checked when a collection is added.
-    pub(super) policy_lookup: Arc<dyn acp::PolicyLookup>,
+    /// The node's DAC policies, installed on the database.
+    pub(super) dac_policies: Arc<db::DacPolicies>,
 }
 
 impl Node {
@@ -28,7 +27,6 @@ impl Node {
         store: Arc<storage::DynStore>,
         zanzibar_store: Arc<dyn acp::ZanzibarStore>,
         event_bus: Arc<dyn events::Bus>,
-        nac_checker: Arc<dyn db::NodeAccessChecker>,
         edge: &edge::Edge,
     ) -> Result<DocumentAcpSetup> {
         #[cfg(feature = "vera")]
@@ -87,17 +85,12 @@ impl Node {
                     .map_err(|e| Error::InvalidConfig(format!("Vera event subscriber: {}", e)))?
             };
             let document_acp = Arc::new(document_acp);
-            let adapter = Arc::new(crate::vera_acp_adapter::VeraAcpAdapter::new(
-                document_acp.clone(),
-                zanzibar_store,
-                nac_checker,
-            ));
+            let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
 
             info!("Document ACP configured (Vera)");
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store),
-                http_adapter: Some(adapter.clone()),
-                policy_lookup: adapter,
+                dac_policies: Arc::new(dac_policies),
             });
         }
 
@@ -164,17 +157,12 @@ impl Node {
             );
 
             let document_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
-            let adapter = Arc::new(crate::vera_acp_adapter::VeraAcpAdapter::new(
-                document_acp.clone(),
-                zanzibar_store,
-                nac_checker,
-            ));
+            let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
 
             info!("Document ACP configured (vera.rs)");
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store),
-                http_adapter: Some(adapter.clone()),
-                policy_lookup: adapter,
+                dac_policies: Arc::new(dac_policies),
             });
         }
 
@@ -182,11 +170,7 @@ impl Node {
         let document_acp = Arc::new(acp::ZanzibarDocumentACP::new(zanzibar_store.clone()));
         Ok(DocumentAcpSetup {
             document_acp,
-            http_adapter: Some(crate::acp_adapter::AcpAdapter::new_arc(
-                zanzibar_store.clone(),
-                nac_checker,
-            )),
-            policy_lookup: Arc::new(acp::StorePolicies(zanzibar_store)),
+            dac_policies: Arc::new(db::DacPolicies::local(zanzibar_store)),
         })
     }
 

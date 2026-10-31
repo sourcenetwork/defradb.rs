@@ -293,6 +293,36 @@ fn provider_err(e: impl std::fmt::Display) -> acp::Error {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl acp::RemotePolicies for VeraDocumentACP {
+    async fn add_policy(&self, creator: &str, policy: &str) -> std::result::Result<String, String> {
+        VeraDocumentACP::add_policy(self, creator, policy)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get_policy(
+        &self,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, String> {
+        VeraDocumentACP::get_policy(self, policy_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    fn light_client_status(&self) -> std::result::Result<acp::LightClientStatus, String> {
+        let status = self.acp_light_client_status().map_err(|e| e.to_string())?;
+        Ok(acp::LightClientStatus {
+            height: status.height,
+            module_state_root: status.module_state_root,
+            cache_entries: status.cache_entries,
+            last_invalidation_height: status.last_invalidation_height,
+            connected: status.connected,
+        })
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
     fn bind_request(&self, context: &defra_core::RequestContext) -> Option<Arc<dyn DocumentACP>> {
         Some(Arc::new(Self {

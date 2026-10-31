@@ -9,9 +9,9 @@ use query::QueryLimits;
 use serde_json::Map;
 
 use super::{
-    AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
-    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
+    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Application state shared across handlers.
@@ -26,7 +26,6 @@ pub struct AppState {
     pub rest: Option<Arc<dyn RestOperations>>,
     pub p2p: Option<Arc<dyn P2POperations>>,
     pub manage: Option<Arc<dyn ManageRequester>>,
-    pub acp: Option<Arc<dyn AcpOperations>>,
     pub index: Option<Arc<dyn IndexOperations>>,
     pub encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     pub backup: Option<Arc<dyn BackupOperations>>,
@@ -52,7 +51,6 @@ impl std::fmt::Debug for AppState {
             .field("rest", &self.rest.as_ref().map(|_| "<RestOperations>"))
             .field("p2p", &self.p2p.as_ref().map(|_| "<P2POperations>"))
             .field("manage", &self.manage.as_ref().map(|_| "<ManageRequester>"))
-            .field("acp", &self.acp.as_ref().map(|_| "<AcpOperations>"))
             .field("index", &self.index.as_ref().map(|_| "<IndexOperations>"))
             .field(
                 "encrypted_index",
@@ -109,15 +107,6 @@ impl AppState {
         self.manage.as_ref().ok_or_else(|| {
             crate::error::HttpError::ServiceUnavailable(
                 "P2P management is not enabled. Start the server with P2P enabled to use this feature.".into()
-            )
-        })
-    }
-
-    /// Get ACP operations or return ServiceUnavailable error.
-    pub fn require_acp(&self) -> Result<&Arc<dyn AcpOperations>, crate::error::HttpError> {
-        self.acp.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "ACP (Access Control Policy) is not enabled. Start the server with ACP enabled to use this feature.".into()
             )
         })
     }
@@ -223,7 +212,6 @@ pub struct AppStateBuilder {
     rest: Option<Arc<dyn RestOperations>>,
     p2p: Option<Arc<dyn P2POperations>>,
     manage: Option<Arc<dyn ManageRequester>>,
-    acp: Option<Arc<dyn AcpOperations>>,
     index: Option<Arc<dyn IndexOperations>>,
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
@@ -253,7 +241,6 @@ impl AppStateBuilder {
             rest: None,
             p2p: None,
             manage: None,
-            acp: None,
             index: None,
             encrypted_index: None,
             backup: None,
@@ -294,12 +281,6 @@ impl AppStateBuilder {
     /// Set the remote management requester.
     pub fn with_manage(mut self, manage: Arc<dyn ManageRequester>) -> Self {
         self.manage = Some(manage);
-        self
-    }
-
-    /// Set ACP operations.
-    pub fn with_acp(mut self, acp: Arc<dyn AcpOperations>) -> Self {
-        self.acp = Some(acp);
         self
     }
 
@@ -414,7 +395,6 @@ impl AppStateBuilder {
             rest: self.rest,
             p2p: self.p2p,
             manage: self.manage,
-            acp: self.acp,
             index: self.index,
             encrypted_index: self.encrypted_index,
             backup: self.backup,

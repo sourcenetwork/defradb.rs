@@ -448,6 +448,13 @@ impl NodeBuilder {
                 context: None,
             }));
 
+            // A local document ACP is the node's own store: its routes run on
+            // the pool, as the node's own calls do.
+            let server = match node.remote_acp {
+                true => server,
+                false => server.with_local_acp(),
+            };
+
             // The node's own DID, however it was configured: a registered
             // identity, or one signing generated or was given a key for.
             let server = if let Some(did) = node.node_identity_did() {

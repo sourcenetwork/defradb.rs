@@ -160,6 +160,8 @@ regolith.workspace = true
 rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
+hex = "0.4"
+identity = { path = "../../crates/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
@@ -179,9 +181,7 @@ alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
 libc = "0.2"
-identity = { path = "../../crates/identity" }
 p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
-hex = "0.4"
 ciborium = { workspace = true }
 serial_test = "3"
 

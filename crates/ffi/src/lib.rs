@@ -50,7 +50,6 @@ pub mod mobile_config;
 pub mod nac_check;
 pub mod node;
 pub mod p2p;
-mod policy_yaml;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub mod query;

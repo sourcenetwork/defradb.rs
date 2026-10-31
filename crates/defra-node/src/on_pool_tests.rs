@@ -29,7 +29,13 @@ fn api_calls_make_no_storage_call_off_the_pool() {
         let node = Node::builder().build().await.unwrap();
         let before = off_pool_calls(&node);
 
-        let policy_id = node.add_dac_policy(OWNER, POLICY_YAML).await.unwrap();
+        let policy_id = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(OWNER))),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap();
         node.add_collection(&format!(
             "type Notes @policy(id: \"{policy_id}\", resource: \"notes\") {{ title: String }}"
         ))
