@@ -19,15 +19,23 @@ use crate::message::{DocumentInfo, PushLogBroadcast};
 use crate::sync::shinzo_batch::encode_batch;
 use crate::topics::DefraTopic;
 
-impl<S: Store> P2PHost<S> {
-    /// Keep a CAR that came inline with an update for `cid`'s head.
-    pub(crate) fn offer_inline_car(&mut self, cid: &[u8], car: Bytes) {
-        if self.shinzo.is_none() || car.is_empty() {
+impl<S> P2PHost<S>
+where
+    S: Store,
+{
+    /// Keep a CAR that came inline with an update for `cid`'s head, bound
+    /// to `offered_by`, the authenticated peer it came from. A CAR with no
+    /// authenticated sender is not kept.
+    pub(crate) fn offer_inline_car(&mut self, cid: &[u8], offered_by: Option<PeerId>, car: Bytes) {
+        let Some(peer) = offered_by.filter(|_| self.shinzo.is_some() && !car.is_empty()) else {
             return;
-        }
+        };
         match Cid::try_from(cid) {
             Ok(head) => {
-                if !self.shinzo_inline.offer(head, car, Instant::now()) {
+                if !self
+                    .shinzo_inline
+                    .offer(head, &peer.to_string(), car, Instant::now())
+                {
                     debug!(%head, "Inline CAR not kept: wrong root or over budget");
                 }
             }
@@ -35,7 +43,8 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
-    /// Answer a CAR request for `root` from an inline CAR, if one is kept:
+    /// Answer a CAR request for `root` to `peer_id` from an inline CAR that
+    /// peer offered, if one is kept:
     /// the CAR fetch response is raised here, with no network request.
     /// Hands `response` back when there is none.
     pub(crate) fn answer_from_inline_car(
@@ -44,7 +53,7 @@ impl<S: Store> P2PHost<S> {
         root: Cid,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) -> Option<tokio::sync::oneshot::Sender<Result<()>>> {
-        let Some(car) = self.shinzo_inline.take(&root) else {
+        let Some(car) = self.shinzo_inline.take(&root, &peer_id.to_string()) else {
             return Some(response);
         };
         let events = self.event_tx.clone();

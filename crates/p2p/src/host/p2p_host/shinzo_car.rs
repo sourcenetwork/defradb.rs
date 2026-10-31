@@ -27,7 +27,10 @@ pub(crate) struct ShinzoCars<S> {
     access: BlockAccess,
 }
 
-impl<S: Clone> Clone for ShinzoCars<S> {
+impl<S> Clone for ShinzoCars<S>
+where
+    S: Clone,
+{
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
@@ -36,7 +39,10 @@ impl<S: Clone> Clone for ShinzoCars<S> {
     }
 }
 
-impl<S: Store> ShinzoCars<S> {
+impl<S> ShinzoCars<S>
+where
+    S: Store,
+{
     pub(crate) fn new(store: S, access: BlockAccess) -> Self {
         Self { store, access }
     }
@@ -72,7 +78,10 @@ impl<S: Store> ShinzoCars<S> {
     }
 }
 
-impl<S: Store> P2PHost<S> {
+impl<S> P2PHost<S>
+where
+    S: Store,
+{
     /// Answer a Go CAR request, if the Shinzo wire is on.
     pub(super) fn serve_shinzo_cars(&mut self, peer_id: PeerId, request: CarRequest) {
         let Some(cars) = self.shinzo.clone() else {
