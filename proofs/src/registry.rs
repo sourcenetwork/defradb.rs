@@ -1305,6 +1305,25 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // KV snapshot import (#2440): one document at a time, blocks stored
+        // before the merge, no merge without the first version, a restore
+        // not judged, live writes kept across a rerun.
+        family: "KV snapshot",
+        name: "INV_MergedHasBlocks / INV_NoDocWithoutFirst / INV_NoLostLiveWrite / INV_Complete",
+        axis: Tla,
+        anchor: "crates/db/src/kv_snapshot/import.rs DB::import_kv_snapshot_as, DB::restore_document, reaches_genesis; crates/defra-core/src/merge.rs BlockMetadata::restore; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks",
+        model_ref: "MC_KvImport_{Green,Green_History,Red_StoreAfter,Red_NoGenesisCheck,Red_Overwrite,Red_Judged,Red_Silent}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "KV snapshot",
+        name: "decode_encode / decode_cut_length / decode_cut_key / decode_cut_value_length / decode_cut_value",
+        axis: Lean,
+        anchor: "crates/db/src/kv_snapshot/frame.rs write_entry, write_end, read_entries",
+        model_ref: "KvSnapshot (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,

@@ -174,3 +174,17 @@ A dropped event (one not stored) is counted under one cause: `missingBlock` (a b
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 `Collection.SaveManyDocuments(docs)` saves each document in order, as `SaveDocument` does: a document whose DocID names a stored document is updated with the fields it gives, any other is added. Every document is saved in one transaction, so either all are stored or none is. It is checked against the update-document node permission. Go's HTTP client and CLI refuse it with `ErrNotSupportedViaHTTP` (a stateless request cannot hold the shared transaction), so it is reached in-process only; Go has no tests for it, and these requirements are written from `internal/db/document.go` (`SaveManyDocuments`, `SaveDocument`).
+
+# `go.shinzo.kv_snapshot`: Export and import a collection's documents as a KV snapshot
+
+- **Parents:** ["go.shinzo"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+`DB.ExportDocKVs(collection, docIDs, w, datastoreOnly)` writes the named documents of one collection to a byte stream; `DB.ExportFieldMapping(collection)` writes the JSON that lets another node read it; `DB.ImportRawKVs(r)` and `DB.ImportRawKVsWithMapping(r, mapping)` load a stream into a node; `DB.RebuildCollectionIndexes(collection)` restores that collection's secondary indexes afterwards. Short IDs are local to a node, so a snapshot moves between nodes only through the field mapping. Go reaches these only in-process: its CLI `client kv export|import` always runs through the HTTP client, which refuses all five with `ErrNotSupportedViaHTTP`. Go has no tests for them, and these requirements are written from `internal/db/kv_export.go`, `internal/db/kv_import.go`, `cli/kv_export.go` and `cli/kv_import.go`. defradb.rs offers `DB::export_kv_snapshot_as` and `DB::import_kv_snapshot_as`; `tools/go-shinzo-kv` runs Go's side in-process for the interop tests.
+
+# `go.shinzo.kv_snapshot.store_options`: Shinzo's Badger tuning on regolith
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Go Shinzo hard-codes three Badger options in `node/store_badger.go`, none of them configurable: `ValueThreshold = 256` (values of 256 bytes or more go to the value log), `Compression = ZSTD` and `ZSTDCompressionLevel = 1`. All three are dropped. regolith 0.2.3 keeps values in its SSTables, with no key-value separation, so the value threshold has nothing to set. Its block compression is `Options::compression`, whose codecs are none, Snappy and LZ4 (the default), with no ZSTD codec and no level setting, so compression stays at regolith's LZ4 default. None of the three changes what a node stores or returns.
