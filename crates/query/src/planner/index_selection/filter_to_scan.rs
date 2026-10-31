@@ -279,6 +279,10 @@ pub fn filter_to_index_scan(
             .iter()
             .map(|v| normalize_for_index_field(v.clone(), first_field, collection_fields))
             .collect();
+        // The lookups run in the index's key order, as a range scan would,
+        // and backward when the scan is: the planner relies on the index for
+        // the requested order, so `_in: [55, 25]` must not come back as written.
+        sort_in_key_order(vs, first_field_descending, reverse);
     }
     lower_bound = match lower_bound {
         Bound::Inclusive(v) => {
@@ -579,4 +583,28 @@ pub fn or_filter_to_index_scan(
     }
 
     None
+}
+
+/// `values` in the order the index holds their keys (`descending` when its
+/// first field is), backward when the scan runs backward, each once. A value
+/// that does not encode keeps its place after those that do.
+fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
+    let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
+        .drain(..)
+        .map(|value| {
+            let key = storage::field_value::encode_field_value(Vec::new(), &value, descending).ok();
+            (key, value)
+        })
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    keyed.dedup_by(|(a, _), (b, _)| a.is_some() && a == b);
+    if reverse {
+        keyed.reverse();
+    }
+    values.extend(keyed.into_iter().map(|(_, value)| value));
 }
