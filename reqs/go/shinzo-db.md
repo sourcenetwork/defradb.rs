@@ -138,23 +138,6 @@ Before `Truncate`, a document's genesis field block is owned by its DocID. After
 
 24 `AddDocument` calls for 24 different `User` documents, started together, all return no error, and each document is stored as its own document: no two of them share an internal document number, and each reads back with its own values.
 
-# `go.shinzo.docid.no_neighbour_conflict`: Reading one document does not conflict with its neighbour
-
-- **Parents:** ["go.shinzo.docid"]
-- **Go-Tests:** ["internal/db/fetcher_overread_test.go::TestDocumentFetcher_ReadingOneDocDoesNotConflictWithItsNeighbour"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A transaction that reads document alice and updates her `age` to 10 commits successfully even though another writer rewrote every field of bob (the next document in the collection) and committed in between.
-
-# `go.shinzo.collection_id`: Collection IDs are deterministic
-
-- **Parents:** ["go.shinzo"]
-- **Go-Tests:** ["internal/db/collection_id_test.go::TestAddCollectionDeterministicIDsWithSharedNamePrefix"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "a collection's version ID is content-addressed and must be identical on a Go Shinzo node and a Rust node given the same SDL, or the nodes do not agree on the collection"
-
-Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same `VersionID` on every run (30 runs, one ID), even though `Foo` is a name prefix of `FooBar`.
-
 # `go.shinzo.unique_index`: Unique-index errors name only the writer
 
 - **Parents:** ["go.shinzo"]
