@@ -241,3 +241,61 @@ async fn holder_public_doc_id(
         None => Ok(None),
     }
 }
+impl IndexManager {
+    /// `error`, unless it is a unique violation of `index` by a local write:
+    /// then the error naming `doc`, the writer, and the `values` it wrote,
+    /// never the document holding them, which the writer may not be allowed
+    /// to read (`defra.index.unique_writer`).
+    pub(super) fn naming_the_writer(
+        error: Error,
+        doc: &document::Document,
+        index: &IndexType,
+        values: &[document::NormalValue],
+    ) -> Error {
+        let Some(doc_id) = doc.id().filter(|_| error.is_unique_constraint_violation()) else {
+            return error;
+        };
+        let fields = index
+            .description()
+            .fields
+            .iter()
+            .zip(values)
+            .map(|(field, value)| format!(", {}: {}", field.name, go_value(value)))
+            .collect();
+        Error::UniqueViolation {
+            doc_id: doc_id.to_string(),
+            fields,
+        }
+    }
+
+    /// [`IndexManager::naming_the_writer`] for an update, which Go also wraps
+    /// with the index's name.
+    pub(super) fn naming_the_updater(
+        error: Error,
+        doc: &document::Document,
+        index: &IndexType,
+        values: &[document::NormalValue],
+    ) -> Error {
+        match Self::naming_the_writer(error, doc, index, values) {
+            named @ Error::UniqueViolation { .. } => Error::UpdateIndex {
+                index: index.description().name.clone(),
+                source: Box::new(named),
+            },
+            other => other,
+        }
+    }
+}
+
+/// `value` as Go's `%v` prints it in an error. Scalars match Go's text, the
+/// part clients match on; other kinds print their Debug form.
+fn go_value(value: &document::NormalValue) -> String {
+    use document::NormalValue::*;
+    match value {
+        value if value.is_nil() => "<nil>".to_string(),
+        String(text) | NillableString(Some(text)) => text.clone(),
+        Int(n) | NillableInt(Some(n)) => n.to_string(),
+        Float64(n) | NillableFloat64(Some(n)) => n.to_string(),
+        Bool(b) | NillableBool(Some(b)) => b.to_string(),
+        other => format!("{other:?}"),
+    }
+}
