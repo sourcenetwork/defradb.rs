@@ -279,10 +279,6 @@ pub fn filter_to_index_scan(
             .iter()
             .map(|v| normalize_for_index_field(v.clone(), first_field, collection_fields))
             .collect();
-        // The lookups run in the index's key order, as a range scan would,
-        // and backward when the scan is: the planner relies on the index for
-        // the requested order, so `_in: [55, 25]` must not come back as written.
-        sort_in_key_order(vs, first_field_descending, reverse);
     }
     lower_bound = match lower_bound {
         Bound::Inclusive(v) => {
@@ -356,7 +352,13 @@ pub fn filter_to_index_scan(
             }
         }
     } else if has_in {
-        let wrapped_values = wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        let mut wrapped_values =
+            wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        // The lookups run in the index's key order, as a range scan would,
+        // and backward when the scan is: the planner relies on the index for
+        // the requested order, so `_in: [55, 25]` must not come back as written.
+        // Sorting after the JSON wrap orders them by the keys the index stores.
+        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
