@@ -100,6 +100,14 @@ impl Subscription {
         })
     }
 
+    /// [`recv`](Self::recv) through a shared reference, as
+    /// [`try_take`](Self::try_take) is to `try_recv`: each message goes to
+    /// exactly one of the tasks awaiting it.
+    #[cfg(feature = "channel")]
+    pub async fn take(&self) -> Option<Message> {
+        self.receiver.recv().await.ok()
+    }
+
     /// Convert into the underlying receiver for use with streams.
     #[cfg(feature = "channel")]
     pub fn into_receiver(self) -> Receiver<Message> {

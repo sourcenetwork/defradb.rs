@@ -4832,6 +4832,7 @@ dependencies = [
  "events",
  "hex",
  "identity",
+ "keyring 0.5.0",
  "kovan 0.2.2",
  "kovan-channel 0.2.2",
  "kovan-map 0.2.2",
