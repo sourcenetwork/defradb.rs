@@ -6,7 +6,9 @@ use bytes::Bytes;
 use p2p::message::PushLogRequest;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
-use storage::corekv::{IterOptions, Reader, Store};
+use storage::corekv::{Reader, Store};
+
+mod selection;
 
 use crate::database::DB;
 use crate::merge::push_docs_common::load_latest_composite_head_cids;
@@ -280,41 +282,13 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
             };
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("failed to iterate datastore: {}", e))?;
-
-            let mut doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("datastore close error: {}", e))?;
-
-            let mut doc_ids = Vec::new();
-            for short_id in doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection.as_ref().and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await?;
 
             'documents: for (doc_short_id, doc_id) in &doc_ids {
                 if !document_is_allowlisted(col_name, doc_id, allowlist_by_collection.as_ref()) {
@@ -696,41 +670,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
             tracing::debug!(collection = %col_name, index_count = encrypted_indexes.len(), "generating SE artifacts");
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("SE: failed to iterate datastore: {}", e))?;
-
-            let mut se_doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("SE: datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    se_doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("SE: datastore close error: {}", e))?;
-
-            let mut se_doc_ids = Vec::new();
-            for short_id in se_doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => se_doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("SE: doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let se_doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection
+                    .as_ref()
+                    .and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await
+            .map_err(|error| format!("SE: {error}"))?;
 
             let mut all_artifacts = Vec::new();
             for (doc_short_id, doc_id) in &se_doc_ids {
