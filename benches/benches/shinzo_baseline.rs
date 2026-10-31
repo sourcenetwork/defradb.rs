@@ -5,7 +5,8 @@
 //! `cargo bench -p benches --bench shinzo_baseline --profile release-fast`
 //! runs 1 and 16 writers, 128 documents each, three times. Override with
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
-//! DEFRA_BASELINE_REPETITIONS; DEFRA_BASELINE_REVISION names the tree measured.
+//! DEFRA_BASELINE_REPETITIONS; DEFRA_BASELINE_WORKLOADS (comma-separated)
+//! picks the workloads; DEFRA_BASELINE_REVISION names the tree measured.
 //! Each sample is a JSON line on stdout.
 //!
 //! - `merges`: each writer merges its own new documents, whose blocks are
@@ -13,6 +14,8 @@
 //! - `truncates`: one filtered truncate removes every writer's documents
 //!   (a collection runs one truncate at a time), deleting their history and
 //!   checking every block's owners; `writers` scales its size.
+//! - `signed_batch_creates`: each writer creates its documents with an
+//!   Ed25519 signing key, inside its own batch signing session.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -190,6 +193,54 @@ async fn truncates(writers: usize, operations: usize) -> Sample {
     sample
 }
 
+async fn signed_batch_creates(writers: usize, operations: usize) -> Sample {
+    use crypto::{Key, PrivateKey};
+    use defra_core::batch_signing::{self, BatchScope};
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    let fixture = Fixture::new().await;
+    let key = crypto::generate_ed25519().unwrap();
+    let public_key = key.public_key();
+    let signing = SigningConfig {
+        key_type: SigningKeyType::Ed25519,
+        private_key_bytes: key.raw_owned(),
+        public_key_bytes: public_key.raw_owned(),
+        public_key_hex: public_key
+            .raw()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        remote_signer: None,
+        signing_authorization: None,
+    };
+    let mutator = Arc::new(db::AutoCommitMutator::new(fixture.db.clone()));
+    let sample = measure(&fixture, writers, |writer| {
+        let session = format!("signed-batch-{writer}");
+        batch_signing::batch_start_with(&session, BatchScope::Composite);
+        let context = defra_core::RequestContext::default()
+            .with_signing(Some(signing.clone()))
+            .with_batch_session(Some(session));
+        let mutator = mutator.clone();
+        async move {
+            let mut latencies = Vec::with_capacity(operations);
+            for index in 0..operations {
+                let start = Instant::now();
+                mutator
+                    .create_as(&context, COLLECTION, document(writer, index))
+                    .await
+                    .unwrap();
+                latencies.push(start.elapsed());
+            }
+            latencies
+        }
+    })
+    .await;
+    for writer in 0..writers {
+        let collected = batch_signing::batch_take_cids(&format!("signed-batch-{writer}")).unwrap();
+        assert_eq!(collected.len(), operations, "one composite per document");
+    }
+    sample
+}
+
 async fn measure<W, F>(fixture: &Fixture, writers: usize, mut writer: W) -> Sample
 where
     W: FnMut(usize) -> F,
@@ -272,7 +323,9 @@ fn main() {
         })
     );
     let rt = common::owned_runtime();
-    for workload in ["merges", "truncates"] {
+    let workloads = std::env::var("DEFRA_BASELINE_WORKLOADS")
+        .unwrap_or_else(|_| "merges,truncates,signed_batch_creates".into());
+    for workload in workloads.split(',') {
         let mut groups: Vec<Group> = Vec::new();
         for &count in &writers {
             let mut values: Vec<Vec<f64>> = Vec::new();
@@ -280,7 +333,9 @@ fn main() {
                 let sample = rt.block_on(async {
                     match workload {
                         "merges" => merges(count, operations).await,
-                        _ => truncates(count, operations).await,
+                        "truncates" => truncates(count, operations).await,
+                        "signed_batch_creates" => signed_batch_creates(count, operations).await,
+                        other => panic!("unknown workload {other}"),
                     }
                 });
                 let metrics = metrics(&sample);

@@ -157,8 +157,21 @@ impl RequestContext {
     }
 
     /// The key this request signs the blocks it writes with; unsigned blocks
-    /// without one.
+    /// without one. A request whose batch signing session is collecting
+    /// writes its blocks unsigned, as Go Shinzo does: the batch signature
+    /// covers them. A session key with no session started signs as usual.
     pub fn signing(&self) -> Option<&SigningConfig> {
+        let batched = self
+            .0
+            .batch_session
+            .as_deref()
+            .is_some_and(crate::batch_signing::batch_active);
+        self.0.signing.as_ref().filter(|_| !batched)
+    }
+
+    /// The signing key as set, batch session or not.
+    #[cfg(any(test, feature = "ambient"))]
+    pub(crate) fn configured_signing(&self) -> Option<&SigningConfig> {
         self.0.signing.as_ref()
     }
 
@@ -338,6 +351,31 @@ mod tests {
             Some("did:key:thread")
         );
         crate::current_identity::set_current_identity(None);
+    }
+
+    #[test]
+    fn a_batch_session_writes_blocks_unsigned() {
+        let signed = RequestContext::default().with_signing(Some(SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![1; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        assert!(signed.signing().is_some());
+        let session = "request-context-batch-session";
+        let batched = signed.with_batch_session(Some(session.to_string()));
+        assert!(
+            batched.signing().is_some(),
+            "a session key with no session started signs"
+        );
+        crate::batch_signing::batch_start(session);
+        assert!(batched.signing().is_none());
+        assert!(batched.configured_signing().is_some());
+        assert!(batched.clone().with_batch_session(None).signing().is_some());
+        crate::batch_signing::batch_take_cids(session);
+        assert!(batched.signing().is_some(), "a taken session signs again");
     }
 
     #[test]

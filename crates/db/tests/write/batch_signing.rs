@@ -158,7 +158,6 @@ fn create_discard_collects_no_cids() {
 /// the batch signature covers them instead.
 #[test]
 #[mantra_macros::req_test("go.shinzo.signing.batch_collects_composites")]
-#[ignore = "#2482: a batched write still signs each block"]
 fn a_batched_signed_write_stores_unsigned_blocks_and_collects_its_composite() {
     use crypto::{Key, PrivateKey};
     use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};

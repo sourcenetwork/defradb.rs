@@ -612,6 +612,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A batch session writes its blocks unsigned, as Go Shinzo does
+        // (#2482); crates/db/tests/write/batch_signing.rs checks the stored
+        // block. Boundary, like the family's other rows.
+        family: "Block integrity / signatures",
+        name: "batched_blocks_unsigned / unbatched_unchanged / composites_collected",
+        axis: Lean,
+        anchor: "crates/defra-core/src/request_context.rs RequestContext::signing; crates/db/src/block/builder/batch_signing.rs collect_on_commit",
+        model_ref: "BatchBlockSigning (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // The unauthorized-denied leg is now observable: a serve-side
         // `tracing::warn!("DEK release DENIED")` at the KMS policy check makes the
         // previously-silent denial loggable, and the behavioral test reads node0's
