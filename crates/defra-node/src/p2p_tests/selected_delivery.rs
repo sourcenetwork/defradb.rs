@@ -72,6 +72,7 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
                 .unwrap()
                 .push_documents_to_peer(&peer, documents)
                 .await;
+            let acknowledged_at = Instant::now();
             let status = receiver.p2p().unwrap().sync_status().await.unwrap();
             tracing::info!(
                 elapsed_ms = started.elapsed().as_millis(),
@@ -83,8 +84,13 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
                 result.is_ok(),
                 "selected transfer must resume after a receiver pause: {result:?}"
             );
-            let deadline = Instant::now() + Duration::from_secs(10);
-            loop {
+            // A PushLog ACK admits receiver-owned work; it does not certify a
+            // synchronous merge. This healthy loopback fixture must keep making
+            // fresh progress and finish within the existing recovery window.
+            let recovery_deadline = acknowledged_at
+                + Duration::from_secs(p2p::sync::PENDING_RECOVERY_WORST_CASE_SECS);
+            let clock = edge::testing::edge();
+            let read = || async {
                 let rows = receiver
                     .execute(&format!(
                         "{{ SelectedPushNote(limit: {}) {{ _docID }} }}",
@@ -98,14 +104,52 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
                     .iter()
                     .map(|row| row["_docID"].as_str().unwrap().to_owned())
                     .collect();
-                if actual == expected {
-                    break;
+                assert!(actual.is_subset(&expected), "unexpected merged document IDs");
+                actual
+            };
+            let completed = clock
+                .timeout(recovery_deadline.saturating_duration_since(Instant::now()), async {
+                    let mut seen = BTreeSet::new();
+                    loop {
+                        let progress = clock
+                            .timeout(Duration::from_secs(5), async {
+                                loop {
+                                    let actual = read().await;
+                                    if actual == expected
+                                        || actual.difference(&seen).next().is_some()
+                                    {
+                                        break actual;
+                                    }
+                                    clock.sleep(Duration::from_millis(20)).await;
+                                }
+                            })
+                            .await;
+                        let actual = match progress {
+                            Ok(actual) => actual,
+                            Err(_) => {
+                                let actual = read().await;
+                                if actual != expected
+                                    && actual.difference(&seen).next().is_none()
+                                {
+                                    let status = receiver.p2p().unwrap().sync_status().await.unwrap();
+                                    panic!("receiver made no fresh merge progress for five seconds: expected={count} actual={} previously_seen={} status={status}", actual.len(), seen.len());
+                                }
+                                actual
+                            }
+                        };
+                        if actual == expected {
+                            break;
+                        }
+                        seen.extend(actual);
+                    }
+                })
+                .await;
+            if completed.is_err() {
+                let actual = read().await;
+                if actual != expected {
+                    let status = receiver.p2p().unwrap().sync_status().await.unwrap();
+                    panic!("selected transfer did not converge within the native recovery window: expected={count} actual={} status={status}", actual.len());
                 }
-                assert!(
-                    Instant::now() < deadline,
-                    "acknowledged documents did not merge"
-                );
-                edge::testing::edge().sleep(Duration::from_millis(20)).await;
             }
             sender.shutdown().await.unwrap();
             receiver.shutdown().await.unwrap();
