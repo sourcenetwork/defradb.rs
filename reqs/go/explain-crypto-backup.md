@@ -215,7 +215,7 @@ After an encrypted doc is replicated and SE sync completes, `encrypted_User(filt
 - **Scope:** "replicator restart test: file-backed database only; ACP test: local DAC only"
 - **Go-Bug-Suspect:** "peer_acp test asserts the replicator has no commits for the doc, with a comment saying this should change to encrypted-delta commits once a dedicated replication permission exists."
 
-Docs added while the replicator is offline are indexed after it restarts and are then found by `encrypted_User`; truncating the doc on the replicator empties its `encrypted_User` result; a replicator without ACP access to a private doc still answers the source's encrypted query but holds neither the doc nor its commits.
+Docs added while the replicator is offline are indexed after it restarts and are then found by `encrypted_User`; after the replicator (node 1) truncates the document, the source (node 0) queries `encrypted_User`, which goes to the replicator, and gets an empty `docIDs`; a replicator without ACP access to a private doc still answers the source's encrypted query but holds neither the doc nor its commits.
 
 # `go.signature`: Block signing
 
