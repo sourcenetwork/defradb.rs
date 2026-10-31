@@ -1,15 +1,18 @@
 use super::{Error, Result};
 use serde_json::Value;
 
-use crate::executor::{QueryResponse, TXN_CONFLICT_ERROR_CODE};
+use crate::executor::{QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE};
 
 /// The `_docID` of each document mutation `op` on `collection` returned, or
 /// the request's first error with its text unchanged.
 pub(super) fn doc_ids(response: QueryResponse, op: &str, collection: &str) -> Result<Vec<String>> {
     if let Some(error) = response.errors.first() {
-        return Err(match error.code() == Some(TXN_CONFLICT_ERROR_CODE) {
-            true => Error::Conflict,
-            false => Error::Request(error.message.clone()),
+        return Err(match error.code() {
+            Some(TXN_CONFLICT_ERROR_CODE) => Error::Conflict,
+            Some(SECONDARY_RELATION_ERROR_CODE) => {
+                Error::SecondaryRelation(quoted_field(&error.message))
+            }
+            _ => Error::Request(error.message.clone()),
         });
     }
     let key = format!("{op}_{collection}");
@@ -62,4 +65,13 @@ pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec
                 .ok_or(Error::DocumentNotFound)
         })
         .collect()
+}
+
+/// The field a GraphQL input error names in `In field "<name>"`.
+fn quoted_field(message: &str) -> String {
+    message
+        .split_once("In field \"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(field, _)| field.to_owned())
+        .unwrap_or_default()
 }
