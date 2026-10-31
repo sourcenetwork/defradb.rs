@@ -62,6 +62,11 @@ pub enum Error {
     #[error("invalid document: {0}")]
     InvalidDocument(String),
 
+    /// A local write of a value a unique index already holds, naming the
+    /// writer ([`crate::index::Error::UniqueViolation`]).
+    #[error("{0}")]
+    UniqueViolation(String),
+
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
 
@@ -158,6 +163,9 @@ impl From<crate::index::Error> for Error {
                 Error::InvalidDocument(other.to_string())
             }
             crate::index::Error::Other(msg) => Error::Other(msg),
+            other @ crate::index::Error::UniqueViolation { .. } => {
+                Error::UniqueViolation(other.to_string())
+            }
         }
     }
 }
@@ -190,6 +198,7 @@ impl Error {
 
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
+            || matches!(self, Error::UniqueViolation(_))
     }
 
     pub fn is_storage_full(&self) -> bool {
@@ -231,7 +240,9 @@ impl Error {
 }
 
 pub fn index_write_query_error(operation: &str, error: Error) -> query::error::QueryError {
-    if error.is_unique_constraint_violation() {
+    if let Error::UniqueViolation(message) = error {
+        query::error::QueryError::execution(message)
+    } else if error.is_unique_constraint_violation() {
         query::error::QueryError::execution(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE)
     } else {
         storage_query_error(error, &format!("{operation} error"))

@@ -32,6 +32,13 @@ pub enum Error {
 
     #[error("{0}")]
     Other(String),
+
+    /// A local write of a value another live document already indexes. It
+    /// names the writer and the values it wrote, never the document holding
+    /// the value, which the writer may not be allowed to read (Go Shinzo's
+    /// text).
+    #[error("can not index a doc's field(s) that violates unique index. DocID: {doc_id}{fields}")]
+    UniqueViolation { doc_id: String, fields: String },
 }
 
 impl Error {
@@ -39,5 +46,6 @@ impl Error {
     /// storage failure that should retry.
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
+            || matches!(self, Error::UniqueViolation { .. })
     }
 }

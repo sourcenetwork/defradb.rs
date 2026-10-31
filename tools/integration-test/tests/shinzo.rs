@@ -16,3 +16,6 @@ mod cursor;
 
 #[path = "shinzo/merge.rs"]
 mod merge;
+
+#[path = "shinzo/unique_index.rs"]
+mod unique_index;

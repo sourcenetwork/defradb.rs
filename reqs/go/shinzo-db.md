@@ -64,11 +64,3 @@ Each block records the DocIDs that own it. Field blocks are content-addressed an
 
 Before `Truncate`, a document's genesis field block is owned by its DocID. After `Truncate`, the DocID no longer resolves on this node and the block has no owner.
 
-# `go.shinzo.unique_index`: Unique-index errors name only the writer
-
-- **Parents:** ["go.shinzo"]
-- **Go-Tests:** ["internal/db/index_backfill_test.go::TestSaveUniqueKey_DoesNotNameTheDocumentHoldingTheValue"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read.
-
