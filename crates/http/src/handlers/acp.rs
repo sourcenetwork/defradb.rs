@@ -1,14 +1,9 @@
 //! ACP (Access Control Policy) endpoint handlers.
 //!
-//! These handlers provide HTTP access to ACP policy management:
-//! - Add policy
-//! - List policies
-//! - Get policy by ID
-//!
-//! All endpoints enforce NAC permissions when NAC is enabled.
-//!
-//! Note: The add_policy endpoint accepts text/plain body to match Go DefraDB behavior.
-//! Go DefraDB reads the raw policy text from the request body, not JSON.
+//! The policy handlers read the request and call the core, which checks the
+//! caller's node permissions and owns every error:
+//! - Add policy (Go's route; the raw policy text is the body, as Go sends it)
+//! - List policies, get a policy by ID, the light client status (Rust only)
 
 use axum::{
     extract::{Path, State},
@@ -20,7 +15,7 @@ use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
-use crate::router::{AcpLightClientStatus, AppState, NodePermission, PolicyInfo};
+use crate::router::{AppState, NodePermission};
 
 /// Response for adding a policy.
 #[derive(Debug, Clone, Serialize)]
@@ -29,97 +24,85 @@ pub struct AddPolicyResponse {
     pub policy_id: String,
 }
 
-/// Add a new ACP policy.
+/// A policy as the list and get routes answer it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyInfo {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<serde_json::Value>,
+}
+
+impl From<&acp::Policy> for PolicyInfo {
+    fn from(policy: &acp::Policy) -> Self {
+        Self {
+            id: policy.id.clone(),
+            name: Some(policy.name.clone()),
+            description: policy.attributes.get("description").cloned(),
+            resources: serde_json::to_value(&policy.resources).ok(),
+        }
+    }
+}
+
+/// Add a DAC policy. Go's `acpHandler.AddDACPolicy`.
 ///
 /// POST /api/v1/acp/document/policy
-///
-/// Accepts raw policy text in the request body (text/plain), matching Go DefraDB.
-/// The policy should be valid YAML or JSON following the ACP policy specification.
-///
-/// Requires `DacPolicyAdd` permission when NAC is enabled.
 pub async fn add_policy(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     body: String,
 ) -> Result<Json<AddPolicyResponse>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacPolicyAdd).await?;
-
-    let _creator = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("policy creator can not be empty".into()))?;
-
-    let acp = bound(state.require_acp()?, &identity.context());
-
-    if body.trim().is_empty() {
-        return Err(HttpError::BadRequest("policy data can not be empty".into()));
-    }
-
-    let policy_id = acp
-        .add_policy(&body)
-        .await
-        .map_err(http_error_from_backend_message)?;
-
+    let policy_id = state
+        .executor
+        .add_dac_policy_as(&identity.context(), &body)
+        .await?;
     Ok(Json(AddPolicyResponse { policy_id }))
 }
 
-/// List all ACP policies.
+/// List every DAC policy the node holds.
 ///
 /// GET /api/v0/acp/policy
-///
-/// Requires `DacStatus` permission when NAC is enabled.
 pub async fn list_policies(
     State(state): State<AppState>,
     identity: ExtractIdentity,
 ) -> Result<Json<Vec<PolicyInfo>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacStatus).await?;
-
-    let acp = bound(state.require_acp()?, &identity.context());
-
-    let policies = acp.list_policies().await.map_err(HttpError::Internal)?;
-
-    Ok(Json(policies))
+    let policies = state
+        .executor
+        .list_dac_policies_as(&identity.context())
+        .await?;
+    Ok(Json(policies.iter().map(PolicyInfo::from).collect()))
 }
 
-/// Get a specific ACP policy by ID.
+/// Get a DAC policy by ID.
 ///
 /// GET /api/v0/acp/policy/:id
-///
-/// Requires `DacStatus` permission when NAC is enabled.
 pub async fn get_policy(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Path(id): Path<String>,
 ) -> Result<Json<PolicyInfo>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacStatus).await?;
-
-    let acp = bound(state.require_acp()?, &identity.context());
-
-    let policy = acp
-        .get_policy(&id)
-        .await
-        .map_err(HttpError::Internal)?
+    let policy = state
+        .executor
+        .get_dac_policy_as(&identity.context(), &id)
+        .await?
         .ok_or_else(|| HttpError::NotFound(format!("Policy '{}' not found", id)))?;
-
-    Ok(Json(policy))
+    Ok(Json(PolicyInfo::from(&policy)))
 }
 
-/// Get ACP light client status.
+/// Get the remote ACP's light client status.
 ///
 /// GET /api/v0/acp/status
-///
-/// Requires `DacStatus` permission when NAC is enabled.
 pub async fn get_status(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<AcpLightClientStatus>, HttpError> {
-    require_permission(&state, &identity, NodePermission::DacStatus).await?;
-
-    let acp = bound(state.require_acp()?, &identity.context());
-    let status = acp
-        .get_light_client_status()
-        .await
-        .map_err(HttpError::ServiceUnavailable)?;
-
+) -> Result<Json<acp::LightClientStatus>, HttpError> {
+    let status = state
+        .executor
+        .acp_light_client_status_as(&identity.context())
+        .await?;
     Ok(Json(status))
 }
 
@@ -396,8 +379,6 @@ mod tests {
             name: Some("Test Policy".to_string()),
             description: None,
             resources: None,
-            actor: None,
-            creation_time: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("policy-123"));

@@ -4,14 +4,11 @@
 //! Go's cbindings/schema.go behavior.
 
 use std::ffi::c_char;
-use std::sync::Arc;
 
 use identity::Did;
 
 use crate::ffi_entry;
 use crate::helpers::{get_node_database, require_c_str};
-use crate::policy_yaml;
-use crate::state::PolicyStore;
 use crate::types::FfiResult;
 use crate::{ffi_async, try_ffi};
 
@@ -170,35 +167,6 @@ unsafe fn collections(
             .map_err(|e| e.to_string())?;
         serde_json::to_string(&collections).map_err(|e| format!("failed to serialize result: {e}"))
     })
-}
-
-/// Validate that a collection's policy references a valid, well-formed policy.
-pub(crate) fn validate_collection_policy(
-    policy: &schema::PolicyDescription,
-    store: &Arc<PolicyStore>,
-) -> Result<(), String> {
-    // 1. Check policy exists in the store
-    let policy_yaml = store
-        .get_policy(&policy.id)
-        .ok_or("policyID specified does not exist with acp")?;
-
-    // 2. Parse the YAML to inspect structure
-    let parsed = policy_yaml::parse_policy_yaml(&policy_yaml)
-        .map_err(|e| format!("failed to parse policy: {}", e))?;
-
-    // 3. Check the referenced resource exists
-    let resource = parsed
-        .find_resource(&policy.resource_name)
-        .ok_or("resource does not exist on the specified policy")?;
-
-    // 4. Check required permissions (read, update, delete)
-    for required in &["read", "update", "delete"] {
-        if !resource.has_permission(required) {
-            return Err("resource is missing required permission on policy.".to_string());
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

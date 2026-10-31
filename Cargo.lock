@@ -4854,7 +4854,6 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
- "vera",
  "workers",
  "zeroize",
 ]

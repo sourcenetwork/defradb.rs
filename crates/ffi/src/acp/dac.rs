@@ -1,16 +1,12 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
-use acp::StorePolicyOptions;
 
 use crate::helpers::{get_rt, require_c_str};
 use crate::nac_check::check_nac_for_node;
-use crate::policy_yaml::{
-    check_duplicate_yaml_keys, parse_policy_yaml, validate_policy_expressions,
-};
 use crate::state::NODES;
-use crate::types::{c_str_to_string, FfiResult};
-use crate::{ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::types::FfiResult;
+use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 
 async fn publish_latest_document_update(
     database: &crate::state::FfiDatabase,
@@ -32,38 +28,39 @@ async fn publish_latest_document_update(
 
 /// Resolve managing relations for a given relation within a policy resource.
 ///
-/// Loads the policy YAML, finds the resource, validates the relation exists,
-/// and returns the list of managing relations.
-pub(crate) fn resolve_managing_relations(
-    policy_store: &crate::state::PolicyStore,
+/// Reads the policy from the node's DAC policies, finds the resource,
+/// validates the relation exists, and returns the list of managing relations.
+pub(crate) async fn resolve_managing_relations(
+    database: &crate::state::FfiDatabase,
     policy_id: &str,
     resource_name: &str,
     relation: &str,
 ) -> Result<Vec<String>, String> {
-    let mut managing_relations: Vec<String> = Vec::new();
-    if let Some(policy_yaml) = policy_store.get_policy(policy_id) {
-        if let Ok(parsed) = crate::policy_yaml::parse_policy_yaml(&policy_yaml) {
-            if let Some(resource) = parsed.find_resource(resource_name) {
-                if !resource.has_relation(relation) {
-                    return Err(format!(
-                        "relation '{}' not found in policy resource '{}'",
-                        relation, resource_name
-                    ));
-                }
-                managing_relations = resource
-                    .get_managers_for_relation(relation)
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect();
-            }
-        }
+    let Some(policies) = database.dac_policies() else {
+        return Ok(Vec::new());
+    };
+    let Some(policy) = policies.get(policy_id).await.map_err(|e| e.to_string())? else {
+        return Ok(Vec::new());
+    };
+    let Some(resource) = policy.get_resource(resource_name) else {
+        return Ok(Vec::new());
+    };
+    if resource.get_relation(relation).is_none() {
+        return Err(format!(
+            "relation '{}' not found in policy resource '{}'",
+            relation, resource_name
+        ));
     }
-    Ok(managing_relations)
+    Ok(policy
+        .get_managers_for_relation(resource_name, relation)
+        .into_iter()
+        .map(str::to_string)
+        .collect())
 }
 
-/// Add a DAC policy.
+/// Add a DAC policy, Go's `AddDACPolicy`, with `identity_did` as its
+/// creator. The core checks node access and the policy.
 ///
-/// Accepts a policy definition in YAML or JSON format.
 /// Returns a JSON object with the policy ID:
 /// ```json
 /// { "PolicyID": "sha256_hash_of_policy" }
@@ -71,151 +68,33 @@ pub(crate) fn resolve_managing_relations(
 ///
 /// # Safety
 ///
-/// `policy` must be a valid null-terminated UTF-8 string containing
-/// the policy definition in YAML or JSON format.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string;
+/// `policy` must be a valid null-terminated UTF-8 string containing the
+/// policy definition in YAML or JSON format.
 #[no_mangle]
 pub unsafe extern "C" fn add_dac_policy(
     node_ptr: usize,
-    _identity_did: *const c_char,
+    identity_did: *const c_char,
     policy: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            _identity_did,
-            NodePermission::DacPolicyAdd
-        ));
-
-        let policy_str = try_ffi!(require_c_str(policy, "policy"));
-
-        let identity_str = c_str_to_string(_identity_did).unwrap_or_default();
-
-        if identity_str.is_empty() {
-            return FfiResult::error("policy creator can not be empty");
-        }
-
-        // Check for empty/null policy data
-        if policy_str.is_empty() {
-            return FfiResult::error("policy data can not be empty");
-        }
-
-        // Step 1: Check for duplicate YAML map keys (Go rejects these via YAMLToJSONStrict)
-        if let Err(e) = check_duplicate_yaml_keys(&policy_str) {
-            return FfiResult::error(e);
-        }
-
-        // Step 2: Parse the policy YAML
-        let parsed = match parse_policy_yaml(&policy_str) {
-            Ok(p) => p,
-            Err(e) => return FfiResult::error(e),
-        };
-
-        // Step 3: Validate name is present (Go's BasicRequirement)
-        if parsed.name.is_empty() {
-            return FfiResult::error("name required");
-        }
-
-        // Step 4: Validate permission expressions
-        if let Err(e) = validate_policy_expressions(&parsed) {
-            return FfiResult::error(e);
-        }
-
-        // Step 5: Store policy - route through Vera when configured, else local
-        #[cfg(feature = "vera")]
-        let sh_acp = match NODES.get(node_ptr, |state| state.vera_acp.clone()) {
-            Some(opt) => opt,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        #[cfg(feature = "vera")]
-        if let Some(sh_acp) = sh_acp {
-            // Vera mode: submit MsgCreatePolicy transaction, network work.
-            let result = crate::helpers::block_on(try_ffi!(get_rt()), async {
-                let policy_id = sh_acp
-                    .add_policy(&identity_str, &policy_str)
-                    .await
-                    .map_err(|e| format!("Vera create policy failed: {}", e))?;
-                Ok::<String, String>(policy_id)
-            });
-            return match result {
-                Ok(policy_id) => {
-                    // Cache policy on all live FFI nodes so multi-node Vera tests
-                    // can validate schemas that reference a policy created by another node.
-                    NODES.for_each(|state| {
-                        state.policy_store.store_policy(&policy_id, &policy_str);
-                    });
-                    FfiResult::success(serde_json::json!({ "PolicyID": policy_id }).to_string())
-                }
-                Err(e) => FfiResult::error(e),
-            };
-        }
-
-        {
-            // Local mode: persist the parsed policy into the same Zanzibar store
-            // used by document ACP so custom relations and permissions are enforced.
-            let (policy_store, local_zanzibar_store) = match NODES.get(node_ptr, |state| {
-                (state.policy_store.clone(), state.local_zanzibar_store.clone())
-            }) {
-                Some(tuple) => tuple,
-                None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-            };
-
-            let Some(local_zanzibar_store) = local_zanzibar_store else {
-                return FfiResult::error("local ACP backend is not available");
-            };
-
-            let counter_store = std::sync::Arc::clone(&local_zanzibar_store);
-            let counter = match crate::call::on_node(node_ptr, move || async move {
-                counter_store
-                    .next_policy_counter()
-                    .await
-                    .map_err(|e| e.to_string())
-            }) {
-                Ok(counter) => counter,
-                Err(e) => {
-                    return FfiResult::error(format!("failed to advance policy counter: {}", e))
-                }
-            };
-
-            let policy = match acp::policy_yaml::build_policy(&parsed, counter) {
-                Ok(policy) => policy,
-                Err(e) => return FfiResult::error(format!("invalid policy: {}", e)),
-            };
-            let policy_id = policy.id.clone();
-            policy_store.store_policy(&policy_id, &policy_str);
-
-            let options = StorePolicyOptions::new()
-                .with_validation()
-                .with_dpi_enforcement();
-
-            let stored_id = policy_id.clone();
-            let result = crate::call::on_node(node_ptr, move || async move {
-                local_zanzibar_store
-                    .store_policy_with_options(&policy, &options)
-                    .await
-                    .map_err(|e| format!("failed to store policy: {}", e))?;
-                Ok::<String, String>(
-                    serde_json::json!({
-                        "PolicyID": stored_id
-                    })
-                    .to_string(),
-                )
-            });
-
-            match result {
-                Ok(json) => FfiResult::success(json),
-                Err(e) => {
-                    policy_store.remove_policy(&policy_id);
-                    FfiResult::error(e)
-                }
-            }
-        }
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let policy = try_ffi!(require_c_str(policy, "policy"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(node_ptr, {
+            let policy_id = runner
+                .add_dac_policy_as(&context, &policy)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "PolicyID": policy_id }).to_string())
+        })
     }
 }
 
 /// Get a DAC policy by ID.
 ///
-/// Returns a JSON object with the policy content, or null if not found.
+/// Returns a JSON object with the policy's ID, name, description and
+/// resources, or null if no ACP has it.
 ///
 /// # Safety
 ///
@@ -223,50 +102,54 @@ pub unsafe extern "C" fn add_dac_policy(
 #[no_mangle]
 pub unsafe extern "C" fn get_dac_policy(node_ptr: usize, policy_id: *const c_char) -> FfiResult {
     ffi_entry! {
-        let policy_id_str = try_ffi!(require_c_str(policy_id, "policy_id"));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                match state.policy_store.get_policy(&policy_id_str) {
-                    Some(policy) => serde_json::json!({
-                        "id": policy_id_str,
-                        "policy": policy
-                    })
-                    .to_string(),
-                    None => serde_json::json!(null).to_string(),
-                }
-            })
-            .ok_or_else(|| ERR_INVALID_NODE_HANDLE.to_string());
-
-        match result {
-            Ok(json) => FfiResult::success(json),
-            Err(e) => FfiResult::error(e),
-        }
+        let policy_id = try_ffi!(require_c_str(policy_id, "policy_id"));
+        let context = try_ffi!(node_context(node_ptr));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(node_ptr, {
+            let policy = runner
+                .get_dac_policy_as(&context, &policy_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(policy.as_ref().map(policy_json).unwrap_or_default().to_string())
+        })
     }
 }
 
 /// List all DAC policy IDs.
 ///
 /// Returns a JSON array of policy IDs.
-///
-/// # Safety
-///
-/// No unsafe string parameters.
 #[no_mangle]
 pub extern "C" fn list_dac_policies(node_ptr: usize) -> FfiResult {
     ffi_entry! {
-        let result = NODES
-            .get(node_ptr, |state| {
-                let ids = state.policy_store.list_policies();
-                serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
-            })
-            .ok_or_else(|| ERR_INVALID_NODE_HANDLE.to_string());
-
-        match result {
-            Ok(json) => FfiResult::success(json),
-            Err(e) => FfiResult::error(e),
-        }
+        let context = try_ffi!(node_context(node_ptr));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(node_ptr, {
+            let policies = runner
+                .list_dac_policies_as(&context)
+                .await
+                .map_err(|e| e.to_string())?;
+            let ids: Vec<&str> = policies.iter().map(|policy| policy.id.as_str()).collect();
+            Ok(serde_json::json!(ids).to_string())
+        })
     }
+}
+
+/// The context the node's own reads run in: its default identity acts.
+fn node_context(node_ptr: usize) -> Result<defra_core::RequestContext, FfiResult> {
+    NODES
+        .get(node_ptr, |state| state.identity_did())
+        .map(|did| defra_core::RequestContext::default().with_identity(did))
+        .ok_or_else(|| FfiResult::error(ERR_INVALID_NODE_HANDLE))
+}
+
+/// A policy as the FFI answers it.
+fn policy_json(policy: &acp::Policy) -> serde_json::Value {
+    serde_json::json!({
+        "id": policy.id,
+        "name": policy.name,
+        "description": policy.attributes.get("description"),
+        "resources": policy.resources,
+    })
 }
 
 /// Add a DAC actor relationship (share document access with target).
@@ -323,13 +206,12 @@ pub unsafe extern "C" fn add_dac_actor_relationship(
             );
         }
 
-        // Validate node handle and get database, document_acp, event_bus, and policy_store
-        let (database, document_acp, event_bus, policy_store) = match NODES.get(node_ptr, |state| {
+        // Validate node handle and get database, document_acp and event_bus
+        let (database, document_acp, event_bus) = match NODES.get(node_ptr, |state| {
             (
                 state.database.clone(),
                 state.document_acp.clone(),
                 state.event_bus.clone(),
-                state.policy_store.clone(),
             )
         }) {
             Some(tuple) => tuple,
@@ -365,17 +247,10 @@ pub unsafe extern "C" fn add_dac_actor_relationship(
             return FfiResult::error("OPERATION_FORBIDDEN: cannot add owner relation");
         }
 
-        let managing_relations = match resolve_managing_relations(
-            &policy_store,
-            &policy_id,
-            &resource_name,
-            &relation_str,
-        ) {
-            Ok(r) => r,
-            Err(e) => return FfiResult::error(e),
-        };
-
         let result = crate::helpers::block_on(rt, async {
+            let managing_relations =
+                resolve_managing_relations(&database, &policy_id, &resource_name, &relation_str)
+                    .await?;
             let requestor = identity::Did::new(&requestor_str)
                 .map_err(|e| format!("invalid requestor DID '{}': {}", requestor_str, e))?;
             let target = if target_str == "*" {
@@ -472,12 +347,11 @@ pub unsafe extern "C" fn delete_dac_actor_relationship(
             );
         }
 
-        // Validate node handle and get database, document_acp, and policy_store
-        let (database, document_acp, policy_store) = match NODES.get(node_ptr, |state| {
+        // Validate node handle and get database and document_acp
+        let (database, document_acp) = match NODES.get(node_ptr, |state| {
             (
                 state.database.clone(),
                 state.document_acp.clone(),
-                state.policy_store.clone(),
             )
         }) {
             Some(tuple) => tuple,
@@ -508,17 +382,10 @@ pub unsafe extern "C" fn delete_dac_actor_relationship(
             return FfiResult::error("OPERATION_FORBIDDEN: cannot delete owner relation");
         }
 
-        let managing_relations = match resolve_managing_relations(
-            &policy_store,
-            &policy_id,
-            &resource_name,
-            &relation_str,
-        ) {
-            Ok(r) => r,
-            Err(e) => return FfiResult::error(e),
-        };
-
         let result = crate::helpers::block_on(rt, async {
+            let managing_relations =
+                resolve_managing_relations(&database, &policy_id, &resource_name, &relation_str)
+                    .await?;
             let requestor = identity::Did::new(&requestor_str)
                 .map_err(|e| format!("invalid requestor DID '{}': {}", requestor_str, e))?;
             let target = if target_str == "*" {

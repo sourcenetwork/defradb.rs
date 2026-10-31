@@ -68,8 +68,8 @@ fn protected_similarity_pages_count_only_authorized_documents() {
     let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
     let policy = node
-        .add_dac_policy(
-            owner,
+        .add_dac_policy_as(
+            &defra_core::RequestContext::ambient().with_identity(Some(owner.to_owned())),
             "name: Notes\nresources:\n  - name: notes\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
         )
         .await

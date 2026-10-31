@@ -172,6 +172,14 @@ impl QueryExecutor for MockQueryExecutor {
         Ok(())
     }
 
+    async fn add_dac_policy_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        _policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        Ok("mock-policy-id".to_owned())
+    }
+
     async fn add_collection_as(
         &self,
         _context: &defra_core::RequestContext,

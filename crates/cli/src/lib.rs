@@ -3,7 +3,6 @@
 //! This library provides the core functionality for the DefraDB CLI.
 //! It is primarily used by the `defra` binary but can also be used for testing.
 
-pub(crate) mod acp_adapter;
 pub(crate) mod backup_adapter;
 pub(crate) mod block_adapter;
 pub mod cli;
@@ -25,7 +24,5 @@ pub(crate) mod p2p_collection_lookup;
 pub(crate) mod schema_adapter;
 #[allow(dead_code)]
 pub(crate) mod transport_doc_pusher;
-#[cfg(feature = "vera")]
-pub(crate) mod vera_acp_adapter;
 pub(crate) mod version_syncer;
 pub(crate) mod view_adapter;

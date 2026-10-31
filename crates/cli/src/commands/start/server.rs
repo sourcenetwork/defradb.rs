@@ -149,13 +149,12 @@ impl Node {
             store.clone(),
             zanzibar_store.clone(),
             event_bus.clone(),
-            db::node_access_checker(database.clone()),
             edge,
         )
         .await?;
 
         if config.acp.document_type != AcpDocumentType::None {
-            database.set_policy_lookup(acp_setup.policy_lookup.clone());
+            database.set_dac_policies(acp_setup.dac_policies.clone());
         }
 
         let mut p2p_setup = Self::setup_p2p(

@@ -20,7 +20,7 @@ default = ["native", "wasmtime-runtime", "vera", "libp2p"]
 native = ["db/native", "defra-node/native"]
 iroh = ["defra-node/p2p", "p2p/iroh-transport"]
 libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
-vera = ["dep:vera", "defra-node/vera"]
+vera = ["defra-node/vera"]
 sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
@@ -80,7 +80,6 @@ query = { path = "../query" }
 schema = { path = "../schema" }
 identity = { path = "../identity" }
 acp = { path = "../acp" }
-vera = { path = "../vera", optional = true }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p" }
 blockstore = { path = "../blockstore" }

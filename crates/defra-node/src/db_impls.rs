@@ -6,7 +6,6 @@ use defra_core::RequestContext;
 use identity::Did;
 use schema::CollectionVersion;
 
-use crate::acp_ops::PolicyLookup;
 use crate::{BlockOps, Error, Result, SchemaOps};
 
 pub(crate) struct DbBlockOps<S: storage::corekv::Store + 'static> {
@@ -88,7 +87,6 @@ pub(crate) struct DbSchemaOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     query_limits: query::QueryLimits,
     document_acp: Arc<dyn acp::DocumentACP>,
-    policy_lookup: PolicyLookup,
 }
 
 impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
@@ -96,13 +94,11 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
         database: Arc<db::DB<S>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
-        policy_lookup: PolicyLookup,
     ) -> Self {
         Self {
             database,
             query_limits,
             document_acp,
-            policy_lookup,
         }
     }
 
@@ -114,9 +110,15 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
             let Some(policy) = &collection.policy else {
                 continue;
             };
-            let stored = self.policy_lookup.get_policy(&policy.id).await?;
-            acp::validate_resource_interface(&policy.id, &policy.resource_name, stored.as_ref())
-                .map_err(Error::PolicyValidation)?;
+            self.database
+                .validate_resource_interface(&policy.id, &policy.resource_name)
+                .await
+                .map_err(|error| match error {
+                    db::DacPolicyError::ResourceInterface(message) => {
+                        Error::PolicyValidation(message)
+                    }
+                    other => Error::DacPolicy(other),
+                })?;
         }
         Ok(())
     }

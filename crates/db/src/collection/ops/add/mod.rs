@@ -35,18 +35,13 @@ where
         &self,
         collections: &[CollectionVersion],
     ) -> std::result::Result<(), AddCollectionError> {
-        let Some(lookup) = self.policy_lookup() else {
+        if self.dac_policies().is_none() {
             return Ok(());
-        };
+        }
         for policy in collections.iter().filter_map(|c| c.policy.as_ref()) {
-            let stored = lookup.get_policy(&policy.id).await.map_err(|e| {
-                AddCollectionError::Policy(format!(
-                    "policy validation failed with acp: {}. PolicyID: {}",
-                    e, policy.id
-                ))
-            })?;
-            acp::validate_resource_interface(&policy.id, &policy.resource_name, stored.as_ref())
-                .map_err(AddCollectionError::Policy)?;
+            self.validate_resource_interface(&policy.id, &policy.resource_name)
+                .await
+                .map_err(|e| AddCollectionError::Policy(e.to_string()))?;
         }
         Ok(())
     }

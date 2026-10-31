@@ -8,7 +8,13 @@ const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n  
 
 async fn fixture() -> (Node, String, String) {
     let node = Node::builder().build().await.unwrap();
-    let policy = node.add_dac_policy(A, POLICY).await.unwrap();
+    let policy = node
+        .add_dac_policy_as(
+            &defra_core::RequestContext::ambient().with_identity(Some(String::from(A))),
+            POLICY,
+        )
+        .await
+        .unwrap();
     node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
     let response = node

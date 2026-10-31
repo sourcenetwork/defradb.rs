@@ -444,22 +444,15 @@ where
     let vera_acp = acp_setup.vera_acp.clone();
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
-    #[cfg(feature = "vera")]
-    let policy_lookup =
-        acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
-    #[cfg(not(feature = "vera"))]
-    let policy_lookup = acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store);
-    database.set_policy_lookup(Arc::new(policy_lookup.clone()));
+    database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
         database.clone(),
         query_limits,
         document_acp.clone(),
-        policy_lookup.clone(),
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
         document_acp.clone(),
-        policy_lookup,
         event_bus.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build

@@ -24,28 +24,6 @@ async fn a_raw_policy_body_needs_no_content_type() {
 }
 
 #[tokio::test]
-async fn an_empty_policy_body_is_rejected() {
-    let (status, body) = Call::post("/api/v0/acp/document/policy")
-        .authenticated()
-        .send()
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.contains("policy data can not be empty"), "{body}");
-}
-
-/// The exact response the cross-runtime probe saw from Go at this path, where
-/// Rust answered 404.
-#[tokio::test]
-async fn a_policy_without_an_identity_is_rejected() {
-    let (status, body) = Call::post("/api/v0/acp/document/policy")
-        .body(POLICY)
-        .send()
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.contains("policy creator can not be empty"), "{body}");
-}
-
-#[tokio::test]
 async fn the_policy_response_is_gos_shape() {
     let (status, body) = Call::post("/api/v0/acp/document/policy")
         .body(POLICY)
