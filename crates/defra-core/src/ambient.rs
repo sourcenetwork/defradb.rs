@@ -101,7 +101,7 @@ impl From<&RequestContext> for Installed {
             identity: context.identity().map(str::to_owned),
             dac_bypass: context.dac_bypass(),
             encryption: context.encryption().cloned(),
-            signing: context.signing().cloned(),
+            signing: context.configured_signing().cloned(),
             batch_session: context.batch_session().map(str::to_owned),
             creator: context.creator().map(str::to_owned),
         }
