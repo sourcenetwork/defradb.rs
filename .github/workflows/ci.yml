@@ -675,3 +675,37 @@ jobs:
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
+
+  go-sdk:
+    name: Go SDK
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    timeout-minutes: 60
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: go-sdk
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+          cache-dependency-path: sdk/go/go.sum
+      - name: Build the FFI library and its header
+        run: |
+          cargo build -p ffi --profile super-dev
+          cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defra.h
+      - name: Run the Go SDK's tests against it
+        working-directory: sdk/go
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          LIB="$GITHUB_WORKSPACE/target/super-dev"
+          CGO_LDFLAGS="-L$LIB -Wl,-rpath,$LIB" go test -race -count=1 ./...

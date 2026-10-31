@@ -107,6 +107,11 @@ tools/
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
 rest are scripts and non-Rust harnesses.
 
+`sdk/go/` is a Go module (`github.com/sourcenetwork/defradb.rs/sdk/go`) that
+opens a node in-process through `crates/ffi`'s C ABI and offers Go Shinzo's
+`client` methods on it. Its tests build against the cdylib and the
+cbindgen header (`crates/ffi/defra.h`); the Go SDK CI job shows the commands.
+
 ### File Size Guidelines
 
 - Under 200 lines: Fine
