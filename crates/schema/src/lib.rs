@@ -6,6 +6,7 @@
 //! The numeric values for FieldKind and CType match the Go DefraDB implementation
 //! exactly, ensuring Rust and Go can read/write the same datastores.
 
+mod chunk;
 mod cid;
 mod collection;
 mod crdt_name;
@@ -22,6 +23,10 @@ mod validation;
 
 pub mod definition_validation;
 
+pub use chunk::{
+    chunk_collection_name, chunk_list_field, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
+    CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
+};
 pub use cid::{
     generate_collection_block_full, generate_collection_block_full_with_query,
     generate_collection_cid, generate_collection_cid_full, generate_collection_cid_full_with_query,

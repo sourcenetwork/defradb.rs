@@ -7,8 +7,8 @@ use serde_json::Value as JsonValue;
 
 use crate::benchmark_queries::escape_graphql;
 use crate::benchmark_support::{CodingSessionFixtureConfig, FixtureSession, SessionKind};
-use crate::search_chunks::{derive_search_chunks, SearchChunkingConfig};
 use crate::EmbeddedNode;
+use db::chunk::window::{derive_search_chunks, SearchChunkingConfig};
 
 const INSERT_BATCH_SIZE: usize = 25;
 const DEFAULT_CHUNK_CONFIG: SearchChunkingConfig = SearchChunkingConfig {

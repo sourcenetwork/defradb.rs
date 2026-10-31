@@ -7,6 +7,7 @@ members = [
     "crates/blockstore",
     "crates/embedded",
     "crates/schema",
+    "crates/chunk-split",
     "crates/query",
     "crates/document",
     "crates/p2p",

@@ -191,6 +191,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mut first_miss = None;
         let mut prepared = Vec::with_capacity(docs.len());
         for mut doc in docs {
+            crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
             match pipeline::embed(
                 &self.db,
                 &collection,

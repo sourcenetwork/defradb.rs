@@ -430,7 +430,8 @@ pub fn generate_cursor_query_type(collections: &[&CollectionVersion]) -> GqlObje
 pub fn generate_mutation_type(collections: &[&CollectionVersion]) -> GqlObjectType {
     let mut mutation = GqlObjectType::new("Mutation");
 
-    for collection in collections {
+    // `@chunk` collections get no mutations. Only their parent's writes change them.
+    for collection in collections.iter().filter(|c| !c.is_generated()) {
         let type_name = &collection.name;
 
         // Add mutation (create document)

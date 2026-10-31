@@ -99,6 +99,10 @@ name = "fts"
 path = "tests/fts.rs"
 
 [[test]]
+name = "chunk"
+path = "tests/chunk.rs"
+
+[[test]]
 name = "p2p_iroh"
 path = "tests/p2p_iroh/main.rs"
 

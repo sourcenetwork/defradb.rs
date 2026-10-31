@@ -502,6 +502,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
     ) -> query::error::Result<((), Collection)> {
         let collection = self.get_collection_or_err(collection_name)?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
         Ok(((), collection))
     }
 

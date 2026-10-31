@@ -13,6 +13,7 @@ use schema::{CType, CrdtName};
 
 use crate::error::{QueryError, Result};
 
+use super::chunk::parse_chunk_directive;
 use super::directives::{
     default_type_error, get_directive_arg, get_directive_string, get_directive_string_list,
     known_directive_arguments, IndexConfig, IndexDirection, ParsedDirectives,
@@ -100,6 +101,7 @@ impl<'a> SdlParser<'a> {
                     result.fulltext = Some(super::directives::FullTextConfig { language, k1, b });
                 }
                 "immutable" => result.immutable = true,
+                "chunk" => result.chunk = Some(parse_chunk_directive(directive)?),
                 "embedding" => {
                     let provider = get_directive_string(directive, "provider").unwrap_or_default();
                     let model = get_directive_string(directive, "model").unwrap_or_default();

@@ -1181,4 +1181,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Text chunking",
+        name: "covers / bounded / deterministic / local_edit",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs fence_before; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings",
+        axis: Lean,
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+    },
 ];
