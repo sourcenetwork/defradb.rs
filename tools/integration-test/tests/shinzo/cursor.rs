@@ -279,7 +279,7 @@ fn shinzo_after_resumes_page_by_page() {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
-#[ignore = "#2481: an unsorted _in filter breaks the cursor order"]
+
 fn shinzo_a_filter_applies_before_paging() {
     let mut actions = aged(&[15, 25, 35, 45, 55, 65, 75]);
     let geq = "first: 2, filter: {age: {_geq: 40}}, order: {age: ASC}";
@@ -970,4 +970,34 @@ fn shinzo_a_cursor_query_explains_its_cursor_node() {
         .into(),
     );
     run(actions);
+}
+
+/// An unsorted `_in` filter keeps the requested order with no cursor at
+/// all, on an indexed and an unindexed field.
+#[test]
+#[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
+fn shinzo_an_unsorted_in_filter_keeps_the_order_without_a_cursor() {
+    for sdl in [
+        USERS,
+        "type User { name: String age: Int @index(direction: DESC) }",
+        "type User { name: String age: Int }",
+    ] {
+        for (order, want) in [("ASC", [25, 35, 45, 55]), ("DESC", [55, 45, 35, 25])] {
+            let mut actions = vec![collection(sdl)];
+            actions.extend(
+                [25, 35, 45, 55, 65]
+                    .map(|age| doc(json!({ "name": format!("u{age}"), "age": age }), None)),
+            );
+            actions.push(
+                Request {
+                    request: format!("query {{ User(filter: {{age: {{_in: [55, 25, 45, 35]}}}}, order: {{age: {order}}}) {{ age }} }}")
+                        .into(),
+                    expected_data: json!({ "User": ages(&want) }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            run(actions);
+        }
+    }
 }
