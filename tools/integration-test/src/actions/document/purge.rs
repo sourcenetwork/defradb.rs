@@ -7,7 +7,7 @@ use testo::prelude::*;
 
 /// The `document.purge` op: Go Shinzo's `PurgeByDocIDs`. A Rust node purges
 /// through its core; a Go Shinzo node through
-/// `POST /collections/{name}/documents/purge`, which reports no count.
+/// `DELETE /collections/{name}/documents/purge`, which reports no count.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PurgeDocs {
@@ -88,7 +88,7 @@ impl PurgeDocs {
         let txn = state.txn_id(self.txn);
         let sent = state
             .block_on(network_edge().spawn(async move {
-                let mut request = reqwest::Client::new().post(url).json(&body);
+                let mut request = reqwest::Client::new().delete(url).json(&body);
                 if let Some(txn) = txn {
                     request = request.header("x-defradb-tx", txn);
                 }
@@ -104,7 +104,7 @@ impl PurgeDocs {
                 .ok()
                 .and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_owned))
                 .unwrap_or(text);
-            return Err(Failure::operation(message));
+            return Err(Failure::operation(format!("{status}: {message}")));
         }
         Ok(json!({}))
     }
