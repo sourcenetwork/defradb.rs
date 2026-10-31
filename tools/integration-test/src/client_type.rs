@@ -17,18 +17,32 @@ pub enum ClientType {
     GoHttp,
     /// `defra client` commands, run against an in-process Rust server.
     Cli,
+    /// A Go `defradb` server built from the Shinzo pin (`GO_SHINZO_COMMIT`),
+    /// reached over HTTP.
+    GoShinzo,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GoBinaryError {
-    #[error("DEFRA_GO_BINARY={path} did not run `version`: {reason}")]
-    Configured { path: String, reason: String },
+    #[error("{variable}={path} did not run `version`: {reason}")]
+    Configured {
+        variable: &'static str,
+        path: String,
+        reason: String,
+    },
     #[error(
         "no runnable Go defradb binary found (tried {tried}). Set DEFRA_GO_BINARY, or build the \
          pinned commit: git clone https://github.com/sourcenetwork/defradb && cd defradb && \
          git checkout 53f0e76a3 && make build (see .github/workflows/ci.yml)"
     )]
     NotFound { tried: String },
+    #[error(
+        "a Go Shinzo node needs DEFRA_GO_SHINZO_BINARY, a Go defradb built from the Shinzo pin \
+         (GO_SHINZO_COMMIT in crates/defra-version): git clone --branch shinzo-develop \
+         https://github.com/sourcenetwork/defradb && cd defradb && git checkout 2a899b860 && \
+         make build (see .github/workflows/ci.yml)"
+    )]
+    ShinzoUnset,
 }
 
 pub(crate) fn network_edge() -> edge::Edge {
@@ -36,7 +50,13 @@ pub(crate) fn network_edge() -> edge::Edge {
 }
 
 impl ClientType {
-    pub const ALL: [ClientType; 4] = [Self::InProcess, Self::RustHttp, Self::GoHttp, Self::Cli];
+    pub const ALL: [ClientType; 5] = [
+        Self::InProcess,
+        Self::RustHttp,
+        Self::GoHttp,
+        Self::Cli,
+        Self::GoShinzo,
+    ];
 
     fn name(self) -> &'static str {
         match self {
@@ -44,6 +64,7 @@ impl ClientType {
             Self::RustHttp => "rust-http",
             Self::GoHttp => "go-http",
             Self::Cli => "cli",
+            Self::GoShinzo => "go-shinzo",
         }
     }
 
@@ -60,12 +81,34 @@ impl Multiplier<Actions> for ClientType {
         ClientType::name(*self)
     }
 
-    /// Connects, then runs each action as this client does.
+    /// Connects, then runs each action as this client does. An action aimed
+    /// at a Go Shinzo node of a mixed cluster runs as the go-shinzo client
+    /// whatever the test's client, since that node is reachable only over HTTP.
     fn apply(&self, actions: &[ActionInstance<Actions>]) -> Vec<ActionInstance<Actions>> {
+        let go_shinzo: Vec<&str> = actions
+            .iter()
+            .filter_map(|instance| match instance {
+                ActionInstance::Sync(Actions::NewNode(node))
+                | ActionInstance::Async(Actions::NewNode(node))
+                    if node.go_shinzo =>
+                {
+                    Some(node.common.node())
+                }
+                _ => None,
+            })
+            .collect();
+        let client_for = |action: &Actions| match action.target_node() {
+            Some(node) if go_shinzo.contains(&node.as_str()) => ClientType::GoShinzo,
+            _ => *self,
+        };
         let mut result = vec![Connect { client_type: *self }.into()];
         result.extend(actions.iter().map(|instance| match instance {
-            ActionInstance::Sync(action) => ActionInstance::Sync(action.for_client(*self)),
-            ActionInstance::Async(action) => ActionInstance::Async(action.for_client(*self)),
+            ActionInstance::Sync(action) => {
+                ActionInstance::Sync(action.for_client(client_for(action)))
+            }
+            ActionInstance::Async(action) => {
+                ActionInstance::Async(action.for_client(client_for(action)))
+            }
         }));
         result
     }
@@ -75,14 +118,7 @@ impl Multiplier<Actions> for ClientType {
 /// the first that runs `version`. The version line goes to the test log.
 pub(crate) fn go_binary() -> Result<PathBuf, GoBinaryError> {
     if let Some(path) = std::env::var_os("DEFRA_GO_BINARY") {
-        let path = PathBuf::from(path);
-        return match version(&path) {
-            Ok(line) => Ok(announce(path, line)),
-            Err(reason) => Err(GoBinaryError::Configured {
-                path: path.display().to_string(),
-                reason,
-            }),
-        };
+        return configured("DEFRA_GO_BINARY", PathBuf::from(path));
     }
     let home = std::env::var("HOME").unwrap_or_default();
     let path_var = std::env::var_os("PATH").unwrap_or_default();
@@ -100,8 +136,26 @@ pub(crate) fn go_binary() -> Result<PathBuf, GoBinaryError> {
     })
 }
 
+/// `DEFRA_GO_SHINZO_BINARY`, a Go `defradb` built from the Shinzo pin. No
+/// fallback: a develop binary on the PATH must never stand in for it.
+pub(crate) fn go_shinzo_binary() -> Result<PathBuf, GoBinaryError> {
+    let path = std::env::var_os("DEFRA_GO_SHINZO_BINARY").ok_or(GoBinaryError::ShinzoUnset)?;
+    configured("DEFRA_GO_SHINZO_BINARY", PathBuf::from(path))
+}
+
+fn configured(variable: &'static str, path: PathBuf) -> Result<PathBuf, GoBinaryError> {
+    match version(&path) {
+        Ok(line) => Ok(announce(path, line)),
+        Err(reason) => Err(GoBinaryError::Configured {
+            variable,
+            path: path.display().to_string(),
+            reason,
+        }),
+    }
+}
+
 fn announce(path: PathBuf, line: String) -> PathBuf {
-    eprintln!("go-http: using {} — {line}", path.display());
+    eprintln!("go node: using {} — {line}", path.display());
     path
 }
 

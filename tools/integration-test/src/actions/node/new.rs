@@ -43,6 +43,11 @@ pub struct NewNode {
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_document_acp_test: bool,
+    /// A Go node built from the Shinzo pin (`DEFRA_GO_SHINZO_BINARY`),
+    /// whatever the test's client: the Go side of a mixed cluster. Actions
+    /// aimed at it run as the go-shinzo client.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub go_shinzo: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +77,7 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        probe.go_shinzo = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -86,6 +92,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            go_shinzo: self.go_shinzo,
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
