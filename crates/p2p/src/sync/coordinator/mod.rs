@@ -83,7 +83,7 @@ use tokio::sync::{watch, Notify, OwnedSemaphorePermit, Semaphore};
 
 use crate::bitswap::{AccessMode, ReplicatorRegistry};
 use crate::replicator::ReplicationFilterMatcher;
-use crate::tracked_task::{TrackedAbort, TrackedTask};
+use crate::tracked_task::TrackedTask;
 use crate::transport::{P2PTransport, PeerId};
 
 use super::broadcaster::Broadcaster;
@@ -224,7 +224,7 @@ struct SyncShutdownState {
     /// drain still closes the channel by dropping the sender.
     shutdown_complete_tx: SegQueue<watch::Sender<bool>>,
     /// Every retained handle, pending-DAG fetches included; the registry
-    /// below keeps only their reservations and abort handles.
+    /// below keeps only their reservations and generation-scoped leases.
     background_tasks: SegQueue<TrackedTask>,
     /// Pruners mid-way through popping and re-pushing live handles; the drain
     /// waits for zero before it takes the queue.
@@ -236,6 +236,8 @@ struct SyncShutdownState {
     /// registry bounds the event handoff and the retained task, so there is no
     /// hidden pre-semaphore task queue (#1159).
     pending_dag_fetch_task_limit: usize,
+    /// Wakes the existing retry clock after an owned task or merge releases capacity.
+    pending_dag_capacity_released: Notify,
     pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
     /// Where the coordinator's network work runs, set once by the node that
     /// owns it (`SyncCoordinator::use_network`).
@@ -245,17 +247,51 @@ struct SyncShutdownState {
 #[derive(Clone)]
 enum PendingDagFetchTask {
     Scheduled,
-    Claimed,
-    Running(TrackedAbort),
+    Claimed(std::sync::Weak<()>),
+    Running(std::sync::Weak<()>),
     Merging(std::sync::Weak<()>),
 }
 
 impl PendingDagFetchTask {
     fn is_live(&self) -> bool {
         match self {
-            Self::Scheduled | Self::Claimed => true,
-            Self::Running(task) => !task.is_finished(),
-            Self::Merging(owner) => owner.strong_count() != 0,
+            Self::Scheduled => true,
+            Self::Claimed(owner) | Self::Running(owner) | Self::Merging(owner) => {
+                owner.strong_count() != 0
+            }
+        }
+    }
+}
+
+/// Owns a pending-work slot through every return, panic or cancellation. Its
+/// generation prevents a late destructor from releasing a replacement owner.
+/// The token stays live throughout Drop, including before the release is visible.
+pub(crate) struct PendingDagWorkOwner {
+    shutdown: SyncShutdownHandle,
+    root_cid: Cid,
+    generation: Arc<()>,
+}
+
+impl Drop for PendingDagWorkOwner {
+    fn drop(&mut self) {
+        let generation = Arc::downgrade(&self.generation);
+        let mut released = false;
+        self.shutdown.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = current.clone();
+            released = matches!(next.get(&self.root_cid),
+                Some(PendingDagFetchTask::Claimed(owner)
+                    | PendingDagFetchTask::Running(owner)
+                    | PendingDagFetchTask::Merging(owner)) if owner.ptr_eq(&generation));
+            if released {
+                next.remove(&self.root_cid);
+            }
+            next
+        });
+        if released && !self.shutdown.is_shutting_down() {
+            self.shutdown
+                .inner
+                .pending_dag_capacity_released
+                .notify_one();
         }
     }
 }
@@ -391,6 +427,7 @@ impl SyncShutdownHandle {
                 )),
                 non_authoritative_broadcast_high_water: AtomicUsize::new(0),
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
+                pending_dag_capacity_released: Notify::new(),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
                 pending_dag_fetch_tasks: Atom::new(RapidHashMap::new()),
                 network: regolith::sync::OnceCell::new(),
@@ -603,7 +640,15 @@ impl SyncShutdownHandle {
         });
     }
 
-    fn claim_pending_dag_merge(&self, root_cid: Cid) -> Option<Arc<()>> {
+    fn pending_dag_work_owner(&self, root_cid: Cid) -> Arc<PendingDagWorkOwner> {
+        Arc::new(PendingDagWorkOwner {
+            shutdown: self.clone(),
+            root_cid,
+            generation: Arc::new(()),
+        })
+    }
+
+    fn claim_pending_dag_merge(&self, root_cid: Cid) -> Option<Arc<PendingDagWorkOwner>> {
         if !self
             .inner
             .pending_dag_fetch_tasks
@@ -611,7 +656,7 @@ impl SyncShutdownHandle {
         {
             return None;
         }
-        let owner = Arc::new(());
+        let owner = self.pending_dag_work_owner(root_cid);
         let mut claimed = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
@@ -619,7 +664,7 @@ impl SyncShutdownHandle {
             if claimed {
                 next.insert(
                     root_cid,
-                    PendingDagFetchTask::Merging(Arc::downgrade(&owner)),
+                    PendingDagFetchTask::Merging(Arc::downgrade(&owner.generation)),
                 );
             }
             next
@@ -658,6 +703,7 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
+        let owner = self.pending_dag_work_owner(root_cid);
         let mut claimed = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = Self::prune_pending_dag_fetches(current);
@@ -668,7 +714,10 @@ impl SyncShutdownHandle {
                     None => next.len() < self.inner.pending_dag_fetch_task_limit,
                 };
             if claimed {
-                next.insert(root_cid, PendingDagFetchTask::Claimed);
+                next.insert(
+                    root_cid,
+                    PendingDagFetchTask::Claimed(Arc::downgrade(&owner.generation)),
+                );
             }
             next
         });
@@ -677,19 +726,31 @@ impl SyncShutdownHandle {
         }
 
         let shutdown = self.clone();
+        let task_owner = Arc::clone(&owner);
         let task = TrackedTask::spawn(async move {
+            let _owner = task_owner;
             tokio::select! {
                 _ = shutdown.cancelled() => {}
                 _ = future => {}
             }
         });
-        let abort = task.abort_handle();
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
-            next.insert(root_cid, PendingDagFetchTask::Running(abort.clone()));
+            if matches!(next.get(&root_cid), Some(PendingDagFetchTask::Claimed(generation))
+                if generation.ptr_eq(&Arc::downgrade(&owner.generation)))
+            {
+                next.insert(
+                    root_cid,
+                    PendingDagFetchTask::Running(Arc::downgrade(&owner.generation)),
+                );
+            }
             next
         });
-        self.register_task(task)
+        // Keep the slot live until Running is installed even if the spawned
+        // future completes before this thread finishes its registration.
+        let accepted = self.register_task(task);
+        drop(owner);
+        accepted
     }
 
     /// Number of live retained background task handles. Prunes finished
@@ -1045,6 +1106,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             tokio::select! {
                 _ = retry_tick.tick() => {}
                 _ = self.manager.pending_dag_ready() => {}
+                _ = self.runtime.shutdown.inner.pending_dag_capacity_released.notified() => {}
                 _ = self.runtime.shutdown.cancelled() => return Ok(()),
             }
             self.dispatch_due_pending_dag_fetches(n0_future::time::Instant::now());
@@ -1320,7 +1382,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// The weak registry entry keeps a continuation bounded while queued or
     /// merging. Dropping the owner releases it even if the merge is cancelled.
     /// Nested single-event handlers cannot take ownership twice.
-    pub(crate) fn pending_dag_merge_guard(&self, root_cid: Cid) -> Option<Arc<()>> {
+    pub(crate) fn pending_dag_merge_guard(
+        &self,
+        root_cid: Cid,
+    ) -> Option<Arc<PendingDagWorkOwner>> {
         self.runtime.shutdown.claim_pending_dag_merge(root_cid)
     }
 
