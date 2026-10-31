@@ -13,6 +13,15 @@ pub const GO_COMPAT_BRANCH: &str = "develop";
 /// Go release tag; empty when CI should build the pinned commit from source.
 pub const GO_COMPAT_TAG: &str = "";
 
+/// Go Shinzo commit we match: the `shinzo-develop` head the Shinzo
+/// requirements were written from. Shinzo nodes run this branch, which forked
+/// from the 1.0.0 release and does not follow `develop`, so it is pinned apart
+/// from `GO_COMPAT_COMMIT`. CI builds it from source for the `go-shinzo`
+/// client and the mixed Rust and Go Shinzo clusters.
+pub const GO_SHINZO_COMMIT: &str = "2a899b860";
+/// Go Shinzo branch.
+pub const GO_SHINZO_BRANCH: &str = "shinzo-develop";
+
 /// Go commit carrying the rustffi test client, which the FFI oracle checks out.
 ///
 /// Deliberately independent of `GO_COMPAT_COMMIT`: that pin selects the Go
@@ -176,5 +185,7 @@ mod tests {
         assert!(!GO_COMPAT_COMMIT.is_empty());
         assert!(!GO_COMPAT_BRANCH.is_empty());
         assert!(!GO_FFI_CLIENT_COMMIT.is_empty());
+        assert!(!GO_SHINZO_COMMIT.is_empty());
+        assert!(!GO_SHINZO_BRANCH.is_empty());
     }
 }
