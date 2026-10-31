@@ -31,6 +31,8 @@ where
     T: P2PTransport + 'static,
 {
     sync: Arc<SyncCoordinator<B, T>>,
+    /// Where a push that found no peers is reported.
+    bus: Option<Arc<dyn events::Bus>>,
     /// Set when the last submitted write's task finished.
     last: Atom<Arc<Event>>,
 }
@@ -40,11 +42,12 @@ where
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 {
-    pub fn new(sync: Arc<SyncCoordinator<B, T>>) -> Self {
+    pub fn new(sync: Arc<SyncCoordinator<B, T>>, bus: Option<Arc<dyn events::Bus>>) -> Self {
         let finished = Event::new();
         finished.set();
         Self {
             sync,
+            bus,
             last: Atom::new(Arc::new(finished)),
         }
     }
@@ -70,20 +73,24 @@ where
         let previous = Arc::clone(&*self.last.swap(Arc::clone(&mine)));
         let finished = Finished(mine);
         let sync = Arc::clone(&self.sync);
+        let bus = self.bus.clone();
         // A task skipped at shutdown is dropped here with `done` and
         // `finished`, so neither its transaction nor the next write waits.
         self.sync
             .spawn_background_task("ordered_transaction_broadcast", async move {
                 previous.wait().await;
-                broadcast(&sync, event).await;
+                broadcast(&sync, bus.as_ref(), event).await;
                 drop(done);
                 drop(finished);
             });
     }
 }
 
-async fn broadcast<B, T>(sync: &Arc<SyncCoordinator<B, T>>, event: TxnBroadcastEvent)
-where
+async fn broadcast<B, T>(
+    sync: &Arc<SyncCoordinator<B, T>>,
+    bus: Option<&Arc<dyn events::Bus>>,
+    event: TxnBroadcastEvent,
+) where
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 {
@@ -135,6 +142,7 @@ where
     }
 
     let gossip = Arc::clone(sync);
+    let bus = bus.cloned();
 
     // The transaction's broadcast is done once its scope markers are
     // durable. Gossip still runs under the node lifecycle without holding
@@ -152,6 +160,8 @@ where
         log_broadcast_failure(
             &broadcast_with_retry_with_creator(
                 &gossip,
+                bus.as_ref(),
+                &doc_id,
                 &doc_block_result,
                 &collection_id,
                 &collection_name,
@@ -171,6 +181,8 @@ where
             log_broadcast_failure(
                 &broadcast_with_retry_with_creator(
                     &gossip,
+                    bus.as_ref(),
+                    &doc_id,
                     &col_block_result,
                     &collection_id,
                     &collection_name,

@@ -64,6 +64,7 @@ pub(crate) mod remote_inputs;
 pub mod replication_filter;
 pub mod retention;
 pub mod search;
+pub mod stats;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;

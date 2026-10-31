@@ -178,6 +178,7 @@ impl<S: Store> P2PHost<S> {
                     {
                         match documents {
                             Ok(documents) => {
+                                self.wire_stats.record_batch();
                                 for (mut broadcast, car) in documents {
                                     let head = broadcast.cid.clone();
                                     self.offer_inline_car(&head, message.source, car);
@@ -282,10 +283,8 @@ impl<S: Store> P2PHost<S> {
                         };
                         // Exponential-backoff sampling: warn on the
                         // 1st, 2nd, 4th, 8th... occurrence; remainder at
-                        // debug. Shared process-global counter with the
-                        // iroh transport (issue #858).
-                        let count =
-                            crate::sync::record_gossip_decode_failure_sample(sample.clone());
+                        // debug. The count is this node's (issue #858).
+                        let count = self.wire_stats.record_gossip_decode_failure(sample.clone());
                         if count == 1 || count.is_power_of_two() {
                             warn!(
                                 peer_id = %propagation_source,

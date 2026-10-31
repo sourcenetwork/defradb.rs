@@ -109,6 +109,7 @@ where
                 enable_pubsub: config.enable_pubsub,
                 enable_relay: config.enable_relay,
                 shinzo_wire: config.shinzo_wire,
+                resource_limits: config.resource_limits,
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
@@ -220,6 +221,16 @@ where
 
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
+    let stats_coordinator = coordinator.clone();
+    let stats_db = Arc::clone(&database);
+    coordinator.spawn_background_task("p2p_stats_report", async move {
+        stats_coordinator
+            .run_stats_report(std::time::Duration::from_secs(30), move || {
+                stats_db.merge_stats().drain().log()
+            })
+            .await;
+    });
+
     let coordinator_for_retry_clock = coordinator.clone();
     let pending_dag_retry_task = spawn_node_task(edge, async move {
         coordinator_for_retry_clock

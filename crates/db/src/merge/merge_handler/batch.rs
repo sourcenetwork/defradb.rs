@@ -26,6 +26,8 @@ struct BatchMergeRetryAttempt<S: Store, B: blockstore::Blockstore> {
     blocks: Vec<MergeBlock>,
     retry_deks: Vec<RetryDecryptionKeys>,
     prefetch_requested: Vec<Arc<std::sync::atomic::AtomicBool>>,
+    /// Whether an earlier attempt of this retry operation ran.
+    attempted: bool,
 }
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> storage::corekv::RetryAttemptFn
@@ -49,6 +51,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> BatchMergeRetryAtt
         &mut self,
         retry: &mut dyn storage::corekv::RetryTxn,
     ) -> Result<Vec<Result<MergeOutcome, MergeError>>, MergeError> {
+        if std::mem::replace(&mut self.attempted, true) {
+            self.handler.db.merge_stats().record_txn_conflict();
+        }
+        self.handler.reset_attempt_counts();
         for requested in &self.prefetch_requested {
             requested.store(false, std::sync::atomic::Ordering::Release);
         }
@@ -183,6 +189,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> BatchMergeRetryAtt
             }
         }
 
+        self.handler.count_merges_on_commit(&txn)?;
         let (io, callbacks) = txn
             .into_retry_attempt()
             .map_err(crate::error::Error::Storage)?;
@@ -219,6 +226,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 )
                 .await
             {
+                self.db.merge_stats().record_drop(&error);
                 results.push(Err(error));
                 continue;
             }
@@ -321,10 +329,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
         let result = loop {
             let attempt = BatchMergeRetryAttempt {
-                handler: self.clone(),
+                handler: self.with_attempt_counts(),
                 blocks: blocks.to_vec(),
                 retry_deks: retry_deks.clone(),
                 prefetch_requested: prefetch_requested.clone(),
+                attempted: false,
             };
             match self
                 .db
@@ -340,47 +349,51 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                             MergeError::MergeFailed("invalid batch merge retry result".into())
                         });
                 }
-                Err(error) => match error.downcast_abort::<MergeError>() {
-                    Ok(MergeError::NeedsBatchDecryptionKey {
-                        block_index,
-                        encryption_cid,
-                    }) => {
-                        let Some(kms) = self.kms() else {
-                            break Err(MergeError::Kms(kms::Error::KeyUnavailable));
-                        };
-                        let (Some(context), Some(block_keys)) =
-                            (kms_contexts.get(block_index), retry_deks.get(block_index))
-                        else {
-                            break Err(MergeError::MergeFailed(
-                                "batch merge requested a DEK for an invalid block index".into(),
-                            ));
-                        };
-                        if block_keys.contains_key(&encryption_cid) {
-                            break Err(repeated_key_request(&encryption_cid));
-                        }
-                        match kms
-                            .get_keys(context, std::slice::from_ref(&encryption_cid))
-                            .await
-                        {
-                            Ok(results) => match results.wait_all().await {
-                                Ok(mut keys) => match keys.remove(&encryption_cid) {
-                                    Some(key) => {
-                                        block_keys.insert(encryption_cid, Zeroizing::new(key));
-                                    }
-                                    None => break Err(MergeError::Kms(kms::Error::KeyUnavailable)),
+                Err(error) => {
+                    match super::exhausted(&self.db, error).downcast_abort::<MergeError>() {
+                        Ok(MergeError::NeedsBatchDecryptionKey {
+                            block_index,
+                            encryption_cid,
+                        }) => {
+                            let Some(kms) = self.kms() else {
+                                break Err(MergeError::Kms(kms::Error::KeyUnavailable));
+                            };
+                            let (Some(context), Some(block_keys)) =
+                                (kms_contexts.get(block_index), retry_deks.get(block_index))
+                            else {
+                                break Err(MergeError::MergeFailed(
+                                    "batch merge requested a DEK for an invalid block index".into(),
+                                ));
+                            };
+                            if block_keys.contains_key(&encryption_cid) {
+                                break Err(repeated_key_request(&encryption_cid));
+                            }
+                            match kms
+                                .get_keys(context, std::slice::from_ref(&encryption_cid))
+                                .await
+                            {
+                                Ok(results) => match results.wait_all().await {
+                                    Ok(mut keys) => match keys.remove(&encryption_cid) {
+                                        Some(key) => {
+                                            block_keys.insert(encryption_cid, Zeroizing::new(key));
+                                        }
+                                        None => {
+                                            break Err(MergeError::Kms(kms::Error::KeyUnavailable))
+                                        }
+                                    },
+                                    Err(error) => break Err(MergeError::Kms(error)),
                                 },
                                 Err(error) => break Err(MergeError::Kms(error)),
-                            },
-                            Err(error) => break Err(MergeError::Kms(error)),
+                            }
+                        }
+                        Ok(error) => break Err(error),
+                        Err(error) => {
+                            break Err(MergeError::Database(crate::error::Error::Storage(
+                                error.into_storage(),
+                            )));
                         }
                     }
-                    Ok(error) => break Err(error),
-                    Err(error) => {
-                        break Err(MergeError::Database(crate::error::Error::Storage(
-                            error.into_storage(),
-                        )));
-                    }
-                },
+                }
             }
         };
 

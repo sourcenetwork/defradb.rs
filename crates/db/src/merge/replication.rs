@@ -129,8 +129,9 @@ pub fn create_replication_stack_with_max_merge_depth<
     merge_handler_inner.set_redriven_merge_sink(Arc::new(SyncRedrivenSink::new(sync.clone())));
     merge_handler_inner.install_local_commit_release();
     let merge_handler = Arc::new(create_acp_merge_handler(merge_handler_inner.clone()));
+    let bus = db.event_bus().cloned();
     let broadcast_mutator = Arc::new(create_broadcast_mutator(db, sync.clone()));
-    let txn_broadcaster: Arc<dyn TxnBroadcaster> = Arc::new(SyncTxnBroadcaster::new(sync));
+    let txn_broadcaster: Arc<dyn TxnBroadcaster> = Arc::new(SyncTxnBroadcaster::new(sync, bus));
 
     ReplicationStack {
         merge_handler_inner,

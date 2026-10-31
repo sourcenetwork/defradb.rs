@@ -174,24 +174,9 @@ Every explain type shows the plan `selectTopNode` → `cursorNode` → `selectNo
 
 Index fixes on `shinzo-develop` outside cursor pagination.
 
-# `go.shinzo.index.range_filter`: A two-sided range filter fetches only the range
-
-- **Parents:** ["go.shinzo.index"]
-- **Go-Tests:** ["index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithGreaterOrEqualAndLessOrEqualFilter_ShouldFetchOnlyTheRange", "index/query_with_index_only_filter_test.go::TestQueryWithIndex_WithNonOverlappingGreaterAndLessThanFilter_ShouldFetchNothing", "index/query_with_index_only_field_order_test.go::TestQueryWithIndex_IfIntFieldInDescOrderWithGtAndLt_ShouldFetchOnlyTheRange"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), `User(filter: {age: {_geq: 28, _leq: 33}}) { name }` on `age: Int @index` returns Fred, John, Islam, Andy with `indexFetches: 4`; `filter: {age: {_gt: 28, _lt: 44}}` on `age: Int @index(direction: DESC)` returns Addo, Andy, Islam, John with `indexFetches: 4`; and the empty range `{_gt: 44, _lt: 30}` returns `[]` with `indexFetches: 0`. Both bounds limit the index scan, not just the lower one.
-
 # `go.shinzo.request`: Request validation
 
 - **Parents:** ["go.shinzo"]
 
 GraphQL request validation fixes on `shinzo-develop`.
 
-# `go.shinzo.request.cyclic_fragments`: Cyclic fragment spreads fail validation
-
-- **Parents:** ["go.shinzo.request"]
-- **Go-Tests:** ["internal/db/request_test.go::TestCyclicFragmentSpreadsFailValidation"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return the error `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.`

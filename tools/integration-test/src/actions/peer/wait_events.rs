@@ -23,6 +23,9 @@ pub struct WaitForPeersEvents {
     pub topics: Option<Vec<Topic>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub start: bool,
+    /// Wait for the next push that found no peers, and return it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_peers: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +53,18 @@ impl Op for WaitForPeersEvents {
             node.watch().map_err(Failure::unsupported)?;
             return Ok(json!({}));
         }
+        let deadline = Duration::from_millis(self.millis.unwrap_or(5000));
+        if self.no_peers {
+            let events = node.events().map_err(Failure::operation)?;
+            let event = state
+                .block_on(events.no_peers(deadline))
+                .map_err(Failure::operation)?;
+            return Ok(json!({
+                "docID": event.doc_id,
+                "collectionID": event.collection_id,
+                "topic": event.topic,
+            }));
+        }
         let mut wanted = RapidHashSet::new();
         for topic in self.topics.iter().flatten() {
             for peer in &topic.peers {
@@ -62,7 +77,6 @@ impl Op for WaitForPeersEvents {
             EventType::Joined => "JOINED",
             EventType::Left => "LEFT",
         };
-        let deadline = Duration::from_millis(self.millis.unwrap_or(5000));
         let events = node.events().map_err(Failure::operation)?;
         state
             .block_on(events.topics(wanted, kind, deadline))

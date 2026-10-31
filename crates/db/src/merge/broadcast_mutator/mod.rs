@@ -350,6 +350,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 .collect(),
         );
         let sync = self.sync.clone();
+        let bus = self.db.event_bus().cloned();
         let collection_name_owned = collection_name.to_string();
 
         // Transfer durable head-hint ownership before returning the committed
@@ -397,6 +398,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 log_broadcast_failure(
                     &broadcast_with_retry_with_creator(
                         &sync,
+                        bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -409,6 +412,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                     log_broadcast_failure(
                         &broadcast_with_retry_with_creator(
                             &sync,
+                            bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,
@@ -679,6 +684,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Capture everything for the spawned task by value.
         let sync = self.sync.clone();
+        let bus = self.db.event_bus().cloned();
         let collection_name_owned = collection_name.to_string();
         let return_cid = block_result.cid;
         let return_block = block_result.block.clone();
@@ -731,6 +737,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 log_broadcast_failure(
                     &broadcast_with_retry_with_creator(
                         &sync,
+                        bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -744,6 +752,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     log_broadcast_failure(
                         &broadcast_with_retry_with_creator(
                             &sync,
+                            bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,
@@ -893,6 +903,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         // Process all broadcast work items in one coordinator-owned task.
         if !broadcast_work.is_empty() {
             let sync = self.sync.clone();
+            let bus = self.db.event_bus().cloned();
             let collection_name_owned = collection_name.to_string();
 
             // Batch commit is already durable. Install every scope marker
@@ -952,6 +963,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                         log_broadcast_failure(
                             &broadcast_with_retry_with_creator(
                                 &sync,
+                                bus.as_ref(),
+                                &block_result.doc_id,
                                 block_result,
                                 &collection_id,
                                 &collection_name_owned,
@@ -964,6 +977,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                             log_broadcast_failure(
                                 &broadcast_with_retry_with_creator(
                                     &sync,
+                                    bus.as_ref(),
+                                    &block_result.doc_id,
                                     col_block_result,
                                     &collection_id,
                                     &collection_name_owned,
@@ -1147,6 +1162,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Capture everything for the spawned task by value.
         let sync = self.sync.clone();
+        let bus = self.db.event_bus().cloned();
         let collection_name_owned = collection_name.to_string();
 
         // Preserve the committed delete as a durable scope obligation before
@@ -1207,6 +1223,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 log_broadcast_failure(
                     &broadcast_with_retry_with_creator(
                         &sync,
+                        bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -1220,6 +1238,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     log_broadcast_failure(
                         &broadcast_with_retry_with_creator(
                             &sync,
+                            bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,

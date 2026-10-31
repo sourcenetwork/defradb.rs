@@ -253,12 +253,18 @@ fn the_count_names_each_stored_document_once() {
             .await
             .unwrap();
         assert_eq!(purged, 2);
+        assert_eq!(
+            db.merge_stats().drain().deleted,
+            2,
+            "purge stats counts what the committed purge removed"
+        );
 
         let again = db
             .purge_by_doc_ids("Users", &[alice], true, None)
             .await
             .unwrap();
         assert_eq!(again, 0, "a DocID that names nothing is skipped");
+        assert_eq!(db.merge_stats().drain().deleted, 0);
     })
     .unwrap()
 }

@@ -4323,3 +4323,35 @@ async fn live_connection_allows_pull_before_lifecycle_notification_without_grant
         .await
         .is_err());
 }
+
+/// A pushlog arriving as a two-stream request counts in `msgsIn`, and in
+/// `droppedQueueFull` when every request worker is busy.
+#[tokio::test]
+async fn a_two_stream_push_refused_at_capacity_counts_as_inbound_and_dropped() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let request = PushLogRequest::new(
+        "doc".to_string(),
+        bytes::Bytes::from(vec![1, 2, 3]),
+        "collection1".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::new(),
+    );
+    let _ = coordinator
+        .handle_transport_event_with_admission(
+            TransportEvent::TwoStreamRequest {
+                peer_id: random_peer_id(),
+                request,
+                token: None,
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+            },
+            crate::sync::DispatchAdmission::Saturated,
+        )
+        .await;
+    let report = coordinator.manager().diagnostics().arrivals().drain();
+    assert_eq!((report.msgs_in, report.dropped_queue_full), (1, 1));
+}

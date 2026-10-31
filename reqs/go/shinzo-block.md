@@ -80,11 +80,3 @@ Creating a document reports no earlier heads for its fields; after the create wr
 
 - **Parents:** ["go.shinzo"]
 
-# `go.shinzo.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
-
-- **Parents:** ["go.shinzo.document"]
-- **Go-Tests:** ["client/document_test.go::TestNewDocFromMap_TypedStringSliceForNillableArray_Persisted", "client/document_test.go::TestNewDocFromMap_TypedTimeSliceForNillableArray_Persisted"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A `[String]` field given a typed string list (`["bafyA", "bafyB", "bafyC"]`) and a `[DateTime]` field given a typed time list (`2026-07-07T12:00:00Z`, `2026-07-08T12:00:00Z`) are kept in the built document with every element present, in order: the Go tests build the document with `NewDocFromMap` and read the field back, without saving it. Before Shinzo, Go dropped such a value silently.
-

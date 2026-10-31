@@ -225,6 +225,10 @@ impl P2PTransport for Libp2pTransport {
         self.handle.send_car_request(pid, root_cid).await
     }
 
+    async fn wire_stats(&self) -> Result<std::sync::Arc<crate::sync::WireStats>> {
+        Ok(self.handle.wire_stats())
+    }
+
     async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
         self.handle.send_car_response(pid, car_data).await

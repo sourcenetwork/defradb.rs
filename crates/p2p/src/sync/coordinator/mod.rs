@@ -166,6 +166,8 @@ pub struct SyncStatus {
     pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
     /// Per-peer measurements of our CAR fetches; empty for transports without them.
     pub peer_fetches: Vec<crate::transport::PeerFetchStats>,
+    /// Gossip payloads this node could not decode (issue #858).
+    pub gossip_decode_failures: u64,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -933,6 +935,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let push_backlog = self.runtime.push_backlog.snapshot().await;
         let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
         let peer_fetches = self.transport().fetch_stats().await.unwrap_or_default();
+        let wire_stats = self.transport().wire_stats().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -953,6 +956,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
             inbound_budget,
             peer_fetches,
+            gossip_decode_failures: wire_stats.gossip_decode_failures(),
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
@@ -1049,6 +1053,59 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             self.dispatch_due_pending_dag_fetches(n0_future::time::Instant::now());
         }
+    }
+
+    /// Logs Go Shinzo's `p2p stats` report every `interval`, each covering
+    /// that interval only, until shutdown. `also` runs on the same tick, for
+    /// the node's reports that live outside the sync layer (`merge stats`).
+    pub async fn run_stats_report<F>(&self, interval: Duration, mut also: F)
+    where
+        F: FnMut(),
+    {
+        let mut tick = n0_future::time::interval(interval);
+        tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
+        tick.tick().await;
+        let mut budget_drops = 0;
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    self.stats_report(&mut budget_drops).await.log();
+                    also();
+                }
+                _ = self.runtime.shutdown.cancelled() => return,
+            }
+        }
+    }
+
+    /// One interval's `p2p stats`: the arrival counts, the push queue as it
+    /// stands, the inbound byte budget's refusals since `budget_drops` (on a
+    /// transport with a budget), and this node's Shinzo wire counters once
+    /// used.
+    async fn stats_report(
+        &self,
+        budget_drops: &mut u64,
+    ) -> crate::sync::manager::arrival_stats::ArrivalReport {
+        let mut report = self.manager.diagnostics().arrivals().drain();
+        let backlog = self.runtime.push_backlog.snapshot().await;
+        report
+            .extra
+            .push(("queueDepth", backlog.queued_items as u64));
+        report
+            .extra
+            .push(("queueBytes", backlog.queued_bytes as u64));
+        let budget = self.transport().inbound_budget().await.unwrap_or_default();
+        if !budget.is_empty() {
+            let total: u64 = budget
+                .iter()
+                .map(|class| class.busy_resets + class.oversized_resets)
+                .sum();
+            let since = total.saturating_sub(std::mem::replace(budget_drops, total));
+            report.extra.push(("droppedOverBudget", since));
+        }
+        if let Ok(wire) = self.transport().wire_stats().await {
+            report.extra.extend(wire.drain_shinzo());
+        }
+        report
     }
 
     fn dispatch_due_pending_dag_fetches(&self, now: n0_future::time::Instant) -> usize {

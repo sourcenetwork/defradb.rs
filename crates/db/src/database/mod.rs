@@ -195,6 +195,8 @@ impl DbOptions {
 pub struct DB<S: Store> {
     /// The underlying store.
     store: Arc<S>,
+    /// This node's merge and purge counters (Go Shinzo's `merge stats`).
+    merge_stats: Arc<crate::stats::MergeStats>,
     /// Options for this database instance.
     options: DbOptions,
     /// Counter for generating unique transaction IDs.
@@ -301,6 +303,7 @@ impl<S: Store> DB<S> {
             store,
             options,
             txn_id_counter: AtomicU64::new(0),
+            merge_stats: Arc::default(),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
@@ -372,6 +375,7 @@ impl<S: Store> DB<S> {
             store,
             options,
             txn_id_counter: AtomicU64::new(0),
+            merge_stats: Arc::default(),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
@@ -832,6 +836,11 @@ impl<S: Store> DB<S> {
     }
 
     /// Get the database options.
+    /// This node's merge and purge counters.
+    pub fn merge_stats(&self) -> &Arc<crate::stats::MergeStats> {
+        &self.merge_stats
+    }
+
     pub fn options(&self) -> &DbOptions {
         &self.options
     }
