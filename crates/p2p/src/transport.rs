@@ -399,6 +399,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         Ok(Vec::new())
     }
 
+    /// This node's transport counters (gossip decode failures, the Shinzo
+    /// wire). A transport that keeps none hands back an empty set.
+    async fn wire_stats(&self) -> Result<std::sync::Arc<crate::sync::WireStats>> {
+        Ok(std::sync::Arc::default())
+    }
+
     /// The live connection to a peer, or `None` when not connected or the
     /// transport cannot report it.
     async fn peer_connection(&self, _peer_id: &PeerId) -> Result<Option<PeerConnectionInfo>> {

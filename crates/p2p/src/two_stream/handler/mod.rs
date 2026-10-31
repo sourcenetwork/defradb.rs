@@ -127,6 +127,8 @@ pub(crate) struct PendingResponses {
     shinzo_cars: HopscotchMap<PendingResponseKey, (cid::Cid, Instant), RandomState>,
     /// Peers whose Go Shinzo CAR requests keep failing.
     car_backoff: crate::sync::shinzo_car::CarPeerBackoff,
+    /// This node's transport counters.
+    wire_stats: Arc<crate::sync::WireStats>,
 }
 
 impl Default for PendingResponses {
@@ -139,11 +141,17 @@ impl Default for PendingResponses {
             branchable_sync_requests: HopscotchMap::with_hasher(RandomState::default()),
             shinzo_cars: HopscotchMap::with_hasher(RandomState::default()),
             car_backoff: Default::default(),
+            wire_stats: Arc::default(),
         }
     }
 }
 
 impl PendingResponses {
+    /// This node's transport counters.
+    pub(crate) fn wire_stats(&self) -> &Arc<crate::sync::WireStats> {
+        &self.wire_stats
+    }
+
     pub(crate) fn register_pushlog(
         &self,
         key: PendingResponseKey,
@@ -231,9 +239,20 @@ pub struct TwoStreamHandler {
 impl TwoStreamHandler {
     /// Create a new two-stream handler from a stream::Control.
     pub fn new(control: stream::Control) -> Self {
+        Self::with_wire_stats(control, Arc::default())
+    }
+
+    /// A handler that counts this node's Shinzo wire traffic in `wire_stats`.
+    pub(crate) fn with_wire_stats(
+        control: stream::Control,
+        wire_stats: Arc<crate::sync::WireStats>,
+    ) -> Self {
         Self {
             control,
-            pending: Arc::new(PendingResponses::default()),
+            pending: Arc::new(PendingResponses {
+                wire_stats,
+                ..Default::default()
+            }),
         }
     }
 

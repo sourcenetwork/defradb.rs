@@ -91,6 +91,7 @@ pub(super) fn reply_event(
             None
         }
     };
+    pending.wire_stats().record_car_fetch(car.is_some());
     let car_data = match car {
         Some(car) => car,
         None => crate::sync::car::encode_car_response(&[root], &[], &[]).ok()?,
