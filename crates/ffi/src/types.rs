@@ -231,6 +231,45 @@ pub struct NodeInitOptions {
     pub rate_limit_burst: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
+    /// Speak Go Shinzo's P2P wire on the libp2p transport (1=true, 0=false).
+    pub shinzo_wire: c_int,
+    /// Optional retention rule as JSON: each collection ID it covers, with
+    /// the integer field that holds a document's height and the floor at or
+    /// below which a replicated document is refused:
+    /// `{"<collectionID>": {"field": "blockNumber", "floor": 100}}`.
+    pub retention_json: *const c_char,
+    /// Optional replication filter, asked whether to keep each replicated
+    /// document before its commit stores anything; a
+    /// `DefraReplicationFilterCallback`, spelled out so C sees a nullable
+    /// function pointer. Null keeps everything.
+    pub replication_filter: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            collection_id: *const c_char,
+            doc_id: *const c_char,
+            fields_json: *const c_char,
+        ) -> c_int,
+    >,
+    /// Passed back to `replication_filter` on every call.
+    pub replication_filter_context: usize,
+    /// Optional retention rule asked as documents arrive (Go Shinzo's
+    /// `client.RetentionRule`); it replaces `retention_json`. Called with
+    /// `retention_rule_context` and a collection ID, it returns non-zero when
+    /// the rule covers the collection, writing the height field's name,
+    /// null-terminated, into `field_out` (`field_capacity` bytes) and the
+    /// floor into `floor_out`. Thread-safe and non-blocking, as
+    /// `replication_filter`.
+    pub retention_rule: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            collection_id: *const c_char,
+            field_out: *mut c_char,
+            field_capacity: usize,
+            floor_out: *mut i64,
+        ) -> c_int,
+    >,
+    /// Passed back to `retention_rule` on every call.
+    pub retention_rule_context: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -263,6 +302,12 @@ impl Default for NodeInitOptions {
             max_doc_sync_request_doc_ids: 0,
             rate_limit_burst: 0,
             rate_limit_rate: 0.0,
+            shinzo_wire: 0,
+            retention_json: ptr::null(),
+            replication_filter: None,
+            replication_filter_context: 0,
+            retention_rule: None,
+            retention_rule_context: 0,
         }
     }
 }

@@ -261,6 +261,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Refuse replicated documents at or below the floors `rule` gives as
+    /// they arrive (Go Shinzo's `node.Node.RetentionRule`); it replaces
+    /// [`Self::with_retention`]'s fixed floors.
+    pub fn with_retention_rule(mut self, rule: Arc<dyn db::retention::RetentionRule>) -> Self {
+        self.config.retention_rule = Some(crate::RetentionRuleHandle(rule));
+        self
+    }
+
     /// Ask `filter` whether to keep each replicated document before its
     /// commit stores anything.
     pub fn with_replication_filter(
