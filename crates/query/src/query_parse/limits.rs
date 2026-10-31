@@ -16,6 +16,24 @@ pub const MAX_QUERY_DEPTH: usize = DEFAULT_MAX_QUERY_DEPTH;
 /// an unbounded number of fetches.
 pub const MAX_QUERY_WIDTH: usize = DEFAULT_MAX_QUERY_WIDTH;
 
+/// Maximum number of fragments one spread chain nests. Fragments flatten into
+/// the selection that spreads them, so a chain adds no nesting depth, but
+/// the parser expands it one fragment at a time; a chain longer than this is
+/// refused before it can exhaust a thread's stack (#2465). The same bound
+/// as a subscription's root fragments.
+pub const MAX_FRAGMENT_NESTING: usize = 32;
+
+/// Refuse a spread that would nest more than `MAX_FRAGMENT_NESTING`
+/// fragments, given the `nesting` fragments already on its chain.
+pub(super) fn check_fragment_nesting(nesting: usize) -> Result<()> {
+    if nesting >= MAX_FRAGMENT_NESTING {
+        return Err(QueryError::parse(format!(
+            "query nests fragments more than {MAX_FRAGMENT_NESTING} deep"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a parsed Select tree against depth and width limits.
 ///
 /// Called after parsing to reject queries that would cause excessive work.

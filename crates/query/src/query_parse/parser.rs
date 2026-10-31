@@ -136,6 +136,7 @@ fn parse_selection_to_selects<'a>(
                 QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
             })?;
 
+            super::limits::check_fragment_nesting(visiting.len())?;
             // Mark this fragment as being visited
             visiting.insert(spread.fragment_name.clone());
 
@@ -232,6 +233,7 @@ fn parse_selection_to_mutations<'a>(
             {
                 return Ok(());
             }
+            super::limits::check_fragment_nesting(visiting.len())?;
             if !visiting.insert(spread.fragment_name.clone()) {
                 return Err(QueryError::parse(format!(
                     "circular fragment reference detected: '{}'",
@@ -1043,6 +1045,7 @@ pub(super) fn parse_selection_set(
                     QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
                 })?;
 
+                super::limits::check_fragment_nesting(visiting.len())?;
                 // Mark this fragment as being visited
                 visiting.insert(spread.fragment_name.clone());
 
