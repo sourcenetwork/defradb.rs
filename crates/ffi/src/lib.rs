@@ -246,7 +246,10 @@ pub use acp::{
 };
 pub use action::list_actions;
 pub use backup::{basic_export, basic_import};
-pub use batch::{batch_sign, batch_sign_with_options, batch_start, batch_start_with_options};
+pub use batch::{
+    batch_collect_start, batch_collect_take, batch_sign, batch_sign_with_options, batch_start,
+    batch_start_with_options,
+};
 pub use block::{block_verify_signature, block_verify_signature_in_txn};
 pub use collection::{
     add_view, delete_collection, delete_collection_versions, delete_collections,
@@ -286,8 +289,9 @@ pub use schema::{add_schema, add_schema_in_txn, get_collections, get_collections
 pub use se_key::set_se_encryption_key;
 pub use shinzo::{kv_export, kv_field_mapping, kv_import, purge_documents, save_many_documents};
 pub use subscription::{
-    close_graphql_subscription, close_subscription, create_merge_complete_subscription,
-    create_subscription, poll_graphql_subscription, poll_subscription,
+    close_graphql_subscription, close_subscription, create_event_subscription,
+    create_merge_complete_subscription, create_subscription, poll_graphql_subscription,
+    poll_subscription,
 };
 pub use txn::{begin_txn, commit_txn, rollback_txn};
 pub use types::defra_free_string;

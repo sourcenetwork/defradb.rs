@@ -370,3 +370,106 @@ fn node_options_turn_on_go_shinzos_wire() {
     let off = unsafe { with_node_options(libp2p(), &NodeInitOptions::default()) }.unwrap();
     assert!(!wire(&off));
 }
+
+unsafe extern "C" fn floor_for_logs(
+    context: usize,
+    collection_id: *const c_char,
+    field_out: *mut c_char,
+    field_capacity: usize,
+    floor_out: *mut i64,
+) -> c_int {
+    assert_eq!(context, 9);
+    if unsafe { CStr::from_ptr(collection_id) }.to_bytes() != b"col-log" {
+        return 0;
+    }
+    let field = b"blockNumber\0";
+    assert!(field.len() <= field_capacity);
+    unsafe {
+        std::ptr::copy_nonoverlapping(field.as_ptr().cast(), field_out, field.len());
+        *floor_out = 100;
+    }
+    1
+}
+
+#[test]
+fn node_options_take_a_retention_rule_callback() {
+    let node = node_with(NodeInitOptions {
+        retention_rule: Some(floor_for_logs),
+        retention_rule_context: 9,
+        ..NodeInitOptions::default()
+    });
+    let rule = NODES
+        .get(node, |state| {
+            state.database.options().retention_rule.clone()
+        })
+        .unwrap()
+        .unwrap();
+    let floor = rule.retention_floor("col-log").unwrap();
+    assert_eq!((floor.field.as_str(), floor.floor), ("blockNumber", 100));
+    assert!(rule.retention_floor("col-other").is_none());
+    node_close(node);
+}
+
+#[test]
+fn an_event_subscription_delivers_the_events_it_names() {
+    use crate::subscription::{close_subscription, create_event_subscription, poll_subscription};
+    let node = node();
+    let names = cstr(r#"["update", "p2p-no-peers"]"#);
+    let subscription = unsafe { create_event_subscription(node, names.as_ptr()) };
+    assert_eq!(subscription.status, 0);
+    let alice = add(node, "Alice", 40);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let event = loop {
+        let polled = poll_subscription(subscription.subscription_handle);
+        if polled.status == 0 {
+            let text = unsafe { CStr::from_ptr(polled.value) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { defra_free_string(polled.value) };
+            break serde_json::from_str::<Value>(&text).unwrap();
+        }
+        assert!(std::time::Instant::now() < deadline, "no update event");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(event["type"], "update");
+    assert_eq!(event["doc_id"], alice);
+    assert_eq!(event["is_relay"], false);
+    let _ = close_subscription(subscription.subscription_handle);
+
+    let unknown = cstr(r#"["nope"]"#);
+    let refused = unsafe { create_event_subscription(node, unknown.as_ptr()) };
+    assert_eq!(refused.status, 1);
+    unsafe { defra_free_string(refused.error) };
+    node_close(node);
+}
+
+#[test]
+fn batch_collection_returns_the_composites_a_tagged_write_produces() {
+    let node = node();
+    let session = cstr("collect-without-signing");
+    take(unsafe { crate::batch::batch_collect_start(session.as_ptr(), null()) }).unwrap();
+    let request = cstr(
+        r#"mutation { add_User(input: [{name: "Alice", age: 40}, {name: "Bob", age: 7}]) { _docID } }"#,
+    );
+    take(unsafe {
+        exec_request(
+            node,
+            null(),
+            null(),
+            request.as_ptr(),
+            null(),
+            null(),
+            session.as_ptr(),
+        )
+    })
+    .unwrap();
+    let cids = take(unsafe { crate::batch::batch_collect_take(session.as_ptr()) }).unwrap();
+    assert_eq!(
+        cids.as_array().unwrap().len(),
+        2,
+        "one composite per document: {cids}"
+    );
+    let error = take(unsafe { crate::batch::batch_collect_take(session.as_ptr()) }).unwrap_err();
+    assert_eq!(error, "no batch session active");
+    node_close(node);
+}

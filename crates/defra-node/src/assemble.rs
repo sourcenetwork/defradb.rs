@@ -82,6 +82,7 @@ where
         query_timeout,
         introspection_cache,
         retention,
+        retention_rule,
         replication_filter,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
@@ -147,7 +148,9 @@ where
     if let Some(size) = chunk_size {
         db_options = db_options.with_chunk_size(size);
     }
-    if let Some(rule) = retention {
+    if let Some(rule) = retention_rule {
+        db_options = db_options.with_retention_rule(rule.0);
+    } else if let Some(rule) = retention {
         db_options = db_options.with_retention_rule(Arc::new(rule));
     }
     if let Some(filter) = replication_filter {
