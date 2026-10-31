@@ -265,7 +265,9 @@ impl Document {
             .collection
             .field_by_name(&field_name)
             .ok_or_else(|| Error::FieldNotExist(field_name.clone()))?;
-        if definition.kind.is_relation() && !definition.is_primary {
+        if (definition.kind.is_relation() || definition.relation_name.is_some())
+            && !definition.is_primary
+        {
             return Err(Error::CannotSetRelationFromSecondarySide(field_name));
         }
         let crdt_type = definition.crdt_type;

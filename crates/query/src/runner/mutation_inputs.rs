@@ -4,7 +4,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
 use crate::document::{document_to_plan_doc, DocumentMapping};
-use crate::error::Result;
+use crate::error::{QueryError, Result};
 use crate::mapper::{Field, Filter, Mutation, Requestable, Select};
 use crate::plan::{AddInput, UpdateInput, UpsertInput};
 use crate::txn::TransactionRegistry;
@@ -58,14 +58,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         collection: &schema::CollectionVersion,
         input: &RapidHashMap<String, JsonValue>,
-    ) -> RapidHashMap<String, JsonValue> {
+    ) -> Result<RapidHashMap<String, JsonValue>> {
         let mut normalized = RapidHashMap::with_capacity(input.len());
 
         for (field_name, value) in input {
-            normalized.insert(input_field_name(collection, field_name), value.clone());
+            let name = input_field_name(collection, field_name);
+            if collection
+                .field_by_name(&name)
+                .is_some_and(|field| field.relation_name.is_some() && !field.is_primary)
+            {
+                return Err(QueryError::SecondaryRelationInput(field_name.clone()));
+            }
+            normalized.insert(name, value.clone());
         }
 
-        normalized
+        Ok(normalized)
     }
 
     /// Resolve a filter to document IDs by querying the collection.
@@ -183,7 +190,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         for doc_input in &mutation.create_input {
             let mut create_input = AddInput::new();
-            let normalized = self.normalize_mutation_input_fields(collection, doc_input);
+            let normalized = self.normalize_mutation_input_fields(collection, doc_input)?;
             for (field_name, value) in normalized {
                 create_input = create_input.with_field(field_name.clone(), value.clone());
             }
@@ -202,7 +209,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut update_input = UpdateInput::new();
 
         let (fields, ops) = mutation.split_update(collection)?;
-        let normalized = self.normalize_mutation_input_fields(collection, &fields);
+        let normalized = self.normalize_mutation_input_fields(collection, &fields)?;
         for (field_name, value) in &normalized {
             update_input = update_input.with_field(field_name.clone(), value.clone());
         }
@@ -225,7 +232,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     ) -> Result<UpsertInput> {
         let mut upsert_input = UpsertInput::new();
 
-        let normalized = self.normalize_mutation_input_fields(collection, input);
+        let normalized = self.normalize_mutation_input_fields(collection, input)?;
         for (field_name, value) in &normalized {
             upsert_input = upsert_input.with_field(field_name.clone(), value.clone());
         }
