@@ -1321,4 +1321,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Receive gate",
+        name: "INV_ArrivalRefusalStoresNothing / INV_FetchRefusalImportsNothing / INV_RefusedNeverMerged / INV_KeptIsKept",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_arrival, SyncCoordinator::gate_fetched; crates/db/src/receive_gate.rs DbReceiveGate::judge",
+        model_ref: "MC_ReceiveGate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
 ];
