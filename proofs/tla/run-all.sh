@@ -205,6 +205,15 @@ RUNS=(
   "MC_ReplicationFilter_Red_Retry.cfg ReplicationFilter.tla RED" # a refused head is retried and stored later (INV_RefusedNothingStored)
   "MC_ReplicationFilter_Red_FilterBranchable.cfg ReplicationFilter.tla RED" # a branchable collection is filtered per document (INV_BranchableUnfiltered)
   "MC_ReplicationFilter_Red_Alone.cfg ReplicationFilter.tla RED" # a later commit of a refused document merges on its own fields (INV_RefusedNothingStored)
+  "MC_Retention_Green.cfg Retention.tla GREEN" # #2450: the merge refuses only what the rule refuses, alone, never relayed, counted
+  "MC_Retention_Green_ZeroFloor.cfg Retention.tla GREEN" # #2450: a floor of 0 refuses nothing by height
+  "MC_Retention_Green_Branchable.cfg Retention.tla GREEN" # #2450: a branchable collection is not judged
+  "MC_Retention_Red_Never.cfg Retention.tla RED" # the merge never judges (INV_NoneBelowFloor)
+  "MC_Retention_Red_JudgeDeletes.cfg Retention.tla RED" # a delete is judged and refused (INV_DeleteApplies)
+  "MC_Retention_Red_WholeBatch.cfg Retention.tla RED" # one refusal refuses its batch (INV_BatchIsolation)
+  "MC_Retention_Red_StrictFloor.cfg Retention.tla RED" # a floor of 0 refuses height 0 (INV_ZeroFloor)
+  "MC_Retention_Red_RelayAll.cfg Retention.tla RED" # a refused event is relayed (INV_RefusedNotMerged)
+  "MC_Retention_Red_JudgeLocal.cfg Retention.tla RED" # a local write is judged (INV_LocalAndBranchable)
   "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
   "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
