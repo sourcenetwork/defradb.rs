@@ -522,6 +522,12 @@ jobs:
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
           -- --skip ::go_
+      - name: Run rust integration tests (purge, save-many, unique-index writer)
+        if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p integration-test
+          --test mutation --test index
+          -- mutation::purge:: mutation::save_many:: index::unique_writer::
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:

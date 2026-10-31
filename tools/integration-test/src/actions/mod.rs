@@ -164,6 +164,7 @@ client_actions! {
         NewEncryptedIndex,
         NewIndex,
         NewNode,
+        PurgeDocs,
         ReEnableNAC,
         RefreshViews,
         SaveDocs,

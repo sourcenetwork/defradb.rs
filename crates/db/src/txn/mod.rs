@@ -15,6 +15,7 @@ use crate::index::vector::engine::diskann::CodeCaches;
 use storage::corekv::{IterOptions, Key, OnAbort, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
+mod attempt;
 mod catalog;
 pub mod context;
 pub(crate) mod fence;

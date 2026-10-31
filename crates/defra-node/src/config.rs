@@ -190,6 +190,9 @@ pub struct Libp2pConfig {
     pub stream_timeout_secs: Option<u64>,
     /// Sync limits and the replicator retry ladder.
     pub sync: SyncTuning,
+    /// When the orphan block sweep (`db::block::orphan_gc`) runs. It runs
+    /// only on a persistent store, which outlives an abandoned fetch.
+    pub orphan_sweep: db::block::orphan_gc::OrphanSweepConfig,
 }
 
 #[cfg(feature = "libp2p")]
@@ -202,6 +205,7 @@ impl Default for Libp2pConfig {
             enable_relay: true,
             stream_timeout_secs: None,
             sync: SyncTuning::default(),
+            orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
         }
     }
 }
