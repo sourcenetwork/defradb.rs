@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-ba738db0.js";
+            window.path_to_searchindex_js = "../searchindex-b29c2469.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -206,12 +206,12 @@ Defaults: <code>127.0.0.1:9181</code>, 300 s timeout, bounded concurrency.</p>
 optional at-rest encryption, Vera or local ACP) and carries a full HTTP client surface
 (<code>defra client ...</code>: acp, backup, blocks, collections, documents, graphql, indexes,
 lens, p2p, txns, views), plus keyring, identity and SDL utilities.</p>
-<h2 id="embedded-cratesembedded-cratesdefra-node"><a class="header" href="#embedded-cratesembedded-cratesdefra-node">Embedded (<code>crates/embedded</code>, <code>crates/defra-node</code>)</a></h2>
-<p>Two builders: <code>defra-node</code> (the newer, minimal builder: pool, optional network edge
-started only if needed, background tasks) and <code>embedded</code> (the older embedder API with
-transport and ACP configuration). Both place the store on a pool
-(<code>storage::start_pool</code>) and expose the same DB core; a node with no network starts no
-network runtime.</p>
+<h2 id="embedded-cratesdefra-node"><a class="header" href="#embedded-cratesdefra-node">Embedded (<code>crates/defra-node</code>)</a></h2>
+<p>One node assembly, reached through <code>NodeBuilder</code>, which opens a regolith store (server or
+embedded sizing profile, in memory or at a path). The builder fills in one <code>NodeConfig</code>
+(transport: libp2p or iroh, signing, document ACP, node access control, query limits, sync
+knobs) and places the store on a pool (<code>storage::start_pool</code>); a node with no network starts
+no network runtime. FFI is built on it.</p>
 <h2 id="ffi-cratesffi"><a class="header" href="#ffi-cratesffi">FFI (<code>crates/ffi</code>)</a></h2>
 <p>A C ABI static library matching Go’s <code>cbindings/</code>: node lifecycle, schema, documents,
 queries and subscriptions, transactions, blocks, batch, backup, lens, indexes, ACP
