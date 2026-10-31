@@ -59,45 +59,111 @@ const INNER_TAG: u8 = 0x01;
 /// are sorted by their binary encoding first, so the order they were
 /// collected in does not matter. An empty set's root is SHA256 of nothing.
 pub fn compute_merkle_root_with(cids: &[Cid], scheme: MerkleScheme) -> [u8; 32] {
-    let mut sorted: Vec<Vec<u8>> = cids.iter().map(Cid::to_bytes).collect();
-    sorted.sort();
-
-    let tagged = scheme == MerkleScheme::DomainSeparated;
-    let mut hashes: Vec<[u8; 32]> = sorted
-        .iter()
-        .map(|bytes| {
-            let mut hasher = Sha256::new();
-            if tagged {
-                hasher.update([LEAF_TAG]);
-            }
-            hasher.update(bytes);
-            hasher.finalize().into()
-        })
-        .collect();
+    let mut hashes = leaf_layer(cids, scheme);
     if hashes.is_empty() {
         return Sha256::digest([]).into();
     }
-
     while hashes.len() > 1 {
-        hashes = hashes
-            .chunks(2)
-            .map(|pair| match (scheme, pair) {
-                (MerkleScheme::DomainSeparated, [alone]) => *alone,
-                _ => {
-                    let right = pair.get(1).unwrap_or(&pair[0]);
-                    let mut hasher = Sha256::new();
-                    if tagged {
-                        hasher.update([INNER_TAG]);
-                    }
-                    hasher.update(pair[0]);
-                    hasher.update(right);
-                    hasher.finalize().into()
-                }
-            })
-            .collect();
+        hashes = up(&hashes, scheme);
     }
-
     hashes[0]
+}
+
+fn leaf_hash(cid: &[u8], scheme: MerkleScheme) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    if scheme == MerkleScheme::DomainSeparated {
+        hasher.update([LEAF_TAG]);
+    }
+    hasher.update(cid);
+    hasher.finalize().into()
+}
+
+fn inner_hash(left: &[u8; 32], right: &[u8; 32], scheme: MerkleScheme) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    if scheme == MerkleScheme::DomainSeparated {
+        hasher.update([INNER_TAG]);
+    }
+    hasher.update(left);
+    hasher.update(right);
+    hasher.finalize().into()
+}
+
+/// The leaf hashes, in the CIDs' sorted byte order.
+fn leaf_layer(cids: &[Cid], scheme: MerkleScheme) -> Vec<[u8; 32]> {
+    let mut sorted: Vec<Vec<u8>> = cids.iter().map(Cid::to_bytes).collect();
+    sorted.sort();
+    sorted.iter().map(|cid| leaf_hash(cid, scheme)).collect()
+}
+
+/// One layer up: neighbours hashed in pairs; a last hash alone is paired
+/// with itself (Go) or moves up unchanged (domain-separated).
+fn up(layer: &[[u8; 32]], scheme: MerkleScheme) -> Vec<[u8; 32]> {
+    layer
+        .chunks(2)
+        .map(|pair| match (scheme, pair) {
+            (MerkleScheme::DomainSeparated, [alone]) => *alone,
+            (_, [alone]) => inner_hash(alone, alone, scheme),
+            _ => inner_hash(&pair[0], &pair[1], scheme),
+        })
+        .collect()
+}
+
+/// Where one CID sits in a batch's Merkle tree: its position in sorted
+/// order, how many CIDs the batch has, and the sibling hash at each layer
+/// that has one, bottom up. With the batch's signature it shows the CID was
+/// signed without sending the whole batch.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MerklePath {
+    pub index: usize,
+    pub count: usize,
+    pub siblings: Vec<[u8; 32]>,
+}
+
+/// The path from `cid` to the root of the tree over `cids`, or `None` when
+/// `cid` is not among them.
+pub fn merkle_path(cids: &[Cid], cid: &Cid, scheme: MerkleScheme) -> Option<MerklePath> {
+    let mut sorted: Vec<Vec<u8>> = cids.iter().map(Cid::to_bytes).collect();
+    sorted.sort();
+    let mut index = sorted.binary_search(&cid.to_bytes()).ok()?;
+    let mut layer = leaf_layer(cids, scheme);
+    let path_index = index;
+    let mut siblings = Vec::new();
+    while layer.len() > 1 {
+        let sibling = index ^ 1;
+        if sibling < layer.len() {
+            siblings.push(layer[sibling]);
+        }
+        layer = up(&layer, scheme);
+        index /= 2;
+    }
+    Some(MerklePath {
+        index: path_index,
+        count: cids.len(),
+        siblings,
+    })
+}
+
+/// The root that `cid` at `path` leads to, or `None` when the path does not
+/// fit a tree of `path.count` CIDs: an index past the end, or too few or
+/// too many siblings for the layers that tree has.
+pub fn root_from_path(cid: &Cid, path: &MerklePath, scheme: MerkleScheme) -> Option<[u8; 32]> {
+    if path.index >= path.count {
+        return None;
+    }
+    let mut hash = leaf_hash(&cid.to_bytes(), scheme);
+    let (mut index, mut count) = (path.index, path.count);
+    let mut siblings = path.siblings.iter();
+    while count > 1 {
+        hash = match (index % 2, index + 1 < count) {
+            (1, _) => inner_hash(siblings.next()?, &hash, scheme),
+            (_, true) => inner_hash(&hash, siblings.next()?, scheme),
+            _ if scheme == MerkleScheme::DomainSeparated => hash,
+            _ => inner_hash(&hash, &hash, scheme),
+        };
+        index /= 2;
+        count = count.div_ceil(2);
+    }
+    siblings.next().is_none().then_some(hash)
 }
 
 // ---------------------------------------------------------------------------

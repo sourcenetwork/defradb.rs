@@ -381,6 +381,56 @@ theorem root_determines_cids (xs ys : List α) (n m : Nat) (t : Tree α)
   rw [hy, leaves_of_leaf_layer] at ey
   exact ex.symm.trans ey
 
+-- One layer of an inclusion path: the sibling on the left, on the right, or
+-- none (the node moved up alone).
+inductive Step (α : Type) where
+  -- The sibling is on the left: `node sibling here`.
+  | left : Tree α → Step α
+  -- The sibling is on the right: `node here sibling`.
+  | right : Tree α → Step α
+  -- No sibling: the node moves up unchanged.
+  | alone : Step α
+
+-- Climb from a node along a path, as `root_from_path` does.
+def rebuild : Tree α → List (Step α) → Tree α
+  -- No more layers: this is the root.
+  | t, [] => t
+  -- Join with the sibling on the left, then climb on.
+  | t, .left s :: rest => rebuild (.node s t) rest
+  -- Join with the sibling on the right, then climb on.
+  | t, .right s :: rest => rebuild (.node t s) rest
+  -- Move up alone, then climb on.
+  | t, .alone :: rest => rebuild t rest
+
+-- Promise: climbing a path never loses a CID the starting node holds.
+theorem rebuild_keeps_leaf (x : α) :
+    ∀ (steps : List (Step α)) (t : Tree α), x ∈ t.leaves → x ∈ (rebuild t steps).leaves
+  -- No steps: the same node.
+  | [], _, h => h
+  -- A left sibling: the node is the right half of the new node.
+  | .left s :: rest, t, h => rebuild_keeps_leaf x rest _ (by simp [Tree.leaves, h])
+  -- A right sibling: the node is the left half of the new node.
+  | .right s :: rest, t, h => rebuild_keeps_leaf x rest _ (by simp [Tree.leaves, h])
+  -- Alone: unchanged.
+  | .alone :: rest, t, h => rebuild_keeps_leaf x rest t h
+
+-- Promise: if a CID's path climbs to the root a batch of CIDs climbs to,
+-- that CID is in the batch. So an inclusion proof that checks out names a
+-- CID the batch's signer signed, whatever siblings it carries.
+theorem path_proves_membership (x : α) (steps : List (Step α)) (xs : List α) (n : Nat)
+    -- Given the batch `xs` climbs to the root the path from `x` reaches,
+    (h : climb (xs.map Tree.leaf) n = [rebuild (.leaf x) steps]) :
+    -- `x` is one of the batch's CIDs.
+    x ∈ xs := by
+  -- The batch's CIDs are exactly the CIDs under that root,
+  have e := climb_leaves n (xs.map Tree.leaf)
+  rw [h, leaves_of_leaf_layer] at e
+  -- and `x` is under it.
+  have hx := rebuild_keeps_leaf x steps (.leaf x) (by simp [Tree.leaves])
+  simp at e
+  rw [← e]
+  exact hx
+
 end DomainSeparated
 
 end ShinzoWire
