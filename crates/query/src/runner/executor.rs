@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -417,12 +417,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .and_then(|prepared| prepared.parsed.as_deref())
         {
             Some(parsed) => parsed.clone(),
-            None => match parse_request_with_limits(
-                &request.query,
-                variables.as_ref(),
-                request.operation_name.as_deref(),
-                self.query_limits,
-            ) {
+            None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(p) => p,
                 Err(e) => {
                     return QueryResponse {

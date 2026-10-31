@@ -144,6 +144,9 @@ pub struct UpsertNode {
     /// Single input to apply to all doc_ids (same fields for create and update)
     single_input: Option<UpsertInput>,
     prepared_writes: Option<crate::prepared::PreparedMutation>,
+    /// The document a save names by DocID, when the request named one: with
+    /// no match it is refused if deleted or hidden, and otherwise added.
+    named_doc_id: Option<String>,
     /// Upserted documents (populated after first next())
     upserted_docs: Vec<Doc>,
     /// Actions taken for each document
@@ -178,6 +181,7 @@ impl UpsertNode {
             update_input: None,
             single_input: None,
             prepared_writes: None,
+            named_doc_id: None,
             upserted_docs: Vec::new(),
             actions: Vec::new(),
             position: 0,
@@ -244,6 +248,37 @@ impl UpsertNode {
     pub fn with_doc_ids(mut self, doc_ids: Vec<String>) -> Self {
         self.doc_ids = Some(doc_ids);
         self
+    }
+
+    /// Name the document this upsert saves by DocID (Go's `SaveDocument`).
+    pub fn with_named_doc_id(mut self, doc_id: String) -> Self {
+        self.named_doc_id = Some(doc_id);
+        self
+    }
+
+    /// With no match, a named document that is stored is either deleted or
+    /// hidden from the caller: either way it is not added again.
+    async fn refuse_unmatched_named(&self) -> Result<()> {
+        let Some(named) = &self.named_doc_id else {
+            return Ok(());
+        };
+        let doc_id = DocID::from_string(named)
+            .map_err(|e| QueryError::execution(format!("Invalid DocID '{}': {}", named, e)))?;
+        if self
+            .mutator
+            .is_deleted(&self.collection_name, &doc_id)
+            .await?
+        {
+            return Err(QueryError::execution(format!(
+                "a document with the given ID has been deleted. DocID: {named}"
+            )));
+        }
+        match self.mutator.exists(&self.collection_name, &doc_id).await? {
+            true => Err(QueryError::execution(
+                "document not found or not authorized to access",
+            )),
+            false => Ok(()),
+        }
     }
 
     /// Get the number of documents that were upserted.
@@ -317,6 +352,7 @@ impl UpsertNode {
             self.upserted_docs.push(plan_doc);
             self.actions.push(UpsertAction::Updated);
         } else {
+            self.refuse_unmatched_named().await?;
             // Document does not exist - create it with the provided ID
             tracing::debug!(
                 collection = %self.collection_name,
@@ -473,6 +509,7 @@ impl PlanNode for UpsertNode {
                                 "upsert filter matched no documents but no 'create' input was provided",
                             )
                         })?;
+                        self.refuse_unmatched_named().await?;
                         self.create_new(&create_input).await?;
                     }
                 }
