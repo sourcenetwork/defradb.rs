@@ -44,6 +44,7 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
     }
 
+    // graphql-go's ScalarLeafs rule (proofs/lean/JsonSubPathCut.lean, leaf rule).
     for requestable in &select.fields {
         if let Requestable::Select(nested) = requestable {
             if let Some(field) = collection.field_by_name(&nested.field.name) {
