@@ -300,6 +300,7 @@ pub extern "C" fn defra_mobile_open_node(config_json: *const c_char) -> NewNodeR
                 .as_ref()
                 .and_then(|p2p| p2p.rate_limit_rate)
                 .unwrap_or(0.0),
+            ..NodeInitOptions::default()
         };
 
         let mut result = if config.p2p.is_some() {
