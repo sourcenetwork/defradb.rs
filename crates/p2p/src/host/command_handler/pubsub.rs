@@ -73,6 +73,12 @@ impl<S: Store> P2PHost<S> {
         message: PushLogBroadcast,
         response: tokio::sync::oneshot::Sender<Result<libp2p::gossipsub::MessageId>>,
     ) {
+        if let Some(result) = self.batch_publish(&topic, &message) {
+            if response.send(result).is_err() {
+                debug!(topic = ?topic, "Publish command response dropped - caller cancelled");
+            }
+            return;
+        }
         let ident_topic = topic.to_ident_topic();
         let result = message
             .encode_gossip_payload()

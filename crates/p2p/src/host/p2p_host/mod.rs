@@ -5,6 +5,7 @@
 
 mod connection_manager;
 mod protocols;
+mod shinzo_batch;
 mod shinzo_car;
 mod swarm;
 mod two_stream;
@@ -297,6 +298,10 @@ pub struct P2PHost<S: Store> {
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
     /// Go Shinzo's wire, when `P2PHostConfig::shinzo_wire` is on.
     pub(crate) shinzo: Option<shinzo_car::ShinzoCars<S>>,
+    /// CARs that came inline with Go Shinzo updates, until asked for.
+    pub(crate) shinzo_inline: crate::sync::shinzo_batch::InlineCars,
+    /// This node's collection-topic updates, batched as Go Shinzo does.
+    pub(crate) shinzo_batcher: crate::sync::shinzo_batch::ShinzoBatcher,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -643,6 +648,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
             shinzo,
+            shinzo_inline: Default::default(),
+            shinzo_batcher: Default::default(),
         };
 
         Ok((host, handle, event_rx, replicators))
@@ -718,6 +725,9 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         connection_prune_interval.tick().await;
 
         while !self.shutdown_requested {
+            // A busy loop never reaches the batch timer's arm; publish what
+            // is due on every pass as well.
+            self.flush_shinzo_batches(false);
             // Biased select: process swarm events before commands.
             // This ensures ConnectionEstablished events (which update peer_addrs)
             // are processed before PeerAddresses commands read them.
@@ -766,8 +776,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 _ = connection_prune_interval.tick() => {
                     self.prune_connections("periodic");
                 }
+                _ = time::sleep(crate::sync::shinzo_batch::BATCH_FLUSH_INTERVAL),
+                    if !self.shinzo_batcher.is_empty() => {
+                    self.flush_shinzo_batches(false);
+                }
             }
         }
+        self.flush_shinzo_batches(true);
 
         info!("P2P host shutdown complete");
     }
