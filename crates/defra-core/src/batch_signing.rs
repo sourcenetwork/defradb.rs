@@ -104,34 +104,95 @@ pub fn compute_merkle_root_with(cids: &[Cid], scheme: MerkleScheme) -> [u8; 32] 
 // Global batch collector  (same pattern as IDENTITY_STORE in signing.rs)
 // ---------------------------------------------------------------------------
 
-static BATCH_COLLECTORS: OnceCell<HopscotchMap<String, Arc<SegQueue<Cid>>, RandomState>> =
+/// Which written blocks a batch signature covers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BatchScope {
+    /// Each document's composite block, one CID per document write, as Go
+    /// `shinzo-develop` collects them, so Rust and Go roots match.
+    #[default]
+    Composite,
+    /// Every block a write produces: composite, field and branchable
+    /// collection blocks, so no block of the batch is left unsigned. Go
+    /// Shinzo does not collect these.
+    Full,
+}
+
+/// What a collected CID names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchCid {
+    /// A document's composite block.
+    Composite,
+    /// A field or branchable collection block.
+    Other,
+}
+
+impl BatchScope {
+    /// Whether a session with this scope collects a CID of `kind`.
+    pub fn covers(self, kind: BatchCid) -> bool {
+        self == BatchScope::Full || kind == BatchCid::Composite
+    }
+}
+
+/// How a batch is signed and verified: the Merkle tree and the blocks it
+/// covers. The default is Go Shinzo's, so today's Go nodes interoperate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BatchOptions {
+    pub scheme: MerkleScheme,
+    pub scope: BatchScope,
+}
+
+/// One session's CIDs and the scope it collects.
+struct Session {
+    scope: BatchScope,
+    cids: SegQueue<Cid>,
+}
+
+static BATCH_COLLECTORS: OnceCell<HopscotchMap<String, Arc<Session>, RandomState>> =
     OnceCell::new();
 
-fn collectors() -> &'static HopscotchMap<String, Arc<SegQueue<Cid>>, RandomState> {
+fn collectors() -> &'static HopscotchMap<String, Arc<Session>, RandomState> {
     BATCH_COLLECTORS.get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
-/// Start (or reset) a batch collection session for `session_key`.
+/// Start (or reset) a batch collection session for `session_key`, covering
+/// composite blocks only (Go Shinzo's scope).
 pub fn batch_start(session_key: &str) {
-    collectors().insert(session_key.to_string(), Arc::new(SegQueue::new()));
+    batch_start_with(session_key, BatchScope::default());
 }
 
-/// Append a CID to the session identified by `session_key`.
-/// No-op if the session does not exist.
-pub fn batch_collect_cid(session_key: &str, cid: Cid) {
-    if let Some(queue) = collectors().get(session_key) {
-        queue.push(cid);
+/// Start (or reset) a batch collection session for `session_key` that
+/// collects the blocks `scope` covers.
+pub fn batch_start_with(session_key: &str, scope: BatchScope) {
+    let session = Session {
+        scope,
+        cids: SegQueue::new(),
+    };
+    collectors().insert(session_key.to_string(), Arc::new(session));
+}
+
+/// Append a CID of `kind` to the session identified by `session_key`, if
+/// its scope covers that kind. No-op if the session does not exist.
+pub fn batch_collect_cid(session_key: &str, cid: Cid, kind: BatchCid) {
+    if let Some(session) = collectors().get(session_key) {
+        if session.scope.covers(kind) {
+            session.cids.push(cid);
+        }
     }
 }
 
 /// Remove and return all collected CIDs for `session_key`.
 pub fn batch_take_cids(session_key: &str) -> Option<Vec<Cid>> {
-    let queue = collectors().remove(session_key)?;
-    let mut cids = Vec::with_capacity(queue.len());
-    while let Some(cid) = queue.pop() {
+    batch_take(session_key).map(|(_, cids)| cids)
+}
+
+/// Remove and return the session's scope and all its collected CIDs.
+pub fn batch_take(session_key: &str) -> Option<(BatchScope, Vec<Cid>)> {
+    let session = collectors().remove(session_key)?;
+    let mut cids = Vec::with_capacity(session.cids.len());
+    while let Some(cid) = session.cids.pop() {
         cids.push(cid);
     }
-    Some(cids)
+    Some((session.scope, cids))
 }
 
 // ---------------------------------------------------------------------------
@@ -223,18 +284,32 @@ mod tests {
         batch_start(key);
         let c1 = make_cid(b"doc1");
         let c2 = make_cid(b"doc2");
-        batch_collect_cid(key, c1);
-        batch_collect_cid(key, c2);
+        batch_collect_cid(key, c1, BatchCid::Composite);
+        batch_collect_cid(key, c2, BatchCid::Composite);
         let cids = batch_take_cids(key).unwrap();
         assert_eq!(cids.len(), 2);
         assert!(batch_take_cids(key).is_none(), "session should be consumed");
     }
 
     #[test]
+    fn a_session_collects_what_its_scope_covers() {
+        let (composite, field) = (make_cid(b"composite"), make_cid(b"field"));
+        for (key, scope, expected) in [
+            ("scope-composite", BatchScope::Composite, vec![composite]),
+            ("scope-full", BatchScope::Full, vec![composite, field]),
+        ] {
+            batch_start_with(key, scope);
+            batch_collect_cid(key, composite, BatchCid::Composite);
+            batch_collect_cid(key, field, BatchCid::Other);
+            assert_eq!(batch_take(key), Some((scope, expected)));
+        }
+    }
+
+    #[test]
     fn batch_collect_noop_without_start() {
         let key = "nonexistent-session";
         let c = make_cid(b"stray");
-        batch_collect_cid(key, c);
+        batch_collect_cid(key, c, BatchCid::Composite);
         assert!(batch_take_cids(key).is_none());
     }
 

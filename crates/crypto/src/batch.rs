@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keys::{PrivateKey, PublicKey};
 use crate::{Ed25519PrivateKey, Ed25519PublicKey, Secp256k1PrivateKey, Secp256k1PublicKey};
-use defra_core::batch_signing::{compute_merkle_root_with, MerkleScheme};
+use defra_core::batch_signing::{compute_merkle_root_with, BatchOptions, BatchScope, MerkleScheme};
 use defra_core::signing::SigningConfig;
 
 /// Errors that can occur during batch signing.
@@ -45,25 +45,34 @@ pub struct BatchSignature {
     /// Go-scheme signature serializes as before.
     #[serde(default, skip_serializing_if = "is_go_scheme")]
     pub merkle_scheme: MerkleScheme,
+    /// Which blocks the CIDs were collected from; absent for Go Shinzo's
+    /// composite-only scope, so such a signature serializes as before.
+    #[serde(default, skip_serializing_if = "is_go_scope")]
+    pub batch_scope: BatchScope,
 }
 
 fn is_go_scheme(scheme: &MerkleScheme) -> bool {
     *scheme == MerkleScheme::GoShinzo
 }
 
-/// Sign a batch of CIDs using the provided signing config, over Go Shinzo's
-/// Merkle tree.
-pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature, BatchSignError> {
-    sign_batch_with(cids, config, MerkleScheme::GoShinzo)
+fn is_go_scope(scope: &BatchScope) -> bool {
+    *scope == BatchScope::Composite
 }
 
-/// Sign a batch of CIDs over the Merkle tree `scheme` builds.
+/// Sign a batch of CIDs using the provided signing config, with Go Shinzo's
+/// Merkle tree and scope.
+pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature, BatchSignError> {
+    sign_batch_with(cids, config, BatchOptions::default())
+}
+
+/// Sign a batch of CIDs, collected under `options.scope`, over the Merkle
+/// tree `options.scheme` builds.
 pub fn sign_batch_with(
     cids: &[Cid],
     config: &SigningConfig,
-    scheme: MerkleScheme,
+    options: BatchOptions,
 ) -> Result<BatchSignature, BatchSignError> {
-    let root = compute_merkle_root_with(cids, scheme);
+    let root = compute_merkle_root_with(cids, options.scheme);
 
     let (sig_type, sig_bytes) = match config.key_type {
         defra_core::signing::SigningKeyType::Ed25519 => {
@@ -99,30 +108,35 @@ pub fn sign_batch_with(
         value: sig_bytes,
         merkle_root: root.to_vec(),
         cid_count: cids.len(),
-        merkle_scheme: scheme,
+        merkle_scheme: options.scheme,
+        batch_scope: options.scope,
     })
 }
 
-/// Verify a batch signature against a set of CIDs, over Go Shinzo's Merkle
-/// tree.
+/// Verify a batch signature against a set of CIDs, with Go Shinzo's Merkle
+/// tree and scope.
 pub fn verify_batch_signature(sig: &BatchSignature, cids: &[Cid]) -> Result<bool, String> {
-    verify_batch_signature_with(sig, cids, MerkleScheme::GoShinzo)
+    verify_batch_signature_with(sig, cids, BatchOptions::default())
 }
 
-/// Verify a batch signature against a set of CIDs over the tree `scheme`
-/// builds. The scheme is the verifier's, never the signature's: a signature
-/// naming another scheme fails, so a signer cannot pick the weaker tree. The
-/// signed CID count must equal the number of CIDs, since Go's tree gives
-/// lists of different lengths the same root.
+/// Verify a batch signature against a set of CIDs, collected under
+/// `options.scope`, over the tree `options.scheme` builds. The options are
+/// the verifier's, never the signature's: a signature naming another tree or
+/// scope fails, so a signer cannot pick a weaker one. The signed CID count
+/// must equal the number of CIDs, since Go's tree gives lists of different
+/// lengths the same root.
 pub fn verify_batch_signature_with(
     sig: &BatchSignature,
     cids: &[Cid],
-    scheme: MerkleScheme,
+    options: BatchOptions,
 ) -> Result<bool, String> {
-    if sig.merkle_scheme != scheme || sig.cid_count != cids.len() {
+    if sig.merkle_scheme != options.scheme
+        || sig.batch_scope != options.scope
+        || sig.cid_count != cids.len()
+    {
         return Ok(false);
     }
-    let root = compute_merkle_root_with(cids, scheme);
+    let root = compute_merkle_root_with(cids, options.scheme);
 
     if root.as_slice() != sig.merkle_root.as_slice() {
         return Ok(false);
@@ -266,6 +280,7 @@ mod tests {
             merkle_root: hex::decode(GO_ROOT).unwrap(),
             cid_count: 3,
             merkle_scheme: MerkleScheme::GoShinzo,
+            batch_scope: BatchScope::Composite,
         }
     }
 
@@ -290,7 +305,10 @@ mod tests {
     fn domain_separated_signatures_verify_only_under_that_scheme() {
         let config = test_ed25519_config();
         let cids = go_cids();
-        let separated = MerkleScheme::DomainSeparated;
+        let separated = BatchOptions {
+            scheme: MerkleScheme::DomainSeparated,
+            ..BatchOptions::default()
+        };
         let sig = sign_batch_with(&cids, &config, separated).unwrap();
         assert!(verify_batch_signature_with(&sig, &cids, separated).unwrap());
         // A Go-scheme verifier refuses it, and a Go-scheme signature is
@@ -303,6 +321,23 @@ mod tests {
         assert!(!serde_json::to_string(&go)
             .unwrap()
             .contains("merkle_scheme"));
+    }
+
+    #[test]
+    fn the_verifier_scope_decides() {
+        let config = test_ed25519_config();
+        let cids = go_cids();
+        let full = BatchOptions {
+            scope: BatchScope::Full,
+            ..BatchOptions::default()
+        };
+        let sig = sign_batch_with(&cids, &config, full).unwrap();
+        assert!(verify_batch_signature_with(&sig, &cids, full).unwrap());
+        // The same CIDs, labelled with another scope, do not verify.
+        assert!(!verify_batch_signature(&sig, &cids).unwrap());
+        let go = sign_batch(&cids, &config).unwrap();
+        assert!(!verify_batch_signature_with(&go, &cids, full).unwrap());
+        assert!(!serde_json::to_string(&go).unwrap().contains("batch_scope"));
     }
 
     #[test]

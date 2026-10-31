@@ -103,6 +103,7 @@ pub async fn batch_verify(Json(req): Json<BatchVerifyRequest>) -> Result<Json<()
         merkle_root: req.merkle_root,
         cid_count: req.cid_count,
         merkle_scheme: Default::default(),
+        batch_scope: Default::default(),
     };
 
     let valid = crypto::batch::verify_batch_signature(&sig, &cids)
