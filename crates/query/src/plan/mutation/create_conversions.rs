@@ -207,6 +207,15 @@ pub fn json_to_normal_value_with_kind_and_time(
                         json_to_normal_value(value)
                     }
                 }
+                // A relation ID must parse as a DocID, as Go's
+                // `NewDocIDFromString` checks on set.
+                ScalarKind::DocID => {
+                    if let JsonValue::String(s) = value {
+                        document::DocID::from_string(s)
+                            .map_err(|e| QueryError::execution(e.to_string()))?;
+                    }
+                    json_to_normal_value(value)
+                }
                 // For other scalar types, fall through to default conversion.
                 _ => json_to_normal_value(value),
             },
