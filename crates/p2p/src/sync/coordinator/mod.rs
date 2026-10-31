@@ -1056,15 +1056,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Logs Go Shinzo's `p2p stats` report every `interval`, each covering
-    /// that interval only, until shutdown.
-    pub async fn run_stats_report(&self, interval: Duration) {
+    /// that interval only, until shutdown. `also` runs on the same tick, for
+    /// the node's reports that live outside the sync layer (`merge stats`).
+    pub async fn run_stats_report<F>(&self, interval: Duration, mut also: F)
+    where
+        F: FnMut(),
+    {
         let mut tick = n0_future::time::interval(interval);
         tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
         tick.tick().await;
         let mut budget_drops = 0;
         loop {
             tokio::select! {
-                _ = tick.tick() => self.stats_report(&mut budget_drops).await.log(),
+                _ = tick.tick() => {
+                    self.stats_report(&mut budget_drops).await.log();
+                    also();
+                }
                 _ = self.runtime.shutdown.cancelled() => return,
             }
         }

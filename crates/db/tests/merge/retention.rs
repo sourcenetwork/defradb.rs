@@ -170,6 +170,16 @@ fn the_merge_refuses_what_the_rule_refuses() {
                 "{address}"
             );
         }
+        let report = handler.db().merge_stats().drain();
+        assert_eq!(
+            (
+                report.creates,
+                report.rejected_below_floor,
+                report.rejected_no_height
+            ),
+            (1, 1, 2),
+            "refusals count by cause, and only the stored one is a create: {report:?}"
+        );
     })
     .unwrap()
 }

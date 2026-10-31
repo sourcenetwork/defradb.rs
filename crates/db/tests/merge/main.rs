@@ -24,6 +24,7 @@ mod merge_handler_composite_persist;
 mod merge_handler_se_merge;
 mod merge_handler_se_repush;
 mod merge_handler_tests;
+mod merge_stats;
 mod parked_encrypted;
 mod parked_errors;
 mod peer_identity;

@@ -261,9 +261,12 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .await;
         });
         let stats_coordinator = Arc::clone(&coordinator);
+        let stats_db = Arc::clone(&database);
         coordinator.spawn_background_task("p2p_stats_report", async move {
             stats_coordinator
-                .run_stats_report(std::time::Duration::from_secs(30))
+                .run_stats_report(std::time::Duration::from_secs(30), move || {
+                    stats_db.merge_stats().drain().log()
+                })
                 .await;
         });
 
