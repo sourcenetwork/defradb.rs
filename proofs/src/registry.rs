@@ -1405,9 +1405,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Receive gate",
-        name: "INV_ArrivalRefusalStoresNothing / INV_FetchRefusalImportsNothing / INV_RefusedNeverMerged / INV_KeptIsKept",
+        name: "INV_ArrivalRefusalStoresNothing / INV_FetchRefusalImportsNothing / INV_HeightRefusalWalksNothing / INV_HeightAskedOnce / INV_RefusedNeverMerged / INV_KeptIsKept",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_arrival, SyncCoordinator::gate_fetched; crates/db/src/receive_gate.rs DbReceiveGate::judge",
+        anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_arrival, SyncCoordinator::gate_fetched; crates/p2p/src/sync/coordinator/dag_fetcher.rs height_refusal; crates/db/src/receive_gate.rs DbReceiveGate::judge, DbReceiveGate::height_link",
         model_ref: "MC_ReceiveGate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },

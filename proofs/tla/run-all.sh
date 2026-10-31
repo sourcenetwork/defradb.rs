@@ -101,6 +101,8 @@ RUNS=(
   "MC_ReceiveGate_Green.cfg ReceiveGate.tla GREEN"
   "MC_ReceiveGate_Red_StoreFirst.cfg ReceiveGate.tla RED"
   "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED"
+  "MC_ReceiveGate_Red_NoHeight.cfg ReceiveGate.tla RED"
+  "MC_ReceiveGate_Red_Refetch.cfg ReceiveGate.tla RED"
   "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED"
   "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED"
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
