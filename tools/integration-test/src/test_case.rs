@@ -190,6 +190,30 @@ pub struct TestCase {
     pub skip: Option<&'static str>,
     /// The scenario never opens the default `db` node.
     pub without_db: bool,
+    /// Why the Go scenario does not apply to defradb.rs; it is not run.
+    pub not_applying: Option<NotApplying>,
+}
+
+/// Why a Go conformance scenario does not apply to defradb.rs. The scenario
+/// stays as Go wrote it, so the corpus round trip still checks it; what
+/// defradb.rs does instead is tested where the reason says.
+#[derive(Clone, Copy, Debug)]
+pub enum NotApplying {
+    /// What the scenario asserts cannot cross a client boundary, Go's own
+    /// included.
+    Interop(&'static str),
+    /// The scenario asserts what its requirement marks `Go-Bug-Suspect`;
+    /// defradb.rs does not copy it.
+    GoBugSuspect(&'static str),
+}
+
+impl std::fmt::Display for NotApplying {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interop(reason) => write!(f, "interop: {reason}"),
+            Self::GoBugSuspect(reason) => write!(f, "Go-Bug-Suspect: {reason}"),
+        }
+    }
 }
 
 impl TestCase {
@@ -218,6 +242,10 @@ impl TestCase {
         self.check_export();
         if let Some(reason) = self.skip {
             eprintln!("skipped: {reason}");
+            return;
+        }
+        if let Some(reason) = self.not_applying {
+            eprintln!("not applying: {reason}");
             return;
         }
         let actions = with_stub_embedder(&self.actions);

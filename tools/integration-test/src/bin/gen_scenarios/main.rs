@@ -12,6 +12,7 @@ mod lifecycle;
 mod literal;
 mod mantra;
 mod names;
+mod not_applying;
 mod parallel;
 mod text;
 mod tree;
