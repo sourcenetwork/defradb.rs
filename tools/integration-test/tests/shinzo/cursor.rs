@@ -111,7 +111,7 @@ fn run(actions: Vec<Actions>) {
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.token.keys")]
 #[mantra_macros::req_test("go.shinzo.cursor.token.encoding")]
-#[ignore = "gap: Rust tokens carry an empty `o`, Go Shinzo tokens do not"]
+#[ignore = "#2481: Rust tokens carry an empty `o`, Go Shinzo tokens do not"]
 fn shinzo_cursor_tokens_carry_their_rows_order_values() {
     let mut actions = aged(&[]);
     actions.extend([
@@ -279,7 +279,7 @@ fn shinzo_after_resumes_page_by_page() {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
-#[ignore = "gap: an unsorted _in filter breaks the cursor order"]
+#[ignore = "#2481: an unsorted _in filter breaks the cursor order"]
 fn shinzo_a_filter_applies_before_paging() {
     let mut actions = aged(&[15, 25, 35, 45, 55, 65, 75]);
     let geq = "first: 2, filter: {age: {_geq: 40}}, order: {age: ASC}";
@@ -443,7 +443,7 @@ const U50_DOC_ID_ONLY: &str = "eyJkIjoiYmFlLTRmMmYwMThmLTUwYjItNTExZS1hYmE0LWFmM
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.deleted_docs")]
-#[ignore = "gap: before a deleted row's cursor reports hasNext true"]
+#[ignore = "#2481: before a deleted row's cursor reports hasNext true"]
 fn shinzo_deleted_documents_leave_pages_but_keep_positions() {
     let order = "order: {age: ASC}";
     let delete = |name: &str| -> Actions {
@@ -936,7 +936,7 @@ fn cursor_node(cursor: Value) -> Value {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.explain")]
-#[ignore = "gap: cursorNode explains direction and pageSize, not Go's first/after/last/before/cursorValue"]
+#[ignore = "#2481: cursorNode explains direction and pageSize, not Go's first/after/last/before/cursorValue"]
 fn shinzo_a_cursor_query_explains_its_cursor_node() {
     let mut actions = aged(&[25, 30, 35]);
     let null = Value::Null;
