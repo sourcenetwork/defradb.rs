@@ -9,6 +9,8 @@ use p2p::network::Network;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
 
+use super::push_docs::SelectedPushStop;
+
 /// How long a push waits for its peer to connect.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -46,17 +48,22 @@ pub(crate) async fn send_se_artifacts<T: P2PTransport>(
 }
 
 /// Waits until `peer_id` is connected, polling every 50 ms for at most
-/// [`CONNECT_TIMEOUT`].
+/// [`CONNECT_TIMEOUT`], or until `stop` is raised.
 pub(crate) async fn wait_for_peer<T: P2PTransport>(
     network: &Network,
     transport: &T,
     peer_id: &PeerId,
+    stop: &SelectedPushStop,
 ) -> Result<(), String> {
     let (transport, peer_id, clock) = (transport.clone(), peer_id.clone(), network.clone());
+    let stop = stop.clone();
     let wait = move || async move {
         let start = web_time::Instant::now();
         let mut logged_conn_error = false;
         loop {
+            if let Some(cause) = stop.cause() {
+                return Err(format!("stopped waiting for peer connection: {cause}"));
+            }
             let peers = match transport.connected_peers().await {
                 Ok(peers) => peers,
                 Err(e) => {

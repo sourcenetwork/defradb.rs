@@ -385,11 +385,18 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Sync collection versions (schema definitions) from connected peers via Bitswap.
     async fn sync_collection_versions(&self, version_ids: Vec<String>) -> P2PResult<()>;
 
-    /// Replay an explicit document set to one peer through DocPusher.
+    /// Send an explicit document set to one peer, without a subscription.
     ///
-    /// Returns after retry markers are registered and the bounded push
-    /// attempt finishes. Default implementations report the operation as
-    /// unsupported.
+    /// `Ok` means the peer acknowledged every listed document's current heads
+    /// in this call; each call sends them all again, whatever an earlier call
+    /// achieved. No retry marker is registered and no replicator's filter or
+    /// retry schedule applies or changes, so an `Err` leaves nothing behind to
+    /// resume: the caller owns calling again. The node owns the send pacing,
+    /// slot counts and per-send deadline. The first send deadline, lost
+    /// connection or receiver pause hint stops the call early; dropping the
+    /// future stops it too, without waiting for the sends already on the wire,
+    /// which end on their own deadline. Default implementations report the
+    /// operation as unsupported.
     async fn push_documents_to_peer(
         &self,
         _peer_id: &str,

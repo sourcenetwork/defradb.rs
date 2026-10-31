@@ -1125,7 +1125,9 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .into_iter()
             .map(|doc| (doc.collection, doc.doc_id))
             .collect();
-        pusher.push_existing_docs_by_id(&peer_id, &pairs).await
+        pusher
+            .push_existing_docs_by_id(&peer_id, &pairs, &db::merge::SelectedPushStop::new())
+            .await
     }
 }
 

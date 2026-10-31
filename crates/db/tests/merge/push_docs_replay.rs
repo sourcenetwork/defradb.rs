@@ -432,6 +432,14 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
     .unwrap()
 }
 
+/// Overrides the reply to the request with this 0-based arrival index; `None`
+/// leaves the configured reply.
+pub(super) type ReplyScript = Arc<
+    dyn Fn(usize) -> futures::future::BoxFuture<'static, Option<p2p::Result<PushLogReply>>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub(super) struct ConnectedPeerTransport {
     local: PeerId,
@@ -442,6 +450,8 @@ pub(super) struct ConnectedPeerTransport {
     before_reply:
         Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     retry_after_ms: Option<u64>,
+    script: Option<ReplyScript>,
+    arrivals: Arc<kovan::Atom<Vec<Instant>>>,
 }
 
 impl ConnectedPeerTransport {
@@ -454,7 +464,19 @@ impl ConnectedPeerTransport {
             require_selected_authority: None,
             before_reply: None,
             retry_after_ms: None,
+            script: None,
+            arrivals: Arc::new(kovan::Atom::new(Vec::new())),
         }
+    }
+
+    pub(super) fn with_reply_script(mut self, script: ReplyScript) -> Self {
+        self.script = Some(script);
+        self
+    }
+
+    /// When each PushLog reached this transport, in arrival order.
+    pub(super) fn arrivals(&self) -> Vec<Instant> {
+        self.arrivals.load_clone()
     }
 
     pub(super) fn with_replies(
@@ -594,8 +616,20 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         requests
             .try_send(req)
             .expect("bounded test request capture");
+        let mut index = 0;
+        self.arrivals.rcu(|arrivals| {
+            index = arrivals.len();
+            let mut next = arrivals.clone();
+            next.push(Instant::now());
+            next
+        });
         if let Some(hook) = &self.before_reply {
             hook(doc_id).await;
+        }
+        if let Some(script) = &self.script {
+            if let Some(reply) = script(index).await {
+                return reply;
+            }
         }
         if let Some(store) = &self.remove_on_reply {
             store.delete_replicator(self.remote.as_str()).await.unwrap();
