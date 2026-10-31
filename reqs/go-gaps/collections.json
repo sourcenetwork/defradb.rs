@@ -1006,9 +1006,13 @@
   },
   {
     "id": "go.collection.truncate.basic",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/collection/truncate/simple.rs::truncate_collection",
+      "tools/integration-test/tests/collection/truncate/simple.rs::truncate_collection_truncate_twice",
+      "tools/integration-test/tests/collection/truncate/parallel.rs::truncate_collection_parallel_deletes_all_previously_existing_documents"
+    ],
+    "evidence": "Every generated testo test for this requirement passes in-process (#2321 truncate step).",
     "note": "No test truncates an empty collection, truncates the same collection twice, or truncates while documents are added concurrently. truncate_parallel.rs (despite its name) truncates two populated collections sequentially; that belongs to removes_data."
   },
   {
@@ -1023,21 +1027,26 @@
   },
   {
     "id": "go.collection.truncate.re_add",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes"
+      "tools/integration-test/tests/collection/truncate/add.rs::truncate_collection_add_adds_doc_with_same_doc_id_as_original",
+      "tools/integration-test/tests/collection/truncate/add.rs::truncate_collection_add_adds_doc_with_same_cid_as_original",
+      "tools/integration-test/tests/collection/truncate/add.rs::truncate_collection_add_adds_doc_with_blocks_at_height1"
     ],
-    "evidence": "crates/db/tests/collection/truncate.rs:72 re-created Alice after a (filtered) truncate gets the same DocID",
+    "evidence": "Every generated testo test for this requirement passes in-process (#2321 truncate step).",
     "note": "Unverified: same head CID as the original and blocks restarting at height 1; full (unfiltered) truncate followed by re-add of the same document."
   },
   {
     "id": "go.collection.truncate.filter",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes",
-      "tools/integration-test/tests/basic/collection_management.rs::filtered_truncate_test"
+      "tools/integration-test/tests/collection/truncate/filter.rs::truncate_collection_with_filter_is_idempotent",
+      "tools/integration-test/tests/collection/truncate/filter.rs::truncate_collection_with_large_integer_filter_removes_only_exact_match",
+      "tools/integration-test/tests/collection/truncate/index_filter.rs::truncate_collection_index_filter_removes_document",
+      "tools/integration-test/tests/collection/truncate/index_filter.rs::truncate_collection_index_filter_with_unique_index_removes_document",
+      "tools/integration-test/tests/collection/truncate/index_filter.rs::truncate_collection_index_filter_with_unique_index_allows_recreation_of_document"
     ],
-    "evidence": "crates/db/tests/collection/truncate.rs:65-70 only the age=30 document is removed; crates/db/tests/collection/truncate.rs:72-79 re-creating Alice under the unique name index succeeds (unique value freed); tools/integration-test/tests/basic/collection_management.rs:105-108 GraphQL truncate_TruncateUser(filter) leaves only Bob",
+    "evidence": "Every generated testo test for this requirement passes in-process (#2321 truncate step).",
     "note": "Unverified: idempotent retry of a filtered truncate, exact large-integer matching (2^53 vs 2^53+1), and truncate through a plain (non-unique) secondary index."
   },
   {
