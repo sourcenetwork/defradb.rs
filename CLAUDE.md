@@ -445,7 +445,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 | Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
-| Shinzo | `--test shinzo` | purge (`shinzo_` cases also run under `DEFRA_CLIENT=go-shinzo`) |
+| Shinzo | `--test shinzo` | purge, save_many (`shinzo_` cases also run under `DEFRA_CLIENT=go-shinzo`) |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
 
