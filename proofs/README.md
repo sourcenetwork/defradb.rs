@@ -86,6 +86,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
+| Per-peer stream cap | TLA+ | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
