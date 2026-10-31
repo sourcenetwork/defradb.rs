@@ -572,7 +572,7 @@ jobs:
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts --test vector --test acp_replay_outage_repro
+          --test backup --test fts --test vector --test acp_replay_outage_repro --test shinzo
           -- --skip ::go_ --skip shinzo_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
@@ -613,14 +613,14 @@ jobs:
       - name: Run mixed Rust and Go Shinzo clusters
         if: matrix.suite == 'go-shinzo'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p --test shinzo
           -- shinzo_
       - name: Run the go-shinzo client
         if: matrix.suite == 'go-shinzo'
         env:
           DEFRA_CLIENT: go-shinzo
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p --test shinzo
           -- shinzo_
       - name: Check Go Shinzo for drift from Go develop (document IDs, block CIDs, P2P sync)
         if: matrix.suite == 'go-shinzo'
