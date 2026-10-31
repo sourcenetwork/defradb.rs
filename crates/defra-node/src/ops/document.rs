@@ -39,8 +39,9 @@ impl Node {
         Ok(documents::update(run, collection, doc_id, patch).await?)
     }
 
-    /// Write `doc` as document `doc_id` when it exists, else add it, and
-    /// return its ID. Go's `SaveDocument`.
+    /// Refuse document `doc_id` when it has been deleted, else write `doc`
+    /// as it when it exists, else add it, and return its ID. Go's
+    /// `SaveDocument`: one transaction, the caller's when it names one.
     pub async fn save_doc(
         &self,
         context: &RequestContext,
@@ -50,8 +51,27 @@ impl Node {
         options: &AddOptions,
     ) -> Result<String> {
         let identity = acting_identity(context)?;
-        let run = |mutation| self.run_as_identity(context, identity, QueryRequest::new(mutation));
-        Ok(documents::save(run, collection, doc_id, doc, options).await?)
+        let save = |context: RequestContext| {
+            let identity = identity.clone();
+            async move {
+                let run = |request| {
+                    self.run_as_identity(&context, identity.clone(), QueryRequest::new(request))
+                };
+                documents::save(run, collection, doc_id, doc, options).await
+            }
+        };
+        if doc_id.is_none() || context.txn().is_some() {
+            return Ok(save(context.clone()).await?);
+        }
+        let txn = self.txn_begin(context, false).await?;
+        let inner = context.clone().with_txn(Some(txn));
+        match save(inner.clone()).await {
+            Ok(id) => self.txn_commit(&inner, txn).await.map(|()| id),
+            Err(error) => {
+                let _ = self.txn_discard(&inner, txn).await;
+                Err(error.into())
+            }
+        }
     }
 
     /// Delete document `doc_id`. Go's `DeleteDocument`.

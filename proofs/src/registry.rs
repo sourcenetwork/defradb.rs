@@ -1306,4 +1306,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Document save",
+        name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
+        axis: Tla,
+        anchor: "crates/query/src/documents/mod.rs save; crates/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
+        model_ref: "MC_DocumentSave_{Green,Red_NoDeletedCheck,Red_SplitTxn}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Document save",
+        name: "decide_refuses_deleted / refuse_only_deleted / save_never_forks / save_under_given_id",
+        axis: Lean,
+        anchor: "crates/query/src/documents/mod.rs save; crates/query/src/plan/mutation/upsert.rs UpsertNode::next",
+        model_ref: "DocumentSave (lake build)",
+        tiers: &[Boundary],
+    },
 ];

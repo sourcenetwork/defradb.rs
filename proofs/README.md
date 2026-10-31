@@ -83,6 +83,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Document save | TLA+ & Lean | query, defra-node |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

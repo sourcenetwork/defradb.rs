@@ -131,3 +131,6 @@ lean_lib LensListing where
 
 @[default_target]
 lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib DocumentSave where

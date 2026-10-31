@@ -44,8 +44,10 @@ where
     response::one(run(mutation).await, "update", collection)
 }
 
-/// Write `doc` over document `doc_id` when it exists, else add it, in one
-/// mutation; the document's ID.
+/// Go's `SaveDocument`: refuse document `doc_id` when it has been deleted,
+/// else write `doc` over it when it exists, else add it; the document's ID.
+/// `run` must run every request in one transaction, so the refusal and the
+/// write decide on the same state (proofs/tla/DocumentSave.tla).
 pub async fn save<R, F>(
     run: R,
     collection: &str,
@@ -54,13 +56,16 @@ pub async fn save<R, F>(
     options: &AddOptions,
 ) -> Result<String>
 where
-    R: FnOnce(String) -> F,
+    R: Fn(String) -> F,
     F: Future<Output = QueryResponse>,
 {
     let Some(doc_id) = doc_id else {
         let ids = add(run, collection, std::slice::from_ref(doc), options).await?;
         return response::single(ids);
     };
+    if response::deleted(run(request::lookup(collection, doc_id)?).await, collection)? {
+        return Err(Error::Deleted(doc_id.to_owned()));
+    }
     let mutation = request::save(collection, doc_id, doc, options)?;
     response::single(response::doc_ids(
         run(mutation).await,
