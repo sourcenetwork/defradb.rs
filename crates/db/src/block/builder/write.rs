@@ -747,8 +747,14 @@ pub(crate) async fn build_document_blocks(
         "Built composite block with field links"
     );
 
-    let mut batch_signed = initial_field_cids;
-    batch_signed.push(composite_cid);
+    let mut batch_signed: Vec<_> = initial_field_cids
+        .into_iter()
+        .map(|cid| (cid, defra_core::batch_signing::BatchCid::Other))
+        .collect();
+    batch_signed.push((
+        composite_cid,
+        defra_core::batch_signing::BatchCid::Composite,
+    ));
     Ok(ComputedBlocks {
         blockstore_entries,
         headstore_entries,
@@ -868,7 +874,15 @@ pub(crate) async fn write_delete_block_with_inputs(
         "Built delete composite block (status=2)"
     );
 
-    collect_on_commit(blockstore, batch_session, [composite_cid]).await?;
+    collect_on_commit(
+        blockstore,
+        batch_session,
+        [(
+            composite_cid,
+            defra_core::batch_signing::BatchCid::Composite,
+        )],
+    )
+    .await?;
 
     Ok(BlockResult {
         cid: composite_cid,
