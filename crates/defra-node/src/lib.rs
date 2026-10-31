@@ -1410,6 +1410,7 @@ impl NodeBuilder {
         let p2p_config = self.p2p_config;
         let query_timeout = self.query_timeout;
         let query_limits = self.query_limits;
+        query_limits.check_fragment_nesting()?;
         let introspection_cache = self.introspection_cache.unwrap_or(true);
         let node_acp_enabled = self.node_acp_enabled;
 

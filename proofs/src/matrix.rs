@@ -38,6 +38,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "DiskANN resident code table",
     "DiskANN walk cutoff",
     "PQ distance four sums",
+    "Query fragment nesting bound",
     "DiskANN pending cache",
     "DiskANN shared quantizer",
     "RobustPrune blocked covered checks",

@@ -1019,6 +1019,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "Query fragment nesting bound",
+        name: "reach_le / walk_none_iff — the fragment walk never calls itself deeper than max_fragment_nesting, and refuses exactly the queries that nest deeper",
+        axis: Lean,
+        anchor: "crates/query/src/query_parse/limits.rs FragmentPath::check_nesting; crates/query/src/subscription.rs collect_root_fields",
+        model_ref: "FragmentNesting.reach_le / walk_none_iff / off_by_one_accepts_too_deep",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Index-maintenance consistency",
         name: "onDocumentUpdate_correct / _no_stale / _none_missing",
         axis: Lean,
