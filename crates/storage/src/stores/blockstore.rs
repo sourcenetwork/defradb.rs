@@ -86,8 +86,8 @@ fn put_keys(cid: Cid, is_p2p: bool) -> (Vec<u8>, Option<Vec<u8>>) {
 }
 
 /// A to-merge mark's value: the time the block was fetched, as big-endian
-/// unix seconds (Go Shinzo's `newToMergeValue`). The orphan sweep reads it;
-/// whether a block is merged depends only on the mark being there.
+/// unix seconds. The orphan sweep reads it; whether a block is merged depends
+/// only on the mark being there, as in Go, which writes `0xff`.
 pub fn marker_value(unix_secs: u64) -> [u8; 8] {
     unix_secs.to_be_bytes()
 }
@@ -107,32 +107,6 @@ fn fresh_marker() -> [u8; 8] {
     marker_value(now.as_secs())
 }
 
-/// Store `data` under `cid`, or, when it is stored already, renew its mark
-/// if it is still waiting to merge, so a block that keeps arriving is not
-/// swept as abandoned. A merged block stays merged: the mark is read in this
-/// transaction, so a merge clearing it first makes this attempt run again.
-/// Evaluates to whether the block was newly stored. A macro, as the retry
-/// transaction and [`BlockstoreTxn`] share no reader and writer trait.
-macro_rules! put_or_refresh {
-    ($txn:expr, $cid:expr, $data:expr, $is_p2p:expr) => {{
-        let (block_key, merge_key) = put_keys($cid, $is_p2p);
-        if $txn.has(&block_key).await? {
-            if let Some(merge_key) = merge_key {
-                if $txn.has(&merge_key).await? {
-                    $txn.set(&merge_key, &fresh_marker()).await?;
-                }
-            }
-            false
-        } else {
-            $txn.set(&block_key, $data).await?;
-            if let Some(merge_key) = merge_key {
-                $txn.set(&merge_key, &fresh_marker()).await?;
-            }
-            true
-        }
-    }};
-}
-
 struct BlockWritesAttempt {
     writes: Vec<BlockWrite>,
     is_p2p: bool,
@@ -145,7 +119,16 @@ impl RetryAttemptFn for BlockWritesAttempt {
             for write in &self.writes {
                 found.push(match write {
                     BlockWrite::Put { cid, data } => {
-                        put_or_refresh!(txn, *cid, data, self.is_p2p)
+                        let (block_key, merge_key) = put_keys(*cid, self.is_p2p);
+                        if txn.has(&block_key).await? {
+                            false
+                        } else {
+                            txn.set(&block_key, data).await?;
+                            if let Some(merge_key) = merge_key {
+                                txn.set(&merge_key, &fresh_marker()).await?;
+                            }
+                            true
+                        }
                     }
                     BlockWrite::MarkMerged(cid) => {
                         let stored = txn.has(&BlockstoreKey::new(*cid).bytes()).await?;
@@ -211,12 +194,13 @@ pub struct BlockstoreTxn {
 }
 
 impl BlockstoreTxn {
-    /// Put a block with automatic merge tracking: a new block starts unmerged
-    /// in P2P mode, a stored one still waiting to merge has its mark renewed,
-    /// and a merged one stays merged.
+    /// Put a block with automatic merge tracking
     pub async fn put_block(&mut self, cid: &Cid, data: &[u8]) -> Result<()> {
-        let is_p2p = self.is_p2p;
-        put_or_refresh!(self, *cid, data, is_p2p);
+        let (block_key, merge_key) = put_keys(*cid, self.is_p2p);
+        self.set(&block_key, data).await?;
+        if let Some(merge_key) = merge_key {
+            self.set(&merge_key, &fresh_marker()).await?;
+        }
         Ok(())
     }
 

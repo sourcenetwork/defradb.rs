@@ -1,5 +1,5 @@
-//! The orphan block sweep (`go.shinzo.orphan_gc`) and the refresh that keeps
-//! a block still arriving out of it (`go.shinzo.merge.refetch`).
+//! The orphan block sweep (`defra.orphan_gc`) and the refresh that keeps a
+//! block still arriving out of it (`defra.orphan_gc.refetch`).
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ async fn sweep(db: &Arc<DB<RegolithStore>>, start: Option<Vec<u8>>, limit: usize
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.orphan_gc.reclaim")]
+#[mantra_macros::req_test("defra.orphan_gc.reclaim")]
 fn only_unowned_blocks_fetched_before_the_cutoff_are_reclaimed() {
     workers::block_on(async {
         let (db, blockstore) = node();
@@ -109,7 +109,7 @@ fn only_unowned_blocks_fetched_before_the_cutoff_are_reclaimed() {
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.orphan_gc.race")]
+#[mantra_macros::req_test("defra.orphan_gc.race")]
 fn a_merge_committing_after_the_nomination_keeps_its_block() {
     workers::block_on(async {
         let (db, blockstore) = node();
@@ -124,7 +124,7 @@ fn a_merge_committing_after_the_nomination_keeps_its_block() {
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.orphan_gc.resume")]
+#[mantra_macros::req_test("defra.orphan_gc.resume")]
 fn the_sweep_resumes_across_calls_and_stops_when_cancelled() {
     workers::block_on(async {
         let (db, blockstore) = node();
@@ -175,38 +175,34 @@ fn the_sweep_resumes_across_calls_and_stops_when_cancelled() {
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.merge.refetch")]
-fn storing_a_waiting_block_again_renews_its_mark_and_a_merged_one_stays_merged() {
+#[mantra_macros::req_test("defra.orphan_gc.refetch")]
+fn storing_a_block_again_leaves_its_mark_and_a_merged_one_stays_merged() {
     workers::block_on(async {
         let (_db, blockstore) = node();
         let waiting = fetched(&blockstore, "waiting", &marker_value(1)).await;
         blockstore.put(&waiting, b"waiting").await.unwrap();
-        let renewed = mark_of(&blockstore, &waiting).await.flatten().unwrap();
-        assert!(
-            renewed > CUTOFF - HOUR * 24 * 365 * 10,
-            "renewed to now, got {renewed}"
-        );
+        assert_eq!(mark_of(&blockstore, &waiting).await.flatten(), Some(1));
 
         let merged = fetched(&blockstore, "merged", &marker_value(1)).await;
         blockstore.mark_as_merged(&merged).await.unwrap();
         blockstore.put(&merged, b"merged").await.unwrap();
         assert!(blockstore.is_merged(&merged).await.unwrap());
 
-        // A batch put holding one waiting and one merged block renews the
-        // first and leaves the second merged.
+        // A batch put holding one waiting and one merged block leaves both
+        // as they were.
         let again = fetched(&blockstore, "again", &marker_value(1)).await;
         blockstore
             .put_many(&[(&again, &b"again"[..]), (&merged, &b"merged"[..])])
             .await
             .unwrap();
-        assert!(mark_of(&blockstore, &again).await.flatten().unwrap() > 1);
+        assert_eq!(mark_of(&blockstore, &again).await.flatten(), Some(1));
         assert!(blockstore.is_merged(&merged).await.unwrap());
     })
     .unwrap()
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.merge.refetch")]
+#[mantra_macros::req_test("defra.orphan_gc.refetch")]
 fn a_merge_racing_a_refetch_always_leaves_the_block_merged() {
     workers::block_on(async {
         let (_db, blockstore) = node();
@@ -226,57 +222,22 @@ fn a_merge_racing_a_refetch_always_leaves_the_block_merged() {
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.store.orphan_sweep_config")]
-fn the_sweep_is_configured_from_the_environment() {
+#[mantra_macros::req_test("defra.orphan_gc.config")]
+fn the_sweep_is_off_by_default_and_runs_every_five_minutes_for_half_hour_marks() {
     use db::block::orphan_gc::OrphanSweepConfig;
     use std::time::Duration;
-    let with = |pairs: &[(&str, &str)]| {
-        let pairs: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        OrphanSweepConfig::from_vars(move |name| {
-            pairs
-                .iter()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.clone())
-        })
-    };
-    let defaults = OrphanSweepConfig {
-        enabled: true,
-        interval: Duration::from_secs(300),
-        ttl: Duration::from_secs(1800),
-    };
-    assert_eq!(with(&[]), defaults);
-    for off in ["1", "t", "T", "TRUE", "true", "True"] {
-        assert!(!with(&[("DEFRA_ORPHAN_GC_DISABLED", off)]).enabled, "{off}");
-    }
-    for on in ["0", "f", "F", "FALSE", "false", "False", "yes", "off", ""] {
-        assert!(with(&[("DEFRA_ORPHAN_GC_DISABLED", on)]).enabled, "{on:?}");
-    }
-    let set = with(&[
-        ("DEFRA_ORPHAN_GC_INTERVAL", "3m"),
-        ("DEFRA_ORPHAN_BLOCK_TTL", "90s"),
-    ]);
     assert_eq!(
-        (set.interval, set.ttl),
-        (Duration::from_secs(180), Duration::from_secs(90))
+        OrphanSweepConfig::default(),
+        OrphanSweepConfig {
+            enabled: false,
+            interval: Duration::from_secs(300),
+            ttl: Duration::from_secs(1800),
+        }
     );
-    for bad in ["", "not-a-duration", "0s", "-1m"] {
-        let fallback = with(&[
-            ("DEFRA_ORPHAN_GC_INTERVAL", bad),
-            ("DEFRA_ORPHAN_BLOCK_TTL", bad),
-        ]);
-        assert_eq!(
-            (fallback.interval, fallback.ttl),
-            (defaults.interval, defaults.ttl),
-            "{bad:?}"
-        );
-    }
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.store.orphan_sweep_config")]
+#[mantra_macros::req_test("defra.orphan_gc.config")]
 fn with_the_sweep_on_an_abandoned_fetch_goes_once_its_mark_ages() {
     use db::block::orphan_gc::{run_orphan_sweep, OrphanSweepConfig};
     use std::time::Duration;

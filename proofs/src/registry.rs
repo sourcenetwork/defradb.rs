@@ -1282,8 +1282,8 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        // The orphan block sweep (#2479): a fetched block's to-merge mark
-        // holds its fetch time and a refetch renews it; the sweep nominates
+        // The orphan block sweep: a fetched block's to-merge mark
+        // holds its fetch time and a refetch leaves it alone; the sweep nominates
         // expired marks from a snapshot and decides each in a transaction
         // that reads the mark and the owners again, deleting an unowned
         // block, clearing the mark of an owned one, and never touching an

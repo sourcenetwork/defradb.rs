@@ -1,7 +1,7 @@
 //! A merged block's signature blocks: the document owns them and they read
 //! as merged, including the signature of a field block the receiver's
-//! schema skips (`go.shinzo.merge.signature_owner`,
-//! `go.shinzo.store.signature_block_merged`).
+//! schema skips (`defra.orphan_gc.signature_owner`,
+//! `defra.orphan_gc.signature_merged`).
 
 use std::sync::Arc;
 
@@ -11,12 +11,77 @@ use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{Block, DAGLink, Signature, SignatureHeader, SignatureType};
-use defra_core::merge::{MergeBlock, MergeOutcome};
-use document::{Document, NormalValue};
+use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
+use document::{DocID, Document, NormalValue};
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-use super::retention::{logs, merge, stored};
+type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
+
+fn logs(collection_id: &str) -> CollectionVersion {
+    CollectionVersion::new(
+        "Log",
+        "v1",
+        collection_id,
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "address",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "blockNumber",
+                FieldKind::int(),
+                schema::CType::LwwRegister,
+            ),
+        ],
+    )
+}
+
+async fn merge(handler: &Handler, block: &MergeBlock) -> MergeOutcome {
+    let metadata = BlockMetadata::normal(
+        &block.doc_id,
+        &block.collection_id,
+        &block.creator,
+        block.sender_peer.as_deref(),
+        false,
+    );
+    handler
+        .handle_block(&block.cid, &block.block_data, metadata)
+        .await
+        .unwrap()
+}
+
+async fn stored(handler: &Handler, collection_id: &str, doc_id: &str) -> bool {
+    let collection = handler
+        .db()
+        .find_collection_by_id(collection_id)
+        .unwrap()
+        .unwrap();
+    let txn = handler.db().new_txn(true).await.unwrap();
+    let doc = {
+        let datastore = txn.datastore().unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        collection
+            .get_by_doc_id(
+                &datastore,
+                &systemstore,
+                &DocID::from_string(doc_id).unwrap(),
+            )
+            .await
+            .unwrap()
+    };
+    txn.force_discard().unwrap();
+    doc.is_some()
+}
 
 /// `block` signed with `key`: its signature block stored in `blockstore`,
 /// its own bytes and CID.
@@ -41,8 +106,8 @@ async fn signed(
 }
 
 #[test]
-#[mantra_macros::req_test("go.shinzo.merge.signature_owner")]
-#[mantra_macros::req_test("go.shinzo.store.signature_block_merged")]
+#[mantra_macros::req_test("defra.orphan_gc.signature_owner")]
+#[mantra_macros::req_test("defra.orphan_gc.signature_merged")]
 fn a_merged_document_owns_its_signature_blocks_and_they_read_as_merged() {
     workers::block_on(async {
         // The sender's Log has blockNumber; the receiver's, mid-upgrade, only address.

@@ -1,15 +1,14 @@
-//! The orphan block sweep (`go.shinzo.orphan_gc`). A block fetched during
+//! The orphan block sweep (`defra.orphan_gc`). A block fetched during
 //! P2P sync carries a to-merge mark holding its fetch time until its merge
 //! clears it. A fetch that is abandoned leaves its block marked, and no
 //! history prune ever reaches it, since a prune walks out from documents.
 //! The sweep reclaims such blocks once their mark is older than a cutoff.
 //!
-//! It runs in two steps, as Go Shinzo's `ReclaimOrphanBlocks` does: a
-//! snapshot scan nominates expired marks, then each batch of nominees is
-//! decided again in the transaction that acts on it, reading the mark and
-//! the block's owners validated. A merge that clears a mark or records an
-//! owner and commits first makes the batch run again, so a merged or owned
-//! block is never deleted. Model: `proofs/tla/OrphanGc.tla`.
+//! It runs in two steps: a snapshot scan nominates expired marks, then each
+//! batch of nominees is decided again in the transaction that acts on it,
+//! reading the mark and the block's owners validated. A merge that clears a
+//! mark or records an owner and commits first makes the batch run again, so
+//! a merged or owned block is never deleted. Model: `proofs/tla/OrphanGc.tla`.
 
 use std::future::Future as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -181,15 +180,16 @@ where
 /// The most marks one sweep examines; the next resumes where it stopped.
 pub const MARKS_PER_SWEEP: usize = 100_000;
 
-/// When the orphan sweep runs (Go Shinzo's `node/store_badger.go`), read
-/// once when the store opens.
+/// When the orphan sweep runs: the node configuration's
+/// `Libp2pConfig::orphan_sweep`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrphanSweepConfig {
-    /// `DEFRA_ORPHAN_GC_DISABLED` unset or false.
+    /// Whether the sweep runs at all. Off by default, so a node that does not
+    /// ask for it keeps every fetched block, as before.
     pub enabled: bool,
-    /// `DEFRA_ORPHAN_GC_INTERVAL`: the time between sweeps, 5 minutes by default.
+    /// The time between sweeps.
     pub interval: std::time::Duration,
-    /// `DEFRA_ORPHAN_BLOCK_TTL`: how long a mark is kept, 30 minutes by default.
+    /// How long a block may wait to merge before the sweep reclaims it.
     pub ttl: std::time::Duration,
 }
 
@@ -198,80 +198,16 @@ impl OrphanSweepConfig {
     pub const INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
     /// The default age past which a mark expires.
     pub const TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+}
 
-    /// The configuration the process environment gives.
-    pub fn from_env() -> Self {
-        Self::from_vars(|name| std::env::var(name).ok())
-    }
-
-    /// The configuration `var` gives for each variable. A boolean that is
-    /// not one is ignored with a warning; an unset, empty, unparsable, zero
-    /// or negative duration falls back to its default.
-    pub fn from_vars<F>(var: F) -> Self
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let duration = |name: &str, default| {
-            var(name)
-                .and_then(|text| go_duration(&text))
-                .filter(|duration| !duration.is_zero())
-                .unwrap_or(default)
-        };
+impl Default for OrphanSweepConfig {
+    fn default() -> Self {
         Self {
-            enabled: !go_bool(var("DEFRA_ORPHAN_GC_DISABLED"), "DEFRA_ORPHAN_GC_DISABLED"),
-            interval: duration("DEFRA_ORPHAN_GC_INTERVAL", Self::INTERVAL),
-            ttl: duration("DEFRA_ORPHAN_BLOCK_TTL", Self::TTL),
+            enabled: false,
+            interval: Self::INTERVAL,
+            ttl: Self::TTL,
         }
     }
-}
-
-/// A boolean variable as Go's `strconv.ParseBool` reads it; unset or not a
-/// boolean is false.
-fn go_bool(value: Option<String>, name: &str) -> bool {
-    match value.as_deref() {
-        None => false,
-        Some("1" | "t" | "T" | "TRUE" | "true" | "True") => true,
-        Some("0" | "f" | "F" | "FALSE" | "false" | "False") => false,
-        Some(other) => {
-            tracing::warn!(
-                name,
-                value = other,
-                "Ignoring malformed boolean environment variable"
-            );
-            false
-        }
-    }
-}
-
-/// A duration as Go's `time.ParseDuration` reads it (`90s`, `3m`, `1h30m`,
-/// `1.5h`, `250ms`); `None` for anything else, a negative one included.
-fn go_duration(text: &str) -> Option<std::time::Duration> {
-    let text = text.strip_prefix('+').unwrap_or(text);
-    if text.is_empty() || text.starts_with('-') {
-        return None;
-    }
-    let mut total = 0f64;
-    let mut rest = text;
-    while !rest.is_empty() {
-        let number_len = rest.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
-        let number: f64 = rest[..number_len].parse().ok()?;
-        rest = &rest[number_len..];
-        let unit_len = rest
-            .find(|c: char| c.is_ascii_digit() || c == '.')
-            .unwrap_or(rest.len());
-        let nanos = match &rest[..unit_len] {
-            "ns" => 1.0,
-            "us" | "µs" | "μs" => 1e3,
-            "ms" => 1e6,
-            "s" => 1e9,
-            "m" => 60e9,
-            "h" => 3600e9,
-            _ => return None,
-        };
-        total += number * nanos;
-        rest = &rest[unit_len..];
-    }
-    Some(std::time::Duration::from_nanos(total as u64))
 }
 
 /// The current unix seconds.

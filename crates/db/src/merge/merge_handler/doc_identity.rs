@@ -264,7 +264,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // block (a skipped field's included) are the document's too, and
         // merge with it: their to-merge marks go in this transaction, so the
         // orphan sweep never reclaims a merged block's signature
-        // (`go.shinzo.store.signature_block_merged`, `go.shinzo.merge.signature_owner`).
+        // (`defra.orphan_gc.signature_merged`, `defra.orphan_gc.signature_owner`).
         let blockstore = systemstore.sibling(storage::namespace::Namespace::Blockstore);
         for signature_cid in block.signature.iter().chain(linked_signature_cids) {
             crate::docid::map::set_block_doc_id_mapping(
