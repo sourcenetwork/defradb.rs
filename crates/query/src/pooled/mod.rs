@@ -254,6 +254,17 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .truncate_collection_as(context, name, filter)
+            .await
+    }
+
     async fn set_migration_as(
         &self,
         context: &RequestContext,

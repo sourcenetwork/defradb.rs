@@ -1,16 +1,25 @@
 //! Mock query executor for testing HTTP routes.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use kovan::Atom;
 use serde_json::json;
 
+use query::documents::Filter;
 use query::error::{QueryError, Result, TransactionError};
 use query::executor::{QueryExecutor, QueryRequest, QueryResponse};
 use query::TransactionHandle;
+
+/// A truncate the mock was asked for: the collection and its filter.
+type TruncateCall = (String, Option<Filter>);
 
 /// Mock executor for testing HTTP routes with pattern-matched query responses.
 #[derive(Debug, Clone)]
 pub struct MockQueryExecutor {
     schema_sdl: String,
+    /// Each truncate asked for: the collection and its filter.
+    truncated: Arc<Atom<Vec<TruncateCall>>>,
 }
 
 /// Mock executor for testing error paths. Schema errors are optional.
@@ -115,16 +124,20 @@ impl QueryExecutor for FailingMockExecutor {
 impl MockQueryExecutor {
     /// Create a mock executor with default schema.
     pub fn new() -> Self {
-        Self {
-            schema_sdl: default_mock_schema(),
-        }
+        Self::with_schema(default_mock_schema())
     }
 
     /// Create with custom schema.
     pub fn with_schema(schema: impl Into<String>) -> Self {
         Self {
             schema_sdl: schema.into(),
+            truncated: Arc::default(),
         }
+    }
+
+    /// The truncates asked for, oldest first.
+    pub fn truncated_collections(&self) -> Vec<TruncateCall> {
+        self.truncated.load_clone()
     }
 }
 
@@ -146,6 +159,18 @@ fn mock_collection_version(name: &str) -> schema::CollectionVersion {
 #[async_trait]
 impl QueryExecutor for MockQueryExecutor {
     fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn truncate_collection_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        name: &str,
+        filter: Option<&Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        crate::mock::update_vec(&self.truncated, |calls| {
+            calls.push((name.to_owned(), filter.cloned()))
+        });
+        Ok(())
+    }
 
     async fn add_collection_as(
         &self,

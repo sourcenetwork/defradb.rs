@@ -13,7 +13,7 @@ mod lookup;
 mod resolve;
 mod select;
 pub(crate) use select::select;
-mod truncate_filtered;
+mod truncate;
 mod version;
 
 use crate::collection::name::CollectionName;
@@ -30,6 +30,7 @@ use storage::keys::systemstore::{
     CollectionKey, CollectionNameKey, CollectionVersionKey, IndexIDSequenceKey,
 };
 use tracing::instrument;
+pub use truncate::TruncateError;
 
 /// Helper to delete all keys with a given prefix from a namespace view.
 pub(super) async fn delete_prefix(store: &NamespaceView, prefix: Vec<u8>) -> Result<()> {

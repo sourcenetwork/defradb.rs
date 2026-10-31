@@ -10,6 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use query::documents;
 use query::rest::{CollectionDocIdsPage, CollectionDocIdsPagination};
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
@@ -189,42 +190,37 @@ struct TruncateCollectionRequest {
     filter: Option<serde_json::Value>,
 }
 
-/// Truncate all or matching documents in a collection.
+/// Truncate all or matching documents in a collection. Go's
+/// `collectionHandler.Truncate`.
 ///
 /// DELETE /api/v0/collections/{name}/truncate
 ///
-/// Deletes all documents, heads, blocks, and index entries while
-/// preserving the collection schema.
-///
-/// Requires `CollectionTruncate` permission when NAC is enabled.
+/// A body must carry a `filter`; without a body every document goes. The
+/// core checks `CollectionTruncate` and the filter.
 pub async fn truncate_collection(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(name): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Json<()>, HttpError> {
-    require_permission(&state, &identity, NodePermission::CollectionTruncate).await?;
-
-    let collection_mgmt = bound(state.require_collection_mgmt()?, &identity.context());
-
     let filter = if body.is_empty() {
         None
     } else {
         let request: TruncateCollectionRequest = serde_json::from_slice(&body)
             .map_err(|error| HttpError::BadRequest(format!("invalid request body: {error}")))?;
         match request.filter {
-            Some(serde_json::Value::Object(filter)) => Some(serde_json::Value::Object(filter)),
             Some(serde_json::Value::Null) | None => {
                 return Err(HttpError::BadRequest("filter is required".into()))
             }
-            Some(_) => return Err(HttpError::BadRequest("filter must be an object".into())),
+            Some(filter) => Some(documents::Filter::from(filter)),
         }
     };
 
-    collection_mgmt
-        .truncate_collection(&name, filter)
-        .await
-        .map_err(http_error_from_backend_message)?;
+    state
+        .executor
+        .truncate_collection_as(&call_context(&identity, &headers)?, &name, filter.as_ref())
+        .await?;
 
     Ok(Json(()))
 }

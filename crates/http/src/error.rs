@@ -266,7 +266,6 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::InvalidCollectionName(_)
         | DbError::CollectionVersionIDEmpty
         | DbError::ExplicitTxnMustUseForce
-        | DbError::FilteredTruncateBranchableCollection
         | DbError::UnsafePolicyTransition(_)
         | DbError::JsonPatch(_) => HttpError::UnprocessableEntity(message),
         DbError::DatabaseClosed => HttpError::ServiceUnavailable(message),
@@ -411,10 +410,6 @@ mod tests {
             ),
             (
                 DbError::UnsafePolicyTransition("collection policy changed".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                DbError::FilteredTruncateBranchableCollection,
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (DbError::DatabaseClosed, StatusCode::SERVICE_UNAVAILABLE),

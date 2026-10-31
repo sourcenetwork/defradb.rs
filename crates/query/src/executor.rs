@@ -593,6 +593,19 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::truncate_collection_as`](crate::txn::TransactionRegistry::truncate_collection_as).
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
     async fn set_migration_as(
         &self,

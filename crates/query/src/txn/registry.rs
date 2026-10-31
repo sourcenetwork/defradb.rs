@@ -197,6 +197,21 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Remove the documents of collection `name` that `filter` matches, or
+    /// all of them, for the caller `context` names. Go's
+    /// `Collection.Truncate`, which is not transactional.
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "collection truncate is not supported in this configuration",
+        ))
+    }
+
     /// Register the lens migration `config` (JSON) in the transaction
     /// `context` carries, if any; the transform ID.
     async fn set_migration_as(

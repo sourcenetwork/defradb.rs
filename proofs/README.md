@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 57 families (bounded model claims)
+### Modeled: 58 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
@@ -80,6 +80,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Add collection | TLA+ | db |
+| Collection truncate | TLA+ | db |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

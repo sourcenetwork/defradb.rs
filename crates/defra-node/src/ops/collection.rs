@@ -2,6 +2,7 @@
 //! transaction it carries if it carries one.
 
 use defra_core::RequestContext;
+use query::documents::Filter;
 use schema::{CollectionSelector, CollectionVersion};
 use serde_json::{Map, Value};
 
@@ -34,6 +35,21 @@ impl Node {
     ) -> Result<()> {
         self.runner()
             .set_active_collection_version_as(&self.caller(context), version_id)
+            .await
+            .map_err(transaction_error)
+    }
+
+    /// Remove the documents of collection `name` that `filter` matches, or
+    /// all of them without one, keeping the collection. Go's
+    /// `Collection.Truncate`.
+    pub async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&Filter>,
+    ) -> Result<()> {
+        self.runner()
+            .truncate_collection_as(&self.caller(context), name, filter)
             .await
             .map_err(transaction_error)
     }

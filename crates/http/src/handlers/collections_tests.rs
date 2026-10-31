@@ -90,62 +90,62 @@ fn router_with_rest() -> axum::Router {
     crate::router::create_router_with_state(state)
 }
 
-#[tokio::test]
-async fn truncate_collection_forwards_optional_filter() {
-    let operations = Arc::new(MockCollectionManagementOperations::new());
-    let router = router_with_collection_mgmt_operations(operations.clone());
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::DELETE)
-                .uri("/api/v0/collections/Users/truncate")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"filter":{"name":{"_eq":"Alice"}}}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+fn router_with_executor(executor: Arc<MockQueryExecutor>) -> axum::Router {
+    let state =
+        AppStateBuilder::new(executor as Arc<dyn QueryExecutor>, edge::testing::edge()).build();
+    crate::router::create_router_with_state(state)
+}
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method(Method::DELETE)
-                .uri("/api/v0/collections/Users/truncate")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
+/// The status of `DELETE /collections/Users/truncate` with `body`.
+fn truncate_users(router: axum::Router, body: &'static str) -> StatusCode {
+    let request = Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v0/collections/Users/truncate")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    edge::testing::edge()
+        .block_on(router.oneshot(request))
+        .unwrap()
+        .unwrap()
+        .status()
+}
+
+#[test]
+fn truncate_collection_hands_the_core_whatever_filter_it_gets() {
+    let executor = Arc::new(MockQueryExecutor::new());
+    let router = router_with_executor(executor.clone());
+
+    for body in [
+        r#"{"filter":{"name":{"_eq":"Alice"}}}"#,
+        r#"{"filter":4}"#,
+        "",
+    ] {
+        assert_eq!(truncate_users(router.clone(), body), StatusCode::OK);
+    }
+
     assert_eq!(
-        operations.truncated_collections(),
+        executor.truncated_collections(),
         vec![
-            ("Users".to_string(), Some(json!({"name": {"_eq": "Alice"}}))),
-            ("Users".to_string(), None),
+            (
+                "Users".to_owned(),
+                Some(json!({"name": {"_eq": "Alice"}}).into())
+            ),
+            ("Users".to_owned(), Some(json!(4).into())),
+            ("Users".to_owned(), None),
         ]
     );
 }
 
-#[tokio::test]
-async fn truncate_collection_rejects_missing_or_null_filter_body() {
+#[test]
+fn truncate_collection_rejects_a_body_without_a_filter() {
     for body in ["{}", r#"{"filter":null}"#, "not json"] {
-        let operations = Arc::new(MockCollectionManagementOperations::new());
-        let response = router_with_collection_mgmt_operations(operations.clone())
-            .oneshot(
-                Request::builder()
-                    .method(Method::DELETE)
-                    .uri("/api/v0/collections/Users/truncate")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let executor = Arc::new(MockQueryExecutor::new());
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert!(operations.truncated_collections().is_empty());
+        let status = truncate_users(router_with_executor(executor.clone()), body);
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(executor.truncated_collections().is_empty());
     }
 }
 
