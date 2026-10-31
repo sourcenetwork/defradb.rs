@@ -15,7 +15,7 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use regolith::sync::Atom;
 use tempfile::TempDir;
 
-use crate::client_type::{go_binary, network_edge, ClientType};
+use crate::client_type::{go_binary, go_shinzo_binary, network_edge, ClientType};
 use crate::go_node::{GoNode, GoOptions};
 
 /// How a node is started, kept so a restart starts it the same way.
@@ -27,6 +27,9 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// A Go node built from the Shinzo pin, whatever the test's client: a
+    /// mixed Rust and Go Shinzo cluster.
+    pub go_shinzo: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -46,6 +49,10 @@ impl TestNode {
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
+        };
+        let client_type = match spec.go_shinzo {
+            true => ClientType::GoShinzo,
+            false => client_type,
         };
         match client_type {
             ClientType::InProcess => {
@@ -72,16 +79,24 @@ impl TestNode {
             }
             ClientType::GoHttp => {
                 let binary = go_binary().unwrap_or_else(|error| panic!("{error}"));
-                let options = GoOptions {
-                    p2p: spec.network.then_some(listen),
-                    dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
-                };
-                let node =
-                    GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
-                let url = node.api_url().to_owned();
-                Self::new(None, Some(url), spec, None, vec![Arc::new(node)])
+                Self::start_go(&binary, spec, listen, false)
+            }
+            ClientType::GoShinzo => {
+                let binary = go_shinzo_binary().unwrap_or_else(|error| panic!("{error}"));
+                Self::start_go(&binary, spec, listen, true)
             }
         }
+    }
+
+    fn start_go(binary: &std::path::Path, spec: NodeSpec, listen: String, on_disk: bool) -> Self {
+        let options = GoOptions {
+            p2p: spec.network.then_some(listen),
+            dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+            on_disk,
+        };
+        let node = GoNode::start(binary, &options).unwrap_or_else(|error| panic!("{error}"));
+        let url = node.api_url().to_owned();
+        Self::new(None, Some(url), spec, None, vec![Arc::new(node)])
     }
 
     fn new(
