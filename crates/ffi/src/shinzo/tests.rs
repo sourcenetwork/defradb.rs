@@ -474,6 +474,7 @@ fn batch_collection_returns_the_composites_a_tagged_write_produces() {
     node_close(node);
 }
 
+#[cfg(feature = "libp2p")]
 fn p2p_node(options: NodeInitOptions) -> Result<usize, String> {
     assert!(crate::runtime::init_runtime());
     let listen = cstr("/ip4/127.0.0.1/tcp/0");
@@ -491,6 +492,7 @@ fn p2p_node(options: NodeInitOptions) -> Result<usize, String> {
 }
 
 /// The node's peer ID and its listen addresses.
+#[cfg(feature = "libp2p")]
 fn peer(node: usize) -> (String, Vec<String>) {
     let info = take(unsafe { crate::p2p::p2p_peer_info(node, null()) }).unwrap();
     let addrs: Vec<String> = serde_json::from_value(info).unwrap();
@@ -498,6 +500,7 @@ fn peer(node: usize) -> (String, Vec<String>) {
     (id, addrs)
 }
 
+#[cfg(feature = "libp2p")]
 #[test]
 fn a_supplied_peer_key_is_the_node_peer_id_on_every_start() {
     use crypto::Key;
@@ -525,6 +528,7 @@ fn a_supplied_peer_key_is_the_node_peer_id_on_every_start() {
     assert!(refused.unwrap_err().contains("64 bytes"));
 }
 
+#[cfg(feature = "libp2p")]
 #[test]
 fn every_listen_address_and_the_resource_limits_reach_the_host() {
     let addrs = cstr(r#"["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.2/tcp/0"]"#);
