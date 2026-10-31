@@ -520,6 +520,12 @@ pub fn test_fn(loaded: &Loaded, name: &str, leaf: Option<&str>, used: &mut Used)
     if without_db {
         out.push_str("        without_db: true,\n");
     }
+    if let Some((kind, reason)) = super::not_applying::lookup(&loaded.scenario.id) {
+        out.push_str(&format!(
+            "        not_applying: Some(NotApplying::{kind}({})),\n",
+            literal::string(reason)
+        ));
+    }
     out.push_str("        ..Default::default()\n    }\n    .execute();\n}\n");
     out
 }
@@ -578,7 +584,10 @@ pub fn file_header(loaded: &Loaded, uses_matchers: bool, used: &Used, body: &str
             scenario_uses.join(", ")
         ));
     }
-    out.push_str("use integration_test::test_case::TestCase;\n");
+    match body.contains("NotApplying::") {
+        true => out.push_str("use integration_test::test_case::{NotApplying, TestCase};\n"),
+        false => out.push_str("use integration_test::test_case::TestCase;\n"),
+    }
     if used.chunked {
         out.push_str("use testo::action::ActionInstance;\n");
     }

@@ -4,7 +4,7 @@
 use integration_test::actions::{AddCollection, AddDoc, Request, TxnBegin, TxnCommit};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
-use integration_test::test_case::TestCase;
+use integration_test::test_case::{NotApplying, TestCase};
 use serde_json::json;
 
 #[test]
@@ -166,12 +166,9 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                 ..Default::default()
             }
             .into(),
-            // Go fails this commit with "transaction conflict" (an SSI
-            // anti-dependency on the publisher each transaction read; see
-            // `go.mutation.txn.conflict`'s Go-Bug-Suspect). The two books
-            // and their publishers are disjoint, so both commit here.
             TxnCommit {
                 txn: 1,
+                expected_error: Some("transaction conflict".into()),
                 ..Default::default()
             }
             .into(),
@@ -191,11 +188,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                 .into(),
                 expected_data: json!({
                     "Publisher": [
-                        {
-                            "_docID": m::r("doc2_1"),
-                            "name": "Online",
-                            "published": { "_docID": m::doc_id(), "name": "Book By Online" },
-                        },
+                        { "_docID": m::r("doc2_1"), "name": "Online", "published": null },
                         {
                             "_docID": m::r("doc2_0"),
                             "name": "Website",
@@ -211,6 +204,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
             }
             .into(),
         ],
+        not_applying: Some(NotApplying::GoBugSuspect(r#"Go fails the second commit with "transaction conflict", an SSI anti-dependency on the publisher each transaction read (go.mutation.txn.conflict). The transactions write disjoint books and publishers, so regolith commits both and both books link correctly."#)),
         ..Default::default()
     }
     .execute();
