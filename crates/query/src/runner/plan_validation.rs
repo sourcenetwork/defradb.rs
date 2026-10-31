@@ -44,6 +44,19 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
     }
 
+    for requestable in &select.fields {
+        if let Requestable::Select(nested) = requestable {
+            if let Some(field) = collection.field_by_name(&nested.field.name) {
+                if !field.kind.is_relation() {
+                    return Err(QueryError::sub_selection_on_leaf(
+                        &field.name,
+                        field.kind.graphql_type_name(),
+                    ));
+                }
+            }
+        }
+    }
+
     // Validate aggregate target fields exist in schema
     // Note: For relation-based aggregates (e.g., _sum(books: {field: score})),
     // the field belongs to the related collection, not the current one.
@@ -297,5 +310,49 @@ mod tests {
             err.to_string(),
             "parse error: cannot group by array or object field. Field: published"
         );
+    }
+
+    #[test]
+    fn sub_selection_on_scalar_returns_go_scalar_leafs_error() {
+        let collection = CollectionVersion::new(
+            "jsonBlob",
+            "json-version",
+            "json-id",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "jsonField",
+                    FieldKind::json(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("3", "name", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        );
+        let cases = [
+            (
+                "jsonField",
+                "Field \"jsonField\" of type \"JSON\" must not have a sub selection.",
+            ),
+            (
+                "name",
+                "Field \"name\" of type \"String\" must not have a sub selection.",
+            ),
+        ];
+        for (field, expected) in cases {
+            let nested = Select::new(field)
+                .with_field_name(field)
+                .with_field(crate::mapper::Field::new("i"));
+            let select = Select::new("jsonBlob").with_select(nested);
+
+            let err = validate_select(&select, &collection).unwrap_err();
+
+            assert_eq!(err.to_string(), expected);
+        }
     }
 }

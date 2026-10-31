@@ -56,13 +56,10 @@ impl Planner {
 
         // Verify it's a relation field
         if !relation_field.kind.is_relation() {
-            return Err(QueryError::execution(format!(
-                "field '{}' on collection '{}' is not a relation (type: {}). \
-                         Only relation fields can have nested selections.",
+            return Err(QueryError::sub_selection_on_leaf(
                 relation_field_name,
-                parent_collection.name,
-                relation_field.kind.graphql_type_name()
-            )));
+                relation_field.kind.graphql_type_name(),
+            ));
         }
 
         let target_collection = self.resolve_relation_target_collection(
@@ -98,8 +95,13 @@ impl Planner {
             relation_field_name,
         );
 
+        let relation_paths = select
+            .filter
+            .as_ref()
+            .map(|f| self.relation_filter_paths(f, parent_collection))
+            .unwrap_or_default();
         let multi_level_paths_for_relation =
-            child_mapping::multi_level_paths_for_relation(select, relation_field_name);
+            child_mapping::multi_level_paths_for_relation(relation_paths, relation_field_name);
         child_mapping::enrich_child_scan_mapping_from_multi_level_paths(
             &mut child_scan_mapping,
             &multi_level_paths_for_relation,

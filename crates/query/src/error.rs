@@ -122,6 +122,10 @@ pub enum QueryError {
     #[error("{0}")]
     UnknownField(String),
 
+    /// A scalar field was given a sub-selection (graphql-go's ScalarLeafs rule)
+    #[error("Field \"{field}\" of type \"{type_name}\" must not have a sub selection.")]
+    SubSelectionOnLeaf { field: String, type_name: String },
+
     /// Collection not found
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
@@ -243,6 +247,14 @@ impl QueryError {
     /// Create an unknown field error
     pub fn unknown_field(name: impl Into<String>) -> Self {
         Self::UnknownField(name.into())
+    }
+
+    /// Create a sub-selection-on-scalar error
+    pub fn sub_selection_on_leaf(field: impl Into<String>, type_name: impl Into<String>) -> Self {
+        Self::SubSelectionOnLeaf {
+            field: field.into(),
+            type_name: type_name.into(),
+        }
     }
 
     /// Create a collection not found error
