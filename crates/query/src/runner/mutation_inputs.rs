@@ -20,20 +20,42 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         limit: usize,
         show_deleted: bool,
     ) -> Result<Vec<String>> {
+        self.selected_doc_ids(
+            collection_name,
+            filter,
+            Some(limit),
+            show_deleted,
+            self.fetcher.as_ref(),
+        )
+        .await
+    }
+
+    /// The document IDs a full select with `filter` returns through
+    /// `fetcher`, joins included.
+    async fn selected_doc_ids(
+        &self,
+        collection_name: &str,
+        filter: Filter,
+        limit: Option<usize>,
+        show_deleted: bool,
+        fetcher: &dyn crate::fetcher::DocFetcher,
+    ) -> Result<Vec<String>> {
         let mut mapping = DocumentMapping::new();
         mapping.add(0, "_docID");
         mapping.add_render_key(0, "_docID");
 
         let mut select = Select::new(collection_name)
             .with_field(Field::new("_docID"))
-            .with_filter(filter)
-            .with_limit(limit as u64);
+            .with_filter(filter);
+        if let Some(limit) = limit {
+            select = select.with_limit(limit as u64);
+        }
         select.document_mapping = mapping;
         select.show_deleted = show_deleted;
 
         let mut warnings = Vec::new();
         let result = self
-            .execute_select_internal(&select, self.fetcher.as_ref(), None, &mut warnings)
+            .execute_select_internal(&select, fetcher, None, &mut warnings)
             .await?;
         let items = result.as_array().ok_or_else(|| {
             crate::error::QueryError::internal("filtered document selection returned a non-list")
@@ -89,6 +111,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             (Some(filter), None) => filter,
             _ => return Ok(None),
         };
+
+        // A condition on a related document needs the join a select runs;
+        // the stored document alone cannot satisfy it.
+        if filter.has_relation_filters() || filter.has_alias_filter() {
+            return self
+                .selected_doc_ids(
+                    &mutation.collection_name,
+                    filter.clone(),
+                    None,
+                    false,
+                    fetcher,
+                )
+                .await
+                .map(Some);
+        }
 
         // Get the collection schema on-demand from provider
         let collection = self.get_collection(&mutation.collection_name).await?;
