@@ -521,6 +521,7 @@ jobs:
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
+          --test mutation
           -- --skip ::go_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
