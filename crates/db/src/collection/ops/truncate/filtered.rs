@@ -32,32 +32,31 @@ impl<S: Store> crate::database::DB<S> {
         }
     }
 
+    /// Purge one chunk in an engine-retried transaction: a conflict, such as
+    /// a merge adopting a block the owner scan decided on, runs it again.
     async fn truncate_filtered_chunk(
-        &self,
+        self: &Arc<Self>,
         collection: &Collection,
         doc_ids: &[String],
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        S: 'static,
+    {
         let doc_ids = doc_ids
             .iter()
             .map(|doc_id| document::DocID::from_string(doc_id))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let txn = self.new_txn(false).await?;
-        txn.validate_collection_for_write(collection).await?;
-        match self.purge_documents(&txn, collection, &doc_ids, true).await {
-            Ok(count) => {
-                txn.commit().await?;
-                Ok(count)
-            }
-            Err(error) => {
-                if let Err(discard_err) = txn.discard() {
-                    tracing::warn!(
-                        error = %discard_err,
-                        original_error = %error,
-                        "Transaction discard failed during filtered truncate"
-                    );
-                }
-                Err(error)
-            }
-        }
+        let db = Arc::clone(self);
+        let collection = collection.clone();
+        self.transact_db(move |txn| {
+            let db = Arc::clone(&db);
+            let collection = collection.clone();
+            let doc_ids = doc_ids.clone();
+            Box::pin(async move {
+                txn.validate_collection_for_write(&collection).await?;
+                db.purge_documents(txn, &collection, &doc_ids, true).await
+            })
+        })
+        .await
     }
 }
