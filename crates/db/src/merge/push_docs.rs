@@ -8,6 +8,7 @@ use p2p::transport::PeerId;
 use p2p::P2PTransport;
 use storage::corekv::{Reader, Store};
 
+mod selected;
 mod selection;
 mod stop;
 
@@ -140,8 +141,9 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 /// they arrive; an earlier call's never lets a document be skipped. Subscription
 /// filters, retry markers and retry deadlines neither apply nor change.
 ///
+/// Receiver pauses retry the same head within one fixed `send_timeout` allowance.
 /// Pacing, slot counts and the per-send deadline come from `replay_config`. The
-/// first send deadline, lost connection or receiver pause hint raises `stop`, as
+/// first send deadline, lost connection or exhausted receiver-pause allowance raises `stop`, as
 /// does dropping this future or the caller raising it: no further document
 /// starts and no started task sends again. Sends already on the wire end on
 /// their own deadline and are joined, and what they acknowledge is kept. A
@@ -279,6 +281,10 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     };
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
+    let pause_budget = Arc::new(selected::PauseBudget::new(
+        replay_config.send_timeout,
+        network.clone(),
+    ));
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
@@ -442,6 +448,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         break 'collections;
                     }
                     let task_stop = stop.clone();
+                    let pause_budget = pause_budget.clone();
                     push_handles.push((
                         col_name.clone(),
                         replay_doc_id,
@@ -457,24 +464,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                     return Err(ReplayPushSendError::Stopped.to_string());
                                 }
                                 let cid = req.cid.clone();
-                                match gate
-                                    .send_pushlog_with_admission(
+                                let sent = if selected {
+                                    selected::send(
+                                        &t, &gate, &pause_budget, &task_stop, &peer_key, &req,
+                                    ).await
+                                } else {
+                                    gate.send_pushlog_with_admission(
                                         &peer_key,
-                                        async {
-                                            if !selected {
-                                                super::push_docs_replay::check_retry_admission(
-                                                    &retry_store, &pid,
-                                                ).await
-                                            } else if task_stop.is_stopped() {
-                                                Err(ReplayPushSendError::Stopped)
-                                            } else {
-                                                Ok(())
-                                            }
-                                        },
+                                        super::push_docs_replay::check_retry_admission(&retry_store, &pid),
                                         t.send_two_stream_request(&pid, req),
-                                    )
-                                    .await
-                                {
+                                    ).await
+                                };
+                                match sent {
                                     Ok(reply) if reply.err_message.is_some() => {
                                         if !selected {
                                             if let Err(error) = super::push_docs_replay::persist_retry_after(
@@ -482,11 +483,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                             ).await {
                                                 tracing::warn!(%error, "Failed to persist replay admission deadline");
                                             }
-                                        } else if stop::reply_requests_pause(&reply) {
-                                            task_stop.stop(format!(
-                                                "receiver backpressure; retry_after_ms={:?}",
-                                                reply.retry_after_ms,
-                                            ));
                                         }
                                         tracing::warn!(
                                             peer_id = %pid,

@@ -1,4 +1,4 @@
-//! A selected push stops after its first stall, lost connection, pause hint
+//! A selected push retries receiver pauses and stops after a stall, lost connection, expired pause allowance
 //! or caller stop, bounded by the work already started
 //! (`SelectedPushIsolation.tla`, `DocumentPush.lean` `serialRun`).
 
@@ -15,7 +15,7 @@ use document::Document;
 use p2p::message::PushLogReply;
 use p2p::transport::PeerId;
 use query::mutator::DocMutator;
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::RapidHashSet;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -162,25 +162,36 @@ impl Fixture {
         prepared
     }
 
-    /// Only selected documents crossed, each once; returns the ones that did.
-    fn assert_only_selected_sent(
+    /// Every attempt, including a retried capacity nack, stays in the selected set.
+    fn selected_attempts(
         &self,
         received: &regolith::sync::BoundedReceiver<p2p::PushLogRequest>,
-    ) -> RapidHashSet<String> {
+    ) -> Vec<String> {
         let selected: RapidHashSet<_> = self.selected.iter().map(|(_, id)| id.clone()).collect();
-        let mut sent = RapidHashSet::new();
+        let mut sent = Vec::new();
         while let Some(request) = received.try_recv() {
             assert!(
                 selected.contains(&request.doc_id),
                 "unselected {} crossed",
                 request.doc_id
             );
-            assert!(
-                sent.insert(request.doc_id.clone()),
-                "{} sent twice",
-                request.doc_id
-            );
+            sent.push(request.doc_id);
         }
+        sent
+    }
+
+    /// A transfer without capacity nacks sends each selected document once.
+    fn assert_only_selected_sent(
+        &self,
+        received: &regolith::sync::BoundedReceiver<p2p::PushLogRequest>,
+    ) -> RapidHashSet<String> {
+        let attempts = self.selected_attempts(received);
+        let sent: RapidHashSet<_> = attempts.iter().cloned().collect();
+        assert_eq!(
+            sent.len(),
+            attempts.len(),
+            "a head was sent twice without a capacity nack"
+        );
         sent
     }
 
@@ -205,7 +216,7 @@ fn never_replies() -> ReplyScript {
 
 fn pause_hint() -> PushLogReply {
     let mut reply = PushLogReply::error("selected-transfer", p2p::error::RATE_LIMITED_MESSAGE);
-    reply.retry_after_ms = Some(45_000);
+    reply.retry_after_ms = Some(5);
     reply
 }
 
@@ -330,22 +341,45 @@ fn a_lost_connection_stops_and_the_next_call_sends_every_selected_head_again() {
 }
 
 #[test]
-fn a_receiver_pause_hint_stops_the_call_and_stays_with_it() {
-    workers::block_on(async {
-        let fixture = Fixture::new(64, 0).await;
-        let (transport, received) = fixture.receiver(Some(Arc::new(|_| {
-            Box::pin(async { Some(Ok(pause_hint())) })
-        })));
-        let error = fixture
-            .push(&transport, Default::default(), &SelectedPushStop::new())
-            .await
-            .unwrap_err();
-        assert!(error.contains("stopped: receiver backpressure"), "{error}");
-        assert!(transport.arrivals().len() <= DEFAULT_MAX_CONCURRENT_REPLAY_SENDS);
-        fixture.assert_only_selected_sent(&received);
-        fixture.assert_subscription_untouched().await;
-    })
-    .unwrap();
+fn a_receiver_pause_is_bounded_and_does_not_change_the_subscription() {
+    workers::block_on(exercise_pause_budget_case(true, false)).unwrap();
+}
+
+pub(super) async fn exercise_pause_budget_case(stops: bool, ok: bool) {
+    let fixture = Fixture::new(64, 0).await;
+    let (transport, received) = fixture.receiver(Some(Arc::new(|_| {
+        Box::pin(async { Some(Ok(pause_hint())) })
+    })));
+    let budget = Duration::from_millis(40);
+    let started = Instant::now();
+    let result = fixture
+        .push(
+            &transport,
+            ReplayPushConfig {
+                send_timeout: budget,
+                ..Default::default()
+            },
+            &SelectedPushStop::new(),
+        )
+        .await;
+    assert_eq!(result.is_ok(), ok);
+    let error = result.unwrap_err();
+    assert_eq!(error.contains("stopped:"), stops, "{error}");
+    assert!(
+        started.elapsed() >= budget,
+        "a pause must be retried within its allowance"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "pause retries must exhaust their fixed budget"
+    );
+    assert!(
+        transport.arrivals().len() > 1,
+        "a transient capacity reply must be retried"
+    );
+    assert!(fixture.selected_attempts(&received).len() > 1);
+    assert_eq!(fixture.acknowledged().await, 0);
+    fixture.assert_subscription_untouched().await;
 }
 
 #[test]
@@ -474,6 +508,78 @@ pub(super) async fn exercise_stop_case(outcome: &str, stops: bool, sends: usize,
         .err()
         .is_some_and(|error| error.contains("stopped: "));
     assert_eq!(stopped, stops, "{outcome}: {result:?}");
-    fixture.assert_only_selected_sent(&received);
+    if outcome == "hinted" {
+        assert_eq!(fixture.selected_attempts(&received).len(), sends);
+        assert_eq!(fixture.acknowledged().await, 3);
+    } else {
+        fixture.assert_only_selected_sent(&received);
+    }
     fixture.assert_subscription_untouched().await;
+}
+
+#[test]
+fn acknowledgements_do_not_reset_the_shared_pause_allowance() {
+    workers::block_on(async {
+        let fixture = Fixture::new(3, 0).await;
+        let (transport, _) = fixture.receiver(Some(Arc::new(|index| {
+            Box::pin(async move {
+                if index == 0 || index == 2 {
+                    let mut reply = pause_hint();
+                    reply.retry_after_ms = Some(20);
+                    Some(Ok(reply))
+                } else {
+                    None
+                }
+            })
+        })));
+        let error = fixture
+            .push(
+                &transport,
+                ReplayPushConfig {
+                    max_concurrent_document_tasks: 1,
+                    max_concurrent_outbound_pushes: 1,
+                    send_timeout: Duration::from_millis(30),
+                    ..Default::default()
+                },
+                &SelectedPushStop::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("pause exceeded"), "{error}");
+        assert_eq!(fixture.acknowledged().await, 1);
+        assert_eq!(transport.arrivals().len(), 3);
+        fixture.assert_subscription_untouched().await;
+    })
+    .unwrap();
+}
+
+#[test]
+fn cancellation_wakes_a_shared_receiver_pause() {
+    workers::block_on(async {
+        let fixture = Fixture::new(3, 0).await;
+        let (seen, received) = regolith::sync::bounded(1);
+        let (transport, _) = fixture.receiver(Some(Arc::new(move |_| {
+            let _ = seen.try_send(());
+            Box::pin(async {
+                let mut reply = pause_hint();
+                reply.retry_after_ms = Some(60_000);
+                Some(Ok(reply))
+            })
+        })));
+        let stop = SelectedPushStop::new();
+        let raised = stop.clone();
+        let edge = edge::testing::edge();
+        let timer = edge.clone();
+        let cancellation = edge.spawn(async move {
+            received.recv_async().await.unwrap();
+            timer.sleep(Duration::from_millis(20)).await;
+            raised.stop("cancel during receiver pause");
+        });
+        let started = Instant::now();
+        let result = fixture.push(&transport, Default::default(), &stop).await;
+        cancellation.await.unwrap();
+        assert!(result.unwrap_err().contains("cancel during receiver pause"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    })
+    .unwrap();
 }

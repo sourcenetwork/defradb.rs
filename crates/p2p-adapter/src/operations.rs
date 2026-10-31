@@ -392,8 +392,9 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// achieved. No retry marker is registered and no replicator's filter or
     /// retry schedule applies or changes, so an `Err` leaves nothing behind to
     /// resume: the caller owns calling again. The node owns the send pacing,
-    /// slot counts and per-send deadline. The first send deadline, lost
-    /// connection or receiver pause hint stops the call early; dropping the
+    /// slot counts and per-send deadline. A receiver pause retries the same head
+    /// within one fixed send-timeout allowance. The first send deadline, lost
+    /// connection or exhausted receiver-pause allowance stops the call early; dropping the
     /// future stops it too, without waiting for the sends already on the wire,
     /// which end on their own deadline. Default implementations report the
     /// operation as unsupported.
