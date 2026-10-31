@@ -5,8 +5,8 @@ use cid::Cid;
 use multihash_codetable::{Code, MultihashDigest};
 
 use super::{
-    encode_batch, InlineCars, ShinzoBatcher, BATCH_FLUSH_INTERVAL, BATCH_MAX_DOCS, INLINE_CAR_TTL,
-    MAX_BATCH_MESSAGE_BYTES,
+    encode_batch, Batch, InlineCars, ShinzoBatcher, BATCH_FLUSH_INTERVAL, BATCH_MAX_DOCS,
+    BATCH_MAX_PUBLISH_ATTEMPTS, BATCH_MAX_RETRY_DELAY, INLINE_CAR_TTL, MAX_BATCH_MESSAGE_BYTES,
 };
 use crate::message::{DocumentInfo, PushLogBroadcast};
 use crate::sync::car::encode_car;
@@ -81,14 +81,15 @@ fn a_batch_is_published_full_or_after_the_flush_interval() {
         assert!(batcher.add("col", document(i, 1), now).is_none());
     }
     let full = batcher.add("col", document(99, 1), now).unwrap();
-    assert_eq!(full.len(), BATCH_MAX_DOCS);
+    assert_eq!(full.documents.len(), BATCH_MAX_DOCS);
+    assert_eq!(full.failures, 0);
     assert!(batcher.is_empty());
 
     batcher.add("col", document(1, 1), now);
     assert!(batcher.due(now + Duration::from_millis(10)).is_empty());
     let due = batcher.due(now + BATCH_FLUSH_INTERVAL);
     assert_eq!(due.len(), 1);
-    assert_eq!(due[0].0, "col");
+    assert_eq!(due[0].topic, "col");
     assert!(batcher.is_empty());
 }
 
@@ -97,7 +98,7 @@ fn an_encoded_batch_reads_back_as_go_reads_it() {
     let documents: Vec<_> = (0..3).map(|i| document(i, 4)).collect();
     let messages = encode_batch("col", "12D3KooWRust", documents.clone()).unwrap();
     assert_eq!(messages.len(), 1);
-    let decoded = PushLogBroadcast::decode_gossip_documents(&messages[0])
+    let decoded = PushLogBroadcast::decode_gossip_documents(&messages[0].0)
         .unwrap()
         .unwrap();
     assert_eq!(decoded.len(), 3);
@@ -115,5 +116,35 @@ fn an_oversized_batch_is_split_in_halves() {
     let documents: Vec<_> = (0..4).map(|i| document(i, size)).collect();
     let messages = encode_batch("col", "creator", documents).unwrap();
     assert_eq!(messages.len(), 2);
-    assert!(messages.iter().all(|m| m.len() < MAX_BATCH_MESSAGE_BYTES));
+    assert!(messages
+        .iter()
+        .all(|(data, _)| data.len() < MAX_BATCH_MESSAGE_BYTES));
+    assert_eq!(
+        messages.iter().map(|(_, docs)| docs.len()).sum::<usize>(),
+        4,
+        "each message names the documents it carries"
+    );
+}
+
+#[test]
+fn a_batch_that_failed_to_publish_comes_back_until_it_has_failed_too_often() {
+    let mut batcher = ShinzoBatcher::default();
+    let now = Instant::now();
+    let mut batch = Batch {
+        topic: "col".into(),
+        documents: vec![document(1, 1)],
+        failures: 0,
+    };
+    for attempt in 1..BATCH_MAX_PUBLISH_ATTEMPTS {
+        assert!(batcher.retry(batch, now), "attempt {attempt} is kept");
+        assert!(!batcher.is_empty());
+        assert!(batcher.due(now).is_empty(), "it waits out its backoff");
+        let mut due = batcher.due(now + BATCH_MAX_RETRY_DELAY);
+        assert_eq!(due.len(), 1);
+        batch = due.remove(0);
+        assert_eq!(batch.failures, attempt);
+        assert_eq!(batch.documents, vec![document(1, 1)]);
+    }
+    assert!(!batcher.retry(batch, now), "the last failure drops it");
+    assert!(batcher.is_empty());
 }

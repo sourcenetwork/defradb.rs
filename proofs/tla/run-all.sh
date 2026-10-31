@@ -94,6 +94,7 @@ RUNS=(
   "MC_ShinzoBatching_Red_Count.cfg ShinzoBatching.tla RED"
   "MC_ShinzoBatching_Red_Reuse.cfg ShinzoBatching.tla RED"
   "MC_ShinzoBatching_Red_AnyPeer.cfg ShinzoBatching.tla RED"
+  "MC_ShinzoBatching_Red_NoKeep.cfg ShinzoBatching.tla RED"
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
