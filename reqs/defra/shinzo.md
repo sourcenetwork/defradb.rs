@@ -30,3 +30,11 @@ A `[String]` field given a typed string list (`["bafyA", "bafyB", "bafyC"]`) and
 - **Interop:** "a collection's version ID is content-addressed and must be identical on a Go Shinzo node and a Rust node given the same SDL, or the nodes do not agree on the collection"
 
 Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same `VersionID` on every run (30 runs, one ID), even though `Foo` is a name prefix of `FooBar`. Its version ID is `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri` on a Rust node and on a Go Shinzo node.
+
+# `go.shinzo.request.cyclic_fragments`: Cyclic fragment spreads fail validation
+
+- **Parents:** ["go.shinzo.request"]
+- **Scenarios:** ["query.cyclic_fragments.fragments-spreading-each-other-fail-validation", "query.cyclic_fragments.a-cycle-no-field-spreads-still-fails-validation", "query.cyclic_fragments.a-fragment-spreading-itself-fails-validation"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return the error `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.`

@@ -430,6 +430,7 @@ pub fn parse_request_with_limits(
             QueryError::parse(msg)
         }
     })?;
+    super::fragment_cycles::check_fragment_cycles(&doc.definitions)?;
 
     // Check for introspection queries (__schema, __type, __typename) before
     // normal parsing. These are handled separately by executing against the

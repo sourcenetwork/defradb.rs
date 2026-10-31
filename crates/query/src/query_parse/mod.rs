@@ -13,6 +13,8 @@ mod aggregates;
 mod cursor;
 mod explain;
 mod filters;
+mod fragment_cycles;
+pub(crate) use fragment_cycles::check_fragment_cycles;
 pub mod limits;
 mod mutations;
 mod ordering;

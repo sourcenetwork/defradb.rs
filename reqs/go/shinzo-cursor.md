@@ -180,10 +180,3 @@ Index fixes on `shinzo-develop` outside cursor pagination.
 
 GraphQL request validation fixes on `shinzo-develop`.
 
-# `go.shinzo.request.cyclic_fragments`: Cyclic fragment spreads fail validation
-
-- **Parents:** ["go.shinzo.request"]
-- **Go-Tests:** ["internal/db/request_test.go::TestCyclicFragmentSpreadsFailValidation"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return the error `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.`
