@@ -58,6 +58,7 @@ pub mod remote_signer;
 pub mod runtime;
 pub mod schema;
 pub mod se_key;
+pub mod shinzo;
 pub mod state;
 pub mod subscription;
 pub mod txn;
@@ -245,7 +246,7 @@ pub use acp::{
 };
 pub use action::list_actions;
 pub use backup::{basic_export, basic_import};
-pub use batch::{batch_sign, batch_start};
+pub use batch::{batch_sign, batch_sign_with_options, batch_start, batch_start_with_options};
 pub use block::{block_verify_signature, block_verify_signature_in_txn};
 pub use collection::{
     add_view, delete_collection, delete_collection_versions, delete_collections,
@@ -283,6 +284,7 @@ pub use remote_signer::{
 };
 pub use schema::{add_schema, add_schema_in_txn, get_collections, get_collections_in_txn};
 pub use se_key::set_se_encryption_key;
+pub use shinzo::{kv_export, kv_import, purge_documents, save_many_documents};
 pub use subscription::{
     close_graphql_subscription, close_subscription, create_merge_complete_subscription,
     create_subscription, poll_graphql_subscription, poll_subscription,

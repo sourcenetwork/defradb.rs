@@ -1,5 +1,7 @@
 use std::ffi::{c_char, c_int};
 
+use acp::nac::NodePermission;
+
 use crate::call::{self, DefraResultCallback, Reply};
 use crate::ffi_entry;
 use crate::helpers::{get_node_runner, get_rt, require_c_str};
@@ -184,6 +186,127 @@ pub(crate) async fn run_mutation(
     }
 }
 
+/// The request path a request the core built runs on (a typed mutation, not
+/// GraphQL text): admitted under `permission` and run as `identity`, in the
+/// transaction `txn` names or on its own, with the node's signing, as an
+/// exec call is.
+pub(crate) async fn run_typed(
+    node_ptr: usize,
+    identity: Option<String>,
+    txn: Option<String>,
+    permission: NodePermission,
+    request: query::QueryRequest,
+) -> query::QueryResponse {
+    let caller = match Caller::admit(node_ptr, identity, txn, None, -1, permission).await {
+        Ok(caller) => caller,
+        Err(decided) => {
+            return query::QueryResponse::error(decided.into_error().unwrap_or_default())
+        }
+    };
+    let runner = match get_node_runner(node_ptr) {
+        Ok(runner) => runner,
+        Err(error) => return query::QueryResponse::error(error.into_error().unwrap_or_default()),
+    };
+    let mut request = request.with_context(caller.context);
+    if caller.did.is_some() {
+        request = request.with_identity(caller.did);
+    }
+    let handle = caller
+        .txn_id
+        .map(|id| query::txn::TransactionHandle::new(id.to_string()));
+    run(&runner, request, handle).await
+}
+
+/// The context a call that names `permission` acts in, once node access
+/// control admits `identity` for it: as an exec call's, with its identity,
+/// its transaction, its DAC bypass and its signer.
+pub(crate) async fn caller_context(
+    node_ptr: usize,
+    identity: Option<String>,
+    txn: Option<String>,
+    permission: NodePermission,
+) -> Result<defra_core::RequestContext, String> {
+    Caller::admit(node_ptr, identity, txn, None, -1, permission)
+        .await
+        .map(|caller| caller.context)
+        .map_err(|decided| decided.into_error().unwrap_or_default())
+}
+
+/// Who an exec call acts as, admitted under the node's access control.
+struct Caller {
+    did: Option<identity::Did>,
+    txn_id: Option<defra_core::TxnId>,
+    context: defra_core::RequestContext,
+}
+
+impl Caller {
+    /// Check `identity` holds `permission`, then build the context it acts
+    /// in: its identity, its transaction, its DAC bypass and the signer
+    /// that signs its writes.
+    async fn admit(
+        node_ptr: usize,
+        identity: Option<String>,
+        txn: Option<String>,
+        batch_session: Option<String>,
+        signing_override: c_int,
+        permission: NodePermission,
+    ) -> Result<Self, FfiResult> {
+        admit_on_node(node_ptr, identity.as_deref(), permission).await?;
+
+        let did = match identity {
+            Some(ref s) if !s.is_empty() => match identity::Did::new(s) {
+                Ok(d) => Some(d),
+                Err(e) => return Err(FfiResult::error(format!("invalid identity DID: {}", e))),
+            },
+            _ => None,
+        };
+
+        // The signer for block signing during mutations. Matches Go's
+        // behavior: if signing is enabled and no explicit identity, fall back
+        // to node identity for block signing.
+        let (node_did, node_signing_enabled) = NODES
+            .get(node_ptr, |state| {
+                (state.identity_did(), state.signing_enabled)
+            })
+            .unwrap_or((None, false));
+        let signing_enabled = match signing_override {
+            -1 => node_signing_enabled,
+            0 => false,
+            1 => true,
+            _ => return Err(FfiResult::error("signing_override must be -1, 0, or 1")),
+        };
+        let signing = defra_core::signing::resolve_signing_config_with_flag(
+            identity.as_deref(),
+            node_did.as_deref(),
+            signing_enabled,
+        );
+        // Use caller-provided session ID if available; otherwise fall back to public key.
+        let session_key =
+            batch_session.or_else(|| signing.as_ref().map(|s| s.public_key_hex.clone()));
+
+        // The caller acts in the request's context, so DB-layer NAC checks
+        // resolve it; a NAC admin/owner can read all documents.
+        let txn_id = match txn.as_deref() {
+            Some(id) => Some(
+                id.parse::<defra_core::TxnId>()
+                    .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e)))?,
+            ),
+            None => None,
+        };
+        let context = defra_core::RequestContext::default()
+            .with_txn(txn_id)
+            .with_identity(identity.as_ref().filter(|s| !s.is_empty()).cloned())
+            .with_dac_bypass(dac_bypass(node_ptr, identity.as_deref()).await)
+            .with_signing(signing)
+            .with_batch_session(session_key);
+        Ok(Self {
+            did,
+            txn_id,
+            context,
+        })
+    }
+}
+
 /// Runs `request` in the transaction it names, or on its own.
 async fn run(
     runner: &std::sync::Arc<dyn query::QueryExecutor>,
@@ -267,54 +390,19 @@ async fn prepare(
     } = args;
 
     let permission = nac_permission_for_query(&query_str);
-    admit_on_node(node_ptr, identity_str.as_deref(), permission).await?;
-
-    // Parse identity DID if provided
-    let did = match identity_str {
-        Some(ref s) if !s.is_empty() => match identity::Did::new(s) {
-            Ok(d) => Some(d),
-            Err(e) => return Err(FfiResult::error(format!("invalid identity DID: {}", e))),
-        },
-        _ => None,
-    };
-
-    // The signer for block signing during mutations. Matches Go's
-    // behavior: if signing is enabled and no explicit identity, fall back
-    // to node identity for block signing.
-    let (node_did, node_signing_enabled) = NODES
-        .get(node_ptr, |state| {
-            (state.identity_did(), state.signing_enabled)
-        })
-        .unwrap_or((None, false));
-    let signing_enabled = match signing_override {
-        -1 => node_signing_enabled,
-        0 => false,
-        1 => true,
-        _ => return Err(FfiResult::error("signing_override must be -1, 0, or 1")),
-    };
-    let signing = defra_core::signing::resolve_signing_config_with_flag(
-        identity_str.as_deref(),
-        node_did.as_deref(),
-        signing_enabled,
-    );
-    // Use caller-provided session ID if available; otherwise fall back to public key.
-    let session_key = batch_session.or_else(|| signing.as_ref().map(|s| s.public_key_hex.clone()));
-
-    // The caller acts in the request's context, so DB-layer NAC checks
-    // resolve it; a NAC admin/owner can read all documents.
-    let txn_id = match txn.as_deref() {
-        Some(id) => Some(
-            id.parse::<defra_core::TxnId>()
-                .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e)))?,
-        ),
-        None => None,
-    };
-    let context = defra_core::RequestContext::default()
-        .with_txn(txn_id)
-        .with_identity(identity_str.as_ref().filter(|s| !s.is_empty()).cloned())
-        .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
-        .with_signing(signing)
-        .with_batch_session(session_key);
+    let Caller {
+        did,
+        txn_id,
+        context,
+    } = Caller::admit(
+        node_ptr,
+        identity_str.clone(),
+        txn,
+        batch_session,
+        signing_override,
+        permission,
+    )
+    .await?;
 
     // Check if this is a subscription query - handle it separately from regular queries/mutations.
     // Subscriptions return status=2 with a handle that the Go side polls via poll_graphql_subscription.
