@@ -299,3 +299,17 @@ When every attempt to commit a merge conflicts, `Merge` returns an error contain
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read.
+
+# `go.shinzo.block_owner.truncate`: Truncate removes document mappings and block ownership
+
+- **Parents:** ["go.shinzo.block_owner"]
+- **Scenarios:** ["db::collection::truncate::truncate_removes_doc_id_mappings_and_block_ownership"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Before `Truncate`, a document's genesis field block is owned by its DocID. After `Truncate`, the DocID no longer resolves on this node and the block has no owner.
+
+# `go.shinzo.block_owner`: Which documents own a block
+
+- **Parents:** ["go.shinzo"]
+
+Each block records the DocIDs that own it. Field blocks are content-addressed and carry no document identity, so ownership is a set.

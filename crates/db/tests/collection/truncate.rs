@@ -334,3 +334,52 @@ fn truncating_a_missing_collection_names_it() {
     })
     .unwrap()
 }
+
+/// Truncate removes a document's DocID mapping and its blocks' ownership:
+/// before it the genesis field block is owned by the DocID, after it the
+/// DocID resolves to nothing and the block has no owner.
+#[test]
+#[mantra_macros::req_test("go.shinzo.block_owner.truncate")]
+fn truncate_removes_doc_id_mappings_and_block_ownership() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let mut doc = Document::new(users_schema());
+        doc.set("name", NormalValue::String("Alice".to_owned()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
+        let created = AutoCommitMutator::new(db.clone())
+            .create("Users", doc)
+            .await
+            .unwrap();
+        let composite =
+            defra_core::Block::from_dag_cbor(created.commit_block.as_ref().unwrap()).unwrap();
+        let field = composite.links.unwrap()[0].link.to_string();
+        let doc_id = created.doc_id.to_string();
+
+        let lookups = || {
+            let db = db.clone();
+            let (field, doc_id) = (field.clone(), doc_id.clone());
+            async move {
+                let txn = db.new_txn(true).await.unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                let owners = db::docid::map::get_doc_ids_for_block(&systemstore, &field)
+                    .await
+                    .unwrap();
+                let resolves = db::docid::map::get_doc_ref(&systemstore, &doc_id)
+                    .await
+                    .unwrap()
+                    .is_some();
+                drop(systemstore);
+                let _ = txn.discard();
+                (owners, resolves)
+            }
+        };
+        assert_eq!(lookups().await, (vec![doc_id.clone()], true));
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", None)
+            .await
+            .unwrap();
+        assert_eq!(lookups().await, (Vec::<String>::new(), false));
+    })
+    .unwrap()
+}
