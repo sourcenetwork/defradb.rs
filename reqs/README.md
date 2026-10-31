@@ -49,12 +49,16 @@ Below the heading are a few optional lines:
 - **`Go-Tests`** lists the Go tests that prove the behaviour.
 - **`Scenarios`** lists our own tests that prove it, once it has some.
 - **`Go-Bug-Suspect`** warns that a Go test may be checking a bug. We don't copy Go's bugs. Work out what the right behaviour is and write that down.
+- **`Go-Ref`** names the Go branch and commit a requirement is checked against when that isn't `develop` at `root.md`'s commit. `go.shinzo` leaves carry `"shinzo-develop 2a899b860"` and run under `DEFRA_CLIENT=go-shinzo`.
+- **`Interop`** marks a wire format a Rust node shares with Go nodes, and says what must match byte for byte.
 
 ## The folders
 
-- **`go/`** holds requirements written from Go's integration tests, each listing its Go tests. `root.md` says which Go commit they were taken from.
+- **`go/`** holds requirements written from Go's integration tests, each listing its Go tests. `root.md` says which Go commit they were taken from. The `shinzo*.md` files hold the `go.shinzo` family, written from the tests Go's `shinzo-develop` branch adds, unit tests included; `shinzo.md` names the commits.
 
 - **`defra/`** holds requirements our own tests already cover. A requirement moves here from `go/` when its tests pass. It keeps its ID, and its `Go-Tests` line becomes a `Scenarios` line. New behaviour that only the Rust version has gets its requirement here from the start.
+
+- **`not-applying/`** lists Go tests that have no requirement because they only check a Go-specific mechanism (a Badger transaction size limit, goroutine plumbing, Go's test harness). Each row names the test and says in one line why defradb.rs doesn't need it. A Go test is either cited by a requirement or listed here, never both.
 
 - **`go-gaps/`** is a one-time audit that compared every `go/` requirement with the Rust tests we had when it was written. Each entry says whether the behaviour was `covered`, `partial`, `missing`, or `diverges` (Rust deliberately does something else), which tests showed it, and what was left unchecked. It's a good place to look for a test that still needs writing.
 
