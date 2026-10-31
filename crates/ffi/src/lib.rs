@@ -284,7 +284,7 @@ pub use remote_signer::{
 };
 pub use schema::{add_schema, add_schema_in_txn, get_collections, get_collections_in_txn};
 pub use se_key::set_se_encryption_key;
-pub use shinzo::{kv_export, kv_import, purge_documents, save_many_documents};
+pub use shinzo::{kv_export, kv_field_mapping, kv_import, purge_documents, save_many_documents};
 pub use subscription::{
     close_graphql_subscription, close_subscription, create_merge_complete_subscription,
     create_subscription, poll_graphql_subscription, poll_subscription,

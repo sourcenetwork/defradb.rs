@@ -188,16 +188,17 @@ pub(crate) async fn run_mutation(
 
 /// The request path a request the core built runs on (a typed mutation, not
 /// GraphQL text): admitted under `permission` and run as `identity`, in the
-/// transaction `txn` names or on its own, with the node's signing, as an
-/// exec call is.
+/// transaction `txn` names or on its own, with the node's signing and the
+/// batch-signing session `batch_session` names, as an exec call is.
 pub(crate) async fn run_typed(
     node_ptr: usize,
     identity: Option<String>,
     txn: Option<String>,
+    batch_session: Option<String>,
     permission: NodePermission,
     request: query::QueryRequest,
 ) -> query::QueryResponse {
-    let caller = match Caller::admit(node_ptr, identity, txn, None, -1, permission).await {
+    let caller = match Caller::admit(node_ptr, identity, txn, batch_session, -1, permission).await {
         Ok(caller) => caller,
         Err(decided) => {
             return query::QueryResponse::error(decided.into_error().unwrap_or_default())

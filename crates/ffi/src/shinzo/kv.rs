@@ -160,3 +160,36 @@ fn export_options(json: Option<String>) -> Result<ExportOptions, FfiResult> {
         history: options.history,
     })
 }
+
+/// The field mapping an importing node reads a KV snapshot of
+/// `collection_name` with (Go Shinzo's `ExportFieldMapping`), without
+/// exporting anything.
+///
+/// # Returns
+///
+/// - Status 0: Success (value is the mapping JSON, Go's shape)
+/// - Status 1: Error (error field contains message)
+///
+/// # Safety
+///
+/// `collection_name` must be a valid null-terminated UTF-8 string;
+/// `identity_did` null or such a string.
+#[no_mangle]
+pub unsafe extern "C" fn kv_field_mapping(
+    node_ptr: usize,
+    identity_did: *const c_char,
+    collection_name: *const c_char,
+) -> FfiResult {
+    ffi_entry! {
+        let collection = try_ffi!(require_c_str(collection_name, "collection_name"));
+        let identity = c_str_to_string(identity_did).filter(|did| !did.is_empty());
+        let database = try_ffi!(get_node_database(node_ptr));
+
+        ffi_async!(node_ptr, {
+            crate::query::caller_context(node_ptr, identity, None, NodePermission::CollectionGet)
+                .await?;
+            let mapping = database.kv_field_mapping(&collection).map_err(|e| e.to_string())?;
+            serde_json::to_string(&mapping).map_err(|e| e.to_string())
+        })
+    }
+}
