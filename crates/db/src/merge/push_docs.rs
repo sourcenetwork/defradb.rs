@@ -141,9 +141,11 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 /// they arrive; an earlier call's never lets a document be skipped. Subscription
 /// filters, retry markers and retry deadlines neither apply nor change.
 ///
-/// Receiver pauses retry the same head within one fixed `send_timeout` allowance.
+/// Each selected head gets one `send_timeout` deadline starting at its first
+/// actual send after initial pacing. Receiver pauses and retries spend that same
+/// deadline; a fresh ACK advances to the next head with a new deadline.
 /// Pacing, slot counts and the per-send deadline come from `replay_config`. The
-/// first send deadline, lost connection or exhausted receiver-pause allowance raises `stop`, as
+/// first send deadline, lost connection or expired current-head deadline raises `stop`, as
 /// does dropping this future or the caller raising it: no further document
 /// starts and no started task sends again. Sends already on the wire end on
 /// their own deadline and are joined, and what they acknowledge is kept. A
@@ -281,10 +283,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     };
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
-    let pause_budget = Arc::new(selected::PauseBudget::new(
-        replay_config.send_timeout,
-        network.clone(),
-    ));
+    let head_timeout = replay_config.send_timeout;
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
@@ -448,7 +447,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         break 'collections;
                     }
                     let task_stop = stop.clone();
-                    let pause_budget = pause_budget.clone();
+                    let head_network = network.clone();
                     push_handles.push((
                         col_name.clone(),
                         replay_doc_id,
@@ -465,8 +464,9 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                 }
                                 let cid = req.cid.clone();
                                 let sent = if selected {
+                                    let deadline = selected::HeadDeadline::new(head_timeout, head_network.clone());
                                     selected::send(
-                                        &t, &gate, &pause_budget, &task_stop, &peer_key, &req,
+                                        &t, &gate, &deadline, &task_stop, &peer_key, &req,
                                     ).await
                                 } else {
                                     gate.send_pushlog_with_admission(

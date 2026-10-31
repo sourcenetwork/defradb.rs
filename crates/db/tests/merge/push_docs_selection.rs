@@ -29,6 +29,17 @@ fn selected_document_transfers_match_executed_model() {
     let mut stop_count = 0;
     for line in cases.lines() {
         let fields: Vec<_> = line.split('\t').collect();
+        if let ["head_budgets", count, budget_ms, pause_ms, ok] = fields.as_slice() {
+            workers::block_on(super::push_docs_selected_stop::exercise_head_budget_case(
+                count.parse().unwrap(),
+                budget_ms.parse().unwrap(),
+                pause_ms.parse().unwrap(),
+                ok.parse().unwrap(),
+            ))
+            .unwrap();
+            stop_count += 1;
+            continue;
+        }
         if let ["pause_limit", stops, ok] = fields.as_slice() {
             workers::block_on(super::push_docs_selected_stop::exercise_pause_budget_case(
                 stops.parse().unwrap(),

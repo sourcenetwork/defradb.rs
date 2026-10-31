@@ -21,7 +21,7 @@ fn selected_delivery_crosses_receiver_capacity_without_losing_the_remainder() {
                     .await
                     .unwrap();
             }
-            let count = 1100;
+            let count = 1800;
             let inputs = (0..count)
                 .map(|value| format!("{{value: {value}}}"))
                 .collect::<Vec<_>>()

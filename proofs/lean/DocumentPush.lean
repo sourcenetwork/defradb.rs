@@ -87,7 +87,7 @@ theorem selected_failure_is_not_deferred (retryRetained : Bool) :
 theorem replay_without_retry_cannot_defer :
     completion .replicator false false = .failed := rfl
 
-/-- One reply or the expiry of the call's fixed pause allowance. -/
+/-- One reply or the expiry of the current head's pause allowance. -/
 inductive SendOutcome where
   | acknowledged | refused | hinted | timedOut | disconnected | pauseExpired
   deriving DecidableEq, Repr
@@ -148,6 +148,18 @@ theorem pause_then_ack_succeeds : serialRun 1 [.hinted, .acknowledged] = (2, tru
 theorem repeated_pause_is_bounded :
     serialRun 1 [.hinted, .hinted, .pauseExpired] = (3, false) := rfl
 
+/-- Each fresh acknowledgement advances to a new head with its own allowance. -/
+def healthyHeadPauses (allowance : Nat) (pauses : List Nat) : Bool :=
+  pauses.all (fun delay => delay < allowance)
+
+/-- Hints for one unacknowledged head consume its one budget; they never reset it. -/
+def sameHeadPauses (allowance : Nat) (pauses : List Nat) : Bool :=
+  pauses.foldl (· + ·) 0 < allowance
+
+theorem fresh_heads_do_not_inherit_elapsed : healthyHeadPauses 2 [1, 1, 1] = true := rfl
+
+theorem same_head_hints_do_not_extend : sameHeadPauses 2 [1, 1] = false := rfl
+
 /-- The first hard failure ends sending after the preceding acknowledged heads. -/
 theorem first_stop_ends_sending (o : SendOutcome) (post : List SendOutcome)
     (hs : stopsTransfer o = true) :
@@ -201,6 +213,9 @@ def emit : IO Unit := do
     let (sends, ok) := serialRun 3 attempts
     IO.println (String.intercalate "\t"
       ["stop", outcomeTag o, toString (stopsTransfer o), toString sends, toString ok])
+
+  IO.println (String.intercalate "\t"
+    ["head_budgets", "3", "100", "60", toString (healthyHeadPauses 100 [60, 60, 60])])
 
   let exhausted := serialRun 1 [.hinted, .hinted, .pauseExpired]
   IO.println (String.intercalate "\t" ["pause_limit", toString (stopsTransfer .pauseExpired), toString exhausted.2])

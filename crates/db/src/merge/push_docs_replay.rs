@@ -47,7 +47,8 @@ pub struct ReplayPushConfig {
     /// Number of per-peer replay tokens refilled per second.
     pub per_peer_rate_limit_rate: f64,
 
-    /// Timeout for one outbound replay PushLog request.
+    /// Timeout for one outbound replay PushLog request, or one selected head
+    /// across its sends and pauses after initial pacing and slot admission.
     pub send_timeout: Duration,
 }
 
@@ -207,7 +208,8 @@ pub enum ReplayPushSendError {
     Timeout {
         timeout: Duration,
     },
-    PauseTimeout {
+    /// The selected head exhausted its deadline across sends and receiver pauses.
+    HeadTimeout {
         timeout: Duration,
     },
     Transport(p2p::Error),
@@ -233,9 +235,9 @@ impl fmt::Display for ReplayPushSendError {
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
             }
-            Self::PauseTimeout { timeout } => write!(
+            Self::HeadTimeout { timeout } => write!(
                 f,
-                "selected receiver pause exceeded its fixed {}ms allowance",
+                "selected head exceeded its fixed {}ms delivery deadline",
                 timeout.as_millis()
             ),
             Self::Transport(error) => write!(f, "{error}"),
