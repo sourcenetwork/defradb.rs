@@ -32,9 +32,11 @@ impl Drop for StreamAdmission {
 }
 
 impl PeerStreams {
+    /// A cap of zero is unset, as in Go Shinzo, where only a positive
+    /// `maxStreamsPerPeer` overrides the default: every stream is admitted.
     pub(crate) fn new(cap: Option<usize>) -> Self {
         Self {
-            cap,
+            cap: cap.filter(|&cap| cap > 0),
             running: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
@@ -76,6 +78,14 @@ mod tests {
         let third = streams.admit(peer).unwrap();
         drop((second, third));
         assert!(streams.admit(peer).is_some());
+    }
+
+    #[test]
+    fn a_cap_of_zero_is_unset_and_admits_every_stream() {
+        let streams = PeerStreams::new(Some(0));
+        let peer = PeerId::random();
+        let held: Vec<_> = (0..100).map(|_| streams.admit(peer).unwrap()).collect();
+        assert_eq!(held.len(), 100);
     }
 
     #[test]

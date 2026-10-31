@@ -393,6 +393,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 }
             }
         }
+        // Counted once, here: a batch that meets a refusal splits and re-runs,
+        // and only the final, single-block attempt reaches this point.
+        if let Err(MergeError::RetentionRefused(refusal)) = &result {
+            self.db.merge_stats().record_retention_refusal(*refusal);
+        }
         if let Err(error) = &result {
             self.db.merge_stats().record_drop(error);
         }

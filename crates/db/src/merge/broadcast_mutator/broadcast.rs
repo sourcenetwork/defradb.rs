@@ -21,9 +21,19 @@ fn is_expected_fire_and_forget_failure(err: &str) -> bool {
         || p2p::error::Error::is_connection_loss_reason(&lower)
 }
 
-/// Tells subscribers a push reached no peer, as Go Shinzo's `P2PNoPeers` does.
+/// The collection topic's part of a publish error. When both topics
+/// fail, the broadcaster joins their errors as `doc=…, collection=…`.
+fn collection_topic_error(error: &str) -> &str {
+    error
+        .split_once("collection=")
+        .map_or(error, |(_, collection)| collection)
+}
+
+/// Tells subscribers a push reached no peer on the collection topic, as Go
+/// Shinzo's `P2PNoPeers` does, naming the document the push was for.
 fn emit_no_peers(bus: Option<&Arc<dyn Bus>>, error: &str, doc_id: &str, collection_id: &str) {
-    if let Some(bus) = bus.filter(|_| error.contains("InsufficientPeers")) {
+    let no_peers = collection_topic_error(error).contains("InsufficientPeers");
+    if let Some(bus) = bus.filter(|_| no_peers) {
         bus.publish(Message::p2p_no_peers(P2PNoPeersData {
             doc_id: doc_id.to_string(),
             collection_id: collection_id.to_string(),
@@ -87,6 +97,7 @@ pub(crate) fn log_broadcast_failure(status: &BroadcastStatus) {
 pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T: P2PTransport>(
     sync: &SyncCoordinator<B, T>,
     bus: Option<&Arc<dyn Bus>>,
+    origin_doc_id: &str,
     block_result: &BlockResult,
     collection_id: &str,
     collection_name: &str,
@@ -139,7 +150,7 @@ pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T
                     error = %collection_error,
                     "Partial broadcast: document topic succeeded, collection topic failed"
                 );
-                emit_no_peers(bus, &collection_error, &block_result.doc_id, collection_id);
+                emit_no_peers(bus, &collection_error, origin_doc_id, collection_id);
                 return BroadcastStatus::Failed(format!(
                     "Partial: collection topic failed: {}",
                     collection_error
@@ -218,9 +229,26 @@ pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T
                     attempts = attempt,
                     "Failed to broadcast document to P2P network - local mutation succeeded"
                 );
-                emit_no_peers(bus, &err_str, &block_result.doc_id, collection_id);
+                emit_no_peers(bus, &err_str, origin_doc_id, collection_id);
                 return BroadcastStatus::Failed(e.to_string());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod no_peers_tests {
+    use super::collection_topic_error;
+
+    #[test]
+    fn only_the_collection_topic_error_decides() {
+        let doc_only = "failed to publish to both topics: doc=gossipsub publish error: \
+                        InsufficientPeers, collection=channel send error";
+        assert!(!collection_topic_error(doc_only).contains("InsufficientPeers"));
+        let collection = "failed to publish to both topics: doc=channel send error, \
+                          collection=gossipsub publish error: InsufficientPeers";
+        assert!(collection_topic_error(collection).contains("InsufficientPeers"));
+        let single = "gossipsub publish error: InsufficientPeers";
+        assert_eq!(collection_topic_error(single), single);
     }
 }

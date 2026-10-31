@@ -280,6 +280,16 @@ fn a_refusal_in_a_batch_refuses_only_that_document() {
         assert!(stored(&handler, "col-log", &blocks[0].doc_id).await);
         assert!(!stored(&handler, "col-log", &blocks[1].doc_id).await);
         assert!(stored(&handler, "col-log", &blocks[2].doc_id).await);
+        let report = handler.db().merge_stats().drain();
+        assert_eq!(
+            (report.rejected_below_floor, report.creates),
+            (1, 2),
+            "a refusal splits the batch, but counts once: {report:?}"
+        );
+        assert!(
+            report.drops.is_empty(),
+            "a refusal is not a drop: {report:?}"
+        );
     })
     .unwrap()
 }
