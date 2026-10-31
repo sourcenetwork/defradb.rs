@@ -60,6 +60,8 @@ mod limit_pushdown;
 mod limits;
 #[path = "query/multi_cid_vectors.rs"]
 mod multi_cid_vectors;
+#[path = "query/non_finite_float.rs"]
+mod non_finite_float;
 #[path = "query/one_to_many_common.rs"]
 mod one_to_many_common;
 #[path = "query/planner_4656.rs"]

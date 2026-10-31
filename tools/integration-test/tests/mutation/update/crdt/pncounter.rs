@@ -5,7 +5,7 @@ use integration_test::actions::{
     AddCollection, AddDoc, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
-use integration_test::test_case::TestCase;
+use integration_test::test_case::{NotApplying, TestCase};
 use integration_test::ClientType;
 use serde_json::json;
 
@@ -72,6 +72,7 @@ fn pn_counter_update_float_kind_with_decrement_overflow_negative_inf() {
             .into(),
         ],
         client_types: Some(&[ClientType::InProcess]),
+        not_applying: Some(NotApplying::Interop(r#"The result holds an infinite Float, which JSON cannot carry, so Go's own HTTP and CLI clients cannot read it back (defradb#2569) and Go runs this only in-process. defradb.rs refuses it on every client with Go's encoding error, "json: unsupported value: +Inf" (tests/query/non_finite_float.rs)."#)),
         ..Default::default()
     }
     .execute();
@@ -140,6 +141,7 @@ fn pn_counter_update_float_kind_with_positive_increment_overflow_positive_inf() 
             .into(),
         ],
         client_types: Some(&[ClientType::InProcess]),
+        not_applying: Some(NotApplying::Interop(r#"The result holds an infinite Float, which JSON cannot carry, so Go's own HTTP and CLI clients cannot read it back (defradb#2569) and Go runs this only in-process. defradb.rs refuses it on every client with Go's encoding error, "json: unsupported value: +Inf" (tests/query/non_finite_float.rs)."#)),
         ..Default::default()
     }
     .execute();
