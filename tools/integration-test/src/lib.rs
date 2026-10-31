@@ -13,6 +13,7 @@ pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
 
+pub use client_type::ClientType;
 pub use scenario::m;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};

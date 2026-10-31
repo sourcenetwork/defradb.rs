@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/add/field_kinds/one_to_one_to_one/with_txn_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/add/field_kinds/one_to_one_to_one/with_txn_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddCollection, AddDoc, Request, TxnBegin, TxnCommit};
@@ -34,30 +34,21 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                         address: String
                         published: Book
                     }
-                "#
-                .into(),
+                "#.into(),
                 ..Default::default()
             }
             .into(),
             AddDoc {
                 collection: "Publisher".into(),
                 doc_map: Some(json!({ "name": "Website", "address": "Manning Publications" })),
-                common: Common {
-                    capture: captures([("doc2_0", "/docID")]),
-                    ..Default::default()
-                },
+                common: Common { capture: captures([("doc2_0", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
             AddDoc {
                 collection: "Publisher".into(),
-                doc_map: Some(
-                    json!({ "name": "Online", "address": "Manning Early Access Program (MEAP)" }),
-                ),
-                common: Common {
-                    capture: captures([("doc2_1", "/docID")]),
-                    ..Default::default()
-                },
+                doc_map: Some(json!({ "name": "Online", "address": "Manning Early Access Program (MEAP)" })),
+                common: Common { capture: captures([("doc2_1", "/docID")]), ..Default::default() },
                 ..Default::default()
             }
             .into(),
@@ -67,19 +58,11 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
             .into(),
             Request {
                 txn: Some(0),
-                request: Text::concat([
-                    Text::from(
-                        r#"mutation {
-					add_Book(input: {name: "Book By Website", rating: 4.0, _publisherID: ""#,
-                    ),
-                    Text::reference("doc2_0"),
-                    Text::from(
-                        r#""}) {
+                request: Text::concat([Text::from(r#"mutation {
+					add_Book(input: {name: "Book By Website", rating: 4.0, _publisherID: ""#), Text::reference("doc2_0"), Text::from(r#""}) {
 						_docID
 					}
-				}"#,
-                    ),
-                ]),
+				}"#)]),
                 expected_data: json!({ "add_Book": [{ "_docID": m::doc_id() }] }),
                 ..Default::default()
             }
@@ -90,19 +73,11 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
             .into(),
             Request {
                 txn: Some(1),
-                request: Text::concat([
-                    Text::from(
-                        r#"mutation {
-					add_Book(input: {name: "Book By Online", rating: 4.0, _publisherID: ""#,
-                    ),
-                    Text::reference("doc2_1"),
-                    Text::from(
-                        r#""}) {
+                request: Text::concat([Text::from(r#"mutation {
+					add_Book(input: {name: "Book By Online", rating: 4.0, _publisherID: ""#), Text::reference("doc2_1"), Text::from(r#""}) {
 						_docID
 					}
-				}"#,
-                    ),
-                ]),
+				}"#)]),
                 expected_data: json!({ "add_Book": [{ "_docID": m::doc_id() }] }),
                 ..Default::default()
             }
@@ -120,8 +95,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                                             }
                                         }
                                     }
-                "#
-                .into(),
+                "#.into(),
                 expected_data: json!({
                     "Book": [
                         {
@@ -147,8 +121,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                                             }
                                         }
                                     }
-                "#
-                .into(),
+                "#.into(),
                 expected_data: json!({
                     "Book": [
                         {
@@ -184,8 +157,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                                             }
                                         }
                                     }
-                "#
-                .into(),
+                "#.into(),
                 expected_data: json!({
                     "Publisher": [
                         { "_docID": m::r("doc2_1"), "name": "Online", "published": null },
@@ -196,10 +168,7 @@ fn transactional_creation_and_linking_of_relational_documents_backward() {
                         },
                     ],
                 }),
-                common: Common {
-                    unordered_documents: vec!["/data/Publisher".into()],
-                    ..Default::default()
-                },
+                common: Common { unordered_documents: vec!["/data/Publisher".into()], ..Default::default() },
                 ..Default::default()
             }
             .into(),
