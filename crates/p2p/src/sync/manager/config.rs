@@ -54,6 +54,14 @@ pub const DEFAULT_RATE_LIMIT_BACKOFF_SECS: &[u64] = &[
 /// Default timeout for one outbound PushLog send to a replicator peer.
 pub const DEFAULT_PUSH_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default wait of a committed write's gossip for room in the pending set or
+/// for a publish slot, past which it is dropped and reported (#2489).
+pub const DEFAULT_BROADCAST_WAIT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Default byte budget for committed writes' gossip waiting to be published
+/// (their blocks, in the coalescing window or waiting for a slot, #2489).
+pub const DEFAULT_BROADCAST_PENDING_BYTES: usize = 64 * 1024 * 1024;
+
 /// Default maximum number of entries in the pending DAGs map.
 ///
 /// Prevents unbounded memory growth when many DAGs arrive faster than they
@@ -138,6 +146,15 @@ pub struct SyncConfig {
     /// Bytes of durable pending records all peers together may hold for
     /// refused gossip heads; keeps many peers from filling the disk.
     pub gossip_deferral_total_bytes: u64,
+
+    /// How long a committed write's gossip waits for room in the pending set
+    /// or for a publish slot. Past it the announcement is dropped, counted
+    /// and reported as a node event (#2489).
+    pub broadcast_wait_deadline: Duration,
+
+    /// Bytes of committed writes' gossip that may wait to be published at
+    /// once. A writer that finds it full waits for room (#2489).
+    pub broadcast_pending_bytes: usize,
 }
 
 impl Default for SyncConfig {
@@ -157,6 +174,8 @@ impl Default for SyncConfig {
             max_pending_dags: DEFAULT_MAX_PENDING_DAGS,
             gossip_deferral_peer_bytes: DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES,
             gossip_deferral_total_bytes: DEFAULT_GOSSIP_DEFERRAL_TOTAL_BYTES,
+            broadcast_wait_deadline: DEFAULT_BROADCAST_WAIT_DEADLINE,
+            broadcast_pending_bytes: DEFAULT_BROADCAST_PENDING_BYTES,
         }
     }
 }

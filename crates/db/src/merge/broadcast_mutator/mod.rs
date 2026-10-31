@@ -31,11 +31,37 @@ use storage::corekv::Store;
 use zeroize::Zeroizing;
 
 use self::batch::BroadcastBatchMutator;
-use self::broadcast::{broadcast_with_retry_with_creator, log_broadcast_failure};
+use self::broadcast::{
+    broadcast_with_retry_with_creator, log_broadcast_failure, spawn_gossip_or_report, AnnouncedRoot,
+};
 use crate::block::builder::{build_blocks_from_document, BlockResult};
 use crate::block::reader::read_latest_composite_block;
 use crate::database::DB;
 use crate::write::autocommit::AutoCommitMutator;
+
+/// The roots one document's gossip announces: its composite block, and the
+/// collection block of a branchable collection.
+fn gossip_roots(
+    block: &BlockResult,
+    collection_block: Option<&BlockResult>,
+    collection_id: &str,
+) -> Vec<AnnouncedRoot> {
+    std::iter::once((
+        block.cid,
+        block.doc_id.clone(),
+        collection_id.to_string(),
+        block.block.len(),
+    ))
+    .chain(collection_block.map(|col| {
+        (
+            col.cid,
+            String::new(),
+            collection_id.to_string(),
+            col.block.len(),
+        )
+    }))
+    .collect()
+}
 
 fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()>) {
     if let Err(error) = result {
@@ -386,8 +412,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
             );
         }
 
-        self.sync
-            .spawn_non_authoritative_broadcast_task("broadcast_document_update", async move {
+        let roots = gossip_roots(&block_result, branchable_data.as_ref(), &collection_id);
+        let report_bus = bus.clone();
+        spawn_gossip_or_report(
+            &self.sync,
+            report_bus.as_ref(),
+            "broadcast_document_update",
+            roots,
+            async move {
                 let creator_ref = creator_did.as_deref();
                 sync.push_se_artifacts_to_replicators_for_document(
                     &collection_id,
@@ -422,7 +454,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                         .await,
                     );
                 }
-            });
+            },
+        )
+        .await;
 
         Ok(UpdateResult::with_broadcast(
             result.document,
@@ -721,10 +755,16 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             );
         }
 
-        // The local transaction is already committed. Do not wait for gossip
-        // delivery; sender durability is already held by the scope marker.
-        self.sync
-            .spawn_non_authoritative_broadcast_task("broadcast_document_create", async move {
+        // The local transaction is already committed. Gossip delivery is not
+        // awaited, only a broadcast slot: gossip-only peers have no marker.
+        let roots = gossip_roots(&block_result, branchable_data.as_ref(), &collection_id);
+        let report_bus = bus.clone();
+        spawn_gossip_or_report(
+            &self.sync,
+            report_bus.as_ref(),
+            "broadcast_document_create",
+            roots,
+            async move {
                 let creator_ref = creator_did.as_deref();
                 sync.push_se_artifacts_to_replicators_for_document(
                     &collection_id,
@@ -762,7 +802,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                         .await,
                     );
                 }
-            });
+            },
+        )
+        .await;
 
         Ok(CreateResult::with_commit_and_broadcast(
             result.doc_id,
@@ -945,51 +987,69 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 }
             }
 
-            self.sync.spawn_non_authoritative_broadcast_task(
+            let roots = broadcast_work
+                .iter()
+                .flat_map(|(_, block_result, branchable_data, _, _)| {
+                    gossip_roots(block_result, branchable_data.as_ref(), &collection_id)
+                })
+                .collect();
+            let report_bus = bus.clone();
+            spawn_gossip_or_report(
+                &self.sync,
+                report_bus.as_ref(),
                 "broadcast_document_create_many",
+                roots,
                 async move {
                     let creator_ref = creator_did.as_deref();
 
-                    for (_, block_result, branchable_data, se_artifacts, document_json) in
-                        &broadcast_work
-                    {
-                        sync.push_se_artifacts_to_replicators_for_document(
-                            &collection_id,
-                            se_artifacts.clone(),
-                            document_json,
-                        )
-                        .await;
-
-                        log_broadcast_failure(
-                            &broadcast_with_retry_with_creator(
-                                &sync,
-                                bus.as_ref(),
-                                &block_result.doc_id,
-                                block_result,
-                                &collection_id,
-                                &collection_name_owned,
-                                creator_ref,
-                            )
-                            .await,
-                        );
-
-                        if let Some(col_block_result) = branchable_data {
-                            log_broadcast_failure(
-                                &broadcast_with_retry_with_creator(
-                                    &sync,
-                                    bus.as_ref(),
-                                    &block_result.doc_id,
-                                    col_block_result,
-                                    &collection_id,
-                                    &collection_name_owned,
-                                    creator_ref,
+                    // Concurrently: one after another, each document waited
+                    // out its own coalescing window (#2489).
+                    let gossip = broadcast_work.iter().map(
+                        |(_, block_result, branchable_data, se_artifacts, document_json)| {
+                            let (sync, bus, collection_id, collection_name_owned) =
+                                (&sync, &bus, &collection_id, &collection_name_owned);
+                            async move {
+                                sync.push_se_artifacts_to_replicators_for_document(
+                                    collection_id,
+                                    se_artifacts.clone(),
+                                    document_json,
                                 )
-                                .await,
-                            );
-                        }
-                    }
+                                .await;
+
+                                log_broadcast_failure(
+                                    &broadcast_with_retry_with_creator(
+                                        sync,
+                                        bus.as_ref(),
+                                        &block_result.doc_id,
+                                        block_result,
+                                        collection_id,
+                                        collection_name_owned,
+                                        creator_ref,
+                                    )
+                                    .await,
+                                );
+
+                                if let Some(col_block_result) = branchable_data {
+                                    log_broadcast_failure(
+                                        &broadcast_with_retry_with_creator(
+                                            sync,
+                                            bus.as_ref(),
+                                            &block_result.doc_id,
+                                            col_block_result,
+                                            collection_id,
+                                            collection_name_owned,
+                                            creator_ref,
+                                        )
+                                        .await,
+                                    );
+                                }
+                            }
+                        },
+                    );
+                    futures::future::join_all(gossip).await;
                 },
-            );
+            )
+            .await;
         }
 
         Ok(broadcast_results)
@@ -1213,10 +1273,16 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             );
         }
 
-        // The local transaction is already committed; gossip remains
-        // fire-and-forget after durable marker registration above.
-        self.sync
-            .spawn_non_authoritative_broadcast_task("broadcast_document_delete", async move {
+        // The local transaction is already committed; gossip delivery is not
+        // awaited, only a broadcast slot.
+        let roots = gossip_roots(&block_result, branchable_data.as_ref(), &collection_id);
+        let report_bus = bus.clone();
+        spawn_gossip_or_report(
+            &self.sync,
+            report_bus.as_ref(),
+            "broadcast_document_delete",
+            roots,
+            async move {
                 let creator_ref = creator_did.as_deref();
 
                 // Broadcast via GossipSub with retry for InsufficientPeers
@@ -1248,7 +1314,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                         .await,
                     );
                 }
-            });
+            },
+        )
+        .await;
 
         Ok(DeleteResult::with_broadcast(
             result.doc_id,

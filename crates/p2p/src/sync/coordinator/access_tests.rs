@@ -381,6 +381,10 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             rate_limiter,
             request_rate_limiter,
             max_doc_sync_request_doc_ids: DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+            broadcast_wait_deadline: crate::sync::DEFAULT_BROADCAST_WAIT_DEADLINE,
+            broadcast_room: Arc::new(super::broadcast_room::BroadcastRoom::new(
+                crate::sync::DEFAULT_BROADCAST_PENDING_BYTES,
+            )),
             shutdown: shutdown.clone(),
             dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
             filter_matcher: Arc::new(crate::replicator::EqOnlyFilterMatcher),

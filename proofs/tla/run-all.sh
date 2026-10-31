@@ -361,6 +361,11 @@ RUNS=(
   "MC_GossipAdmission_Red_Drop.cfg MC_GossipAdmission_Common.tla RED" # main: a refused gossip head is dropped and never re-announced (INV_HeardIsOwned)
   "MC_GossipAdmission_Red_MemoryDefer.cfg MC_GossipAdmission_Common.tla RED" # in-memory side queue: a crash loses it (INV_HeardIsOwned)
   "MC_GossipAdmission_Red_NoPromote.cfg MC_GossipAdmission_Common.tla RED" # durable records never promoted (LIVE_AllMerged)
+  "MC_SenderBroadcast_Green.cfg MC_SenderBroadcast_Common.tla GREEN" # #2489: a committed write waits for room, its window holds no slot, a passed deadline is reported
+  "MC_SenderBroadcast_Red_Shed.cfg MC_SenderBroadcast_Common.tla RED" # main: a full pool sheds a committed write's gossip (INV_CommittedIsOwnedOrReported)
+  "MC_SenderBroadcast_Red_SilentExpiry.cfg MC_SenderBroadcast_Common.tla RED" # a deadline drops it without the event (INV_CommittedIsOwnedOrReported)
+  "MC_SenderBroadcast_Red_SlotAcrossWindow.cfg MC_SenderBroadcast_Common.tla RED" # a slot held through the coalescing window (INV_WindowHoldsNoSlot)
+  "MC_SenderBroadcast_Red_UnboundedPending.cfg MC_SenderBroadcast_Common.tla RED" # no bound on the pending set (INV_PendingBounded)
   "MC_PushLogJoin_Green.cfg PushLogJoin.tla GREEN" # same-CID PushLog joins the in-flight owner: success implies durable, one processor, every join ends
   "MC_PushLogJoin_Red_NoRecheck.cfg PushLogJoin.tla RED" # waiter acks when the owner lets go without looking again (INV_SuccessImpliesDurable)
   "MC_PushLogJoin_Red_NoGuard.cfg PushLogJoin.tla RED" # waiter processes its copy without the CID guard (INV_OneProcessor)

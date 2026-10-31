@@ -27,6 +27,10 @@ pub const RATE_LIMITED_MESSAGE: &str = "rate limited: too many requests, retry l
 /// older peers.
 pub const AT_CAPACITY_MESSAGE: &str = "at capacity: receiver is saturated, back off";
 
+/// Publish error when a coalesced broadcast waited past its deadline for a
+/// publish slot and was dropped (#2489); the caller reports its root.
+pub const BROADCAST_SLOT_ELAPSED: &str = "publish slot wait deadline passed";
+
 /// Message prefix for a replay whose transport went away mid-push.
 ///
 /// The replay path already classifies the typed transport error

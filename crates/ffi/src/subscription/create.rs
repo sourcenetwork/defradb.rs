@@ -156,6 +156,7 @@ fn event_name(name: &str) -> Option<events::EventName> {
         UniqueIndexConflict,
         P2PNoPeers,
         P2PGossipHeadDropped,
+        P2PBroadcastDropped,
     ]
     .into_iter()
     .find(|event| event.to_string() == name)
