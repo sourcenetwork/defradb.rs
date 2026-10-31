@@ -10,6 +10,11 @@ use crate::error::{QueryError, Result};
 type Fragments<'d, 'a> = RapidHashMap<&'d str, &'d FragmentDefinition<'a, String>>;
 
 /// Rejects the first fragment cycle in `definitions`, in document order.
+///
+/// The walk keeps its own stack, so a long chain of fragments costs heap,
+/// not thread stack: a test thread on macOS has a small stack, and a chain
+/// thousands of fragments long must be refused by the depth limit later,
+/// never by a stack overflow here.
 pub(crate) fn check_fragment_cycles<'a>(definitions: &[Definition<'a, String>]) -> Result<()> {
     let ordered: Vec<_> = definitions
         .iter()
@@ -22,73 +27,102 @@ pub(crate) fn check_fragment_cycles<'a>(definitions: &[Definition<'a, String>]) 
         .iter()
         .map(|fragment| (fragment.name.as_str(), *fragment))
         .collect();
-    let mut walk = Walk {
-        fragments: &fragments,
-        visited: RapidHashSet::new(),
-        on_path: RapidHashMap::new(),
-        path: Vec::new(),
-    };
+    let mut visited: RapidHashSet<&str> = RapidHashSet::new();
     for fragment in ordered {
-        if !walk.visited.contains(fragment.name.as_str()) {
-            walk.detect(fragment)?;
+        if !visited.contains(fragment.name.as_str()) {
+            detect(&fragments, &mut visited, fragment)?;
         }
     }
     Ok(())
 }
 
-struct Walk<'w, 'd, 'a> {
-    fragments: &'w Fragments<'d, 'a>,
-    visited: RapidHashSet<&'d str>,
-    /// Where each fragment on the current path starts in `path`.
-    on_path: RapidHashMap<&'d str, usize>,
-    /// The spreads followed from the walk's first fragment.
-    path: Vec<&'d str>,
+/// A fragment being walked: its name, the spreads it holds, and the next one
+/// to follow.
+struct Frame<'d> {
+    name: &'d str,
+    spreads: Vec<&'d str>,
+    next: usize,
 }
 
-impl<'d, 'a> Walk<'_, 'd, 'a> {
-    fn detect(&mut self, fragment: &'d FragmentDefinition<'a, String>) -> Result<()> {
-        let name = fragment.name.as_str();
-        self.visited.insert(name);
-        let mut spreads = Vec::new();
-        collect_spreads(&fragment.selection_set, &mut spreads);
-        self.on_path.insert(name, self.path.len());
-        for spread in spreads {
-            let start = self.on_path.get(spread).copied();
-            self.path.push(spread);
-            match start {
-                Some(start) => {
-                    let via = &self.path[start..self.path.len() - 1];
-                    let via = match via.is_empty() {
-                        true => String::new(),
-                        false => format!(" via {}", via.join(", ")),
-                    };
-                    return Err(QueryError::parse(format!(
-                        "Cannot spread fragment \"{spread}\" within itself{via}."
-                    )));
-                }
-                None => {
-                    if let Some(next) = self.fragments.get(spread) {
-                        if !self.visited.contains(spread) {
-                            self.detect(next)?;
-                        }
-                    }
-                }
+impl<'d> Frame<'d> {
+    fn new(fragment: &'d FragmentDefinition<'_, String>) -> Self {
+        Self {
+            name: fragment.name.as_str(),
+            spreads: spreads_of(&fragment.selection_set),
+            next: 0,
+        }
+    }
+}
+
+/// graphql-js's `detectCycleRecursive`, with an explicit stack of frames in
+/// place of recursion. `path` holds the spreads followed from `root`, and
+/// `on_path` where each fragment on the current path starts in it.
+fn detect<'d>(
+    fragments: &Fragments<'d, '_>,
+    visited: &mut RapidHashSet<&'d str>,
+    root: &'d FragmentDefinition<'_, String>,
+) -> Result<()> {
+    let mut path: Vec<&str> = Vec::new();
+    let mut on_path: RapidHashMap<&str, usize> = RapidHashMap::new();
+    visited.insert(root.name.as_str());
+    on_path.insert(root.name.as_str(), 0);
+    let mut stack = vec![Frame::new(root)];
+    while let Some(frame) = stack.last_mut() {
+        let Some(&spread) = frame.spreads.get(frame.next) else {
+            // Every spread of this fragment is done: it leaves the path, and
+            // so does the spread that led to it.
+            on_path.remove(frame.name);
+            stack.pop();
+            if !stack.is_empty() {
+                path.pop();
             }
-            self.path.pop();
+            continue;
+        };
+        frame.next += 1;
+        let start = on_path.get(spread).copied();
+        path.push(spread);
+        if let Some(start) = start {
+            let via = &path[start..path.len() - 1];
+            let via = match via.is_empty() {
+                true => String::new(),
+                false => format!(" via {}", via.join(", ")),
+            };
+            return Err(QueryError::parse(format!(
+                "Cannot spread fragment \"{spread}\" within itself{via}."
+            )));
         }
-        self.on_path.remove(name);
-        Ok(())
+        match fragments.get(spread) {
+            Some(next) if !visited.contains(spread) => {
+                visited.insert(spread);
+                on_path.insert(spread, path.len());
+                stack.push(Frame::new(next));
+            }
+            _ => {
+                path.pop();
+            }
+        }
     }
+    Ok(())
 }
 
-fn collect_spreads<'d>(set: &'d SelectionSet<'_, String>, out: &mut Vec<&'d str>) {
-    for selection in &set.items {
-        match selection {
-            Selection::Field(field) => collect_spreads(&field.selection_set, out),
-            Selection::FragmentSpread(spread) => out.push(spread.fragment_name.as_str()),
-            Selection::InlineFragment(inline) => collect_spreads(&inline.selection_set, out),
+/// The fragment spreads in `set`, in document order, nested ones included,
+/// read without recursion.
+fn spreads_of<'d>(set: &'d SelectionSet<'_, String>) -> Vec<&'d str> {
+    let mut spreads = Vec::new();
+    let mut stack = vec![set.items.iter()];
+    while let Some(items) = stack.last_mut() {
+        match items.next() {
+            None => {
+                stack.pop();
+            }
+            Some(Selection::Field(field)) => stack.push(field.selection_set.items.iter()),
+            Some(Selection::FragmentSpread(spread)) => spreads.push(spread.fragment_name.as_str()),
+            Some(Selection::InlineFragment(inline)) => {
+                stack.push(inline.selection_set.items.iter())
+            }
         }
     }
+    spreads
 }
 
 #[cfg(test)]
