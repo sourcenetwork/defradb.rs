@@ -40,6 +40,7 @@ fn create_two(scope: BatchScope, session: &str) -> (Vec<cid::Cid>, Vec<cid::Cid>
 /// Go Shinzo's scope, the default: one composite CID per document, so a
 /// Rust root matches a Go root over the same writes.
 #[test]
+#[mantra_macros::req_test("go.shinzo.signing.batch_collects_composites")]
 fn create_many_collects_one_composite_cid_per_document() {
     let (collected, mut composites, _) = create_two(BatchScope::Composite, "scope-composite");
     composites.sort();
@@ -149,6 +150,52 @@ fn create_discard_collects_no_cids() {
         })
         .await;
         assert_eq!(collected, Vec::new());
+    })
+    .unwrap()
+}
+
+/// With a signing identity set, a batched write leaves its blocks unsigned:
+/// the batch signature covers them instead.
+#[test]
+#[mantra_macros::req_test("go.shinzo.signing.batch_collects_composites")]
+#[ignore = "gap: a batched write still signs each block"]
+fn a_batched_signed_write_stores_unsigned_blocks_and_collects_its_composite() {
+    use crypto::{Key, PrivateKey};
+    use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
+    workers::block_on(async {
+        let (db, _) = make_test_db_with_bus().await;
+        db.create_collection(test_collection()).await.unwrap();
+        let key = crypto::generate_ed25519().unwrap();
+        let public_key = key.public_key();
+        set_signing_config(Some(SigningConfig {
+            key_type: SigningKeyType::Ed25519,
+            private_key_bytes: key.raw_owned(),
+            public_key_bytes: public_key.raw_owned(),
+            public_key_hex: hex::encode(public_key.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        let session = "signed-batch";
+        batch_signing::batch_start_with(session, BatchScope::Composite);
+        batch_signing::set_batch_session_key(Some(session.to_string()));
+        let created = AutoCommitMutator::new(db)
+            .create(
+                "TestDoc",
+                Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
+            )
+            .await;
+        batch_signing::set_batch_session_key(None);
+        set_signing_config(None);
+        let created = created.unwrap();
+        let block = Block::from_dag_cbor(created.commit_block.as_ref().unwrap()).unwrap();
+        assert!(
+            block.signature.is_none(),
+            "a batched block carries no signature: {block:?}"
+        );
+        assert_eq!(
+            batch_signing::batch_take_cids(session).unwrap(),
+            vec![created.commit_cid.unwrap()]
+        );
     })
     .unwrap()
 }

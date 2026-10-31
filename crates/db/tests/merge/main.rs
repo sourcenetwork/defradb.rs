@@ -5,6 +5,7 @@ mod common;
 
 mod acp_merge_handler;
 mod acp_protected_update;
+mod batch_isolation;
 mod broadcast_mutator_broadcast;
 mod collection_block_links;
 mod collection_guard_race;
