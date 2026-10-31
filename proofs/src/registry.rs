@@ -1226,6 +1226,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The retention floor (#2450): the merge judges the merged, alive
+        // document of a covered, non-branchable collection; a refusal is the
+        // event's own Rejected outcome, never merged, relayed or counted as a
+        // drop; deletes, local writes and a floor of zero or less refuse
+        // nothing by height.
+        family: "Retention floor",
+        name: "INV_NoneBelowFloor / INV_RefusedNotMerged / INV_DeleteApplies / INV_BatchIsolation / INV_ZeroFloor / INV_LocalAndBranchable / INV_Counted",
+        axis: Tla,
+        anchor: "crates/db/src/retention.rs RetentionFloor::refusal; crates/db/src/database/mod.rs DbOptions::retention_floor; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/composite.rs (RetentionRefused to Rejected); crates/db/src/merge/merge_handler/batch.rs try_batch_merge_with_split",
+        model_ref: "MC_Retention_{Green,Green_ZeroFloor,Green_Branchable,Red_Never,Red_JudgeDeletes,Red_WholeBatch,Red_StrictFloor,Red_RelayAll,Red_JudgeLocal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,
