@@ -179,6 +179,16 @@ impl<S: Store> P2PHost<S> {
                         match documents {
                             Ok(documents) => {
                                 for (mut broadcast, _car) in documents {
+                                    // Go peers ask a pushlog's Creator for the CAR
+                                    // first; never relay a creator nobody signed.
+                                    broadcast.creator =
+                                        crate::sync::shinzo_car::authenticated_creator(
+                                            &broadcast.creator,
+                                            message
+                                                .source
+                                                .map(|source| source.to_string())
+                                                .as_deref(),
+                                        );
                                     if let Some(source) = message.source {
                                         let source = source.to_string();
                                         broadcast.source_peer_id = Some(source.clone());
