@@ -78,6 +78,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // BEFORE persisting anything, so a rejected composite leaves no partial write.
         // One entry per link: an Immutable block carries several field deltas.
         let mut pending: Vec<(Cid, Vec<Cid>, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
+        let mut filtered_fields = crate::replication_filter::FieldValues::default();
         for dag_link in links {
             let link_name = &dag_link.name;
             let link_cid = &dag_link.link;
@@ -94,6 +95,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             };
             let linked_block = Block::from_dag_cbor(&linked_block_data)
                 .map_err(|e| MergeError::BlockDecode(e.to_string()))?;
+            crate::replication_filter::add_field_values(&mut filtered_fields, &linked_block);
             state.owned_field_cids.push(*link_cid);
             state.linked_signature_cids.extend(linked_block.signature);
             if let Some(encryption_cid) = &linked_block.encryption {
@@ -160,6 +162,34 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 linked_block.heads.clone().unwrap_or_default(),
                 deltas,
             ));
+        }
+
+        // The embedder's filter decides before anything of the commit is
+        // stored. A refusal is final, so the head is not merged again. A
+        // branchable collection's head commits many documents at once, so
+        // its documents are not filtered one by one.
+        let branchable = context
+            .collection
+            .as_ref()
+            .is_some_and(|collection| collection.schema().is_branchable);
+        if let Some(filter) = self
+            .db
+            .options()
+            .replication_filter
+            .as_ref()
+            .filter(|_| !branchable)
+        {
+            let collection_id = context
+                .collection
+                .as_ref()
+                .map(|collection| collection.collection_id())
+                .or(context.metadata.collection_id)
+                .unwrap_or_default();
+            if !filter.allow_replication(collection_id, context.doc_id_str, &filtered_fields) {
+                return Ok(Some(MergeOutcome::terminal_skip(
+                    "refused by the replication filter",
+                )));
+            }
         }
 
         // Phase 2: persist the decoded deltas.

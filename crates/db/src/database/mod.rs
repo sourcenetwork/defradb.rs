@@ -52,6 +52,9 @@ pub struct DbOptions {
     /// closes. `None` (a test, a one-shot tool) runs them on the process's
     /// default pool.
     pub pool: Option<workers::Pool>,
+    /// The embedder's check on replicated documents before their commits
+    /// store anything. `None` keeps every document.
+    pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -74,6 +77,7 @@ impl std::fmt::Debug for DbOptions {
                 &!self.embedding_api_key.is_empty(),
             )
             .field("pool", &self.pool)
+            .field("replication_filter", &self.replication_filter.is_some())
             .finish()
     }
 }
@@ -105,6 +109,15 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Asks `filter` whether to keep each replicated document.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.replication_filter = Some(filter);
+        self
     }
 
     /// The engine retry policy every write of this database runs under.

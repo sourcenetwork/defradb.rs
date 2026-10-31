@@ -255,6 +255,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Ask `filter` whether to keep each replicated document before its
+    /// commit stores anything.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn db::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.config.replication_filter = Some(crate::ReplicationFilterHandle(filter));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {

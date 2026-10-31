@@ -1,5 +1,6 @@
 //! Configuration types for the embedded DefraDB node.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(feature = "http")]
@@ -380,4 +381,25 @@ pub struct NodeConfig {
     pub query_timeout: Option<Duration>,
     /// The introspection cache; `None` keeps it on.
     pub introspection_cache: Option<bool>,
+    /// The embedder's check on replicated documents; `None` keeps them all.
+    pub replication_filter: Option<ReplicationFilterHandle>,
+}
+
+/// An embedder's [`db::replication_filter::ReplicationFilter`], compared by
+/// identity.
+#[derive(Clone)]
+pub struct ReplicationFilterHandle(pub Arc<dyn db::replication_filter::ReplicationFilter>);
+
+impl std::fmt::Debug for ReplicationFilterHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReplicationFilterHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for ReplicationFilterHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }

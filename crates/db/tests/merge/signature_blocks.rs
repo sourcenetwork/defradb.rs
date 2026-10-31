@@ -11,77 +11,12 @@ use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{Block, DAGLink, Signature, SignatureHeader, SignatureType};
-use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
-use document::{DocID, Document, NormalValue};
+use defra_core::merge::{MergeBlock, MergeOutcome};
+use document::{Document, NormalValue};
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
-type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
-
-fn logs(collection_id: &str) -> CollectionVersion {
-    CollectionVersion::new(
-        "Log",
-        "v1",
-        collection_id,
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "address",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "3",
-                "blockNumber",
-                FieldKind::int(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
-}
-
-async fn merge(handler: &Handler, block: &MergeBlock) -> MergeOutcome {
-    let metadata = BlockMetadata::normal(
-        &block.doc_id,
-        &block.collection_id,
-        &block.creator,
-        block.sender_peer.as_deref(),
-        false,
-    );
-    handler
-        .handle_block(&block.cid, &block.block_data, metadata)
-        .await
-        .unwrap()
-}
-
-async fn stored(handler: &Handler, collection_id: &str, doc_id: &str) -> bool {
-    let collection = handler
-        .db()
-        .find_collection_by_id(collection_id)
-        .unwrap()
-        .unwrap();
-    let txn = handler.db().new_txn(true).await.unwrap();
-    let doc = {
-        let datastore = txn.datastore().unwrap();
-        let systemstore = txn.systemstore().unwrap();
-        collection
-            .get_by_doc_id(
-                &datastore,
-                &systemstore,
-                &DocID::from_string(doc_id).unwrap(),
-            )
-            .await
-            .unwrap()
-    };
-    txn.force_discard().unwrap();
-    doc.is_some()
-}
+use super::replicated::{logs, merge, stored};
 
 /// `block` signed with `key`: its signature block stored in `blockstore`,
 /// its own bytes and CID.
