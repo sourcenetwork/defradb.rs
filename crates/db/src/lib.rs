@@ -61,6 +61,7 @@ pub mod merge;
 pub mod nac;
 pub mod read;
 pub(crate) mod remote_inputs;
+pub mod retention;
 pub mod search;
 pub mod txn;
 pub(crate) mod view;

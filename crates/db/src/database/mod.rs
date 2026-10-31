@@ -52,6 +52,9 @@ pub struct DbOptions {
     /// closes. `None` (a test, a one-shot tool) runs them on the process's
     /// default pool.
     pub pool: Option<workers::Pool>,
+    /// The retention floor replicated documents are judged against at
+    /// merge. `None` judges nothing.
+    pub retention_rule: Option<Arc<dyn crate::retention::RetentionRule>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -74,6 +77,7 @@ impl std::fmt::Debug for DbOptions {
                 &!self.embedding_api_key.is_empty(),
             )
             .field("pool", &self.pool)
+            .field("retention_rule", &self.retention_rule.is_some())
             .finish()
     }
 }
@@ -105,6 +109,27 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Judges replicated documents against `rule` at merge.
+    pub fn with_retention_rule(mut self, rule: Arc<dyn crate::retention::RetentionRule>) -> Self {
+        self.retention_rule = Some(rule);
+        self
+    }
+
+    /// The field and floor replicated documents of a collection are judged
+    /// against, or `None` when it is not judged. A branchable collection
+    /// never is: one of its heads commits many documents at once.
+    pub fn retention_floor(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> Option<crate::retention::RetentionFloor> {
+        if collection.is_branchable {
+            return None;
+        }
+        self.retention_rule
+            .as_ref()?
+            .retention_floor(&collection.collection_id)
     }
 
     /// The engine retry policy every write of this database runs under.
