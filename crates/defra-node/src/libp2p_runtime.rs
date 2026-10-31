@@ -121,6 +121,12 @@ where
         )
         .await
         .map_err(Error::HostCreate)?;
+    #[cfg(feature = "test-utils")]
+    let host = if config.car_requests {
+        host
+    } else {
+        host.without_car_requests()
+    };
     let host_task = spawn_node_task(edge, async move {
         host.run().await;
     });

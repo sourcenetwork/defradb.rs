@@ -177,3 +177,41 @@ fn a_node_with_nothing_to_judge_has_no_gate() {
     })
     .unwrap()
 }
+
+#[test]
+#[mantra_macros::req_test("go.shinzo.p2p.retention.gate")]
+fn a_create_names_its_height_block_and_nothing_else_does() {
+    workers::block_on(async {
+        let (gate, blocks) = gate(floor(100)).await;
+        let (_, head, _) = pushed(&blocks, Some(100), false).await;
+        let height = Block::from_dag_cbor(&head)
+            .unwrap()
+            .links
+            .into_iter()
+            .flatten()
+            .find(|link| link.name == "blockNumber")
+            .map(|link| link.link);
+        assert!(height.is_some());
+        assert_eq!(gate.height_link("col-log", &head).await, height);
+
+        let mut update = Block::from_dag_cbor(&head).unwrap();
+        if let CrdtDelta::Composite(payload) = &mut update.delta {
+            payload.priority = 2;
+        }
+        let update = update.to_dag_cbor().unwrap();
+        assert_eq!(
+            gate.height_link("col-log", &update).await,
+            None,
+            "an update"
+        );
+
+        let (_, unset, _) = pushed(&blocks, None, false).await;
+        assert_eq!(gate.height_link("col-log", &unset).await, None, "no height");
+        assert_eq!(
+            gate.height_link("col-other", &head).await,
+            None,
+            "uncovered"
+        );
+    })
+    .unwrap()
+}

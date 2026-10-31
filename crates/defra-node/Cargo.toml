@@ -60,6 +60,8 @@ wasmtime-runtime = [
 # and the underlying `telemetry/otlp` gate. Off by default — embedded users
 # who want OTel must opt in.
 otel = ["telemetry/otlp"]
+# Test-only switches, such as a libp2p node that sends no CAR requests.
+test-utils = ["libp2p", "p2p/test-utils"]
 
 [lib]
 bench = false
@@ -140,3 +142,8 @@ tar = "0.4"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "height_fetch_bench"
+path = "tests/height_fetch_bench.rs"
+required-features = ["test-utils"]

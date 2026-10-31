@@ -146,7 +146,7 @@ futures = "0.3"
 paste = "1.0"
 ctor = "0.2"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
+defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p", "test-utils"] }
 db = { path = "../../crates/db" }
 ciborium = { workspace = true }
 events = { path = "../../crates/events" }

@@ -24,11 +24,13 @@ pub enum GateRefusal {
     NoHeight,
 }
 
-/// Which check is asking: the one on arrival, or the one on a fetched CAR.
+/// Which check is asking: the one on arrival, the one on a fetched CAR, or
+/// the one on a height block fetched alone before a block-by-block walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateStage {
     Arrival,
     AfterFetch,
+    AfterHeightFetch,
 }
 
 impl GateRefusal {
@@ -36,9 +38,14 @@ impl GateRefusal {
     pub fn skip(self, stage: GateStage) -> SkipReason {
         match (self, stage) {
             (Self::Filtered, GateStage::Arrival) => SkipReason::Filtered,
-            (Self::Filtered, GateStage::AfterFetch) => SkipReason::FilteredAfterFetch,
+            (Self::Filtered, GateStage::AfterFetch | GateStage::AfterHeightFetch) => {
+                SkipReason::FilteredAfterFetch
+            }
             (Self::BelowFloor, GateStage::Arrival) => SkipReason::RetentionBeforeFetch,
             (Self::BelowFloor, GateStage::AfterFetch) => SkipReason::RetentionAfterCarFetch,
+            (Self::BelowFloor, GateStage::AfterHeightFetch) => {
+                SkipReason::RetentionAfterHeightFetch
+            }
             (Self::NoHeight, _) => SkipReason::RetentionNoHeight,
         }
     }
@@ -68,6 +75,12 @@ pub trait ReceiveGate: defra_core::thread_bounds::MaybeSendSync {
         head: &[u8],
         blocks: &dyn GateBlocks,
     ) -> Option<GateRefusal>;
+
+    /// The block a create head links under the retention rule's height
+    /// field (Go's `heightLink`), or `None` when the rule does not judge
+    /// `head`. It is the one block fetched alone before a document is
+    /// walked block by block.
+    async fn height_link(&self, collection_id: &str, head: &[u8]) -> Option<Cid>;
 }
 
 /// Blocks held in memory, as a CAR carries them, in front of another

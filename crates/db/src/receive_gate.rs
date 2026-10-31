@@ -123,4 +123,23 @@ where
             Height::Invalid => Some(GateRefusal::NoHeight),
         }
     }
+
+    async fn height_link(&self, collection_id: &str, head: &[u8]) -> Option<cid::Cid> {
+        let collection = self.db.find_collection_by_id(collection_id).ok()??;
+        let schema = collection.schema();
+        if schema.is_branchable {
+            return None;
+        }
+        let floor = self.db.options().retention_floor(schema)?;
+        let head = Block::from_dag_cbor(head).ok()?;
+        match &head.delta {
+            CrdtDelta::Composite(payload) if payload.priority == 1 => {}
+            _ => return None,
+        }
+        head.links
+            .iter()
+            .flatten()
+            .find(|link| link.name == floor.field)
+            .map(|link| link.link)
+    }
 }

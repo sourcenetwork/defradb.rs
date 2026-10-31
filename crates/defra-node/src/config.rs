@@ -198,6 +198,10 @@ pub struct Libp2pConfig {
     /// libp2p resource budget overrides (Go Shinzo's `net.resourceMemoryMiB`,
     /// `net.resourceFileDescriptors`, `net.maxStreamsPerPeer`).
     pub resource_limits: p2p::ResourceLimits,
+    /// Send rooted CAR requests; off, every fetch walks the DAG block by
+    /// block. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub car_requests: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -212,6 +216,8 @@ impl Default for Libp2pConfig {
             sync: SyncTuning::default(),
             shinzo_wire: false,
             resource_limits: p2p::ResourceLimits::default(),
+            #[cfg(feature = "test-utils")]
+            car_requests: true,
         }
     }
 }

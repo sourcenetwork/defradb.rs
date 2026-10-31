@@ -26,13 +26,15 @@ fn on(node: &str) -> Common {
 }
 
 /// `judging` receives a refused Log at 50 and a kept one at 150 from a
-/// sender, and ends up holding only the one at 150.
-fn only_the_kept_log_arrives(judging: NewNode) {
+/// sender speaking Go Shinzo's wire or not, and ends up holding only the
+/// one at 150.
+fn only_the_kept_log_arrives(judging: NewNode, sender_wire: bool) {
     let mut actions = vec![
         judging.into(),
         NewNode {
             network: true,
-            shinzo_wire: true,
+            shinzo_wire: sender_wire,
+            rust: true,
             common: on(SENDER),
             ..Default::default()
         }
@@ -128,30 +130,59 @@ fn only_the_kept_log_arrives(judging: NewNode) {
 #[test]
 #[mantra_macros::req_test("go.shinzo.p2p.retention.gate")]
 fn a_document_below_the_retention_floor_never_arrives() {
-    only_the_kept_log_arrives(NewNode {
-        network: true,
-        shinzo_wire: true,
-        retention: Some(RetentionSpec {
-            collection_id: LOG_ID.into(),
-            field: "blockNumber".into(),
-            floor: 100,
-        }),
-        common: on(JUDGING),
-        ..Default::default()
-    });
+    only_the_kept_log_arrives(
+        NewNode {
+            network: true,
+            shinzo_wire: true,
+            retention: Some(RetentionSpec {
+                collection_id: LOG_ID.into(),
+                field: "blockNumber".into(),
+                floor: 100,
+            }),
+            common: on(JUDGING),
+            ..Default::default()
+        },
+        true,
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.p2p.replication_filter.after_fetch")]
 fn a_document_the_filter_refuses_never_arrives() {
-    only_the_kept_log_arrives(NewNode {
-        network: true,
-        shinzo_wire: true,
-        refuse_at_or_below: Some(CutoffSpec {
-            field: "blockNumber".into(),
-            cutoff: 100,
-        }),
-        common: on(JUDGING),
-        ..Default::default()
-    });
+    only_the_kept_log_arrives(
+        NewNode {
+            network: true,
+            shinzo_wire: true,
+            refuse_at_or_below: Some(CutoffSpec {
+                field: "blockNumber".into(),
+                cutoff: 100,
+            }),
+            common: on(JUDGING),
+            ..Default::default()
+        },
+        true,
+    );
+}
+
+/// A node that sends no CAR requests walks a pushed document block by block,
+/// as from a peer that predates the exchange. Before that walk it fetches
+/// only the height block, and a Log below the floor is refused there, never
+/// walked (#2464).
+#[test]
+#[mantra_macros::req_test("go.shinzo.p2p.retention.gate")]
+fn a_document_below_the_floor_is_refused_on_its_height_block_alone() {
+    only_the_kept_log_arrives(
+        NewNode {
+            network: true,
+            no_car_requests: true,
+            retention: Some(RetentionSpec {
+                collection_id: LOG_ID.into(),
+                field: "blockNumber".into(),
+                floor: 100,
+            }),
+            common: on(JUDGING),
+            ..Default::default()
+        },
+        false,
+    );
 }
