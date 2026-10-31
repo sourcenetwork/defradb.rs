@@ -388,6 +388,9 @@ pub struct NodeConfig {
     pub introspection_cache: Option<bool>,
     /// The embedder's check on replicated documents; `None` keeps them all.
     pub replication_filter: Option<ReplicationFilterHandle>,
+    /// The retention floor replicated documents are judged against at
+    /// merge; `None` judges nothing.
+    pub retention: Option<db::retention::StaticRetentionRule>,
 }
 
 /// An embedder's [`db::replication_filter::ReplicationFilter`], compared by
