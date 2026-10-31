@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keys::{PrivateKey, PublicKey};
 use crate::{Ed25519PrivateKey, Ed25519PublicKey, Secp256k1PrivateKey, Secp256k1PublicKey};
-use defra_core::batch_signing::compute_merkle_root;
+use defra_core::batch_signing::{compute_merkle_root_with, MerkleScheme};
 use defra_core::signing::SigningConfig;
 
 /// Errors that can occur during batch signing.
@@ -41,11 +41,29 @@ pub struct BatchSignature {
     pub merkle_root: Vec<u8>,
     /// Number of CIDs in the batch
     pub cid_count: usize,
+    /// How the Merkle tree was built; absent for Go Shinzo's tree, so a
+    /// Go-scheme signature serializes as before.
+    #[serde(default, skip_serializing_if = "is_go_scheme")]
+    pub merkle_scheme: MerkleScheme,
 }
 
-/// Sign a batch of CIDs using the provided signing config.
+fn is_go_scheme(scheme: &MerkleScheme) -> bool {
+    *scheme == MerkleScheme::GoShinzo
+}
+
+/// Sign a batch of CIDs using the provided signing config, over Go Shinzo's
+/// Merkle tree.
 pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature, BatchSignError> {
-    let root = compute_merkle_root(cids);
+    sign_batch_with(cids, config, MerkleScheme::GoShinzo)
+}
+
+/// Sign a batch of CIDs over the Merkle tree `scheme` builds.
+pub fn sign_batch_with(
+    cids: &[Cid],
+    config: &SigningConfig,
+    scheme: MerkleScheme,
+) -> Result<BatchSignature, BatchSignError> {
+    let root = compute_merkle_root_with(cids, scheme);
 
     let (sig_type, sig_bytes) = match config.key_type {
         defra_core::signing::SigningKeyType::Ed25519 => {
@@ -81,12 +99,30 @@ pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature
         value: sig_bytes,
         merkle_root: root.to_vec(),
         cid_count: cids.len(),
+        merkle_scheme: scheme,
     })
 }
 
-/// Verify a batch signature against a set of CIDs.
+/// Verify a batch signature against a set of CIDs, over Go Shinzo's Merkle
+/// tree.
 pub fn verify_batch_signature(sig: &BatchSignature, cids: &[Cid]) -> Result<bool, String> {
-    let root = compute_merkle_root(cids);
+    verify_batch_signature_with(sig, cids, MerkleScheme::GoShinzo)
+}
+
+/// Verify a batch signature against a set of CIDs over the tree `scheme`
+/// builds. The scheme is the verifier's, never the signature's: a signature
+/// naming another scheme fails, so a signer cannot pick the weaker tree. The
+/// signed CID count must equal the number of CIDs, since Go's tree gives
+/// lists of different lengths the same root.
+pub fn verify_batch_signature_with(
+    sig: &BatchSignature,
+    cids: &[Cid],
+    scheme: MerkleScheme,
+) -> Result<bool, String> {
+    if sig.merkle_scheme != scheme || sig.cid_count != cids.len() {
+        return Ok(false);
+    }
+    let root = compute_merkle_root_with(cids, scheme);
 
     if root.as_slice() != sig.merkle_root.as_slice() {
         return Ok(false);
@@ -138,6 +174,7 @@ mod hex_bytes {
 mod tests {
     use super::*;
     use crate::keys::Key;
+    use defra_core::batch_signing::compute_merkle_root;
     use defra_core::DAG_CBOR_CODEC;
     use multihash_codetable::{Code, MultihashDigest};
 
@@ -228,7 +265,44 @@ mod tests {
             value: hex::decode(value).unwrap(),
             merkle_root: hex::decode(GO_ROOT).unwrap(),
             cid_count: 3,
+            merkle_scheme: MerkleScheme::GoShinzo,
         }
+    }
+
+    #[test]
+    fn domain_separated_roots_differ_where_go_roots_collide() {
+        let mut cids = [make_cid(b"a"), make_cid(b"b"), make_cid(b"c")];
+        cids.sort_by_key(Cid::to_bytes);
+        let [a, b, c] = cids;
+        let separated = MerkleScheme::DomainSeparated;
+        assert_ne!(
+            compute_merkle_root_with(&[a, b, c], separated),
+            compute_merkle_root_with(&[a, b, c, c], separated)
+        );
+        // A single CID's root is its tagged leaf, never the bare CID hash.
+        assert_ne!(
+            compute_merkle_root_with(&[a], separated),
+            compute_merkle_root_with(&[a], MerkleScheme::GoShinzo)
+        );
+    }
+
+    #[test]
+    fn domain_separated_signatures_verify_only_under_that_scheme() {
+        let config = test_ed25519_config();
+        let cids = go_cids();
+        let separated = MerkleScheme::DomainSeparated;
+        let sig = sign_batch_with(&cids, &config, separated).unwrap();
+        assert!(verify_batch_signature_with(&sig, &cids, separated).unwrap());
+        // A Go-scheme verifier refuses it, and a Go-scheme signature is
+        // refused by a domain-separated verifier: the scheme is never the
+        // signer's choice.
+        assert!(!verify_batch_signature(&sig, &cids).unwrap());
+        let go = sign_batch(&cids, &config).unwrap();
+        assert!(!verify_batch_signature_with(&go, &cids, separated).unwrap());
+        // A Go-scheme signature serializes without the scheme field.
+        assert!(!serde_json::to_string(&go)
+            .unwrap()
+            .contains("merkle_scheme"));
     }
 
     #[test]
@@ -275,6 +349,24 @@ mod tests {
         };
         let sig = sign_batch(&go_cids(), &secp256k1).unwrap();
         assert_eq!(hex::encode(&sig.value), GO_SECP256K1_VALUE);
+    }
+
+    /// Go's tree pairs an odd last leaf with itself, so `[a, b, c]` and
+    /// `[a, b, c, c]`, with `c` last in sorted order, share a root; the
+    /// signed count tells them apart.
+    #[test]
+    fn verify_rejects_a_cid_set_of_another_size_with_the_same_root() {
+        let config = test_ed25519_config();
+        let mut cids = [make_cid(b"a"), make_cid(b"b"), make_cid(b"c")];
+        cids.sort_by_key(Cid::to_bytes);
+        let [a, b, c] = cids;
+        let sig = sign_batch(&[a, b, c], &config).unwrap();
+        assert_eq!(
+            compute_merkle_root(&[a, b, c]),
+            compute_merkle_root(&[a, b, c, c])
+        );
+        assert!(verify_batch_signature(&sig, &[a, b, c]).unwrap());
+        assert!(!verify_batch_signature(&sig, &[a, b, c, c]).unwrap());
     }
 
     /// Go signs an empty batch over SHA256 of nothing; so does Rust.
