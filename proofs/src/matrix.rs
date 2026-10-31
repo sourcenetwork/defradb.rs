@@ -72,6 +72,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Add collection",
     "Shinzo CAR exchange",
     "Shinzo batching",
+    "Per-peer stream cap",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

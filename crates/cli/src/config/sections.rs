@@ -332,6 +332,18 @@ pub struct NetConfig {
     /// Default: false.
     #[serde(default)]
     pub shinzo_wire: bool,
+    /// libp2p's whole memory budget in MiB, in place of half of system
+    /// memory (Go Shinzo's `net.resourceMemoryMiB`). Default: unset.
+    #[serde(default, alias = "resourceMemoryMiB")]
+    pub resource_memory_mib: Option<u64>,
+    /// libp2p's file descriptor budget with a memory budget; 512 when unset
+    /// (Go Shinzo's `net.resourceFileDescriptors`).
+    #[serde(default, alias = "resourceFileDescriptors")]
+    pub resource_file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset
+    /// (Go Shinzo's `net.maxStreamsPerPeer`). Default: unset.
+    #[serde(default, alias = "maxStreamsPerPeer")]
+    pub max_streams_per_peer: Option<usize>,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -494,6 +506,9 @@ impl Default for NetConfig {
             connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
             max_connections_per_peer: default_max_connections_per_peer(),
             shinzo_wire: false,
+            resource_memory_mib: None,
+            resource_file_descriptors: None,
+            max_streams_per_peer: None,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,
