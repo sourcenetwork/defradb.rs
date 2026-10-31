@@ -75,7 +75,7 @@ impl super::Planner {
             .as_ref()
             .map(|f| {
                 f.is_complex()
-                    || !f.get_multi_level_relation_paths().is_empty()
+                    || !self.relation_filter_paths(f, collection).is_empty()
                     || f.has_alias_filter()
             })
             .unwrap_or(false);
