@@ -593,3 +593,37 @@ fn waiting_on_a_subscription_parks_until_an_event_or_the_timeout() {
     unsafe { defra_free_string(closed.error) };
     node_close(node);
 }
+
+#[test]
+fn waiting_past_the_deadline_stops_skipping_filtered_events() {
+    use crate::state::SUBSCRIPTIONS;
+    use crate::subscription::{close_subscription, create_subscription, wait_subscription};
+    let node = node();
+    let nothing = cstr("no-such-collection");
+    let filtered = unsafe { create_subscription(node, nothing.as_ptr()) };
+    let witness = unsafe { create_subscription(node, null()) };
+    assert_eq!((filtered.status, witness.status), (0, 0));
+    for (name, age) in [("Alice", 40), ("Bob", 7), ("Carol", 3)] {
+        add(node, name, age);
+    }
+    for _ in 0..3 {
+        let seen = wait_subscription(witness.subscription_handle, 10_000);
+        assert_eq!(seen.status, 0);
+        unsafe { defra_free_string(seen.value) };
+    }
+
+    assert_eq!(wait_subscription(filtered.subscription_handle, 0).status, 2);
+    let queued = SUBSCRIPTIONS
+        .get(filtered.subscription_handle)
+        .unwrap()
+        .subscription
+        .try_take();
+    assert!(
+        queued.is_ok(),
+        "a wait past its deadline drained every filtered-out event"
+    );
+
+    let _ = close_subscription(filtered.subscription_handle);
+    let _ = close_subscription(witness.subscription_handle);
+    node_close(node);
+}
