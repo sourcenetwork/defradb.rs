@@ -18,7 +18,6 @@ fn encode_decode_with_keys() {
     let c = Cursor {
         doc_id: "doc-1".into(),
         keys: keys.clone(),
-        ..Default::default()
     };
 
     let token = c.encode();
@@ -39,6 +38,14 @@ fn decode_rejects_invalid_json() {
     let token = "bm90IGpzb24";
     let err = Cursor::decode(token).unwrap_err();
     assert!(matches!(err, CursorError::InvalidJson(_)));
+}
+
+/// A token from a build that still wrote an empty `o` keeps decoding.
+#[test]
+fn decode_accepts_a_token_with_an_empty_o() {
+    // base64url('{"d":"doc-1","o":""}')
+    let decoded = Cursor::decode("eyJkIjoiZG9jLTEiLCJvIjoiIn0").unwrap();
+    assert_eq!(decoded, Cursor::from_doc_id("doc-1"));
 }
 
 #[test]
@@ -74,7 +81,6 @@ fn keys_serialize_alphabetically() {
     let c = Cursor {
         doc_id: "x".into(),
         keys,
-        ..Default::default()
     };
 
     let token = c.encode();

@@ -143,3 +143,6 @@ lean_lib ShinzoWire where
 
 @[default_target]
 lean_lib ShinzoBatch where
+
+@[default_target]
+lean_lib CursorParity where

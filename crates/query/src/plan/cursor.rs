@@ -65,6 +65,10 @@ pub struct CursorNode {
     has_next: bool,
     has_prev: bool,
     index_seek_active: bool,
+    /// A backward seek's boundary key is the order values alone (a unique,
+    /// non-null index), so a row at those values sits in the boundary's slot
+    /// whatever its DocID.
+    boundary_keyed_by_value: bool,
     emitted: u64,
     start_cursor: Option<String>,
     end_cursor: Option<String>,
@@ -114,11 +118,18 @@ impl CursorNode {
             has_next: false,
             has_prev: false,
             index_seek_active,
+            boundary_keyed_by_value: false,
             emitted: 0,
             start_cursor: None,
             end_cursor: None,
             exec_info: ExecInfo::default(),
         }
+    }
+
+    /// Mark the backward seek's boundary key as holding no DocID.
+    pub fn with_boundary_keyed_by_value(mut self, keyed_by_value: bool) -> Self {
+        self.boundary_keyed_by_value = keyed_by_value;
+        self
     }
 
     /// Return page-info computed after the last `next()` call returned false.
@@ -160,9 +171,6 @@ impl CursorNode {
         Cursor {
             doc_id: snapshot.doc_id.clone(),
             keys: snapshot.keys.clone(),
-            // Go's buildEnrichedPayload never sets Direction; keep it empty for
-            // byte-exact cursor parity.
-            direction: String::new(),
         }
     }
 
@@ -279,14 +287,20 @@ impl CursorNode {
     }
 
     /// Fast path: the inner plan already iterates in reverse from the `before`
-    /// boundary. Collect up to `limit + 1` docs (or all docs when no limit) and
-    /// reverse them so callers receive docs in logical (ascending) order.
+    /// boundary, its key included. The boundary row, if it is still there,
+    /// comes first and is dropped. Collect up to `limit + 1` docs (or all docs
+    /// when no limit) and reverse them so callers receive docs in logical
+    /// (ascending) order.
     async fn populate_backward_buffer_fast(&mut self) -> Result<()> {
         // +1 to detect has_prev; `None` means unbounded (return all rows).
         let window_size = self.limit.map(|lim| lim as usize + 1);
         let mut collected: Vec<Doc> = Vec::new();
+        let mut first = true;
         while self.inner.next().await? {
             let doc = self.inner.value().deep_clone();
+            if std::mem::take(&mut first) && self.at_before_boundary(&doc) {
+                continue;
+            }
             collected.push(doc);
             if window_size.is_some_and(|w| collected.len() >= w) {
                 break;
@@ -304,6 +318,23 @@ impl CursorNode {
             self.buffer.push_back(doc);
         }
         Ok(())
+    }
+
+    /// Whether `doc`, the first row of an inclusive backward seek, sits at the
+    /// `before` token's index key. `has_next` records whether it is the token's
+    /// own row, as Go's `beforeCursorBoundarySurvives` reports: a page before a
+    /// deleted or moved row has no next page.
+    fn at_before_boundary(&mut self, doc: &Doc) -> bool {
+        let Some(before) = self.before.as_ref() else {
+            return false;
+        };
+        let row = Self::snapshot_from_doc(doc, self.inner.document_map(), &self.order_fields);
+        if row.keys != before.keys {
+            return false;
+        }
+        let same_row = row.doc_id == before.doc_id;
+        self.has_next = same_row;
+        same_row || self.boundary_keyed_by_value
     }
 
     /// Slow path (no index seek). Mirrors Go's `drainBackwardPage`: scan forward
@@ -324,7 +355,9 @@ impl CursorNode {
             let value = self.inner.value();
             if let Some(boundary) = before_doc_id.as_deref() {
                 // The `before` doc itself is excluded; stop on exact match.
+                // Finding it is what makes a next page (Go's drainBackwardPage).
                 if value.doc_id() == Some(boundary) {
+                    self.has_next = true;
                     break;
                 }
             }
@@ -343,7 +376,7 @@ impl CursorNode {
         Ok(())
     }
 
-    /// Capture first/last snapshots from the buffer and set `has_next`.
+    /// Capture first/last snapshots from the buffer.
     /// Called after either fast or slow population.
     fn populate_snapshots_after_buffer(&mut self) {
         let map = self.inner.document_map();
@@ -353,9 +386,6 @@ impl CursorNode {
         if let Some(last) = self.buffer.back() {
             self.last_snapshot = Some(Self::snapshot_from_doc(last, map, &self.order_fields));
         }
-        // has_next is always true when a `before` token was provided, because the
-        // caller of this page knows there are rows on the next (forward) page.
-        self.has_next = self.before.is_some();
         self.finalize_page_info();
     }
 }
@@ -437,29 +467,40 @@ impl PlanNode for CursorNode {
     }
 
     fn explain_inner(&self) -> serde_json::Value {
+        use serde_json::{json, Value};
+        let (first, last) = match self.direction {
+            CursorDirection::Forward => (self.limit, None),
+            CursorDirection::Backward => (None, self.limit),
+        };
+        let token = |cursor: &Option<Cursor>| cursor.as_ref().map(Cursor::encode);
+        let cursor_value = self.after.as_ref().or(self.before.as_ref()).map(|c| {
+            let mut value = json!({ "docID": c.doc_id });
+            if !c.keys.is_empty() {
+                value["keys"] = json!(c.keys);
+            }
+            value
+        });
+        // Go Shinzo's `cursorNode.simpleExplain`.
+        let mut obj = serde_json::Map::new();
+        obj.insert("first".into(), json!(first));
+        obj.insert("after".into(), json!(token(&self.after)));
+        obj.insert("last".into(), json!(last));
+        obj.insert("before".into(), json!(token(&self.before)));
+        obj.insert("cursorValue".into(), cursor_value.unwrap_or(Value::Null));
+        if let Value::Object(child) = self.inner.explain() {
+            obj.extend(child);
+        }
+        Value::Object(obj)
+    }
+
+    fn explain_execute_inner(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
         obj.insert(
-            "pageSize".to_string(),
-            match self.limit {
-                Some(n) => serde_json::Value::Number(n.into()),
-                None => serde_json::Value::Null,
-            },
+            "iterations".into(),
+            serde_json::json!(self.exec_info.iterations),
         );
-        obj.insert(
-            "direction".to_string(),
-            serde_json::Value::String(
-                match self.direction {
-                    CursorDirection::Forward => "forward",
-                    CursorDirection::Backward => "backward",
-                }
-                .to_string(),
-            ),
-        );
-        let child_explain = self.inner.explain();
-        if let Some(child_obj) = child_explain.as_object() {
-            for (key, value) in child_obj {
-                obj.insert(key.clone(), value.clone());
-            }
+        if let serde_json::Value::Object(child) = self.inner.explain_execute() {
+            obj.extend(child);
         }
         serde_json::Value::Object(obj)
     }
@@ -657,9 +698,85 @@ mod tests {
             assert!(!node.next().await.unwrap());
 
             let info = node.page_info_data();
-            assert!(info.has_next, "before.is_some() => has_next=true");
+            assert!(info.has_next, "the before row was found => has_next=true");
         })
         .unwrap()
+    }
+
+    /// A backward page over `rows` with `last: 2` and `before`, its ids and
+    /// `has_next`.
+    fn backward_page(
+        rows: &[&str],
+        before: Cursor,
+        index_seek_active: bool,
+        keyed_by_value: bool,
+    ) -> (Vec<String>, bool) {
+        workers::block_on(async {
+            let inner = FakePlan::new(rows.iter().map(|id| doc_with_id(id)).collect());
+            let mut node = CursorNode::new(
+                Box::new(inner),
+                CursorDirection::Backward,
+                Some(2),
+                None,
+                Some(before),
+                CursorPageInfoFields {
+                    has_next: Some("hasNext".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+                index_seek_active,
+            )
+            .with_boundary_keyed_by_value(keyed_by_value);
+            node.init().await.unwrap();
+            let mut ids = Vec::new();
+            while node.next().await.unwrap() {
+                ids.push(current_id(&node).to_string());
+            }
+            (ids, node.page_info_data().has_next)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn backward_before_a_missing_row_has_no_next_page() {
+        let (ids, has_next) =
+            backward_page(&["a", "b", "d"], Cursor::from_doc_id("c"), false, false);
+        assert_eq!(ids, ["b", "d"]);
+        assert!(!has_next, "the before row is gone => has_next=false");
+    }
+
+    #[test]
+    fn backward_seek_drops_the_boundary_row_and_has_a_next_page() {
+        let (ids, has_next) =
+            backward_page(&["c", "b", "a"], Cursor::from_doc_id("c"), true, false);
+        assert_eq!(ids, ["a", "b"]);
+        assert!(has_next, "the seek met the before row => has_next=true");
+    }
+
+    #[test]
+    fn backward_seek_past_a_missing_boundary_keeps_every_row() {
+        let (ids, has_next) = backward_page(&["b", "a"], Cursor::from_doc_id("c"), true, false);
+        assert_eq!(ids, ["a", "b"]);
+        assert!(!has_next, "the seek met no before row => has_next=false");
+    }
+
+    #[test]
+    fn backward_seek_drops_another_row_in_a_value_keyed_boundary_slot() {
+        let (ids, has_next) = backward_page(&["x", "b", "a"], Cursor::from_doc_id("c"), true, true);
+        assert_eq!(ids, ["a", "b"]);
+        assert!(
+            !has_next,
+            "another row holds the unique key => has_next=false"
+        );
+    }
+
+    #[test]
+    fn backward_seek_keeps_the_before_row_once_it_moved() {
+        let mut moved = Cursor::from_doc_id("c");
+        moved.keys.insert("age".into(), serde_json::json!(45));
+        let (ids, has_next) = backward_page(&["c", "b", "a"], moved, true, false);
+        assert_eq!(ids, ["b", "c"]);
+        assert!(!has_next, "the row left the boundary key => has_next=false");
     }
 
     #[test]

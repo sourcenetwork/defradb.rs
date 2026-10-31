@@ -111,7 +111,6 @@ fn run(actions: Vec<Actions>) {
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.token.keys")]
 #[mantra_macros::req_test("go.shinzo.cursor.token.encoding")]
-#[ignore = "#2481: Rust tokens carry an empty `o`, Go Shinzo tokens do not"]
 fn shinzo_cursor_tokens_carry_their_rows_order_values() {
     let mut actions = aged(&[]);
     actions.extend([
@@ -279,7 +278,6 @@ fn shinzo_after_resumes_page_by_page() {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
-#[ignore = "#2481: an unsorted _in filter breaks the cursor order"]
 fn shinzo_a_filter_applies_before_paging() {
     let mut actions = aged(&[15, 25, 35, 45, 55, 65, 75]);
     let geq = "first: 2, filter: {age: {_geq: 40}}, order: {age: ASC}";
@@ -443,7 +441,6 @@ const U50_DOC_ID_ONLY: &str = "eyJkIjoiYmFlLTRmMmYwMThmLTUwYjItNTExZS1hYmE0LWFmM
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.deleted_docs")]
-#[ignore = "#2481: before a deleted row's cursor reports hasNext true"]
 fn shinzo_deleted_documents_leave_pages_but_keep_positions() {
     let order = "order: {age: ASC}";
     let delete = |name: &str| -> Actions {
@@ -913,7 +910,11 @@ fn shinzo_a_page_reads_only_the_rows_it_needs_from_the_index() {
                 Text::reference("all_end"),
                 Text::from("\") { age } _pageInfo { hasNext } } }"),
             ]),
-            expected_data: json!({ "$match": "explainScan", "metrics": { "indexFetches": 3 } }),
+            // Rust's backward seek reads the before key as a scanned row, to
+            // know whether that row is still there; Go reads it with a point
+            // get outside the scan, which indexFetches does not count.
+            expected_data: json!({ "$match": "explainScan", "metrics": { "indexFetches": 4 } }),
+            expected_data_go: json!({ "$match": "explainScan", "metrics": { "indexFetches": 3 } }),
             ..Default::default()
         }
         .into(),
@@ -936,7 +937,6 @@ fn cursor_node(cursor: Value) -> Value {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.explain")]
-#[ignore = "#2481: cursorNode explains direction and pageSize, not Go's first/after/last/before/cursorValue"]
 fn shinzo_a_cursor_query_explains_its_cursor_node() {
     let mut actions = aged(&[25, 30, 35]);
     let null = Value::Null;
@@ -970,4 +970,68 @@ fn shinzo_a_cursor_query_explains_its_cursor_node() {
         .into(),
     );
     run(actions);
+}
+
+/// A cursor query with a token explains the token and what it decodes to.
+#[test]
+#[mantra_macros::req_test("go.shinzo.cursor.explain")]
+fn shinzo_a_cursor_query_explains_its_token() {
+    let mut actions = aged(&[]);
+    actions.extend([
+        doc(json!({ "name": "Alice", "age": 25 }), None),
+        doc(json!({ "name": "Bob", "age": 30 }), None),
+    ]);
+    let alice =
+        json!({ "docID": "bae-6064fa74-3ca9-5fc5-b08d-2bfcd839488d", "keys": { "age": 25 } });
+    let bob = json!({ "docID": "bae-b99540cd-c9aa-5b6a-9080-a97f918c1186", "keys": { "age": 30 } });
+    for (args, expected) in [
+        (
+            format!("first: 1, after: \"{ALICE_25}\""),
+            json!({ "first": 1, "after": ALICE_25, "last": null, "before": null, "cursorValue": alice }),
+        ),
+        (
+            format!("last: 1, before: \"{BOB_30}\""),
+            json!({ "first": null, "after": null, "last": 1, "before": BOB_30, "cursorValue": bob }),
+        ),
+    ] {
+        actions.push(
+            Request {
+                request: format!("query @explain {{ _cursor {{ User({args}, order: {{age: ASC}}) {{ name }} }} }}").into(),
+                expected_data: cursor_node(expected),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    run(actions);
+}
+
+/// An unsorted `_in` filter keeps the requested order with no cursor at
+/// all, on an indexed and an unindexed field.
+#[test]
+#[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
+fn shinzo_an_unsorted_in_filter_keeps_the_order_without_a_cursor() {
+    for sdl in [
+        USERS,
+        "type User { name: String age: Int @index(direction: DESC) }",
+        "type User { name: String age: Int }",
+    ] {
+        for (order, want) in [("ASC", [25, 35, 45, 55]), ("DESC", [55, 45, 35, 25])] {
+            let mut actions = vec![collection(sdl)];
+            actions.extend(
+                [25, 35, 45, 55, 65]
+                    .map(|age| doc(json!({ "name": format!("u{age}"), "age": age }), None)),
+            );
+            actions.push(
+                Request {
+                    request: format!("query {{ User(filter: {{age: {{_in: [55, 25, 45, 35]}}}}, order: {{age: {order}}}) {{ age }} }}")
+                        .into(),
+                    expected_data: json!({ "User": ages(&want) }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            run(actions);
+        }
+    }
 }

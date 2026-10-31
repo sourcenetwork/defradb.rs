@@ -92,6 +92,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
 | Orphan block sweep | TLA+ & Lean | db, storage |
+| Cursor pagination | Lean | cursor, query |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -187,6 +188,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
+| Cursor pagination | Boundary | `CursorParity`; tokens pinned by `crates/cursor/tests/go_fixtures.rs`, pages and explain by `tools/integration-test/tests/shinzo/cursor.rs` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)

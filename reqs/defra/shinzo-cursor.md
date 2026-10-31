@@ -67,9 +67,9 @@ The request fails with an error starting `no supporting index for cursor order f
 
 - **Parents:** ["go.shinzo.cursor.index"]
 - **Scenarios:** ["shinzo::cursor::shinzo_a_page_reads_only_the_rows_it_needs_from_the_index"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Go-Ref:** "shinzo-develop 2a899b860; with `before`, Go checks the before row with a point get outside the scan (beforeCursorBoundarySurvives), which `indexFetches` does not count, while Rust's backward seek includes the before key and counts that row as scanned: the same reads, one more in the metric"
 
-`@explain(type: execute)` of a cursor query ordered on an indexed field reports `indexFetches` equal to the page size plus one probe row (for `hasNext`/`hasPrev`), or the whole collection when it is smaller: `first: 3` over five rows fetches 4 (for an `Int`, `String`, `Float`, `DateTime` or two-field composite index alike), `first: 5` over five rows inserted in descending order fetches 5 and returns them ascending, `last: 2` over three rows fetches 3, and `last: 2, before` the row aged 50 over ages 10…50 seeks backward from the cursor and fetches 3, returning [30, 40]. A cursor query with no `order` (`User(first: 3)`) does not use the index (`indexFetches: 0`).
+`@explain(type: execute)` of a cursor query ordered on an indexed field reports `indexFetches` equal to the page size plus one probe row (for `hasNext`/`hasPrev`), or the whole collection when it is smaller: `first: 3` over five rows fetches 4 (for an `Int`, `String`, `Float`, `DateTime` or two-field composite index alike), `first: 5` over five rows inserted in descending order fetches 5 and returns them ascending, `last: 2` over three rows fetches 3, and `last: 2, before` the row aged 50 over ages 10…50 seeks backward from the cursor, returns [30, 40] and fetches 4 on Rust (the before row included) and 3 on Go. The rows and `hasNext` are the same on both. A cursor query with no `order` (`User(first: 3)`) does not use the index (`indexFetches: 0`).
 
 # `go.shinzo.cursor.index.direction`: An index serves both directions
 
@@ -94,3 +94,47 @@ On `User @index(includes: [{field: "name"}, {field: "age"}])` with (Addo 25), (A
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 `_cursor { users: User(first: 2, order: {age: ASC}) { name age } _pageInfo { hasNext hasPrev } }` returns the rows under `_cursor.users` (Alice 25, Bob 30, `hasNext: true`, `hasPrev: false`). `User(first: 10, groupBy: [age]) { age }` over ages 25, 25, 35, 45 returns the groups `{age: 25}`, `{age: 35}`, `{age: 45}` (in any order) with `hasNext: false`, `hasPrev: false`.
+
+# `go.shinzo.cursor.forward.filter`: A filter applies before paging
+
+- **Parents:** ["go.shinzo.cursor.forward"]
+- **Scenarios:** ["shinzo::cursor::shinzo_a_filter_applies_before_paging", "shinzo::cursor::shinzo_an_unsorted_in_filter_keeps_the_order_without_a_cursor"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Go-Bug-Suspect:** "Go Shinzo returns a document once per repeated `_in` value: `_in: [55, 25, 45, 35, 25]` returns 25 twice. Rust looks each value up once and returns 25 once."
+
+`User(first: 2, filter: {age: {_geq: 40}}, order: {age: ASC})` over ages 15…75 returns [45, 55] then, with `after`, [65, 75] and `hasNext: false`; over ages 10…100 with `_geq: 80` it returns [80, 90] then [100]. With `filter: {age: {_in: [55, 25, 45, 35]}}` over ages 25…65 the pages are [25, 35] and [45, 55], so the cursor boundary holds even when the filter's values are unsorted, and 65 never appears.
+
+# `go.shinzo.cursor.token.encoding`: A token is unpadded base64url of `{"d": docID, "k": keys}`
+
+- **Parents:** ["go.shinzo.cursor.token"]
+- **Scenarios:** ["shinzo::cursor::shinzo_cursor_tokens_carry_their_rows_order_values"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "cursor token bytes: a token issued by a Go Shinzo node must decode on a Rust node and the reverse, so clients can page across either"
+
+A token is the JSON object `{"d":"<docID>","k":{<order field>: <value>, …}}`, encoded with base64url without padding (Go `base64.RawURLEncoding`), so it never contains `+`, `/` or `=`. It has no `o` member. `k` is omitted when there are no key values: an empty or absent key map decodes as no keys, and a non-empty one decodes to the same entries. A token from an older build that carries `"o":""` still decodes. Decoding returns exactly what was encoded: a 504-character docID (`"bae-"` plus 500 characters), key strings with Unicode (`Café 中文`), newlines, tabs and quotes, and numeric keys `25`, `3.14`, `0`, `-42.5` and `9007199254740991` all round-trip unchanged.
+
+# `go.shinzo.cursor.token.keys`: Returned tokens carry the order field values of their row
+
+- **Parents:** ["go.shinzo.cursor.token"]
+- **Scenarios:** ["shinzo::cursor::shinzo_cursor_tokens_carry_their_rows_order_values"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "the `k` map names each order field by its field name and holds its JSON value (Int as a JSON number, DateTime as an RFC 3339 string)"
+- **Go-Bug-Suspect:** "Go decodes `k` values as JSON float64 and converts back with int64(float) only for nillable Int and parses RFC 3339 only for nillable DateTime fields (internal/planner/scan.go buildCursorSeekKey): an Int beyond 2^53 resumes at the wrong index position, and a non-nillable Int!/DateTime! order field gets a float or string seek value. Untested in Go; write the right behaviour (exact values for every kind)."
+
+With User `{name: String, age: Int @index}` holding Alice 25, Bob 30, Carol 35, `User(first: 2, order: {age: ASC})` returns `startCursor` and `endCursor` as non-empty tokens with a non-empty `d` whose `k` holds `{"age": 25}` and `{"age": 30}`: the first and last rows actually returned, not the input cursor.
+
+# `go.shinzo.cursor.deleted_docs`: Deleted documents and cursors
+
+- **Parents:** ["go.shinzo.cursor"]
+- **Scenarios:** ["shinzo::cursor::shinzo_deleted_documents_leave_pages_but_keep_positions"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A deleted document never appears in a page, and a cursor whose row was deleted still marks a position. Over ages 25, 30, 35: deleting Bob (30) after taking his `endCursor` makes `first: 2, after` that cursor return [35] with `hasNext: false`, `hasPrev: true`; deleting Bob and Carol after taking Alice's cursor makes `first: 10, after` it return `[]`, `hasNext: false`, `hasPrev: true`, null cursors. Deleting Carol (35) from ages 25…45 makes `first: 5` return [25, 30, 40, 45] with `hasNext: false`; deleting Eve (45) after taking her `endCursor` then makes `last: 2, before` it return [30, 40] with `hasNext: false`, `hasPrev: true`. With `before`, `hasNext` is true only while the `before` row still exists at the position its token names: deleted, moved to another value, or filtered out, it gives `hasNext: false`.
+
+# `go.shinzo.cursor.explain`: Explain output of a cursor query
+
+- **Parents:** ["go.shinzo.cursor"]
+- **Scenarios:** ["shinzo::cursor::shinzo_a_cursor_query_explains_its_cursor_node", "shinzo::cursor::shinzo_a_cursor_query_explains_its_token"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Every explain type shows the plan `selectTopNode` → `cursorNode` → `selectNode` → `scanNode`. Simple explain gives `cursorNode` the attributes `first`, `after`, `last`, `before` and `cursorValue`: `User(first: 5, order: {age: ASC})` and `User(first: 3, after: null, …)` show `first: 5` (or `3`) and the other four `null`; `User(last: 2, …)` shows `last: 2` and `first`, `after`, `before` `null`. When a cursor is given, `after` (or `before`) shows the token and `cursorValue` is `{docID: <d>}` plus `keys: <k>` when the token has keys. Execute explain of `User(first: 2, order: {age: ASC}) { name }` over three rows reports `executionSuccess: true`, `sizeOfResult: 1`, `planExecutions: 2`, `cursorNode.iterations: 3`, `selectNode.iterations: 3`, `filterMatches: 3`, and `scanNode` `iterations: 3`, `docFetches: 3`, `fieldFetches: 6`, `indexFetches: 3`; with `first: 10` the iteration counts are 4 and the fetch counts are the same.
