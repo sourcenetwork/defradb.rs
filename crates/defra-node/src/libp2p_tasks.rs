@@ -189,7 +189,12 @@ where
                 .handle_transport_event_with_admission(transport_event, admission)
                 .await
             {
-                tracing::error!(error = %error, "error handling libp2p event");
+                if error.is_admission_refusal() {
+                    // Counted, and answered, kept or reported where it was refused.
+                    tracing::debug!(error = %error, "libp2p event refused at admission");
+                } else {
+                    tracing::error!(error = %error, "error handling libp2p event");
+                }
             }
             }
         })

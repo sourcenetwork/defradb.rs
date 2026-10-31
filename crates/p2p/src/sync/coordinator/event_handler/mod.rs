@@ -67,16 +67,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     fn rate_limited_error(peer_id: &PeerId) -> Error {
-        Error::AccessDenied {
+        Error::RateLimited {
             peer_id: peer_id.to_string(),
-            collection_id: "rate-limited".into(),
         }
     }
 
     fn saturated_error(peer_id: &PeerId) -> Error {
-        Error::AccessDenied {
+        Error::RequestWorkersSaturated {
             peer_id: peer_id.to_string(),
-            collection_id: "request-worker-saturated".into(),
         }
     }
 

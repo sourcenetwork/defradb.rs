@@ -3412,7 +3412,7 @@ async fn gossip_remains_rate_limited_when_bucket_is_empty() {
         .await;
 
     assert!(
-        matches!(&result, Err(Error::AccessDenied { .. })),
+        matches!(&result, Err(Error::RateLimited { .. })),
         "gossip should still be rate limited, got {:?}",
         result
     );
