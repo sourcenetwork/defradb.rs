@@ -146,3 +146,6 @@ lean_lib ShinzoBatch where
 
 @[default_target]
 lean_lib CursorParity where
+
+@[default_target]
+lean_lib BatchBlockSigning where

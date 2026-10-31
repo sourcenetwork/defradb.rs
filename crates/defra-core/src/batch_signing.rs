@@ -260,6 +260,12 @@ pub fn batch_collect_cid(session_key: &str, cid: Cid, kind: BatchCid) {
     }
 }
 
+/// Whether a session named `session_key` is collecting: started and not yet
+/// taken. Go Shinzo's "a collector is in the context".
+pub fn batch_active(session_key: &str) -> bool {
+    collectors().get(session_key).is_some()
+}
+
 /// Remove and return all collected CIDs for `session_key`.
 pub fn batch_take_cids(session_key: &str) -> Option<Vec<Cid>> {
     batch_take(session_key).map(|(_, cids)| cids)
