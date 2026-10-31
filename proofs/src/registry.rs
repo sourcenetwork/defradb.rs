@@ -113,7 +113,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership, pause and retry the same head on capacity hints within a fixed allowance, stop scheduling after a stall, disconnect, expired allowance or cancellation, bound late sends and timeouts by the send slots, drain all started tasks and succeed only when every document is acknowledged",
+        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership, pause and retry the same head on capacity hints within its own first-send deadline, stop scheduling after a stall, disconnect, expired head deadline or cancellation, bound late sends and timeouts by the send slots, drain all started tasks and succeed only when every document is acknowledged",
         axis: Tla,
         anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id; crates/db/src/merge/push_docs/stop.rs SelectedPushStop; crates/p2p-adapter/src/pooled_doc_pusher.rs push_existing_docs_by_id",
         model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",

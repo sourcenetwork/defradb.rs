@@ -82,9 +82,10 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
     /// ([`db::merge::push_existing_docs_by_id`]): no subscription filter,
     /// retry marker or retry schedule applies or changes, and success means
     /// the peer acknowledged every selected document's current heads in this
-    /// call. Capacity hints pause and retry the same head within a fixed allowance.
-    /// `stop` is raised by the first stall, lost connection, exhausted pause
-    /// allowance, the caller, or dropping the call; it
+    /// call. Each head gets one deadline from its first actual send after initial
+    /// pacing; retries and capacity pauses spend it, and a fresh ACK advances to a
+    /// new head and deadline. `stop` is raised by the first stall, lost connection,
+    /// expired head deadline, the caller, or dropping the call; it
     /// ends scheduling while started sends drain on their own deadline.
     /// Default implementations report the operation as unsupported.
     async fn push_existing_docs_by_id(

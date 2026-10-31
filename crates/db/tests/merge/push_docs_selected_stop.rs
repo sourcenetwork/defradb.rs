@@ -1,4 +1,4 @@
-//! A selected push retries receiver pauses and stops after a stall, lost connection, expired pause allowance
+//! A selected push retries receiver pauses and stops after a stall, lost connection, expired head deadline
 //! or caller stop, bounded by the work already started
 //! (`SelectedPushIsolation.tla`, `DocumentPush.lean` `serialRun`).
 
@@ -371,7 +371,7 @@ pub(super) async fn exercise_pause_budget_case(stops: bool, ok: bool) {
     );
     assert!(
         started.elapsed() < Duration::from_secs(1),
-        "pause retries must exhaust their fixed budget"
+        "same-head pause retries must exhaust their fixed deadline"
     );
     assert!(
         transport.arrivals().len() > 1,
@@ -518,36 +518,123 @@ pub(super) async fn exercise_stop_case(outcome: &str, stops: bool, sends: usize,
 }
 
 #[test]
-fn acknowledgements_do_not_reset_the_shared_pause_allowance() {
+fn fresh_heads_receive_fresh_deadlines() {
+    workers::block_on(exercise_head_budget_case(3, 100, 60, true)).unwrap();
+}
+
+pub(super) async fn exercise_head_budget_case(
+    count: usize,
+    budget_ms: u64,
+    pause_ms: u64,
+    ok: bool,
+) {
+    let fixture = Fixture::new(count, 0).await;
+    let (transport, received) = fixture.receiver(Some(Arc::new(move |index| {
+        Box::pin(async move {
+            if index % 2 == 0 {
+                let mut reply = pause_hint();
+                reply.retry_after_ms = Some(pause_ms);
+                Some(Ok(reply))
+            } else {
+                None
+            }
+        })
+    })));
+    let budget = Duration::from_millis(budget_ms);
+    let started = Instant::now();
+    let result = fixture
+        .push(
+            &transport,
+            ReplayPushConfig {
+                max_concurrent_document_tasks: 1,
+                max_concurrent_outbound_pushes: 1,
+                send_timeout: budget,
+                ..Default::default()
+            },
+            &SelectedPushStop::new(),
+        )
+        .await;
+    assert_eq!(result.is_ok(), ok, "{result:?}");
+    assert!(
+        started.elapsed() > budget,
+        "the whole selection must outlive one head deadline"
+    );
+    assert_eq!(transport.arrivals().len(), count * 2);
+    assert_eq!(fixture.selected_attempts(&received).len(), count * 2);
+    assert_eq!(fixture.acknowledged().await, count);
+    fixture.assert_subscription_untouched().await;
+}
+
+#[test]
+fn a_healthy_large_selection_can_outlive_thirty_seconds_with_capacity_pauses() {
     workers::block_on(async {
-        let fixture = Fixture::new(3, 0).await;
-        let (transport, _) = fixture.receiver(Some(Arc::new(|index| {
+        let fixture = Fixture::new(2200, 1).await;
+        let (transport, received) = fixture.receiver(Some(Arc::new(|index| {
             Box::pin(async move {
-                if index == 0 || index == 2 {
+                if index % 51 == 0 {
                     let mut reply = pause_hint();
-                    reply.retry_after_ms = Some(20);
+                    reply.retry_after_ms = Some(1);
                     Some(Ok(reply))
                 } else {
                     None
                 }
             })
         })));
-        let error = fixture
+        let config = ReplayPushConfig::default();
+        let head_deadline = config.send_timeout;
+        let started = Instant::now();
+        fixture
+            .push(&transport, config, &SelectedPushStop::new())
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() > head_deadline,
+            "native pacing must cross one head deadline"
+        );
+        assert_eq!(fixture.acknowledged().await, 2200);
+        let sent = fixture.selected_attempts(&received);
+        assert_eq!(sent.iter().collect::<RapidHashSet<_>>().len(), 2200);
+        assert!(
+            sent.len() > 2200,
+            "the receiver must exercise transient capacity"
+        );
+        fixture.assert_subscription_untouched().await;
+    })
+    .unwrap();
+}
+
+#[test]
+fn first_send_time_counts_toward_the_same_head_deadline() {
+    workers::block_on(async {
+        let fixture = Fixture::new(1, 0).await;
+        let (transport, _) = fixture.receiver(Some(Arc::new(|index| {
+            Box::pin(async move {
+                if index == 0 {
+                    edge::testing::edge().sleep(Duration::from_millis(50)).await;
+                    let mut reply = pause_hint();
+                    reply.retry_after_ms = Some(50);
+                    Some(Ok(reply))
+                } else {
+                    None
+                }
+            })
+        })));
+        let result = fixture
             .push(
                 &transport,
                 ReplayPushConfig {
-                    max_concurrent_document_tasks: 1,
-                    max_concurrent_outbound_pushes: 1,
-                    send_timeout: Duration::from_millis(30),
+                    send_timeout: Duration::from_millis(80),
                     ..Default::default()
                 },
                 &SelectedPushStop::new(),
             )
-            .await
-            .unwrap_err();
-        assert!(error.contains("pause exceeded"), "{error}");
-        assert_eq!(fixture.acknowledged().await, 1);
-        assert_eq!(transport.arrivals().len(), 3);
+            .await;
+        assert!(
+            result.is_err(),
+            "first send plus its pause must use one deadline"
+        );
+        assert_eq!(fixture.acknowledged().await, 0);
+        assert_eq!(transport.arrivals().len(), 1);
         fixture.assert_subscription_untouched().await;
     })
     .unwrap();

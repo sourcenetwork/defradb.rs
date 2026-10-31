@@ -13,22 +13,39 @@ use web_time::Instant;
 use super::stop::{reply_requests_pause, SelectedPushStop};
 use crate::merge::push_docs_replay::{ReplayPushGate, ReplayPushSendError};
 
-/// The first pause starts a fixed allowance, shared across this selection's
-/// tasks. More hints or acknowledgements never extend it. Ordinary sends keep
-/// their existing per-send deadline when a receiver has not asked to pause.
-pub(super) struct PauseBudget {
+/// One current head's deadline starts at its first actual send, after initial
+/// pacing and slot admission. Every retry and receiver pause spends the same
+/// allowance. A fresh acknowledged head gives the next head its own deadline.
+pub(super) struct HeadDeadline {
     started: OnceCell<Instant>,
     within: Duration,
     network: Network,
 }
 
-impl PauseBudget {
+impl HeadDeadline {
     pub(super) fn new(within: Duration, network: Network) -> Self {
         Self {
             started: OnceCell::new(),
             within: within.max(Duration::from_millis(1)),
             network,
         }
+    }
+
+    fn start(&self) {
+        self.started.get_or_init_racy(Instant::now);
+    }
+
+    fn remaining(&self) -> Result<Option<Duration>, ReplayPushSendError> {
+        let Some(started) = self.started.get() else {
+            return Ok(None);
+        };
+        self.within
+            .checked_sub(started.elapsed())
+            .filter(|left| !left.is_zero())
+            .map(Some)
+            .ok_or(ReplayPushSendError::HeadTimeout {
+                timeout: self.within,
+            })
     }
 
     async fn wait(
@@ -39,38 +56,25 @@ impl PauseBudget {
         if stop.is_stopped() {
             return Err(ReplayPushSendError::Stopped);
         }
-        let started = self.started.get_or_init_racy(Instant::now);
-        let Some(remaining) = self
-            .within
-            .checked_sub(started.elapsed())
-            .filter(|left| !left.is_zero())
-        else {
-            return Err(ReplayPushSendError::PauseTimeout {
-                timeout: self.within,
-            });
-        };
+        let delay = self.remaining()?.map_or(delay, |left| delay.min(left));
         let cancelled = stop.cancelled();
-        let waiting = self.network.sleep(delay.min(remaining));
+        let waiting = self.network.sleep(delay);
         futures::pin_mut!(cancelled, waiting);
         if matches!(select(cancelled, waiting).await, Either::Left(_)) {
             return Err(ReplayPushSendError::Stopped);
         }
-        if started.elapsed() >= self.within {
-            return Err(ReplayPushSendError::PauseTimeout {
-                timeout: self.within,
-            });
-        }
+        self.remaining()?;
         Ok(())
     }
 }
 
 /// Retry only an explicit receiver pause, sending this same still-unacknowledged
-/// head. The gate's peer-wide pause paces every task, and the fixed budget bounds
-/// a receiver that keeps nacking without inventing a continuous retry marker.
+/// head. The gate's peer-wide pause paces every task. Only this head's first
+/// send starts its fixed deadline, without inventing a continuous retry marker.
 pub(super) async fn send<T>(
     transport: &T,
     gate: &ReplayPushGate,
-    budget: &PauseBudget,
+    deadline: &HeadDeadline,
     stop: &SelectedPushStop,
     peer: &PeerId,
     request: &PushLogRequest,
@@ -82,19 +86,26 @@ where
         if stop.is_stopped() {
             return Err(ReplayPushSendError::Stopped);
         }
-        let reply = gate
-            .send_pushlog_with_admission(
-                peer,
-                async {
-                    if stop.is_stopped() {
-                        Err(ReplayPushSendError::Stopped)
-                    } else {
-                        Ok(())
-                    }
-                },
-                transport.send_two_stream_request(peer, request.clone()),
-            )
-            .await;
+        let sending = gate.send_pushlog_with_admission(
+            peer,
+            async {
+                if stop.is_stopped() {
+                    Err(ReplayPushSendError::Stopped)
+                } else {
+                    deadline.start();
+                    Ok(())
+                }
+            },
+            transport.send_two_stream_request(peer, request.clone()),
+        );
+        let reply = match deadline.remaining()? {
+            None => sending.await,
+            Some(left) => deadline.network.timeout(left, sending).await.map_err(|_| {
+                ReplayPushSendError::HeadTimeout {
+                    timeout: deadline.within,
+                }
+            })?,
+        };
         let delay = match reply {
             Ok(reply) if reply_requests_pause(&reply) => {
                 let delay = reply
@@ -106,6 +117,6 @@ where
             Err(ReplayPushSendError::Backpressure { retry_after }) => retry_after,
             result => return result,
         };
-        budget.wait(delay, stop).await?;
+        deadline.wait(delay, stop).await?;
     }
 }
