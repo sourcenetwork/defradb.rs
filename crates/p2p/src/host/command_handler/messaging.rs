@@ -301,6 +301,13 @@ impl<S: Store> P2PHost<S> {
         root_cid: Cid,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
+        #[cfg(feature = "test-utils")]
+        if !self.car_requests {
+            let _ = response.send(Err(crate::error::Error::Transport(
+                "CAR requests are off".to_string(),
+            )));
+            return;
+        }
         if self.shinzo.is_some() {
             // A CAR that came inline with the update answers without asking.
             let Some(response) = self.answer_from_inline_car(peer_id, root_cid, response) else {

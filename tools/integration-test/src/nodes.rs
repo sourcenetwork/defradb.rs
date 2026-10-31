@@ -38,6 +38,8 @@ pub struct NodeSpec {
     pub retention: Option<crate::actions::RetentionSpec>,
     /// The node's replication filter cutoff, if any.
     pub refuse_at_or_below: Option<crate::actions::CutoffSpec>,
+    /// The node sends no CAR requests.
+    pub no_car_requests: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -59,13 +61,14 @@ impl TestNode {
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
         // A node that speaks Go Shinzo's wire, is pinned to Rust, or has a
-        // retention floor or a receive filter (Rust options) is a Rust node
+        // retention floor, a receive filter or no CAR requests (Rust options) is a Rust node
         // under every client; the Go clients reach it over HTTP, as rust-http
         // does.
         let rust = spec.shinzo_wire
             || spec.rust
             || spec.retention.is_some()
-            || spec.refuse_at_or_below.is_some();
+            || spec.refuse_at_or_below.is_some()
+            || spec.no_car_requests;
         let client_type = match client_type {
             _ if spec.go_shinzo => ClientType::GoShinzo,
             ClientType::GoHttp | ClientType::GoShinzo if rust => ClientType::RustHttp,
@@ -236,6 +239,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
             },
         );
         builder = builder.with_retention(db::retention::StaticRetentionRule::new(floors));
+    }
+    if spec.no_car_requests {
+        builder = builder.without_car_requests();
     }
     if let Some(cutoff) = &spec.refuse_at_or_below {
         builder = builder.with_replication_filter(Arc::new(Cutoff(cutoff.clone())));

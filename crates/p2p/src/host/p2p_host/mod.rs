@@ -338,9 +338,21 @@ pub struct P2PHost<S: Store> {
     pub(crate) shinzo_inline: crate::sync::shinzo_batch::InlineCars,
     /// This node's collection-topic updates, batched as Go Shinzo does.
     pub(crate) shinzo_batcher: crate::sync::shinzo_batch::ShinzoBatcher,
+    /// Send rooted CAR requests; see [`Self::without_car_requests`].
+    #[cfg(feature = "test-utils")]
+    pub(crate) car_requests: bool,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
+    /// Send no rooted CAR requests: each fails at once, so every fetch walks
+    /// the DAG block by block, as with a peer that predates the exchange.
+    /// Tests only; call it before the host runs.
+    #[cfg(feature = "test-utils")]
+    pub fn without_car_requests(mut self) -> Self {
+        self.car_requests = false;
+        self
+    }
+
     /// Create a new P2P host with a generated identity and the given blockstore.
     ///
     /// # Arguments
@@ -693,6 +705,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             wire_stats,
             shinzo_inline: Default::default(),
             shinzo_batcher: Default::default(),
+            #[cfg(feature = "test-utils")]
+            car_requests: true,
         };
 
         Ok((host, handle, event_rx, replicators))

@@ -60,6 +60,8 @@ wasmtime-runtime = [
 # and the underlying `telemetry/otlp` gate. Off by default — embedded users
 # who want OTel must opt in.
 otel = ["telemetry/otlp"]
+# Test-only switches, such as a libp2p node that sends no CAR requests.
+test-utils = ["libp2p", "p2p/test-utils"]
 
 [lib]
 bench = false
