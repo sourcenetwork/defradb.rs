@@ -64,7 +64,14 @@ pub unsafe fn with_node_options(
     options: &NodeInitOptions,
 ) -> Result<defra_node::NodeBuilder, String> {
     if options.shinzo_wire != 0 {
-        builder = builder.with_shinzo_wire();
+        #[cfg(feature = "libp2p")]
+        {
+            builder = builder.with_shinzo_wire();
+        }
+        #[cfg(not(feature = "libp2p"))]
+        return Err(
+            "shinzo_wire needs the libp2p transport, which this build leaves out".to_owned(),
+        );
     }
     if let Some(json) = c_str_to_string(options.retention_json).filter(|json| !json.is_empty()) {
         builder = builder.with_retention(retention_rule(&json)?);
