@@ -16,6 +16,7 @@ mod head_provider;
 mod head_publication;
 mod immutable_block;
 mod json_merge;
+mod kv_snapshot;
 mod long_history;
 mod long_history_authorization;
 mod long_history_encryption;

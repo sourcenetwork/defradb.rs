@@ -68,6 +68,25 @@ impl State {
         self.nodes.0.get(name)
     }
 
+    /// Whether node `name` is a Go node: a Go Shinzo node of a mixed cluster,
+    /// or any node but a Rust one speaking Go Shinzo's wire under a Go client.
+    pub fn is_go_node(&self, name: &str) -> bool {
+        self.slot(name).is_some_and(|slot| {
+            slot.spec.go_shinzo
+                || (!slot.spec.shinzo_wire
+                    && matches!(
+                        self.client_type,
+                        Some(ClientType::GoHttp | ClientType::GoShinzo)
+                    ))
+        })
+    }
+
+    /// The data directory of node `name`, when it keeps its data on disk.
+    pub fn node_dir(&self, name: &str) -> Option<std::path::PathBuf> {
+        self.slot(name)
+            .and_then(|slot| slot.spec.dir.as_ref().map(|dir| dir.path().to_owned()))
+    }
+
     fn client_type(&self) -> ClientType {
         self.client_type
             .expect("no client type: the Connect action did not run")

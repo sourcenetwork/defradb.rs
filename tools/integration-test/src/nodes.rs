@@ -133,6 +133,12 @@ impl TestNode {
         }
     }
 
+    /// The Rust node behind any client, for an operation only its core
+    /// offers; `None` for a Go node.
+    pub fn core(&self) -> Option<Arc<Node>> {
+        self.node.clone().or_else(|| self.embedded.clone())
+    }
+
     /// Stop the node through the core's shutdown; a Go node is stopped when
     /// it is dropped.
     pub async fn stop(&self) {

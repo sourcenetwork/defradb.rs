@@ -583,7 +583,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/defra-shinzo
-          key: go-shinzo-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-shinzo-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs', 'tools/go-shinzo-kv/main.go') }}
       - name: Prepare Go Shinzo binary
         if: matrix.suite == 'go-shinzo'
         run: |
@@ -593,14 +593,20 @@ jobs:
           test -n "$SHINZO_BRANCH"
           CACHE_DIR="$HOME/.cache/defra-shinzo/${SHINZO_REF}"
           mkdir -p "$CACHE_DIR"
-          if [ ! -x "$CACHE_DIR/defradb" ]; then
+          # kvsnap runs Go Shinzo's KV snapshot export and import, which Go
+          # reaches only in-process; it is built inside the pinned checkout.
+          if [ ! -x "$CACHE_DIR/defradb" ] || [ ! -x "$CACHE_DIR/kvsnap" ]; then
             WORK_DIR="$RUNNER_TEMP/defradb-shinzo-${SHINZO_REF}"
             git clone --filter=blob:none --branch "$SHINZO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
             git -C "$WORK_DIR" checkout "$SHINZO_REF"
             make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-            chmod +x "$CACHE_DIR/defradb"
+            mkdir -p "$WORK_DIR/cmd/kvsnap"
+            cp tools/go-shinzo-kv/main.go "$WORK_DIR/cmd/kvsnap/main.go"
+            (cd "$WORK_DIR" && go build -o "$CACHE_DIR/kvsnap" ./cmd/kvsnap)
+            chmod +x "$CACHE_DIR/defradb" "$CACHE_DIR/kvsnap"
           fi
           "$CACHE_DIR/defradb" version --format json
+          echo "DEFRA_GO_SHINZO_KVSNAP=$CACHE_DIR/kvsnap" >> "$GITHUB_ENV"
           echo "DEFRA_GO_SHINZO_BINARY=$CACHE_DIR/defradb" >> "$GITHUB_ENV"
 
           # The drift check finds `defradb` on the PATH. This one is Go Shinzo,
@@ -657,7 +663,7 @@ jobs:
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
-          --test matchers --test export --test issue1211_repro --test issue1294_bytes_json
+          --test matchers --test export --test issue1211_repro --test issue1294_bytes_json --test shinzo
           -- --skip ::go_ --skip shinzo_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
@@ -698,14 +704,14 @@ jobs:
       - name: Run mixed Rust and Go Shinzo clusters
         if: matrix.suite == 'go-shinzo'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p --test shinzo
           -- shinzo_
       - name: Run the go-shinzo client
         if: matrix.suite == 'go-shinzo'
         env:
           DEFRA_CLIENT: go-shinzo
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p --test shinzo
           -- shinzo_
       - name: Check Go Shinzo for drift from Go develop (document IDs, block CIDs, P2P sync)
         if: matrix.suite == 'go-shinzo'

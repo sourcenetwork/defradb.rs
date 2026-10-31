@@ -24,6 +24,7 @@ struct MergeRetryAttempt<S: Store, B: blockstore::Blockstore> {
     authorization: Option<ExplicitReplayAuthorization>,
     is_recovery: bool,
     is_schema_block: bool,
+    is_restore: bool,
     history_rejection: Option<Box<super::HistoryRejection>>,
     /// Whether an earlier attempt of this retry operation ran; each one
     /// after the first means that one was abandoned to a conflict.
@@ -80,6 +81,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeRetryAttempt<
             verified_creator: None,
             is_recovery: self.is_recovery,
             is_schema_block: self.is_schema_block,
+            is_restore: self.is_restore,
         };
         let result = if let Some(rejection) = &self.history_rejection {
             self.handler
@@ -277,6 +279,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             verified_creator: None,
             is_recovery: metadata.is_recovery,
             is_schema_block: metadata.is_schema_block,
+            is_restore: metadata.is_restore,
         };
         let kms_context = Self::kms_request_context(Some(&retry_metadata));
         if let Ok(block) = Block::from_dag_cbor(block_data) {
@@ -312,6 +315,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 authorization: metadata.explicit_replay_authorization.clone(),
                 is_recovery: metadata.is_recovery,
                 is_schema_block: metadata.is_schema_block,
+                is_restore: metadata.is_restore,
                 history_rejection: history_rejection.take(),
                 attempted: false,
             };
