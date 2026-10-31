@@ -13,11 +13,13 @@ pub struct ComputedBlocks {
     pub head_write: storage::merge::head_set::Write,
     pub doc_short_id: u64,
     pub block_result: BlockResult,
+    /// The blocks a batch signing session collects once the write commits:
+    /// every block that starts a field's history, and the composite.
+    pub batch_signed: Vec<Cid>,
 }
 
 /// Compute all document blocks without any storage access.
 ///
-/// This is the CREATE-only path extracted from `write_document_blocks()`.
 /// For creates: priority is always 1, no headstore reads, no prev heads.
 /// The entire computation is a pure function of the inputs.
 ///
@@ -330,11 +332,14 @@ pub(crate) fn compute_document_blocks_with_inputs(
         vec![],
     ));
 
+    let mut batch_signed = field_cids.clone();
+    batch_signed.push(composite_cid);
     Ok(ComputedBlocks {
         blockstore_entries,
         headstore_entries,
         head_write,
         doc_short_id: identity.doc_short_id,
+        batch_signed,
         block_result: BlockResult {
             cid: composite_cid,
             block: composite_bytes,
@@ -371,12 +376,7 @@ pub async fn insert_computed_blocks(
     collect_on_commit(
         blockstore,
         batch_session,
-        blocks
-            .block_result
-            .field_cids
-            .iter()
-            .copied()
-            .chain([blocks.block_result.cid]),
+        blocks.batch_signed.iter().copied(),
     )
     .await?;
     Ok(())

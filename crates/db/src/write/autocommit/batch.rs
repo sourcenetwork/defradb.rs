@@ -9,19 +9,18 @@ use rapidhash::RapidHashSet;
 use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 
-use super::helpers::{
-    ensure_collection_is_active, register_block_doc_id_mappings, write_branchable_collection_block,
-    write_local_update,
-};
+use super::helpers::{ensure_collection_is_active, write_branchable_collection_block};
+use crate::block::builder::write_delete_block_with_inputs;
 use crate::block::builder::DocRef;
-use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::database::DB;
 use crate::event::emission::register_update_event_callback;
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
-use crate::write::create::{self as pipeline, CreateStores};
+use crate::write::create as pipeline;
 use crate::write::prepare::prepared_identity;
+use crate::write::update as update_pipeline;
+use crate::write::WriteStores;
 use datastore::BasicTxn;
 use defra_core::RequestContext;
 
@@ -416,7 +415,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             let (blockstore, headstore) = self.block_and_head_stores().await?;
             pipeline::persist(
                 &self.db,
-                &CreateStores {
+                &WriteStores {
                     datastore: &datastore,
                     systemstore: &systemstore,
                     blockstore: &blockstore,
@@ -483,7 +482,6 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
         let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
 
         let doc_id = doc
@@ -521,96 +519,62 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             return Ok(UpdateResult::new(doc, 0));
         }
 
-        self.db
-            .validate_downsample_write(
-                &datastore,
-                &systemstore,
-                &collection,
-                &doc,
-                Some(&modified_fields),
-            )
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
-        write_local_update(
-            &datastore,
-            &collection,
-            &mut doc,
+        let (blockstore, headstore) = self.block_and_head_stores().await?;
+        let stores = WriteStores {
+            datastore: &datastore,
+            systemstore: &systemstore,
+            blockstore: &blockstore,
+            headstore: &headstore,
+        };
+        let doc_id_text = canonical_doc_id.to_string();
+        let target = update_pipeline::Target {
+            collection_name,
+            collection: &collection,
             doc_short_id,
+            doc_id: &doc_id_text,
+        };
+        let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        update_pipeline::write_local(
+            &self.db,
+            &stores,
+            &target,
+            &mut doc,
             &index_manager,
             &mut modified_fields,
             &heads,
             self.update_run,
-            &embedding_config,
             &prepared_inputs,
         )
         .await?;
-
-        let short_id = collection.resolved_root_id();
-        let enc_config = context.encryption();
-        let sign_config = context.signing();
-
-        {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
+        // With a memo the builder asks it for the keys, so they are minted
+        // between attempts; only a batch over a lent transaction mints here.
+        if self.prepared_inputs.is_none() {
             crate::write::prepare::prepare_keys_with_stores(
                 &self.db,
                 &mut doc,
-                DocRef::new(short_id, doc_short_id),
+                DocRef::new(collection.resolved_root_id(), doc_short_id),
                 Some(&modified_fields),
-                enc_config,
+                context.encryption(),
                 Some((&blockstore, &headstore)),
                 None,
             )
             .await?;
         }
-
-        let (doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks_with_inputs(
-                &blockstore,
-                &headstore,
-                &doc,
-                collection.schema(),
-                DocRef::new(short_id, doc_short_id),
-                Some(&modified_fields),
-                enc_config,
-                sign_config,
-                context.batch_session(),
-                self.db.kms().as_ref(),
-                self.prepared_inputs.as_ref(),
-                Some(heads),
-            )
-            .await
-            .map_err(|error| {
-                error.into_query_error_in(&format!(
-                    "failed to write document blocks for update on collection {collection_name}"
-                ))
-            })?;
-
-            register_block_doc_id_mappings(
-                &systemstore,
-                &block_result,
-                &canonical_doc_id.to_string(),
-            )
-            .await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
-                collection_name,
-                &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                doc_short_id,
-                context,
-                self.prepared_inputs.as_ref(),
-            )
-            .await?;
-
-            (block_result.cid, block_result.block, col_block_data)
-        };
+        let update_pipeline::Updated {
+            cid: doc_cid,
+            block: doc_block,
+            collection_block: col_block_data,
+        } = update_pipeline::write_blocks(
+            &self.db,
+            &stores,
+            &target,
+            &doc,
+            &modified_fields,
+            heads,
+            context,
+            self.prepared_inputs.as_ref(),
+        )
+        .await?;
 
         if let Some(doc_id) = doc.id() {
             self.register_update_callback(

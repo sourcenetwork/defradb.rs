@@ -1,6 +1,10 @@
 use super::push_docs_replay::ConnectedPeerTransport;
+use crate::common::counting_store::CountingStore;
 use crate::common::failing_write_store::FailingWriteStore;
-use db::merge::{document_heads_acknowledged, push_existing_docs_by_id, PushExistingDocsSeOptions};
+use db::merge::{
+    document_heads_acknowledged, push_existing_docs_by_id, PushExistingDocsSeOptions,
+    SelectedPushStop,
+};
 use db::{AutoCommitMutator, DB};
 use document::Document;
 use p2p::transport::PeerId;
@@ -73,6 +77,7 @@ where
         Default::default(),
         &p2p::EqOnlyFilterMatcher,
         &p2p::sync::HeadHintCarAuthority::default(),
+        &SelectedPushStop::new(),
     )
     .await
 }
@@ -87,6 +92,37 @@ where
         .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
         .await
         .unwrap();
+}
+
+#[test]
+fn selected_push_does_not_scan_unselected_documents() {
+    workers::block_on(async {
+        let store = Arc::new(CountingStore::new(
+            storage::RegolithStore::in_memory().unwrap(),
+        ));
+        let (db, docs, peer) = fixture(store.clone()).await;
+        let mutator = AutoCommitMutator::new(db.clone());
+        let schema = db.get_collection("Note").unwrap().unwrap().schema_arc();
+        for index in 0..64 {
+            let mut document = Document::new(schema.clone());
+            document.set("body", format!("unselected-{index}")).unwrap();
+            mutator.create("Note", document).await.unwrap();
+        }
+        store.take_scan_prefixes();
+        let (sent, received) = regolith::sync::bounded(8);
+        let transport =
+            ConnectedPeerTransport::new("sender", peer.as_str()).with_replies(true, sent);
+        select(&db, &transport, &peer, &docs[..1], &Default::default())
+            .await
+            .unwrap();
+        assert!(received.try_recv().is_some());
+        let scans = store.take_scan_prefixes();
+        assert!(
+            scans.iter().all(|prefix| !prefix.ends_with(b"/d/notes/")),
+            "selected replay must resolve its requested IDs without scanning the collection: {scans:?}"
+        );
+    })
+    .unwrap();
 }
 
 #[test]

@@ -113,9 +113,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership and drain all started tasks",
+        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership, stop scheduling after a stall, disconnect, hint or cancellation, bound late sends and timeouts by the send slots, drain all started tasks and succeed only when every document is acknowledged",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id; crates/db/src/merge/push_docs/stop.rs SelectedPushStop; crates/p2p-adapter/src/pooled_doc_pusher.rs push_existing_docs_by_id",
         model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -129,9 +129,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation",
+        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation / no_progress_stops / stopped_admits_nothing / stopped_selection_fails / selected_success_needs_every_acknowledgement",
         axis: Lean,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs/stop.rs; crates/db/tests/merge/push_docs_selection.rs",
         model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
         tiers: &[Boundary],
     },
@@ -253,6 +253,22 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected",
         model_ref: "PeerConnection.lean",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "Reverse RPC reuses inbound and legacy paths; stale eviction cannot hide replacements from disconnect",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
+        model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal and stable-id eviction",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; endpoint_streams.rs handle_incoming",
+        model_ref: "PeerConnection.SharedRpc",
         tiers: &[Contract],
     },
     Property {
@@ -1037,6 +1053,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // An embedded node checks its config before it opens anything, hands
+        // its retry ladder to every retry site of either transport, stops a
+        // host whose listen failed, enables NAC owned by the node identity,
+        // and dials bootstrap peers only once NAC is in place, logging a peer
+        // that does not answer.
+        family: "Embedded node startup",
+        name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
+        axis: Tla,
+        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Embedded node startup",
+        name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
+        model_ref: "RetrySchedule (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Inbound stream admission",
         name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
         axis: Tla,
@@ -1109,11 +1146,25 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        family: "Document create pipeline",
+        // Dropping an index while its backfill runs: the drop's commit takes
+        // the backfill record with it, a backfill failure is recorded only
+        // while the index is defined, entries go in pages after the
+        // definition commits, the drop retires the index's id so a new
+        // index never shares its keys, and a restart finishes an unfinished
+        // drop.
+        family: "Index drop during backfill",
+        name: "INV_NoRecordForGoneIndex / INV_NoOrphanEntries / INV_NewIndexIntact / LIVE_DropFinishes",
+        axis: Tla,
+        anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/db/src/index/manager/mod.rs index_id_floor; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
+        model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,
-        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity",
-        model_ref: "MC_CreatePipeline_{Green,Red_*}.cfg",
+        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity; crates/db/src/write/update.rs write_local, write_blocks; crates/db/src/write/autocommit/update.rs run_update_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::update_as; crates/db/src/block/builder/write.rs build_document_blocks, encrypt_with_new_key",
+        model_ref: "MC_WritePipeline_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {

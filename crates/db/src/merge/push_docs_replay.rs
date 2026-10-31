@@ -197,10 +197,16 @@ impl Default for ReplayPushConfig {
 
 #[derive(Debug)]
 pub enum ReplayPushSendError {
-    Backpressure { retry_after: Duration },
+    Backpressure {
+        retry_after: Duration,
+    },
     Persistence(String),
     SemaphoreClosed,
-    Timeout { timeout: Duration },
+    /// The call's [`SelectedPushStop`](super::push_docs::SelectedPushStop) was raised before this send.
+    Stopped,
+    Timeout {
+        timeout: Duration,
+    },
     Transport(p2p::Error),
 }
 
@@ -220,6 +226,7 @@ impl fmt::Display for ReplayPushSendError {
                 retry_after.as_millis()
             ),
             Self::SemaphoreClosed => f.write_str("replay send semaphore closed"),
+            Self::Stopped => f.write_str("not sent: the selected push stopped"),
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
             }

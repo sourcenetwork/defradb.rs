@@ -6,13 +6,19 @@ use bytes::Bytes;
 use p2p::message::PushLogRequest;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
-use storage::corekv::{IterOptions, Reader, Store};
+use storage::corekv::{Reader, Store};
+
+mod selection;
+mod stop;
+
+pub use stop::{SelectedPushStop, StopOnDrop};
 
 use crate::database::DB;
 use crate::merge::push_docs_common::load_latest_composite_head_cids;
 use crate::merge::push_docs_creator::resolve_push_creator;
 use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
+    ReplayPushSendError,
 };
 
 enum PushOwnership {
@@ -127,9 +133,20 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 }
 
 /// Push an explicit `(collection_name, doc_id)` set without adding a subscription.
-/// Success requires acknowledgements for every selected document's unchanged
-/// heads, independently of continuous replication to the same peer.
-/// Subscription filters and retry deadlines do not apply to explicit selections.
+///
+/// Every call sends every selected document's current heads and succeeds only
+/// when the peer acknowledged all of them, unchanged, in this call, independently
+/// of continuous replication to the same peer. Acknowledgements are recorded as
+/// they arrive; an earlier call's never lets a document be skipped. Subscription
+/// filters, retry markers and retry deadlines neither apply nor change.
+///
+/// Pacing, slot counts and the per-send deadline come from `replay_config`. The
+/// first send deadline, lost connection or receiver pause hint raises `stop`, as
+/// does dropping this future or the caller raising it: no further document
+/// starts and no started task sends again. Sends already on the wire end on
+/// their own deadline and are joined, and what they acknowledge is kept. A
+/// stopped or partial call returns an error naming its cause and the
+/// unacknowledged documents.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -142,6 +159,7 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
+    stop: &SelectedPushStop,
 ) -> Result<(), String> {
     let collections = unique_collection_names(docs);
     push_existing_docs_with_config_and_allowlist(
@@ -156,6 +174,7 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
         matcher,
         car_authority,
         Some(docs),
+        stop,
     )
     .await
 }
@@ -186,13 +205,14 @@ pub async fn push_existing_docs_with_config<S: Store + 'static, T: P2PTransport>
         matcher,
         car_authority,
         None,
+        &SelectedPushStop::new(),
     )
     .await
 }
 
 /// Push existing documents, optionally restricted to an allowlist of
 /// `(collection_name, doc_id)` pairs. `None` scans every document in
-/// `collections`.
+/// `collections`. Only an allowlisted (selected) call raises or reads `stop`.
 #[allow(clippy::too_many_arguments)]
 async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -206,9 +226,14 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
     allowlist: Option<&[(String, String)]>,
+    stop: &SelectedPushStop,
 ) -> Result<(), String> {
+    let selected = allowlist.is_some();
+    // Dropped unfinished, this call's started tasks see the stop at their next
+    // block instead of sending the rest of an abandoned selection.
+    let _stop_on_drop = selected.then(|| stop.stop_on_drop());
     let network = db.network();
-    super::push_docs_network::wait_for_peer(&network, transport, peer_id).await?;
+    super::push_docs_network::wait_for_peer(&network, transport, peer_id, stop).await?;
 
     let local_peer_id = transport.local_peer_id().to_string();
     let peerstore = db
@@ -248,14 +273,17 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         .map_err(|e| format!("failed to get systemstore: {}", e))?;
 
     car_authority.bind_peerstore(db.peerstore());
-    let selected = matches!(&ownership, PushOwnership::Selected(_));
+    let selected_count = match &ownership {
+        PushOwnership::Selected(pending) => pending.len(),
+        PushOwnership::Replicator => 0,
+    };
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
     let preparation: Result<(), String> = async {
-        for col_name in collections {
+        'collections: for col_name in collections {
             if let Some(ref allowed) = allowlist_by_collection {
                 if !allowed.contains_key(col_name.as_str()) {
                     continue;
@@ -280,43 +308,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
             };
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("failed to iterate datastore: {}", e))?;
-
-            let mut doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("datastore close error: {}", e))?;
-
-            let mut doc_ids = Vec::new();
-            for short_id in doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection.as_ref().and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await?;
 
             'documents: for (doc_short_id, doc_id) in &doc_ids {
+                if selected && stop.is_stopped() {
+                    break 'collections;
+                }
                 if !document_is_allowlisted(col_name, doc_id, allowlist_by_collection.as_ref()) {
                     continue;
                 }
@@ -433,6 +436,12 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         .acquire_document_task()
                         .await
                         .map_err(|e| format!("replay gate closed before scheduling push: {e}"))?;
+                    // A task raises the stop before releasing its slot, so a
+                    // slot freed by a failure never starts another document.
+                    if selected && stop.is_stopped() {
+                        break 'collections;
+                    }
+                    let task_stop = stop.clone();
                     push_handles.push((
                         col_name.clone(),
                         replay_doc_id,
@@ -444,17 +453,22 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                             let _permit = permit;
                             let mut completed_blocks = 0usize;
                             for (_car_grant, req) in requests {
+                                if selected && task_stop.is_stopped() {
+                                    return Err(ReplayPushSendError::Stopped.to_string());
+                                }
                                 let cid = req.cid.clone();
                                 match gate
                                     .send_pushlog_with_admission(
                                         &peer_key,
                                         async {
-                                            if selected {
-                                                Ok(())
-                                            } else {
+                                            if !selected {
                                                 super::push_docs_replay::check_retry_admission(
                                                     &retry_store, &pid,
                                                 ).await
+                                            } else if task_stop.is_stopped() {
+                                                Err(ReplayPushSendError::Stopped)
+                                            } else {
+                                                Ok(())
                                             }
                                         },
                                         t.send_two_stream_request(&pid, req),
@@ -468,6 +482,11 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                             ).await {
                                                 tracing::warn!(%error, "Failed to persist replay admission deadline");
                                             }
+                                        } else if stop::reply_requests_pause(&reply) {
+                                            task_stop.stop(format!(
+                                                "receiver backpressure; retry_after_ms={:?}",
+                                                reply.retry_after_ms,
+                                            ));
                                         }
                                         tracing::warn!(
                                             peer_id = %pid,
@@ -487,6 +506,9 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                         completed_blocks += 1;
                                     }
                                     Err(e) => {
+                                        if selected && stop::stops_selected_transfer(&e) {
+                                            task_stop.stop(e.to_string());
+                                        }
                                         if e.is_connection_like() {
                                             tracing::debug!(
                                                 peer_id = %pid,
@@ -644,6 +666,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     let reason = failures.get(scope).map(String::as_str).unwrap_or(
                         if preparation.is_err() {
                             "not sent because preparation failed"
+                        } else if stop.is_stopped() {
+                            "not sent because the push stopped"
                         } else {
                             "document not found in collection"
                         },
@@ -652,11 +676,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 })
                 .collect();
             reasons.sort_unstable();
+            if let Some(cause) = stop.cause() {
+                reasons.insert(0, format!("stopped: {cause}"));
+            }
             if let Err(error) = preparation {
                 reasons.push(error);
             }
             return Err(format!(
-                "selected document push incomplete: {}",
+                "selected document push incomplete ({} of {} acknowledged): {}",
+                selected_count - pending.len(),
+                selected_count,
                 reasons.join("; ")
             ));
         }
@@ -696,41 +725,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
             tracing::debug!(collection = %col_name, index_count = encrypted_indexes.len(), "generating SE artifacts");
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("SE: failed to iterate datastore: {}", e))?;
-
-            let mut se_doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("SE: datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    se_doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("SE: datastore close error: {}", e))?;
-
-            let mut se_doc_ids = Vec::new();
-            for short_id in se_doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => se_doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("SE: doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let se_doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection
+                    .as_ref()
+                    .and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await
+            .map_err(|error| format!("SE: {error}"))?;
 
             let mut all_artifacts = Vec::new();
             for (doc_short_id, doc_id) in &se_doc_ids {

@@ -1,7 +1,7 @@
 use super::push_docs_replay::ConnectedPeerTransport;
 use db::merge::{
     document_heads_acknowledged, push_existing_docs, push_existing_docs_by_id,
-    PushExistingDocsSeOptions,
+    PushExistingDocsSeOptions, SelectedPushStop,
 };
 use db::{AutoCommitMutator, DB};
 use document::Document;
@@ -26,8 +26,20 @@ fn selected_document_transfers_match_executed_model() {
     );
     let cases = String::from_utf8(output.stdout).unwrap();
     let mut count = 0;
+    let mut stop_count = 0;
     for line in cases.lines() {
         let fields: Vec<_> = line.split('\t').collect();
+        if let ["stop", outcome, stops, sends, ok] = fields.as_slice() {
+            workers::block_on(super::push_docs_selected_stop::exercise_stop_case(
+                outcome,
+                stops.parse().unwrap(),
+                sends.parse().unwrap(),
+                ok.parse().unwrap(),
+            ))
+            .unwrap();
+            stop_count += 1;
+            continue;
+        }
         let [explicit, present, acknowledged, owner, expected, retained] = fields.as_slice() else {
             panic!("invalid model case: {line}")
         };
@@ -44,6 +56,7 @@ fn selected_document_transfers_match_executed_model() {
         count += 1;
     }
     assert!(count > 0, "model emitted no transfer cases");
+    assert!(stop_count > 0, "model emitted no stop cases");
 }
 
 async fn exercise(
@@ -125,6 +138,7 @@ async fn exercise(
             Default::default(),
             &p2p::EqOnlyFilterMatcher,
             &authority,
+            &SelectedPushStop::new(),
         )
         .await
     } else {

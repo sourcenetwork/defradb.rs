@@ -77,6 +77,11 @@ RUNS=(
   "MC_SelectedPushIsolation_Red_backoff.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_hint.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_drain.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_stall.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_cancel.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_schedule.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_admission.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_partial.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
@@ -103,6 +108,18 @@ RUNS=(
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
+  "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
+  "MC_LegacyRpcCache_Green.cfg LegacyRpcCache.tla GREEN"
+  "MC_RpcCacheEviction_Green.cfg RpcCacheEviction.tla GREEN"
+  "MC_RpcCacheEviction_Red_Reinsert.cfg RpcCacheEviction.tla RED"
+  "MC_LegacyRpcCache_Red_NoCache.cfg LegacyRpcCache.tla RED"
+  "MC_LegacyRpcCache_Red_Preference.cfg LegacyRpcCache.tla RED"
+  "MC_SharedRpcConnection_Red_NoAdoption.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_NoPostCheck.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_NoOutboundCheck.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
+  "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
@@ -141,10 +158,17 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
-  "MC_CreatePipeline_Green.cfg CreatePipeline.tla GREEN" # #1890: blocks stored once the composite exists, one short ID and one key mint per field across attempts
-  "MC_CreatePipeline_Red_AsComputed.cfg CreatePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
-  "MC_CreatePipeline_Red_PerAttempt.cfg CreatePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
-  "MC_CreatePipeline_Red_Direct.cfg CreatePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
+  "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
+  "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
+  "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
+  "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
+  "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
+  "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
+  "MC_WritePipeline_Green.cfg WritePipeline.tla GREEN" # #1890: creates and updates store blocks once the composite exists, one short ID and one key mint per field across attempts
+  "MC_WritePipeline_Red_AsComputed.cfg WritePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
+  "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
+  "MC_WritePipeline_Red_Direct.cfg WritePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
+  "MC_WritePipeline_Red_FirstMiss.cfg WritePipeline.tla RED" # the first missing key ends the attempt: a second wave (INV_OneWave)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
@@ -444,6 +468,13 @@ RUNS=(
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller
+  "MC_EmbeddedStartup_Green.cfg EmbeddedStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
+  "MC_EmbeddedStartup_Red_IrohDefaultLadder.cfg EmbeddedStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
+  "MC_EmbeddedStartup_Red_ListenLeak.cfg EmbeddedStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_LateNacCheck.cfg EmbeddedStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_NacUnowned.cfg EmbeddedStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
+  "MC_EmbeddedStartup_Red_DialBeforeNac.cfg EmbeddedStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
+  "MC_EmbeddedStartup_Red_BootstrapFatal.cfg EmbeddedStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
 )
 
 parallelism="${TLA_JOBS:-4}"
