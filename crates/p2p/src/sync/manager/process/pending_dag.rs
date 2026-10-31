@@ -928,6 +928,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 continue;
             }
 
+            // A record that cannot fit now is skipped before its block read
+            // and link walk, so a backlog of durable-only gossip heads costs
+            // each sweep one store scan rather than one walk per record.
+            if !self.pending_has_room_for(record.source_peer.as_deref()) {
+                continue;
+            }
+
             let (missing, decoded_head_priority): (Vec<Cid>, Option<u64>) =
                 match self.blockstore.get(&root_cid).await {
                     Ok(Some(data)) => {
@@ -952,7 +959,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 let upgrade = Registration {
                     root: root_cid,
                     record: &record,
-                    capacity: self.persisted_pending_capacity(),
+                    capacity: Some(self.persisted_pending_capacity()),
                 };
                 if let Err(error) = store.register(upgrade, &self.persisted).await {
                     tracing::warn!(

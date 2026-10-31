@@ -162,7 +162,7 @@ async fn register(
             Registration {
                 root,
                 record,
-                capacity,
+                capacity: Some(capacity),
             },
             view,
         )
@@ -330,7 +330,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
                     Registration {
                         root,
                         record: &record,
-                        capacity: 4,
+                        capacity: Some(4),
                     },
                     &view,
                 )
@@ -406,7 +406,7 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
                     Registration {
                         root,
                         record: &record,
-                        capacity: 8,
+                        capacity: Some(8),
                     },
                     &view,
                 )

@@ -38,6 +38,9 @@ pub enum EventName {
     /// A document's push found no subscribed peers, so the update may not
     /// have reached anyone (Go Shinzo's `p2p-no-peers`).
     P2PNoPeers,
+    /// A gossip head refused at admission was dropped with its deferral
+    /// budget full (#2489): the document will not arrive unless resynced.
+    P2PGossipHeadDropped,
 }
 
 impl EventName {
@@ -67,6 +70,7 @@ impl std::fmt::Display for EventName {
             EventName::ActionExecution => write!(f, "action-execution"),
             EventName::UniqueIndexConflict => write!(f, "unique-index-conflict"),
             EventName::P2PNoPeers => write!(f, "p2p-no-peers"),
+            EventName::P2PGossipHeadDropped => write!(f, "p2p-gossip-head-dropped"),
         }
     }
 }
@@ -111,6 +115,21 @@ pub struct PeerConnectionData {
 pub struct SEArtifactReceivedData {
     /// Document ID the artifact is for.
     pub doc_id: String,
+}
+
+/// A gossip head this node refused at admission and could not keep (#2489):
+/// the peer it came from and the root it announced, so an application can
+/// resync the document from that peer.
+#[derive(Debug, Clone)]
+pub struct P2PGossipHeadDroppedData {
+    /// The peer whose announcement was dropped.
+    pub peer_id: String,
+    /// CID of the dropped root block.
+    pub cid: Cid,
+    /// Document ID, if known.
+    pub doc_id: String,
+    /// Collection ID.
+    pub collection_id: String,
 }
 
 /// Pending-DAG quarantine event data (#1128).
@@ -293,6 +312,8 @@ pub enum MessageData {
     UniqueIndexConflict(UniqueIndexConflictData),
     /// A document's push found no subscribed peers.
     P2PNoPeers(P2PNoPeersData),
+    /// A refused gossip head was dropped.
+    P2PGossipHeadDropped(P2PGossipHeadDroppedData),
 }
 
 impl Message {
@@ -403,6 +424,14 @@ impl Message {
         Self {
             name: EventName::P2PNoPeers,
             data: MessageData::P2PNoPeers(data),
+        }
+    }
+
+    /// Create a new P2PGossipHeadDropped message.
+    pub fn p2p_gossip_head_dropped(data: P2PGossipHeadDroppedData) -> Self {
+        Self {
+            name: EventName::P2PGossipHeadDropped,
+            data: MessageData::P2PGossipHeadDropped(data),
         }
     }
 

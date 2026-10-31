@@ -189,6 +189,10 @@ pub struct SyncStatus {
     pub single_flight_suppressed: u64,
     pub already_merged_fast_path: u64,
     pub pending_dag_capacity_shed: u64,
+    /// Gossip heads refused at the edge and kept as durable-only records (#2489).
+    pub gossip_heads_deferred: u64,
+    /// Gossip heads refused with the durable store full: counted losses (#2489).
+    pub gossip_heads_shed: u64,
     /// Retry-clock ticks that dispatched a due pending-DAG fetch (#1116 stage 2).
     pub pending_dag_retry_dispatched: u64,
     /// Retry-clock/claim attempts that found no due entry (#1116 stage 2).
@@ -974,6 +978,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             single_flight_suppressed: diagnostics.single_flight_suppressed,
             already_merged_fast_path: diagnostics.already_merged_fast_path,
             pending_dag_capacity_shed: diagnostics.pending_dag_capacity_shed,
+            gossip_heads_deferred: diagnostics.gossip_heads_deferred,
+            gossip_heads_shed: diagnostics.gossip_heads_shed,
             pending_dag_retry_dispatched: diagnostics.pending_dag_retry_dispatched,
             pending_dag_retry_suppressed: diagnostics.pending_dag_retry_suppressed,
             pending_dag_fetch_deferred_unavailable: diagnostics
@@ -1010,7 +1016,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// at `interval` until shutdown, so records skipped at capacity (or whose
     /// in-memory entries TTL-expired) are re-driven even when no peer
     /// reconnects and the node never restarts. The steady-state early-exit
-    /// inside the sweep makes idle ticks free. Run from a spawned task.
+    /// inside the sweep makes idle ticks free. A durable-only record (a
+    /// refused gossip head, #2489) also wakes it as soon as a slot frees.
+    /// Run from a spawned task.
     pub async fn run_pending_dag_resync(&self, interval: Duration) {
         loop {
             if self.runtime.shutdown.is_shutting_down() {
@@ -1022,6 +1030,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             tokio::select! {
                 _ = n0_future::time::sleep(interval) => {}
+                _ = self.manager.durable_only_ready() => {}
                 _ = self.runtime.shutdown.cancelled() => return,
             }
         }

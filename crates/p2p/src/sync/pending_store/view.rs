@@ -9,7 +9,7 @@
 //! rebuilds the view from the records it read, lands between the commits
 //! before it and those after it.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use cid::Cid;
@@ -22,17 +22,37 @@ use super::PersistedPendingDag;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 
 /// The roots with a durable record and the durable current head of each
-/// sender scope.
+/// sender scope, with the bytes the records take per source peer and in all.
 pub struct PersistedView {
-    roots: HopscotchMap<Cid, (), RandomState>,
+    roots: HopscotchMap<Cid, Footprint, RandomState>,
+    source_bytes: HopscotchMap<String, Arc<AtomicU64>, RandomState>,
+    total_bytes: AtomicU64,
     scope_heads: HopscotchMap<Scope, HeadVersion, RandomState>,
     quarantined: AtomicUsize,
+}
+
+/// What one durable record takes, charged to its source peer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Footprint {
+    source: Option<String>,
+    bytes: u64,
+}
+
+impl Footprint {
+    fn of(root: &Cid, record: &PersistedPendingDag) -> Self {
+        Self {
+            source: record.source_peer.clone(),
+            bytes: super::store::footprint(root, record),
+        }
+    }
 }
 
 impl Default for PersistedView {
     fn default() -> Self {
         Self {
             roots: HopscotchMap::with_hasher(RandomState::default()),
+            source_bytes: HopscotchMap::with_hasher(RandomState::default()),
+            total_bytes: AtomicU64::new(0),
             scope_heads: HopscotchMap::with_hasher(RandomState::default()),
             quarantined: AtomicUsize::new(0),
         }
@@ -58,6 +78,51 @@ impl PersistedView {
     /// The roots with a durable record.
     pub fn roots(&self) -> Vec<Cid> {
         self.roots.keys().collect()
+    }
+
+    /// Bytes the durable records of `source_peer` take.
+    pub fn source_bytes(&self, source_peer: &str) -> u64 {
+        self.source_bytes
+            .get(source_peer)
+            .map_or(0, |bytes| bytes.load(Ordering::Relaxed))
+    }
+
+    /// Bytes every durable record takes.
+    pub fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
+    fn insert_root(&self, root: Cid, footprint: Footprint) {
+        self.charge(&footprint, true);
+        if let Some(previous) = self.roots.insert(root, footprint) {
+            self.charge(&previous, false);
+        }
+    }
+
+    fn remove_root(&self, root: &Cid) {
+        if let Some(previous) = self.roots.remove(root) {
+            self.charge(&previous, false);
+        }
+    }
+
+    fn charge(&self, footprint: &Footprint, add: bool) {
+        let apply = |counter: &AtomicU64| {
+            if add {
+                counter.fetch_add(footprint.bytes, Ordering::Relaxed);
+            } else {
+                counter.fetch_sub(footprint.bytes, Ordering::Relaxed);
+            }
+        };
+        apply(&self.total_bytes);
+        if let Some(source) = &footprint.source {
+            let counter = match self.source_bytes.get(source.as_str()) {
+                Some(counter) => counter,
+                None => self
+                    .source_bytes
+                    .get_or_insert(source.clone(), Arc::new(AtomicU64::new(0))),
+            };
+            apply(&counter);
+        }
     }
 
     /// How many roots are quarantined.
@@ -114,12 +179,13 @@ impl PersistedView {
     ) -> TxnCallback {
         let view = Arc::clone(self);
         let head = scope_head(root, record);
+        let footprint = Footprint::of(&root, record);
         Box::new(move || {
             // The retired root shares the scope, whose head this one takes.
             if let Some(retired) = retired {
-                view.roots.remove(&retired);
+                view.remove_root(&retired);
             }
-            view.roots.insert(root, ());
+            view.insert_root(root, footprint.clone());
             if let Some((scope, version)) = head.clone() {
                 view.remember(scope, version);
             }
@@ -139,7 +205,7 @@ impl PersistedView {
             .and_then(|record| scope_head(root, record))
             .map(|(scope, _)| scope);
         Box::new(move || {
-            view.roots.remove(&root);
+            view.remove_root(&root);
             if let Some(scope) = &scope {
                 if view
                     .scope_heads
@@ -159,6 +225,10 @@ impl PersistedView {
     pub(super) fn swept(self: &Arc<Self>, records: &[(Cid, PersistedPendingDag)]) -> TxnCallback {
         let view = Arc::clone(self);
         let roots: RapidHashSet<Cid> = records.iter().map(|(root, _)| *root).collect();
+        let footprints: Vec<(Cid, Footprint)> = records
+            .iter()
+            .map(|(root, record)| (*root, Footprint::of(root, record)))
+            .collect();
         let heads: Vec<(Scope, HeadVersion)> = records
             .iter()
             .filter_map(|(root, record)| scope_head(*root, record))
@@ -170,10 +240,10 @@ impl PersistedView {
                 .filter(|root| !roots.contains(root))
                 .collect();
             for root in stale_roots {
-                view.roots.remove(&root);
+                view.remove_root(&root);
             }
-            for root in &roots {
-                view.roots.insert(*root, ());
+            for (root, footprint) in &footprints {
+                view.insert_root(*root, footprint.clone());
             }
             let stale_scopes: Vec<Scope> = view
                 .scope_heads

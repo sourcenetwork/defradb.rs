@@ -104,9 +104,12 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
     ) -> Result<Admission> {
         // The ticket is allocated outside the transaction: an allocation is
         // not undone by an abort, and a re-run reuses it.
-        let ticket = slots::ticket(&self.systemstore)
-            .await
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        let ticket = match registration.capacity {
+            Some(_) => slots::ticket(&self.systemstore)
+                .await
+                .map_err(|e| Error::Storage(e.to_string()))?,
+            None => 0,
+        };
         let root = registration.root;
         let record = registration.record.clone();
         let capacity = registration.capacity;
@@ -258,7 +261,7 @@ async fn register(
     txn: &mut BasicTxn,
     root: Cid,
     record: PersistedPendingDag,
-    capacity: usize,
+    capacity: Option<usize>,
     ticket: u64,
     view: Arc<PersistedView>,
 ) -> AttemptResult {
@@ -291,14 +294,24 @@ async fn register(
                     Some(slot)
                 }
                 Some(Stored { slot: None, .. }) => None,
-                None => match slots::claim(&systemstore, &root, ticket, capacity).await? {
-                    Some(slot) => Some(slot),
-                    None => return Ok(Box::new(Admission::AtCapacity)),
+                None => match capacity {
+                    None => None,
+                    Some(capacity) => {
+                        match slots::claim(&systemstore, &root, ticket, capacity).await? {
+                            Some(slot) => Some(slot),
+                            None => return Ok(Box::new(Admission::AtCapacity)),
+                        }
+                    }
                 },
             },
-            None => match slots::claim(&systemstore, &root, ticket, capacity).await? {
-                Some(slot) => Some(slot),
-                None => return Ok(Box::new(Admission::AtCapacity)),
+            None => match capacity {
+                None => None,
+                Some(capacity) => {
+                    match slots::claim(&systemstore, &root, ticket, capacity).await? {
+                        Some(slot) => Some(slot),
+                        None => return Ok(Box::new(Admission::AtCapacity)),
+                    }
+                }
             },
         },
     };
@@ -444,6 +457,16 @@ fn on_commit(
 
 fn record_key(root: &Cid) -> Vec<u8> {
     P2PPendingDagKey::new(root.to_string()).bytes()
+}
+
+/// The bytes `root`'s record writes: its key and value, and its sender
+/// scope's head key and value when it has a scope.
+pub(crate) fn footprint(root: &Cid, record: &PersistedPendingDag) -> u64 {
+    let value = encode(record, None).map_or(0, |value| value.len());
+    let scope = scope_head(*root, record).map_or(0, |(scope, version)| {
+        scope.key(SCOPE_PREFIX).len() + version.to_bytes().len()
+    });
+    (record_key(root).len() + value + scope) as u64
 }
 
 fn encode(record: &PersistedPendingDag, slot: Option<u64>) -> storage::corekv::Result<Vec<u8>> {

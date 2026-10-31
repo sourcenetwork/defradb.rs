@@ -971,6 +971,17 @@ where
             .await
         }
         SyncEvent::SyncError { cid, error } => ReplicationResult::Failed { cid, error },
+        SyncEvent::GossipHeadDropped {
+            root_cid,
+            doc_id,
+            collection_id,
+            peer_id,
+        } => ReplicationResult::GossipHeadDropped {
+            cid: root_cid,
+            doc_id,
+            collection_id,
+            peer_id,
+        },
         SyncEvent::GateRefused {
             root_cid,
             doc_id,

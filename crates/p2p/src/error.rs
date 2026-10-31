@@ -241,6 +241,17 @@ pub enum Error {
         max: usize,
     },
 
+    /// A gossip head refused at admission could not be kept durably and was
+    /// dropped; the node reported it with a `p2p-gossip-head-dropped` event
+    /// (#2489).
+    #[error("gossip head {cid} dropped: {reason}")]
+    GossipHeadDropped {
+        /// The dropped root.
+        cid: String,
+        /// Why it could not be kept.
+        reason: &'static str,
+    },
+
     /// Another receive task owns this CID and has not established recovery state yet.
     #[error("PushLog for CID {cid} is already being processed, retry later")]
     PushLogInFlight { cid: String },

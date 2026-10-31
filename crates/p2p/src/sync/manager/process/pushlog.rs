@@ -31,7 +31,7 @@ use crate::ExplicitReplayAuthorization;
 use super::SyncManager;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AnnouncedBlockKind {
+pub(super) enum AnnouncedBlockKind {
     Head(u64),
     Descendant,
 }
@@ -45,7 +45,7 @@ impl AnnouncedBlockKind {
     }
 }
 
-fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
+pub(super) fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
     let Ok(block) = defra_core::Block::from_dag_cbor(bytes) else {
         return AnnouncedBlockKind::Descendant;
     };
@@ -556,7 +556,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 let registration = Registration {
                     root: *cid,
                     record: &record,
-                    capacity: durable_cap,
+                    capacity: Some(durable_cap),
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
                     Ok(Admission::Registered) => None,
@@ -720,7 +720,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             let registration = Registration {
                 root: *cid,
                 record: &record,
-                capacity,
+                capacity: Some(capacity),
             };
             if store.register(registration, &self.persisted).await? == Admission::AtCapacity {
                 return Err(Error::PendingDagCapacity { max: capacity });

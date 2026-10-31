@@ -61,6 +61,14 @@ pub const DEFAULT_PUSH_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// `RATE_LIMITED_MESSAGE` (#1088 W1) so its retry ladder keeps the doc queued.
 pub const DEFAULT_MAX_PENDING_DAGS: usize = 1000;
 
+/// Default byte budget for one peer's deferred gossip heads: room for a
+/// million Shinzo Log heads, measured at 653 bytes each (record key and value
+/// plus its sender scope's head entry, #2489).
+pub const DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES: u64 = 640 * 1024 * 1024;
+
+/// Default byte budget for every peer's deferred gossip heads together.
+pub const DEFAULT_GOSSIP_DEFERRAL_TOTAL_BYTES: u64 = 4 * DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES;
+
 /// Default rate-limit backoff ladder as durations.
 pub fn default_rate_limit_backoff() -> Vec<Duration> {
     DEFAULT_RATE_LIMIT_BACKOFF_SECS
@@ -121,6 +129,15 @@ pub struct SyncConfig {
     /// Values below 1 are normalized to 1 (a zero cap would reject every
     /// missing-link push forever).
     pub max_pending_dags: usize,
+
+    /// Bytes of durable pending records one source peer may hold for gossip
+    /// heads refused at admission (#2489). Past it a refused head is dropped,
+    /// counted, logged and reported as a node event.
+    pub gossip_deferral_peer_bytes: u64,
+
+    /// Bytes of durable pending records all peers together may hold for
+    /// refused gossip heads; keeps many peers from filling the disk.
+    pub gossip_deferral_total_bytes: u64,
 }
 
 impl Default for SyncConfig {
@@ -138,6 +155,8 @@ impl Default for SyncConfig {
             rate_limit_backoff: default_rate_limit_backoff(),
             push_send_timeout: DEFAULT_PUSH_SEND_TIMEOUT,
             max_pending_dags: DEFAULT_MAX_PENDING_DAGS,
+            gossip_deferral_peer_bytes: DEFAULT_GOSSIP_DEFERRAL_PEER_BYTES,
+            gossip_deferral_total_bytes: DEFAULT_GOSSIP_DEFERRAL_TOTAL_BYTES,
         }
     }
 }

@@ -355,6 +355,12 @@ RUNS=(
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
   "MC_PushLogAdmission_Red_SuccessOnFull.cfg MC_PushLogAdmission_Common.tla RED" # fa4a84f7 regression: overflow drops registration but acks success (INV_SuccessImpliesRegisteredOrMerged)
+  "MC_GossipAdmission_Green.cfg MC_GossipAdmission_Common.tla GREEN" # #2489: refused gossip heads kept durably and promoted -> none lost, all merge
+  "MC_GossipAdmission_Green_PastCap.cfg MC_GossipAdmission_Common.tla GREEN" # past a byte budget every refused head is owned or reported as a node event
+  "MC_GossipAdmission_Red_SilentShed.cfg MC_GossipAdmission_Common.tla RED" # past a budget, dropped without the event (INV_HeardIsOwnedOrReported)
+  "MC_GossipAdmission_Red_Drop.cfg MC_GossipAdmission_Common.tla RED" # main: a refused gossip head is dropped and never re-announced (INV_HeardIsOwned)
+  "MC_GossipAdmission_Red_MemoryDefer.cfg MC_GossipAdmission_Common.tla RED" # in-memory side queue: a crash loses it (INV_HeardIsOwned)
+  "MC_GossipAdmission_Red_NoPromote.cfg MC_GossipAdmission_Common.tla RED" # durable records never promoted (LIVE_AllMerged)
   "MC_PushLogJoin_Green.cfg PushLogJoin.tla GREEN" # same-CID PushLog joins the in-flight owner: success implies durable, one processor, every join ends
   "MC_PushLogJoin_Red_NoRecheck.cfg PushLogJoin.tla RED" # waiter acks when the owner lets go without looking again (INV_SuccessImpliesDurable)
   "MC_PushLogJoin_Red_NoGuard.cfg PushLogJoin.tla RED" # waiter processes its copy without the CID guard (INV_OneProcessor)
