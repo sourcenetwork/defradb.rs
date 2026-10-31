@@ -39,6 +39,7 @@ pub(crate) struct DagFetchContext {
     block_sync_completions: Option<crate::sync::manager::BlockSyncCompletionTracker>,
     rooted_car_completions: Option<crate::sync::manager::RootedCarCompletionTracker>,
     rooted_provider_discovery: bool,
+    height_gate: Option<super::height_gate::HeightGate>,
 }
 
 impl DagFetchContext {
@@ -61,6 +62,7 @@ impl DagFetchContext {
             block_sync_completions: None,
             rooted_car_completions: None,
             rooted_provider_discovery: false,
+            height_gate: None,
         }
     }
 
@@ -134,6 +136,17 @@ impl DagFetchContext {
     ) -> Self {
         self.rooted_car_completions = Some(tracker);
         self
+    }
+
+    /// Fetch a create's height block alone and let the gate judge it
+    /// before the document is walked block by block (#2464).
+    pub(crate) fn with_height_gate(mut self, gate: Option<super::height_gate::HeightGate>) -> Self {
+        self.height_gate = gate;
+        self
+    }
+
+    pub(crate) fn height_gate(&self) -> Option<&super::height_gate::HeightGate> {
+        self.height_gate.as_ref()
     }
 
     pub(crate) fn with_rooted_provider_discovery(mut self) -> Self {

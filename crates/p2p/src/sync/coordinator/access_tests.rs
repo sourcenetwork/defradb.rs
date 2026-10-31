@@ -4338,6 +4338,10 @@ impl crate::sync::receive_gate::ReceiveGate for RefuseAll {
     ) -> Option<crate::sync::receive_gate::GateRefusal> {
         Some(self.0)
     }
+
+    async fn height_link(&self, _collection_id: &str, _head: &[u8]) -> Option<Cid> {
+        None
+    }
 }
 
 /// A one-field document: its composite head and the field block it links.

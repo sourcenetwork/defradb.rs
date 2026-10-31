@@ -104,6 +104,10 @@ pub struct SyncManager<B: Blockstore> {
     /// fetched or stored, if it has one.
     pub(crate) receive_gate: regolith::sync::OnceCell<crate::sync::receive_gate::SharedReceiveGate>,
 
+    /// Single-flight owners of the height blocks fetched alone for the gate,
+    /// so a height block several documents share is asked for once.
+    pub(crate) height_fetches: ProcessQueue,
+
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
 
@@ -223,6 +227,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             rooted_car_completions: RootedCarCompletionTracker::default(),
             diagnostics: Arc::new(SyncDiagnostics::default()),
             receive_gate: regolith::sync::OnceCell::new(),
+            height_fetches: ProcessQueue::new(),
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
@@ -251,6 +256,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// deterministic content rejection that will never succeed on replay),
     /// and never at DagReady emission, TTL eviction, or clear, is the
     /// persisted record deleted.
+    /// The gate a pushed document's fetch judges its height block with,
+    /// when the node runs one.
+    pub(crate) fn height_gate(&self) -> Option<crate::sync::coordinator::height_gate::HeightGate> {
+        self.receive_gate
+            .get()
+            .map(|gate| crate::sync::coordinator::height_gate::HeightGate {
+                gate: gate.clone(),
+                fetches: self.height_fetches.clone(),
+            })
+    }
+
     pub async fn mark_as_merged(&self, cid: &Cid) -> crate::error::Result<()> {
         self.blockstore
             .mark_as_merged(cid)

@@ -14,7 +14,7 @@ use crate::sync::receive_gate::{CarBlocks, GateBlocks, GateStage, SharedReceiveG
 use crate::transport::{P2PTransport, PeerId};
 
 /// Blocks this node already stores.
-struct StoredBlocks<'a, B>(&'a B);
+pub(super) struct StoredBlocks<'a, B>(pub(super) &'a B);
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

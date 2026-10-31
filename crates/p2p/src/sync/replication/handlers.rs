@@ -148,7 +148,8 @@ where
             .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
             .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
-            .with_rooted_provider_discovery();
+            .with_rooted_provider_discovery()
+            .with_height_gate(coordinator.manager().height_gate());
 
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
             crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
@@ -970,6 +971,23 @@ where
             .await
         }
         SyncEvent::SyncError { cid, error } => ReplicationResult::Failed { cid, error },
+        SyncEvent::GateRefused {
+            root_cid,
+            doc_id,
+            collection_id,
+            skip,
+        } => {
+            if let Err(error) = coordinator.mark_as_merged(&root_cid).await {
+                tracing::warn!(root = %root_cid, %error, "Could not discharge a refused root");
+            }
+            ReplicationResult::Skipped {
+                cid: root_cid,
+                doc_id,
+                collection_id,
+                reason: skip.name().to_string(),
+                terminal: true,
+            }
+        }
         SyncEvent::DagNeedsFetch {
             root_cid,
             missing,
