@@ -20,6 +20,11 @@
 \*   - a head an honest, healthy, allowed source holds and can fit in a reply
 \*     goes to the slow DAG walk anyway.
 \*
+\* Every node answers Go's request shape whether or not its own Shinzo wire
+\* is on: the switch picks what a node sends, never what it serves, so a
+\* Shinzo node in a mixed Rust cluster gets one answer per ask instead of a
+\* timeout. Rust: crates/p2p/src/host/p2p_host/shinzo_car.rs
+\* serve_shinzo_cars (served with the wire off too).
 \* Rust: crates/p2p/src/sync/shinzo_car.rs serve_cars (the source side),
 \* accept_reply (the requester side) and CarPeerBackoff (who is passed over);
 \* the request and its fallback run in crates/p2p/src/two_stream/handler/
@@ -37,6 +42,8 @@ EXTENDS Naturals, Sequences, FiniteSets
 \*   "fallback"  drop the asked heads when a request fails -> INV_Accounted
 \*   "blame"     back off a peer for our own cancel     -> INV_BlameOnlyFaults
 \*   "oversize"  stop the reply at a too-big CAR        -> INV_Served
+\*   "wireoff"   a source with the Shinzo wire off ignores Go's request
+\*               -> INV_EveryNodeAnswers
 CONSTANT Bug
 
 \* Two heads are enough to show a reply that covers only a prefix.
@@ -72,14 +79,17 @@ Standings == {"ready", "passedOver"}
 \*   requester held it back.
 \* stray: whether an entry was matched to a head that was not asked for.
 \* done: the fetch has finished.
+\* wireOn: per source, whether its own Shinzo wire is on.
+\* ignored: whether a source let a request go unanswered because its wire
+\*   was off.
 VARIABLES held, readable, liar, size, standing, order, pending, ask,
           unserved, result, root, servedBy, rounds, failed, faulted,
-          backedOff, stray, done
+          backedOff, stray, done, wireOn, ignored
 
 \* Every variable, for UNCHANGED.
 vars == <<held, readable, liar, size, standing, order, pending, ask,
           unserved, result, root, servedBy, rounds, failed, faulted,
-          backedOff, stray, done>>
+          backedOff, stray, done, wireOn, ignored>>
 
 \* A sequence of all members of a set, in one fixed order.
 SeqOf(S) == CHOOSE s \in [1..Cardinality(S) -> S] :
@@ -111,6 +121,9 @@ Init ==
   /\ backedOff = [s \in Sources |-> FALSE]
   /\ stray = FALSE
   /\ done = FALSE
+  \* Any source may have its wire on or off; nothing is ignored yet.
+  /\ wireOn \in [Sources -> BOOLEAN]
+  /\ ignored = FALSE
 
 \* The source being asked now is the head of `order`.
 Current == Head(order)
@@ -159,7 +172,7 @@ Ask ==
   /\ unserved' = <<>>
   /\ UNCHANGED <<held, readable, liar, size, standing, order, pending,
                  result, root, servedBy, rounds, failed, faulted, backedOff,
-                 stray, done>>
+                 stray, done, wireOn, ignored>>
 
 \* Move on to the next source with what this one left unserved. The heads
 \* still pending are exactly those.
@@ -170,7 +183,8 @@ NextSource ==
   /\ unserved' = <<>>
   /\ rounds' = 0
   /\ UNCHANGED <<held, readable, liar, size, standing, ask, result, root,
-                 servedBy, failed, faulted, backedOff, stray, done>>
+                 servedBy, failed, faulted, backedOff, stray, done, wireOn,
+                 ignored>>
 
 \* The request fails. A fault (timeout, dial, reset) backs the source off; a
 \* cancellation is the requester's own doing and does not, unless the
@@ -187,7 +201,7 @@ Fail ==
   /\ ask' = <<>>
   /\ rounds' = rounds + 1
   /\ UNCHANGED <<held, readable, liar, size, standing, order, pending,
-                 result, root, servedBy, stray, done>>
+                 result, root, servedBy, stray, done, wireOn, ignored>>
 
 \* Whether entry e of a reply is usable for head h: not empty, and rooted at
 \* h (the "root" bug skips the root check).
@@ -201,6 +215,9 @@ Usable(e, h) == e # 0 /\ (e = h \/ Bug = "root")
 \* reply stay asked for the next round.
 Reply ==
   /\ ~done /\ ask # <<>>
+  \* A source answers whatever its own switch says (the "wireoff" bug keeps
+  \* a switched-off source silent).
+  /\ (wireOn[Current] \/ Bug # "wireoff")
   /\ \E r \in Replies(Current, ask) :
        IF (Len(r) > Len(ask) /\ Bug # "length")
           \/ (Len(r) = 0 /\ Bug # "empty")
@@ -227,7 +244,23 @@ Reply ==
             /\ ask' = [j \in 1..(Len(ask) - m) |-> ask[m + j]]
   /\ rounds' = rounds + 1
   /\ UNCHANGED <<held, readable, liar, size, standing, order, pending,
-                 failed, faulted, backedOff, done>>
+                 failed, faulted, backedOff, done, wireOn, ignored>>
+
+\* The "wireoff" bug only: a source whose wire is off reads Go's request as
+\* nothing and never answers, so the requester waits out its timeout and
+\* counts a fault against a healthy source. The asked heads go back to the
+\* unserved list, as for any failure.
+Ignore ==
+  /\ Bug = "wireoff" /\ ~done /\ ask # <<>> /\ ~wireOn[Current]
+  /\ ignored' = TRUE
+  /\ failed' = [failed EXCEPT ![Current] = TRUE]
+  /\ faulted' = [faulted EXCEPT ![Current] = TRUE]
+  /\ backedOff' = [backedOff EXCEPT ![Current] = TRUE]
+  /\ unserved' = unserved \o ask
+  /\ ask' = <<>>
+  /\ rounds' = rounds + 1
+  /\ UNCHANGED <<held, readable, liar, size, standing, order, pending,
+                 result, root, servedBy, stray, done, wireOn>>
 
 \* The heads in a sequence, as a set.
 Range(s) == {s[i] : i \in DOMAIN s}
@@ -245,10 +278,10 @@ Finish ==
   /\ done' = TRUE
   /\ UNCHANGED <<held, readable, liar, size, standing, order, pending, ask,
                  unserved, root, servedBy, rounds, failed, faulted, backedOff,
-                 stray>>
+                 stray, wireOn, ignored>>
 
 \* Every step the protocol can take.
-Next == Ask \/ NextSource \/ Fail \/ Reply \/ Finish
+Next == Ask \/ NextSource \/ Fail \/ Reply \/ Ignore \/ Finish
 
 \* Every imported CAR is rooted at the head it was imported for.
 INV_RootMatches == \A h \in Heads : result[h] = "car" => root[h] = h
@@ -279,6 +312,10 @@ INV_Served ==
          /\ standing[s] # "passedOver" /\ h \in held[s] /\ h \in readable[s]
          /\ size[h] <= Budget /\ ~liar[s] /\ ~failed[s])
       => result[h] = "car"
+
+\* No source ever leaves a request unanswered because of its own switch: a
+\* Shinzo node never waits out a timeout on a Rust peer that has the wire off.
+INV_EveryNodeAnswers == ~ignored
 
 \* Explore every interleaving.
 Spec == Init /\ [][Next]_vars
