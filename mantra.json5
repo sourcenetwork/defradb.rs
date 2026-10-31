@@ -6,5 +6,8 @@
             { path: "reqs/go/", source: "markup" },
             { path: "reqs/defra/", source: "markup" },
         ],
+        annotations: [
+            { path: "tools/integration-test/", source: "content", pattern: "*.rs" },
+        ],
     }],
 }

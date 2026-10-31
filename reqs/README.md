@@ -95,3 +95,5 @@ mantra report --formats html --output-dir mantra-report # writes the report; ope
 ```
 
 `mantra.db` and `mantra-report/` are ignored by git.
+
+`mantra.json5` reads the requirements in `go/` and `defra/` and the `req_test` tags under `tools/integration-test/`. It doesn't read test results yet: mantra takes them as nextest's JUnit file together with a Cobertura coverage file, and nothing produces the coverage file today. Until it does, the report shows which requirements have tagged tests, not whether those tests pass.
