@@ -45,7 +45,7 @@ pub struct BatchSignature {
 
 /// Sign a batch of CIDs using the provided signing config.
 pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature, BatchSignError> {
-    let root = compute_merkle_root(cids).ok_or(BatchSignError::MissingKey)?;
+    let root = compute_merkle_root(cids);
 
     let (sig_type, sig_bytes) = match config.key_type {
         defra_core::signing::SigningKeyType::Ed25519 => {
@@ -86,7 +86,7 @@ pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature
 
 /// Verify a batch signature against a set of CIDs.
 pub fn verify_batch_signature(sig: &BatchSignature, cids: &[Cid]) -> Result<bool, String> {
-    let root = compute_merkle_root(cids).ok_or_else(|| "cannot verify empty batch".to_string())?;
+    let root = compute_merkle_root(cids);
 
     if root.as_slice() != sig.merkle_root.as_slice() {
         return Ok(false);
@@ -200,10 +200,90 @@ mod tests {
         assert!(!verify_batch_signature(&sig, &wrong_cids).unwrap());
     }
 
+    /// Batch signatures from Go shinzo-develop's `SignBatch` over the CIDs of
+    /// "doc0".."doc2", with the Ed25519 seed SHA256("shinzo-ed25519") and the
+    /// secp256k1 secret SHA256("shinzo-secp256k1").
+    const GO_ED25519_SEED: &str =
+        "e447512b417e54f102eac9e2d0ac8b3fae5d9111d381e493b24720d07b0adf0a";
+    const GO_ED25519_IDENTITY: &str =
+        "fabd7aa83c1055a21d6c176138011a96035dbc2ef1af10708067e8af2b15a427";
+    const GO_ED25519_VALUE: &str = "00eebb9a3d93372651acc87f05bf2f04e39660064f432e12faa1fcbcbcf7e9b29870c281326621f80afe02b3f36d0f866e2a7bd7798e91f058bb2376a7278f04";
+    const GO_SECP256K1_SECRET: &str =
+        "1233ff67e1cbaeabd49e0c2a3976746e019276392249314c08bb088e05918e4b";
+    const GO_SECP256K1_IDENTITY: &str =
+        "038cab60f242dc148f3ade868850621f544ce4ae89b22e77653f4482e12538af71";
+    const GO_SECP256K1_VALUE: &str = "3045022100a763a5c583e70f9285fb20610b6ed5a6557dcf864570e0618d864cb7528060b502203782e375cdc90b19e79be0fc58ec5f5d0f614fb3316536d0e836320fa278a697";
+    const GO_ROOT: &str = "0ffb57f4c557c42494a782e71b2d234ec526603ac639bee54ad50a326377777b";
+
+    fn go_cids() -> Vec<Cid> {
+        (0..3)
+            .map(|i| make_cid(format!("doc{i}").as_bytes()))
+            .collect()
+    }
+
+    fn go_signature(sig_type: &str, identity: &str, value: &str) -> BatchSignature {
+        BatchSignature {
+            sig_type: sig_type.into(),
+            identity: identity.into(),
+            value: hex::decode(value).unwrap(),
+            merkle_root: hex::decode(GO_ROOT).unwrap(),
+            cid_count: 3,
+        }
+    }
+
     #[test]
-    fn sign_empty_fails() {
+    fn go_batch_signatures_verify() {
+        for sig in [
+            go_signature("EdDSA", GO_ED25519_IDENTITY, GO_ED25519_VALUE),
+            go_signature("ES256K", GO_SECP256K1_IDENTITY, GO_SECP256K1_VALUE),
+        ] {
+            assert!(
+                verify_batch_signature(&sig, &go_cids()).unwrap(),
+                "{}",
+                sig.sig_type
+            );
+        }
+    }
+
+    /// Both runtimes sign deterministically (Ed25519, and RFC 6979 nonces
+    /// for secp256k1), so equal bytes show Go verifies what Rust signs.
+    #[test]
+    fn rust_batch_signatures_match_go_bytes() {
+        let mut ed25519 = hex::decode(GO_ED25519_SEED).unwrap();
+        ed25519.extend(hex::decode(GO_ED25519_IDENTITY).unwrap());
+        let ed25519 = SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: SigningConfig::private_key_bytes_from_vec(ed25519),
+            public_key_bytes: hex::decode(GO_ED25519_IDENTITY).unwrap(),
+            public_key_hex: GO_ED25519_IDENTITY.into(),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let sig = sign_batch(&go_cids(), &ed25519).unwrap();
+        assert_eq!(hex::encode(&sig.value), GO_ED25519_VALUE);
+        assert_eq!(hex::encode(&sig.merkle_root), GO_ROOT);
+
+        let secp256k1 = SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Secp256k1,
+            private_key_bytes: SigningConfig::private_key_bytes_from_vec(
+                hex::decode(GO_SECP256K1_SECRET).unwrap(),
+            ),
+            public_key_bytes: hex::decode(GO_SECP256K1_IDENTITY).unwrap(),
+            public_key_hex: GO_SECP256K1_IDENTITY.into(),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let sig = sign_batch(&go_cids(), &secp256k1).unwrap();
+        assert_eq!(hex::encode(&sig.value), GO_SECP256K1_VALUE);
+    }
+
+    /// Go signs an empty batch over SHA256 of nothing; so does Rust.
+    #[test]
+    fn sign_empty_signs_the_empty_root() {
         let config = test_ed25519_config();
-        assert!(sign_batch(&[], &config).is_err());
+        let sig = sign_batch(&[], &config).unwrap();
+        assert_eq!(sig.cid_count, 0);
+        assert!(verify_batch_signature(&sig, &[]).unwrap());
     }
 
     #[test]

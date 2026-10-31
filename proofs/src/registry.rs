@@ -1316,9 +1316,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Shinzo CAR exchange",
-        name: "decode_encode_request / decode_encode_reply / verify_bytes_request / verify_bytes_reply / decode_encode_document / empty_car_not_written",
+        name: "decode_encode_request / decode_encode_reply / verify_bytes_request / verify_bytes_reply / decode_encode_document / empty_car_not_written / up_length / up_hashes_every_entry",
         axis: Lean,
-        anchor: "crates/p2p/src/message/car_exchange.rs CarRequest, CarReply; crates/p2p/src/message/pushlog.rs DocumentInfo",
+        anchor: "crates/p2p/src/message/car_exchange.rs CarRequest, CarReply; crates/p2p/src/message/pushlog.rs DocumentInfo; crates/defra-core/src/batch_signing.rs compute_merkle_root",
         model_ref: "ShinzoWire (lake build)",
         tiers: &[Boundary],
     },
