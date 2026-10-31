@@ -57,7 +57,7 @@ impl ChangePublisher {
             .filter(|update| {
                 self.collections
                     .as_ref()
-                    .is_none_or(|ids| ids.contains(&update.collection_id))
+                    .is_none_or(|ids| ids.contains(update.observation_collection_id()))
             })
             .collect();
         if updates.is_empty() {
@@ -69,7 +69,10 @@ impl ChangePublisher {
             for update in &updates {
                 next.updates = next.updates.saturating_add(1);
                 if !next.resync_required {
-                    let key = (update.collection_id.clone(), update.doc_id.clone());
+                    let key = (
+                        update.observation_collection_id().to_owned(),
+                        update.doc_id.clone(),
+                    );
                     if let Some(local) = next.documents.get_mut(&key) {
                         *local |= !update.is_relay;
                     } else if next.documents.len() < capacity {
