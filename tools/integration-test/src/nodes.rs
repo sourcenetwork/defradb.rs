@@ -144,6 +144,7 @@ impl TestNode {
             EventName::Update,
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
+            EventName::P2PNoPeers,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -227,6 +228,8 @@ struct EventLog {
     heads: RapidHashMap<String, String>,
     /// Topic events not yet awaited: (topic, peer, JOINED or LEFT).
     topics: VecDeque<(String, String, String)>,
+    /// Pushes that found no peers, not yet awaited.
+    no_peers: VecDeque<events::P2PNoPeersData>,
 }
 
 /// A node's recorded events.
@@ -288,6 +291,7 @@ impl Events {
                         .push_back((event.topic, event.peer_id, event.event_type))
                 });
             }
+            MessageData::P2PNoPeers(event) => self.update(|log| log.no_peers.push_back(event)),
             _ => {}
         }
         Ok(())
@@ -330,6 +334,20 @@ impl Events {
             self.receive(deadline)
                 .await
                 .map_err(|reason| format!("{doc_id} did not merge {head}: {reason}"))?;
+        }
+    }
+
+    /// The next push that found no peers.
+    pub async fn no_peers(&self, deadline: Duration) -> Result<events::P2PNoPeersData, String> {
+        loop {
+            let mut log = self.log.load_clone();
+            if let Some(event) = log.no_peers.pop_front() {
+                self.log.store(log);
+                return Ok(event);
+            }
+            self.receive(deadline)
+                .await
+                .map_err(|reason| format!("no push found no peers: {reason}"))?;
         }
     }
 
