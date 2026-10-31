@@ -50,17 +50,3 @@ A block nominated by the sweep whose merge commits before the sweep deletes it i
 
 With five expired blocks and a scan limit of 2, repeated sweeps, each starting from the previous `NextKey`, take more than one call, scan each block exactly once (5 in total), reclaim all 5, and end with no `NextKey`. A sweep whose context is already cancelled returns `context canceled`, scans nothing and deletes nothing.
 
-# `go.shinzo.block_owner`: Which documents own a block
-
-- **Parents:** ["go.shinzo"]
-
-Each block records the DocIDs that own it. Field blocks are content-addressed and carry no document identity, so ownership is a set.
-
-# `go.shinzo.block_owner.truncate`: Truncate removes document mappings and block ownership
-
-- **Parents:** ["go.shinzo.block_owner"]
-- **Go-Tests:** ["internal/db/collection_truncate_test.go::TestCollectionTruncateRemovesDocIDMappings"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-Before `Truncate`, a document's genesis field block is owned by its DocID. After `Truncate`, the DocID no longer resolves on this node and the block has no owner.
-
