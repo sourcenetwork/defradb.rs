@@ -166,6 +166,7 @@ client_actions! {
         NewNode,
         ReEnableNAC,
         RefreshViews,
+        SaveDocs,
         Restart,
         Start,
         SubscriptionRequest,

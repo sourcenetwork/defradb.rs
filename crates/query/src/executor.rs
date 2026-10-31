@@ -73,6 +73,12 @@ pub struct QueryRequest {
     /// The request's context, built by the boundary that received it.
     #[serde(skip)]
     pub context: RequestContext,
+
+    /// The operation as typed structs, for a core caller that builds it
+    /// instead of writing GraphQL text: it is run as parsed, and `query` is
+    /// not read.
+    #[serde(skip)]
+    pub parsed: Option<std::sync::Arc<crate::query_parse::ParsedOperation>>,
 }
 
 impl QueryRequest {
@@ -84,6 +90,34 @@ impl QueryRequest {
             variables: None,
             identity: None,
             context: RequestContext::default(),
+            parsed: None,
+        }
+    }
+
+    /// A request for an operation already built as typed structs. It takes
+    /// the same preparation, checks and write path as one parsed from text.
+    pub fn parsed(operation: crate::query_parse::ParsedOperation) -> Self {
+        Self {
+            parsed: Some(std::sync::Arc::new(operation)),
+            ..Self::new(String::new())
+        }
+    }
+
+    /// The operation this request names: the typed one it carries, or its
+    /// text parsed under `limits`.
+    pub(crate) fn operation(
+        &self,
+        variables: Option<&rapidhash::RapidHashMap<String, JsonValue>>,
+        limits: crate::QueryLimits,
+    ) -> Result<crate::query_parse::ParsedOperation> {
+        match &self.parsed {
+            Some(parsed) => Ok((**parsed).clone()),
+            None => crate::query_parse::parse_request_with_limits(
+                &self.query,
+                variables,
+                self.operation_name.as_deref(),
+                limits,
+            ),
         }
     }
 
