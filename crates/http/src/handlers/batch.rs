@@ -144,3 +144,55 @@ mod hex_serde {
         hex::decode(&s).map_err(serde::de::Error::custom)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    use super::*;
+
+    /// A batch signature the base revision of #2454 made over "doc0".."doc2"
+    /// with Rust's old Merkle tree; it carries no scheme.
+    fn old_signature(merkle_scheme: Option<&str>) -> BatchVerifyRequest {
+        let mut body = serde_json::json!({
+            "sig_type": "EdDSA",
+            "identity": "fabd7aa83c1055a21d6c176138011a96035dbc2ef1af10708067e8af2b15a427",
+            "value": "ba768beb92db641e431301c51ee83661e4dc7c2d90ca9e456817bac810407cc30ad69f506adfef8aa5b401522ec76b6b6de1cb2e7a3c6646e18359cb72b8c300",
+            "merkle_root": "fc8f2a4d773c6db591bdb6b6e122a3fb44274049c8d7d4b0b68212a1dcc8bfc9",
+            "cid_count": 3,
+            "cids": [
+                "bafyreihzcm257sh3jalv3gf5z4ifkgonns5qhgc644twfyc2izce24zomu",
+                "bafyreiggh264xyama235smkdavv6fozx27w4o7cqo3a52oy4tey7g3o3ri",
+                "bafyreidys6rnehmxq7uqr6emxwunoiibai62tbtilhwiqj6yartrrdauhy",
+            ],
+        });
+        if let Some(scheme) = merkle_scheme {
+            body["merkle_scheme"] = scheme.into();
+        }
+        serde_json::from_value(body).unwrap()
+    }
+
+    /// The handler does no I/O, so one poll finishes it.
+    fn verify(request: BatchVerifyRequest) -> Result<Json<()>, HttpError> {
+        let mut future = pin!(batch_verify(Json(request)));
+        match future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            Poll::Ready(result) => result,
+            Poll::Pending => panic!("batch verify waited on nothing"),
+        }
+    }
+
+    #[test]
+    fn an_old_signature_verifies_only_when_the_old_tree_is_named() {
+        assert!(
+            verify(old_signature(None)).is_err(),
+            "Go's tree is the default"
+        );
+        assert!(verify(old_signature(Some("GoShinzo"))).is_err());
+        assert!(verify(old_signature(Some("RustLegacy"))).is_ok());
+    }
+}
