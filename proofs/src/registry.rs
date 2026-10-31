@@ -1221,7 +1221,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Purge by DocID",
         name: "INV_OthersIntact / INV_CollectionIntact / INV_Gone / INV_NoStaleOwner / INV_Pruned / INV_Count / PROP_Commits",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, PurgeAttempt, purge_documents; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners",
+        anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, PurgeAttempt, purge_documents; crates/db/src/collection/ops/truncate_filtered.rs truncate_filtered_chunk; crates/db/src/txn/registry/purge.rs DbTransactionRegistry::purge_by_doc_ids_as; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners",
         model_ref: "MC_Purge_{Green_Prune,Green_NoPrune,Red_Blind,Red_KeepEdges,Red_KeepIndex,Red_CountRequests,Red_CountAttempt,Red_Fail,Red_PlainScan,Green_Branchable,Red_IgnoreCollection}.cfg",
         tiers: &[Boundary],
     },

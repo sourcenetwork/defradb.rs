@@ -33,7 +33,8 @@
 \*     running again.
 \*
 \* Code it models (crates/db/src/collection/ops/purge.rs):
-\*   DB::purge_by_doc_ids_as, PurgeAttempt (one transact_retry attempt),
+\*   DB::purge_by_doc_ids_as, PurgeAttempt (one transact_retry attempt; a
+\*   filtered truncate's chunk, truncate_filtered_chunk, is the same attempt),
 \*   purge_documents (values, index entries, primary key, heads, mappings),
 \*   crate::block::cleanup::delete_owned_dag_for_owners (prune: its collection_dag
 \*   flag keeps a branchable collection's composites; a validated

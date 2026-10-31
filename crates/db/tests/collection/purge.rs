@@ -525,8 +525,14 @@ fn prune_keeps_the_composites_a_branchable_collection_links() {
 
             assert_eq!(purged, 1);
             for cid in &blocks {
-                assert!(held(&db, cid).await, "{cid} is linked by the collection DAG (txn {in_txn})");
-                assert!(owners(&db, cid).await.is_empty(), "{cid} no longer names Alice");
+                assert!(
+                    held(&db, cid).await,
+                    "{cid} is linked by the collection DAG (txn {in_txn})"
+                );
+                assert!(
+                    owners(&db, cid).await.is_empty(),
+                    "{cid} no longer names Alice"
+                );
             }
             assert_eq!(collection_linked(&db).await, linked);
         }
@@ -563,6 +569,57 @@ fn a_purge_in_a_transaction_conflicts_with_a_definition_change() {
 
         let error = registry.commit(&handle).await.unwrap_err().to_string();
         assert!(error.contains("conflict"), "{error}");
+    })
+    .unwrap()
+}
+
+/// A truncate's chunks run as engine-retried attempts: a merge adopting a
+/// block the chunk's owner scan decided on conflicts with the first attempt,
+/// the chunk runs again, and the truncate completes with the block kept.
+#[test]
+#[mantra_macros::req_test("go.shinzo.purge.no_conflict")]
+fn a_truncate_chunk_reruns_after_a_conflicting_owner_write() {
+    workers::block_on(async {
+        for filtered in [true, false] {
+            let (db, control) = competing().await;
+            let alice = create(&db, "Alice", 40).await;
+            let adopted = *history(&db, &alice).await.iter().next().unwrap();
+            let newcomer = "bae-0000000000000000000000000000000000000000000000000000000000000000";
+            control.write.store(Some((
+                namespaced(
+                    Namespace::Systemstore,
+                    &BlockCIDToDocIDKey::bytes_for(&adopted.to_string(), newcomer),
+                ),
+                newcomer.as_bytes().to_vec(),
+            )));
+            control.owed.store(1, Ordering::SeqCst);
+            control.attempts.store(0, Ordering::SeqCst);
+
+            match filtered {
+                true => {
+                    let mut conditions = serde_json::Map::new();
+                    conditions.insert("name".into(), serde_json::json!({ "_eq": "Alice" }));
+                    db.truncate_collection_with_filter(
+                        "Users",
+                        query::Filter::from_conditions(conditions),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                }
+                false => db.truncate_collection("Users", None).await.unwrap(),
+            }
+
+            assert!(
+                control.attempts.load(Ordering::SeqCst) >= 2,
+                "the chunk ran as retried attempts and re-ran (filtered {filtered})"
+            );
+            assert!(
+                held(&db, &adopted).await,
+                "the adopted block is kept (filtered {filtered})"
+            );
+            assert_eq!(owners(&db, &adopted).await, vec![newcomer.to_string()]);
+        }
     })
     .unwrap()
 }
