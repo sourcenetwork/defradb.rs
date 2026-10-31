@@ -163,9 +163,8 @@ impl From<crate::index::Error> for Error {
                 Error::InvalidDocument(other.to_string())
             }
             crate::index::Error::Other(msg) => Error::Other(msg),
-            other @ crate::index::Error::UniqueViolation { .. } => {
-                Error::UniqueViolation(other.to_string())
-            }
+            other @ (crate::index::Error::UniqueViolation { .. }
+            | crate::index::Error::UpdateIndex { .. }) => Error::UniqueViolation(other.to_string()),
         }
     }
 }

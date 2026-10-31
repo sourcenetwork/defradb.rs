@@ -39,6 +39,10 @@ pub enum Error {
     /// text).
     #[error("can not index a doc's field(s) that violates unique index. DocID: {doc_id}{fields}")]
     UniqueViolation { doc_id: String, fields: String },
+
+    /// A unique violation by an update, wrapped as Go Shinzo wraps it.
+    #[error("failed to update index: {source}. IndexName: {index}")]
+    UpdateIndex { index: String, source: Box<Error> },
 }
 
 impl Error {
@@ -47,5 +51,6 @@ impl Error {
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
             || matches!(self, Error::UniqueViolation { .. })
+            || matches!(self, Error::UpdateIndex { source, .. } if source.is_unique_constraint_violation())
     }
 }

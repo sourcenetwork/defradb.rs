@@ -283,3 +283,22 @@ fn go_value(value: &document::NormalValue) -> String {
         other => format!("{other:?}"),
     }
 }
+
+impl IndexManager {
+    /// [`IndexManager::naming_the_writer`] for an update, which Go Shinzo
+    /// also wraps with the index's name.
+    pub(super) fn naming_the_updater(
+        error: Error,
+        doc: &document::Document,
+        index: &IndexType,
+        values: &[document::NormalValue],
+    ) -> Error {
+        match Self::naming_the_writer(error, doc, index, values) {
+            named @ Error::UniqueViolation { .. } => Error::UpdateIndex {
+                index: index.description().name.clone(),
+                source: Box::new(named),
+            },
+            other => other,
+        }
+    }
+}

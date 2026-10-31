@@ -693,7 +693,7 @@ impl IndexManager {
 
             if old_value_sets != new_value_sets {
                 Self::validate_unique_value_sets(index, &new_value_sets).map_err(|e| {
-                    Self::naming_the_writer(
+                    Self::naming_the_updater(
                         e,
                         new_doc,
                         index,
@@ -715,7 +715,7 @@ impl IndexManager {
                     )
                     .await
                     .map_err(|e| {
-                        Self::naming_the_writer(Error::Storage(e), new_doc, index, new_values)
+                        Self::naming_the_updater(Error::Storage(e), new_doc, index, new_values)
                     })?;
                 }
             }
@@ -753,7 +753,7 @@ impl IndexManager {
                 continue;
             }
             Self::validate_unique_value_sets(index, &new_value_sets).map_err(|e| {
-                Self::naming_the_writer(
+                Self::naming_the_updater(
                     e,
                     new_doc,
                     index,
@@ -775,7 +775,7 @@ impl IndexManager {
                 )
                 .await
                 .map_err(|e| {
-                    Self::naming_the_writer(Error::Storage(e), new_doc, index, new_values)
+                    Self::naming_the_updater(Error::Storage(e), new_doc, index, new_values)
                 })?;
             }
         }

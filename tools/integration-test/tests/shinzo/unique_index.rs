@@ -45,7 +45,9 @@ fn shinzo_a_unique_index_error_names_the_writer_and_its_value() {
             collection: "User".into(),
             doc_id: Text::reference("bob"),
             doc_map: json!({ "name": "alice" }),
-            expected_error: Some(format!("{VIOLATION}. DocID: {BOB_3}, name: alice")),
+            expected_error: Some(format!(
+                "failed to update index: {VIOLATION}. DocID: {BOB_3}, name: alice. IndexName: User_name_ASC"
+            )),
             ..Default::default()
         }
         .into(),
