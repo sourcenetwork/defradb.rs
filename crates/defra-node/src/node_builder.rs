@@ -255,6 +255,12 @@ impl NodeBuilder {
         self
     }
 
+    /// Refuse replicated documents at or below `rule`'s retention floors.
+    pub fn with_retention(mut self, rule: db::retention::StaticRetentionRule) -> Self {
+        self.config.retention = Some(rule);
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {

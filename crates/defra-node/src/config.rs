@@ -376,4 +376,7 @@ pub struct NodeConfig {
     pub query_timeout: Option<Duration>,
     /// The introspection cache; `None` keeps it on.
     pub introspection_cache: Option<bool>,
+    /// The retention floor replicated documents are judged against at
+    /// merge; `None` judges nothing.
+    pub retention: Option<db::retention::StaticRetentionRule>,
 }
