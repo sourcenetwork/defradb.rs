@@ -26,6 +26,10 @@ pub struct WaitForPeersEvents {
     /// Wait for the next push that found no peers, and return it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_peers: bool,
+    /// Wait for this many gossip heads dropped past a deferral budget, and
+    /// return how many were dropped and from how many peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gossip_dropped: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,6 +58,17 @@ impl Op for WaitForPeersEvents {
             return Ok(json!({}));
         }
         let deadline = Duration::from_millis(self.millis.unwrap_or(5000));
+        if let Some(count) = self.gossip_dropped {
+            let events = node.events().map_err(Failure::operation)?;
+            let dropped = state
+                .block_on(events.gossip_dropped(count, deadline))
+                .map_err(Failure::operation)?;
+            let peers: RapidHashSet<&str> =
+                dropped.iter().map(|event| event.peer_id.as_str()).collect();
+            let roots: RapidHashSet<String> =
+                dropped.iter().map(|event| event.cid.to_string()).collect();
+            return Ok(json!({ "dropped": roots.len(), "peers": peers.len() }));
+        }
         if self.no_peers {
             let events = node.events().map_err(Failure::operation)?;
             let event = state

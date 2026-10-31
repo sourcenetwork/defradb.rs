@@ -28,6 +28,20 @@ pub struct CutoffSpec {
     pub cutoff: i64,
 }
 
+/// A Rust receiver's admission limits: its pending-DAG map and its per-peer
+/// rate bucket (tokens, and tokens refilled per second).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionSpec {
+    pub max_pending_dags: usize,
+    pub rate_limit_burst: u32,
+    pub rate_limit_rate: f64,
+    /// The byte budget for one peer's deferred gossip heads; `None` keeps
+    /// the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferral_peer_bytes: Option<u64>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewNode {
@@ -81,6 +95,9 @@ pub struct NewNode {
     /// document block by block, as from a peer that predates the exchange.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_car_requests: bool,
+    /// A Rust node with the given admission limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSpec>,
     /// A Go node built from the Shinzo pin (`DEFRA_GO_SHINZO_BINARY`),
     /// whatever the test's client: the Go side of a mixed cluster. Actions
     /// aimed at it run as the go-shinzo client.
@@ -120,6 +137,7 @@ impl Op for NewNode {
         probe.retention = None;
         probe.refuse_at_or_below = None;
         probe.no_car_requests = false;
+        probe.admission = None;
         probe.go_shinzo = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
@@ -140,6 +158,7 @@ impl Op for NewNode {
             retention: self.retention.clone(),
             refuse_at_or_below: self.refuse_at_or_below.clone(),
             no_car_requests: self.no_car_requests,
+            admission: self.admission.clone(),
             go_shinzo: self.go_shinzo,
         };
         state.start_node(self.common.node(), spec);

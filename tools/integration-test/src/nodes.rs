@@ -40,6 +40,8 @@ pub struct NodeSpec {
     pub refuse_at_or_below: Option<crate::actions::CutoffSpec>,
     /// The node sends no CAR requests.
     pub no_car_requests: bool,
+    /// The node's admission limits, if not the defaults.
+    pub admission: Option<crate::actions::AdmissionSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -68,7 +70,8 @@ impl TestNode {
             || spec.rust
             || spec.retention.is_some()
             || spec.refuse_at_or_below.is_some()
-            || spec.no_car_requests;
+            || spec.no_car_requests
+            || spec.admission.is_some();
         let client_type = match client_type {
             _ if spec.go_shinzo => ClientType::GoShinzo,
             ClientType::GoHttp | ClientType::GoShinzo if rust => ClientType::RustHttp,
@@ -161,6 +164,7 @@ impl TestNode {
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
             EventName::P2PNoPeers,
+            EventName::P2PGossipHeadDropped,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -243,6 +247,16 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     if spec.no_car_requests {
         builder = builder.without_car_requests();
     }
+    if let Some(limits) = &spec.admission {
+        builder = builder.with_admission_limits(
+            limits.max_pending_dags,
+            limits.rate_limit_burst,
+            limits.rate_limit_rate,
+        );
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            builder = builder.with_gossip_deferral_peer_bytes(bytes);
+        }
+    }
     if let Some(cutoff) = &spec.refuse_at_or_below {
         builder = builder.with_replication_filter(Arc::new(Cutoff(cutoff.clone())));
     }
@@ -267,6 +281,8 @@ struct EventLog {
     topics: VecDeque<(String, String, String)>,
     /// Pushes that found no peers, not yet awaited.
     no_peers: VecDeque<events::P2PNoPeersData>,
+    /// Gossip heads the node dropped past a deferral budget, not yet awaited.
+    gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
 }
 
 /// A node's recorded events.
@@ -329,6 +345,9 @@ impl Events {
                 });
             }
             MessageData::P2PNoPeers(event) => self.update(|log| log.no_peers.push_back(event)),
+            MessageData::P2PGossipHeadDropped(event) => {
+                self.update(|log| log.gossip_dropped.push_back(event))
+            }
             _ => {}
         }
         Ok(())
@@ -390,6 +409,32 @@ impl Events {
                 .await
                 .map_err(|reason| format!("no push found no peers: {reason}"))?;
         }
+    }
+
+    /// The next `count` gossip heads the node dropped past a deferral budget.
+    pub async fn gossip_dropped(
+        &self,
+        count: usize,
+        deadline: Duration,
+    ) -> Result<Vec<events::P2PGossipHeadDroppedData>, String> {
+        let end = std::time::Instant::now() + deadline;
+        let mut dropped = Vec::with_capacity(count);
+        while dropped.len() < count {
+            let mut log = self.log.load_clone();
+            if let Some(event) = log.gossip_dropped.pop_front() {
+                self.log.store(log);
+                dropped.push(event);
+                continue;
+            }
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left).await.map_err(|reason| {
+                format!(
+                    "{} of {count} dropped gossip heads: {reason}",
+                    dropped.len()
+                )
+            })?;
+        }
+        Ok(dropped)
     }
 
     /// Wait until every (topic, peer) in `wanted` has an event of `kind`,

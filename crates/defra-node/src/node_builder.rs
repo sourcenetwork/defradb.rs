@@ -384,6 +384,33 @@ impl NodeBuilder {
         self
     }
 
+    /// Set the libp2p receiver's admission limits: the pending-DAG map and
+    /// the per-peer rate bucket. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub fn with_admission_limits(
+        mut self,
+        max_pending_dags: usize,
+        rate_limit_burst: u32,
+        rate_limit_rate: f64,
+    ) -> Self {
+        if let TransportConfig::Libp2p(config) = &mut self.config.transport {
+            config.sync.max_pending_dags = max_pending_dags;
+            config.sync.rate_limit_burst = rate_limit_burst;
+            config.sync.rate_limit_rate = rate_limit_rate;
+        }
+        self
+    }
+
+    /// Set the libp2p receiver's byte budget for one peer's deferred gossip
+    /// heads. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub fn with_gossip_deferral_peer_bytes(mut self, bytes: u64) -> Self {
+        if let TransportConfig::Libp2p(config) = &mut self.config.transport {
+            config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+        self
+    }
+
     /// Keep the transport identity in an application-owned keyring.
     ///
     /// The backend must provide durable storage and its own namespace per node.
