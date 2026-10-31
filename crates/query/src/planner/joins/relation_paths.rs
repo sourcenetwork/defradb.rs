@@ -14,20 +14,19 @@ impl Planner {
     /// JSON sub-path such as `{jsonField: {i: {love: {_like: "%x%"}}}}` looks like a
     /// relation chain. Each path is cut at its first segment that is not a relation
     /// field; the rest is a scalar condition on that field. Paths left with a single
-    /// segment are single-level relation filters and are dropped.
+    /// segment are single-level relation filters and are dropped. A path that is
+    /// all relations comes back unchanged (`proofs/lean/JsonSubPathCut.lean`).
     pub(in crate::planner) fn relation_filter_paths(
         &self,
         filter: &Filter,
         collection: &CollectionVersion,
     ) -> Vec<Vec<String>> {
-        let mut paths: Vec<Vec<String>> = Vec::new();
-        for path in filter.get_multi_level_relation_paths() {
-            let relation_path = self.relation_prefix(&path, collection);
-            if relation_path.len() > 1 && !paths.contains(&relation_path) {
-                paths.push(relation_path);
-            }
-        }
-        paths
+        filter
+            .get_multi_level_relation_paths()
+            .into_iter()
+            .map(|path| self.relation_prefix(&path, collection))
+            .filter(|path| path.len() > 1)
+            .collect()
     }
 
     fn relation_prefix(&self, path: &[String], collection: &CollectionVersion) -> Vec<String> {

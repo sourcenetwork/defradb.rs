@@ -81,6 +81,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
+| Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
