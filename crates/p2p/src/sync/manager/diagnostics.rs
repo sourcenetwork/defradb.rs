@@ -145,6 +145,7 @@ pub struct SyncDiagnostics {
     pending_dag_fetch_exhausted: AtomicU64,
     pending_dag_terminal_merged: AtomicU64,
     pending_dag_terminal_quarantined: AtomicU64,
+    arrivals: super::arrival_stats::ArrivalStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -182,6 +183,11 @@ pub struct SyncDiagnosticsSnapshot {
 }
 
 impl SyncDiagnostics {
+    /// Arrival outcomes since the last `p2p stats` report.
+    pub fn arrivals(&self) -> &super::arrival_stats::ArrivalStats {
+        &self.arrivals
+    }
+
     pub fn snapshot(&self) -> SyncDiagnosticsSnapshot {
         SyncDiagnosticsSnapshot {
             car_empty_responses: self.car_empty_responses.load(Ordering::Relaxed),
