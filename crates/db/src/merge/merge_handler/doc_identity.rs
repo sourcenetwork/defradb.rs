@@ -227,8 +227,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     /// Record block ownership for a merged composite: the composite CID
-    /// itself, its linked field blocks, and its encryption block (mirrors
+    /// itself, its linked field blocks, its encryption blocks and every
+    /// signature block among them (mirrors
     /// Go's setBlockDocIDMapping/setLinkedBlockDocIDMappings).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn record_block_ownership(
         &self,
         systemstore: &NamespaceView,
@@ -237,6 +239,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         block: &Block,
         linked_field_cids: &[Cid],
         linked_encryption_cids: &[Cid],
+        linked_signature_cids: &[Cid],
     ) -> std::result::Result<(), MergeError> {
         crate::docid::map::set_block_doc_id_mapping(
             systemstore,
@@ -267,6 +270,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             crate::docid::map::set_block_doc_id_mapping(systemstore, &enc_cid.to_string(), doc_id)
                 .await
                 .map_err(MergeError::Database)?;
+        }
+        // The signature blocks of the composite and of every linked field
+        // block (a skipped field's included) are the document's too, and
+        // merge with it: their to-merge marks go in this transaction, so the
+        // orphan sweep never reclaims a merged block's signature
+        // (`go.shinzo.store.signature_block_merged`, `go.shinzo.merge.signature_owner`).
+        let blockstore = systemstore.sibling(storage::namespace::Namespace::Blockstore);
+        for signature_cid in block.signature.iter().chain(linked_signature_cids) {
+            crate::docid::map::set_block_doc_id_mapping(
+                systemstore,
+                &signature_cid.to_string(),
+                doc_id,
+            )
+            .await
+            .map_err(MergeError::Database)?;
+            blockstore
+                .delete(&storage::keys::blockstore::ToMergeIndexKey::new(*signature_cid).bytes())
+                .await
+                .map_err(|e| MergeError::Storage(e.to_string()))?;
         }
         Ok(())
     }

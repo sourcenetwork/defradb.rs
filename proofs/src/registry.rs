@@ -1281,6 +1281,28 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The orphan block sweep (#2479): a fetched block's to-merge mark
+        // holds its fetch time and a refetch renews it; the sweep nominates
+        // expired marks from a snapshot and decides each in a transaction
+        // that reads the mark and the owners again, deleting an unowned
+        // block, clearing the mark of an owned one, and never touching an
+        // untimed mark; a merge clears and owns its signature block too.
+        family: "Orphan block sweep",
+        name: "INV_NoMergedLoss / INV_NoOwnedLoss / INV_MergedUnmarked / INV_SigOwned / INV_LegacyKept / PROP_Reclaims",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run, marker_value, marker_time; crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, ReclaimBatch::run; crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership",
+        model_ref: "MC_OrphanGc_{Green,Red_SnapshotRead,Red_NoOwnerCheck,Red_BlindRefresh,Red_ReclaimLegacy,Red_SigMarked,Red_SigUnowned}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Orphan block sweep",
+        name: "time_value / time_short / time_long / time_legacy",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/blockstore.rs marker_value, marker_time",
+        model_ref: "OrphanMarker (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // The retention floor (#2450): the merge judges the merged, alive
         // document of a covered, non-branchable collection; a refusal is the
         // event's own Rejected outcome, never merged, relayed or counted as a
