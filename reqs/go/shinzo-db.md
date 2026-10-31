@@ -184,3 +184,38 @@ The `merge stats` info line carries `creates`, `updates`, `txnConflicts`, `chunk
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 A dropped event (one not stored) is counted under one cause: `missingBlock` (a block of the DAG could not be found), `uniqueIndex` (`can not index a doc's field(s) that violates unique index`), `retryExhausted`, `collectionNotFound` (the event names a collection this node does not hold; `Merge` returns `collection not found`), `contextDone` (cancelled or past its deadline, including a collection lookup that fails because the node is shutting down, on both `Merge` and `MergeBatchWithTxn`, where the outcome is `MergeDropped`), and `other` for anything else. The causes that occurred in an interval are logged on their own `merge drops` error line, one count per cause (e.g. `missingBlock: 2, uniqueIndex: 1`), then reset; an interval with no drops logs no such line.
+
+# `go.shinzo.save_many`: Save many documents in one transaction
+
+- **Parents:** ["go.shinzo"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+`Collection.SaveManyDocuments(docs)` saves each document in order, as `SaveDocument` does: a document whose DocID names a stored document is updated with the fields it gives, any other is added. Every document is saved in one transaction, so either all are stored or none is. It is checked against the update-document node permission. Go's HTTP client and CLI refuse it with `ErrNotSupportedViaHTTP` (a stateless request cannot hold the shared transaction), so it is reached in-process only; Go has no tests for it, and these requirements are written from `internal/db/document.go` (`SaveManyDocuments`, `SaveDocument`).
+
+# `go.shinzo.save_many.create_or_update`: Each document is added or updated
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+With `User { name: String, age: Int }` holding Alice (`age: 40`), saving `[{_docID: <alice>, age: 41}, {name: "Bob", age: 50}]` leaves Alice at `age: 41` with her name unchanged and adds Bob. defradb.rs returns the saved documents' DocIDs in the order given.
+
+# `go.shinzo.save_many.atomic`: One document that fails saves none
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+When one document of the batch cannot be saved, the call fails with that document's error and no document of the batch is stored, including the ones before it: saving `[{name: "Bob"}, {name: "Carol", nickname: "C"}]` on a `User` with no `nickname` field fails, and neither Bob nor Carol exists afterwards.
+
+# `go.shinzo.save_many.deleted`: A deleted document is not saved again
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A document whose DocID names a document that was deleted fails the batch (Go: `a document with the given ID has been deleted`), and nothing of the batch is stored.
+
+# `go.shinzo.save_many.transaction`: In a caller's transaction, the batch lands on commit
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Saved in a caller's transaction, the documents are not visible outside it until it commits, and are never stored if it is discarded. An empty batch succeeds and stores nothing.
