@@ -60,93 +60,98 @@ vars == <<state, owner, readOnly, writes, base, committed, final, ranBy, lateRan
 \* The first caller, only to give `owner` a value before any transaction opens.
 Anyone == CHOOSE c \in Callers : TRUE
 
+\* Every variable holds a value of the shape it was declared with.
 TypeOK ==
-  /\ state \in [Txns -> {"none", "open", "committed", "discarded"}]
-  /\ owner \in [Txns -> Callers]
-  /\ readOnly \in [Txns -> BOOLEAN]
-  /\ writes \in [Txns -> SUBSET Keys]
-  /\ base \in [Txns -> SUBSET Keys]
-  /\ committed \subseteq Keys
-  /\ final \in [Txns -> SUBSET Keys]
-  /\ ranBy \in [Txns -> SUBSET Callers]
-  /\ lateRan \in BOOLEAN
-  /\ lostUpdate \in BOOLEAN
+  /\ state \in [Txns -> {"none", "open", "committed", "discarded"}]  \* each ID is unused, open, committed or discarded
+  /\ owner \in [Txns -> Callers]                                      \* each ID names one caller as its opener
+  /\ readOnly \in [Txns -> BOOLEAN]                                   \* each ID is read-only or not
+  /\ writes \in [Txns -> SUBSET Keys]                                 \* each ID holds some private writes
+  /\ base \in [Txns -> SUBSET Keys]                                   \* each ID remembers the store it started from
+  /\ committed \subseteq Keys                                         \* the shared store is a set of keys
+  /\ final \in [Txns -> SUBSET Keys]                                  \* each ID remembers what its commit added
+  /\ ranBy \in [Txns -> SUBSET Callers]                               \* each ID remembers who ran requests in it
+  /\ lateRan \in BOOLEAN                                              \* the late-run latch is up or down
+  /\ lostUpdate \in BOOLEAN                                           \* the lost-update latch is up or down
 
+\* At the start nothing is open, nothing is written and nothing went wrong.
 Init ==
-  /\ state = [t \in Txns |-> "none"]
-  /\ owner = [t \in Txns |-> Anyone]
-  /\ readOnly = [t \in Txns |-> FALSE]
-  /\ writes = [t \in Txns |-> {}]
-  /\ base = [t \in Txns |-> {}]
-  /\ committed = {}
-  /\ final = [t \in Txns |-> {}]
-  /\ ranBy = [t \in Txns |-> {}]
-  /\ lateRan = FALSE
-  /\ lostUpdate = FALSE
+  /\ state = [t \in Txns |-> "none"]       \* no ID has been handed out yet
+  /\ owner = [t \in Txns |-> Anyone]       \* a placeholder opener until an ID opens
+  /\ readOnly = [t \in Txns |-> FALSE]     \* nothing is read-only yet
+  /\ writes = [t \in Txns |-> {}]          \* no transaction holds a write
+  /\ base = [t \in Txns |-> {}]            \* no transaction has a starting picture
+  /\ committed = {}                        \* the shared store is empty
+  /\ final = [t \in Txns |-> {}]           \* no commit has added anything
+  /\ ranBy = [t \in Txns |-> {}]           \* no request has run anywhere
+  /\ lateRan = FALSE                       \* no request has run in a finished transaction
+  /\ lostUpdate = FALSE                    \* no commit has overwritten another
 
 \* Caller c opens transaction t (Node::txn_begin). The store as it is now is
 \* the transaction's starting picture.
 Begin(c, t, ro) ==
-  /\ state[t] = "none"
-  /\ state' = [state EXCEPT ![t] = "open"]
-  /\ owner' = [owner EXCEPT ![t] = c]
-  /\ readOnly' = [readOnly EXCEPT ![t] = ro]
-  /\ base' = [base EXCEPT ![t] = committed]
-  /\ UNCHANGED <<writes, committed, final, ranBy, lateRan, lostUpdate>>
+  /\ state[t] = "none"                                    \* only an unused ID can be handed out
+  /\ state' = [state EXCEPT ![t] = "open"]                \* t is now open
+  /\ owner' = [owner EXCEPT ![t] = c]                     \* and belongs to c
+  /\ readOnly' = [readOnly EXCEPT ![t] = ro]              \* read-only if c asked for it
+  /\ base' = [base EXCEPT ![t] = committed]               \* t starts from the store as it is now
+  /\ UNCHANGED <<writes, committed, final, ranBy, lateRan, lostUpdate>>  \* nothing else moves
 
 \* May caller c's request, carrying t in its context, run in t?
 \* Real code: only while t is open, and only for the caller that opened it.
 Admits(c, t) ==
-  CASE Bug = "NoOwnerCheck" -> state[t] = "open"
-    [] Bug = "RunAfterEnd"  -> state[t] # "none"
-    [] OTHER                -> state[t] = "open" /\ owner[t] = c
+  CASE Bug = "NoOwnerCheck" -> state[t] = "open"          \* bug: any caller may use an open t
+    [] Bug = "RunAfterEnd"  -> state[t] # "none"          \* bug: a committed or discarded t still runs requests
+    [] OTHER                -> state[t] = "open" /\ owner[t] = c  \* real code: open, and c opened it
 
 \* Caller c runs a write request on key k with t in its context (exec_request).
 \* If t is not admitted the request gets "transaction not found" and nothing
 \* changes. A read-only transaction refuses the write: also no change.
 Request(c, t, k) ==
-  /\ state[t] # "none"
-  /\ IF Admits(c, t)
-       THEN /\ ranBy' = [ranBy EXCEPT ![t] = @ \cup {c}]
-            /\ lateRan' = (lateRan \/ state[t] # "open")
-            /\ writes' = IF readOnly[t] /\ Bug # "ReadOnlyWrites"
-                           THEN writes
-                           ELSE [writes EXCEPT ![t] = @ \cup {k}]
-       ELSE UNCHANGED <<ranBy, lateRan, writes>>
-  /\ UNCHANGED <<state, owner, readOnly, base, committed, final, lostUpdate>>
+  /\ state[t] # "none"                                    \* the context names an ID that was handed out
+  /\ IF Admits(c, t)                                      \* the core lets the request in
+       THEN /\ ranBy' = [ranBy EXCEPT ![t] = @ \cup {c}]  \* remember that c ran a request in t
+            /\ lateRan' = (lateRan \/ state[t] # "open")  \* raise the latch if t had already finished
+            /\ writes' = IF readOnly[t] /\ Bug # "ReadOnlyWrites"  \* a read-only t refuses the write
+                           THEN writes                    \* so its writes stay as they were
+                           ELSE [writes EXCEPT ![t] = @ \cup {k}]  \* otherwise k joins t's private writes
+       ELSE UNCHANGED <<ranBy, lateRan, writes>>          \* refused: "transaction not found", nothing changes
+  /\ UNCHANGED <<state, owner, readOnly, base, committed, final, lostUpdate>>  \* a request never ends t or touches the store
 
 \* Caller c commits t (Node::txn_commit). Only the opener, only while open.
 \* The commit fails with a conflict when it writes a key another transaction
 \* committed after t opened; a failed commit ends t and keeps nothing.
 Commit(c, t) ==
-  /\ state[t] = "open" /\ owner[t] = c
-  /\ LET clash == writes[t] \cap (committed \ base[t]) IN
-       IF clash # {} /\ Bug # "NoConflictCheck"
-         THEN /\ state' = [state EXCEPT ![t] = "discarded"]
-              /\ UNCHANGED <<committed, final, lostUpdate>>
-         ELSE /\ state' = [state EXCEPT ![t] = "committed"]
-              /\ committed' = committed \cup writes[t]
-              /\ final' = [final EXCEPT ![t] = writes[t]]
-              /\ lostUpdate' = (lostUpdate \/ clash # {})
-  /\ writes' = [writes EXCEPT ![t] = {}]
-  /\ UNCHANGED <<owner, readOnly, base, ranBy, lateRan>>
+  /\ state[t] = "open" /\ owner[t] = c                    \* only t's opener commits, only while t is open
+  /\ LET clash == writes[t] \cap (committed \ base[t]) IN \* keys t wrote that someone committed since t opened
+       IF clash # {} /\ Bug # "NoConflictCheck"           \* regolith sees the clash
+         THEN /\ state' = [state EXCEPT ![t] = "discarded"]  \* the commit fails with a conflict and t ends
+              /\ UNCHANGED <<committed, final, lostUpdate>>  \* the store keeps nothing of t
+         ELSE /\ state' = [state EXCEPT ![t] = "committed"]  \* no clash (or the bug ignores it): t commits
+              /\ committed' = committed \cup writes[t]    \* t's writes reach the shared store
+              /\ final' = [final EXCEPT ![t] = writes[t]] \* remember what t added
+              /\ lostUpdate' = (lostUpdate \/ clash # {}) \* raise the latch if t overwrote a newer commit
+  /\ writes' = [writes EXCEPT ![t] = {}]                  \* t's private writes are gone either way
+  /\ UNCHANGED <<owner, readOnly, base, ranBy, lateRan>>  \* nothing else moves
 
 \* Caller c discards t (Node::txn_discard). The writes are dropped.
 Discard(c, t) ==
-  /\ state[t] = "open" /\ owner[t] = c
-  /\ state' = [state EXCEPT ![t] = "discarded"]
-  /\ committed' = IF Bug = "DiscardLeaks" THEN committed \cup writes[t] ELSE committed
-  /\ writes' = [writes EXCEPT ![t] = {}]
-  /\ UNCHANGED <<owner, readOnly, base, final, ranBy, lateRan, lostUpdate>>
+  /\ state[t] = "open" /\ owner[t] = c                    \* only t's opener discards, only while t is open
+  /\ state' = [state EXCEPT ![t] = "discarded"]           \* t ends
+  /\ committed' = IF Bug = "DiscardLeaks" THEN committed \cup writes[t] ELSE committed  \* bug: the writes leak into the store
+  /\ writes' = [writes EXCEPT ![t] = {}]                  \* t's private writes are dropped
+  /\ UNCHANGED <<owner, readOnly, base, final, ranBy, lateRan, lostUpdate>>  \* nothing else moves
 
+\* Each step, some caller does one thing with some transaction ID.
 Next ==
-  \E c \in Callers, t \in Txns :
-    \/ \E ro \in BOOLEAN : Begin(c, t, ro)
-    \/ \E k \in Keys : Request(c, t, k)
-    \/ Commit(c, t)
-    \/ Discard(c, t)
+  \E c \in Callers, t \in Txns :                          \* pick a caller and an ID
+    \/ \E ro \in BOOLEAN : Begin(c, t, ro)                \* open it, read-only or not
+    \/ \E k \in Keys : Request(c, t, k)                   \* run a write of some key in it
+    \/ Commit(c, t)                                       \* commit it
+    \/ Discard(c, t)                                      \* or discard it
 
+\* Start from Init and take Next steps forever (or stand still).
 Spec == Init /\ [][Next]_vars
+
 
 \* ---- What must always hold ----
 
