@@ -533,3 +533,36 @@ fn prune_keeps_the_composites_a_branchable_collection_links() {
     })
     .unwrap()
 }
+
+/// A purge in a caller's transaction validates the collection's definition
+/// as every write there does, so switching the collection's active version
+/// while it runs makes the transaction's commit conflict.
+#[test]
+#[mantra_macros::req_test("go.shinzo.purge.count")]
+fn a_purge_in_a_transaction_conflicts_with_a_definition_change() {
+    workers::block_on(async {
+        let db = users().await;
+        let alice = create(&db, "Alice", 40).await;
+        db.patch_collection(
+            "Users",
+            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
+        let handle = registry.begin(false).await.unwrap();
+        let context =
+            defra_core::RequestContext::default().with_txn(Some(handle.as_str().parse().unwrap()));
+        registry
+            .purge_by_doc_ids_as(&context, "Users", std::slice::from_ref(&alice), false)
+            .await
+            .unwrap();
+
+        db.set_active_collection_version("users-v1").await.unwrap();
+
+        let error = registry.commit(&handle).await.unwrap_err().to_string();
+        assert!(error.contains("conflict"), "{error}");
+    })
+    .unwrap()
+}
