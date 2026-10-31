@@ -6,15 +6,7 @@ use crate::executor::{QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT
 /// The `_docID` of each document mutation `op` on `collection` returned, or
 /// the request's first error with its text unchanged.
 pub(super) fn doc_ids(response: QueryResponse, op: &str, collection: &str) -> Result<Vec<String>> {
-    if let Some(error) = response.errors.first() {
-        return Err(match error.code() {
-            Some(TXN_CONFLICT_ERROR_CODE) => Error::Conflict,
-            Some(SECONDARY_RELATION_ERROR_CODE) => {
-                Error::SecondaryRelation(quoted_field(&error.message))
-            }
-            _ => Error::Request(error.message.clone()),
-        });
-    }
+    refused(&response)?;
     let key = format!("{op}_{collection}");
     let docs = response
         .data
@@ -35,6 +27,34 @@ pub(super) fn one(response: QueryResponse, op: &str, collection: &str) -> Result
     match doc_ids(response, op, collection)?.is_empty() {
         true => Err(Error::DocumentNotFound),
         false => Ok(()),
+    }
+}
+
+/// Whether the document a [`super::request::lookup`] asked for is deleted.
+pub(super) fn deleted(response: QueryResponse, collection: &str) -> Result<bool> {
+    refused(&response)?;
+    Ok(response
+        .data
+        .as_ref()
+        .and_then(|data| data.get(collection))
+        .and_then(Value::as_array)
+        .is_some_and(|docs| {
+            docs.iter()
+                .any(|doc| doc.get("_deleted") == Some(&Value::Bool(true)))
+        }))
+}
+
+/// The request's first error, with its text unchanged.
+fn refused(response: &QueryResponse) -> Result<()> {
+    match response.errors.first() {
+        None => Ok(()),
+        Some(error) => Err(match error.code() {
+            Some(TXN_CONFLICT_ERROR_CODE) => Error::Conflict,
+            Some(SECONDARY_RELATION_ERROR_CODE) => {
+                Error::SecondaryRelation(quoted_field(&error.message))
+            }
+            _ => Error::Request(error.message.clone()),
+        }),
     }
 }
 

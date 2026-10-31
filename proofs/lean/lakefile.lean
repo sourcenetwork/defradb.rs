@@ -158,3 +158,6 @@ lean_lib RequestDrain where
 
 @[default_target]
 lean_lib NacToggle where
+
+@[default_target]
+lean_lib DocumentSave where

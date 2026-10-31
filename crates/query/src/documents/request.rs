@@ -99,6 +99,15 @@ pub(super) fn save(
     ))
 }
 
+/// Whether document `doc_id` is deleted, deleted documents included.
+pub(super) fn lookup(collection: &str, doc_id: &str) -> Result<String> {
+    Ok(format!(
+        "query {{ {}(docID: {}, showDeleted: true) {{ _deleted }} }}",
+        name(collection)?,
+        string(doc_id)
+    ))
+}
+
 pub(super) fn delete(collection: &str, doc_id: &str) -> Result<String> {
     Ok(format!(
         "mutation {{ delete_{}(docIDs: [{}]) {SELECTION} }}",

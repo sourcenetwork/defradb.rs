@@ -120,9 +120,9 @@ fn refused(error: documents::Error) -> HttpError {
     match error {
         documents::Error::DocumentNotFound => HttpError::NotFound(message),
         documents::Error::Conflict => HttpError::TransactionConflict,
-        documents::Error::Request(_) | documents::Error::SecondaryRelation(_) => {
-            http_error_from_backend_message(message)
-        }
+        documents::Error::Request(_)
+        | documents::Error::SecondaryRelation(_)
+        | documents::Error::Deleted(_) => http_error_from_backend_message(message),
     }
 }
 
