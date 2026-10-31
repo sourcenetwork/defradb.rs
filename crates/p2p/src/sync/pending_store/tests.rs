@@ -228,7 +228,7 @@ async fn pending_store_conflicts_run_under_the_configured_retry_budget() {
 
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
     assert!(
-        matches!(error, Error::Storage(ref message) if message.contains("retry")),
+        matches!(error, Error::Storage(ref message) if message.starts_with("reached maximum transaction reties")),
         "unexpected terminal error: {error:?}"
     );
     let key = P2PPendingDagKey::new(root_cid.to_string());

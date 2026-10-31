@@ -61,7 +61,26 @@ async fn batch_with_an_orphan_at(size: usize, bad: usize) {
     }
     blocks[bad] = orphan(&blocks[bad]);
 
-    let outcomes = handler.handle_block_batch(&blocks).await;
+    // Through the handler the network calls, which reports a drop as Go does.
+    let network = db::merge::AcpMergeHandler::new(Arc::new(DbMergeHandler::new(
+        handler.db().clone(),
+        blockstore.clone(),
+    )));
+    let outcomes = network.handle_block_batch(&blocks).await;
+    let missing = generate_cid_from_bytes(b"a parent this node never received").unwrap();
+    let error = outcomes[bad].as_ref().unwrap_err().to_string();
+    assert!(error.starts_with("merge event dropped: "), "{error}");
+    assert!(
+        error.contains(&format!("could not find {missing}")),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(&format!(
+            ". DocID: {}, CID: {}",
+            blocks[bad].doc_id, blocks[bad].cid
+        )),
+        "{error}"
+    );
     for (i, (block, outcome)) in blocks.iter().zip(&outcomes).enumerate() {
         let merged = matches!(outcome, Ok(MergeOutcome::Merged));
         assert_eq!(merged, i != bad, "event {i} of {size}: {outcome:?}");

@@ -16,6 +16,13 @@ pub struct HistoryRejection {
 /// Error type for database merge operations.
 #[derive(Debug, thiserror::Error)]
 pub enum MergeError {
+    /// A replicated event the merge did not store, as Go Shinzo reports it
+    /// (`NewErrMergeEventDropped`): the cause, then the event's DocID and
+    /// head CID. Only the handler the network calls wraps its errors so;
+    /// every classification is the cause's.
+    #[error("{0}")]
+    Dropped(Box<DroppedEvent>),
+
     /// Failed to decode block from DAG-CBOR.
     #[error("block decode failed: {0}")]
     BlockDecode(String),
@@ -112,6 +119,26 @@ pub enum MergeError {
 }
 
 impl MergeError {
+    /// `self` as the network sees an event it did not store.
+    pub fn dropped(self, doc_id: &str, cid: &Cid) -> Self {
+        match self {
+            dropped @ MergeError::Dropped(_) => dropped,
+            cause => MergeError::Dropped(Box::new(DroppedEvent {
+                cause,
+                doc_id: doc_id.to_string(),
+                cid: *cid,
+            })),
+        }
+    }
+
+    /// The error under the network's [`MergeError::Dropped`] wrapper.
+    pub fn cause(&self) -> &MergeError {
+        match self {
+            MergeError::Dropped(dropped) => dropped.cause.cause(),
+            cause => cause,
+        }
+    }
+
     /// Construct a `DepthExceeded` error.
     pub(crate) fn depth_exceeded(cid: &Cid, depth: usize) -> Self {
         MergeError::DepthExceeded { cid: *cid, depth }
@@ -124,6 +151,7 @@ impl MergeError {
     /// leaves the block parked ([`MergeError::needs_key`]).
     pub fn fails_block(&self) -> bool {
         match self {
+            MergeError::Dropped(dropped) => dropped.cause.fails_block(),
             MergeError::Storage(_) => false,
             MergeError::Database(error) => !matches!(
                 error,
@@ -136,6 +164,9 @@ impl MergeError {
     /// Whether merging a block needs a key this node does not hold: a parked
     /// block stays parked, and the rest of the replay goes on.
     pub fn needs_key(&self) -> bool {
+        if let MergeError::Dropped(dropped) = self {
+            return dropped.cause.needs_key();
+        }
         matches!(
             self,
             MergeError::Kms(_)
@@ -147,6 +178,7 @@ impl MergeError {
     /// Classify failures that cannot change while replaying the same block.
     pub(crate) fn disposition(&self) -> MergeErrorDisposition {
         match self {
+            Self::Dropped(dropped) => dropped.cause.disposition(),
             Self::BlockDecode(_)
             | Self::UnsupportedDelta(_)
             | Self::InvalidReplayAuthorization(_)
@@ -175,4 +207,14 @@ impl From<workers::Error> for MergeError {
     fn from(error: workers::Error) -> Self {
         MergeError::Storage(format!("the merge did not run: {error}"))
     }
+}
+
+/// A replicated event the merge did not store: its cause, and the event's
+/// DocID and head CID, written as Go Shinzo's `NewErrMergeEventDropped`.
+#[derive(Debug, thiserror::Error)]
+#[error("merge event dropped: {cause}. DocID: {doc_id}, CID: {cid}")]
+pub struct DroppedEvent {
+    pub cause: MergeError,
+    pub doc_id: String,
+    pub cid: Cid,
 }

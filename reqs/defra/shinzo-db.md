@@ -274,3 +274,20 @@ Two `User` documents created with the same `name: "Shared"` and different `age` 
 # `go.shinzo.docid`: Document identity under concurrency
 
 - **Parents:** ["go.shinzo"]
+
+# `go.shinzo.merge.batch_isolation`: One event that cannot merge does not stop the others
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["db::merge::batch_isolation::an_event_whose_parent_never_arrived_stops_no_other_event"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+In a batch where one event's head has a parent this node never received, every other event is stored and its outcome is `MergeCommitted`; the bad event's outcome is `MergeDropped` and it is not readable. This holds wherever the bad event sits: first in a batch of two, or at position 9 of 18. The returned error contains `could not find <missing CID>` and the bad event's DocID, wrapped as `merge event dropped: <cause>. DocID: <docID>, CID: <head CID>`. The outcomes agree with what a read returns for each document.
+
+# `go.shinzo.merge.retry`: Retries are bounded, and exhaustion is reported as a failure
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["db::merge::retry_exhaustion::exhausted_retries_drop_the_event_with_gos_text", "db::merge::retry_exhaustion::a_budget_of_zero_still_makes_one_attempt"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Go-Bug-Suspect:** "Go's text is `reached maximum transaction reties` (a typo for retries); a Rust node should match the text clients match on, so decide which spelling the requirement fixes."
+
+When every attempt to commit a merge conflicts, `Merge` returns an error containing `maximum transaction` (Go: `merge event dropped: reached maximum transaction reties: <conflict>. DocID: <docID>, CID: <head CID>`), and the batch path reports `[MergeDropped]` with an error; in both cases the document is not readable. A retry budget (`MaxTxnRetries`) of 0 still makes one attempt: a merge that does not conflict commits. (Go also checks that a head whose block is absent fails with `failed to load block for merge`; a defradb.rs merge is handed the block itself, so there is no head to load.)
