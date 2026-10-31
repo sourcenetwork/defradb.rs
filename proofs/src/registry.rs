@@ -113,9 +113,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership and drain all started tasks",
+        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership, stop scheduling after a stall, disconnect, hint or cancellation, bound late sends and timeouts by the send slots, drain all started tasks and succeed only when every document is acknowledged",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id; crates/db/src/merge/push_docs/stop.rs SelectedPushStop; crates/p2p-adapter/src/pooled_doc_pusher.rs push_existing_docs_by_id",
         model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -129,9 +129,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation",
+        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation / no_progress_stops / stopped_admits_nothing / stopped_selection_fails / selected_success_needs_every_acknowledgement",
         axis: Lean,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs/stop.rs; crates/db/tests/merge/push_docs_selection.rs",
         model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
         tiers: &[Boundary],
     },

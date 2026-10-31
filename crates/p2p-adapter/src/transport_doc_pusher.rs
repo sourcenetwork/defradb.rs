@@ -78,14 +78,19 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         se_identity_pubkey: Option<&[u8]>,
     ) -> P2PResult<()>;
 
-    /// Replay an explicit `(collection_name, doc_id)` set to one peer.
-    ///
-    /// Loads persisted replicator filters the same way [`Self::retry_doc`]
-    /// does. Default implementations report the operation as unsupported.
+    /// Send an explicit `(collection_name, doc_id)` set to one peer
+    /// ([`db::merge::push_existing_docs_by_id`]): no subscription filter,
+    /// retry marker or retry schedule applies or changes, and success means
+    /// the peer acknowledged every selected document's current heads in this
+    /// call. `stop` is the call's stop owner: raised by the first stall, lost
+    /// connection or pause hint, by the caller, or by dropping the call, it
+    /// ends scheduling while started sends drain on their own deadline.
+    /// Default implementations report the operation as unsupported.
     async fn push_existing_docs_by_id(
         &self,
         _peer_id: &PeerId,
         _docs: &[(String, String)],
+        _stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         Err(P2PError::unsupported(
             "push_existing_docs_by_id is not implemented",
@@ -336,6 +341,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         &self,
         peer_id: &PeerId,
         docs: &[(String, String)],
+        stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         db::merge::push_existing_docs_by_id(
             &self.transport,
@@ -351,6 +357,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             },
             &replication_filter::QueryReplicationFilterMatcher::new(),
             &self.car_authority,
+            stop,
         )
         .await
         .map_err(P2PError::from)

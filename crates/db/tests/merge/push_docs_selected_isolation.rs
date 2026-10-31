@@ -1,7 +1,10 @@
 use super::push_docs_replay::ConnectedPeerTransport;
 use crate::common::counting_store::CountingStore;
 use crate::common::failing_write_store::FailingWriteStore;
-use db::merge::{document_heads_acknowledged, push_existing_docs_by_id, PushExistingDocsSeOptions};
+use db::merge::{
+    document_heads_acknowledged, push_existing_docs_by_id, PushExistingDocsSeOptions,
+    SelectedPushStop,
+};
 use db::{AutoCommitMutator, DB};
 use document::Document;
 use p2p::transport::PeerId;
@@ -74,6 +77,7 @@ where
         Default::default(),
         &p2p::EqOnlyFilterMatcher,
         &p2p::sync::HeadHintCarAuthority::default(),
+        &SelectedPushStop::new(),
     )
     .await
 }
