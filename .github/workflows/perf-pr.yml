@@ -49,10 +49,12 @@ jobs:
   # passes, so a separation between the two ranges means the code moved.
   #
   # One pinned instance type, on demand: a spot reclaim mid-run loses the job,
-  # and a type that changes between runs makes runs incomparable.
+  # and a type that changes between runs makes runs incomparable. A pull
+  # request from a fork runs on a hosted runner instead: its code must not run
+  # on our RunsOn instances, which can reach the team's AWS resources.
   quick:
     name: Quick benchmark
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/spot=false/family=c7i.4xlarge/env=v3/extras=s3-cache
+    runs-on: ${{ github.event.pull_request.head.repo.full_name == github.repository && format('runs-on={0}-{1}/spot=false/family=c7i.4xlarge/env=v3/extras=s3-cache', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -71,7 +73,8 @@ jobs:
       DEFRA_BASELINE_PROFILE: release-fast
       CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
-      - uses: runs-on/action@v2
+      - if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: runs-on/action@v2
       - uses: actions/checkout@v4
         with:
           path: head
