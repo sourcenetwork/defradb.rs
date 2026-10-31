@@ -223,4 +223,60 @@ theorem empty_car_not_written (d : DocumentInfo) (h : d.car = []) :
   -- With the CAR empty only the three fixed pairs are written.
   simp [encodeDocument, h, List.lookup]
 
+/-! ## The batch-signature Merkle tree
+
+A batch signature signs the root of a Merkle tree over the batch's CIDs. Go
+builds each layer by hashing neighbours in pairs, and pairs a last hash that
+has no neighbour with itself. Rust must build the same layers, or a batch one
+runtime signs would not verify on the other. What must never happen: a hash
+reaches the next layer without being hashed again (`up_hashes_every_entry`),
+or a layer fails to halve (`up_length`), which is what makes the climb end at
+one root.
+
+Rust anchor: `compute_merkle_root` in `crates/defra-core/src/batch_signing.rs`.
+-/
+
+section Merkle
+
+-- `H a b` is SHA-256 of `a` followed by `b`; any two-argument function will do.
+variable {α : Type} (H : α → α → α)
+
+-- One layer up: hash neighbours in pairs; a last hash alone is paired with itself.
+def up : List α → List α
+  -- Two or more: hash the first pair, then do the rest.
+  | a :: b :: rest => H a b :: up rest
+  -- One left over: pair it with itself, as Go does.
+  | [a] => [H a a]
+  -- Nothing left: nothing more.
+  | [] => []
+
+-- Promise: a layer up is half as long, rounded up, so the climb ends at one root.
+theorem up_length : ∀ l : List α, (up H l).length = (l.length + 1) / 2
+  -- A pair: one hash for it, then the rest is half as long.
+  | _ :: _ :: rest => by simp only [up, List.length_cons, up_length rest]; omega
+  -- One left over: one hash.
+  | [_] => by simp [up]
+  -- Nothing: nothing.
+  | [] => by simp [up]
+
+-- Promise: every hash in the next layer is the hash of two hashes of this one;
+-- none passes through unhashed.
+theorem up_hashes_every_entry :
+    ∀ (l : List α) (y : α), y ∈ up H l → ∃ a ∈ l, ∃ b ∈ l, y = H a b
+  -- A pair: either the pair's own hash, or one from the rest.
+  | a :: b :: rest, y, hy => by
+    simp only [up, List.mem_cons] at hy
+    rcases hy with rfl | hy
+    · exact ⟨a, by simp, b, by simp, rfl⟩
+    · obtain ⟨c, hc, d, hd, rfl⟩ := up_hashes_every_entry rest y hy
+      exact ⟨c, by simp [hc], d, by simp [hd], rfl⟩
+  -- One left over: its hash with itself.
+  | [a], y, hy => by
+    simp only [up, List.mem_singleton] at hy
+    exact ⟨a, by simp, a, by simp, hy⟩
+  -- Nothing: no hash to account for.
+  | [], _, hy => by simp [up] at hy
+
+end Merkle
+
 end ShinzoWire
