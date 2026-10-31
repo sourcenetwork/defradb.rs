@@ -69,6 +69,32 @@ where
     )?)
 }
 
+/// Save every document of `docs` in one mutation: one that carries a
+/// `_docID` naming a stored document is updated with its other fields, any
+/// other is added, and one naming a deleted document fails the batch. Either
+/// all are saved or none is; their IDs, in order. Go Shinzo's
+/// `SaveManyDocuments`. `run` runs each request (the check, then the
+/// mutation) in the one transaction the caller holds.
+pub async fn save_many<R, F>(
+    run: R,
+    collection: &str,
+    docs: &[Value],
+    options: &AddOptions,
+) -> Result<Vec<String>>
+where
+    R: Fn(String) -> F,
+    F: Future<Output = QueryResponse>,
+{
+    if docs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mutation = request::save_many(collection, docs, options)?;
+    if let Some(check) = request::deleted_among(collection, docs)? {
+        response::none_deleted(run(check).await, collection)?;
+    }
+    response::saved_doc_ids(run(mutation).await, docs.len())
+}
+
 /// Delete document `doc_id`.
 pub async fn delete<R, F>(run: R, collection: &str, doc_id: &str) -> Result<()>
 where

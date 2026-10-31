@@ -54,6 +54,56 @@ impl Node {
         Ok(documents::save(run, collection, doc_id, doc, options).await?)
     }
 
+    /// Save every document of `docs` in one transaction, each updated when
+    /// its `_docID` names a stored document and added otherwise, and return
+    /// their IDs in order. Go Shinzo's `SaveManyDocuments`. Runs in the
+    /// transaction `context` carries, or in one of its own that commits
+    /// when every document is saved; a conflict at that commit is returned.
+    pub async fn save_docs(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        docs: &[Value],
+        options: &AddOptions,
+    ) -> Result<Vec<String>> {
+        if context.txn().is_some() {
+            return self
+                .save_docs_in_txn(context, collection, docs, options)
+                .await;
+        }
+        let id = self.txn_begin(context, false).await?;
+        let in_txn = context.clone().with_txn(Some(id));
+        match self
+            .save_docs_in_txn(&in_txn, collection, docs, options)
+            .await
+        {
+            Ok(doc_ids) => {
+                self.txn_commit(&in_txn, id).await?;
+                Ok(doc_ids)
+            }
+            Err(error) => {
+                if let Err(discard) = self.txn_discard(&in_txn, id).await {
+                    tracing::warn!(%discard, "failed to discard a failed save-many transaction");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn save_docs_in_txn(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        docs: &[Value],
+        options: &AddOptions,
+    ) -> Result<Vec<String>> {
+        let identity = acting_identity(context)?;
+        let run = |request: String| {
+            self.run_as_identity(context, identity.clone(), QueryRequest::new(request))
+        };
+        Ok(documents::save_many(run, collection, docs, options).await?)
+    }
+
     /// Delete document `doc_id`. Go's `DeleteDocument`.
     pub async fn delete_doc(
         &self,
