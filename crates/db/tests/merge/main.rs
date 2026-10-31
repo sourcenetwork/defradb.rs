@@ -33,6 +33,7 @@ mod push_docs_replay;
 mod push_docs_selected_isolation;
 mod push_docs_selection;
 mod replication;
+mod retention;
 mod se_artifact_gen;
 mod se_coordinator;
 mod se_receiver;
