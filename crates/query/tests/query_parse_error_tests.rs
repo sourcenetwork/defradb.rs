@@ -131,10 +131,7 @@ fn test_parse_circular_fragment_returns_error() {
     let result = parse_query(query);
     assert!(result.is_err(), "Circular fragment should error");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular fragment reference"),
+        result.unwrap_err().to_string().contains("within itself"),
         "Expected error about circular fragment"
     );
 }
@@ -149,10 +146,7 @@ fn test_parse_self_referential_fragment_returns_error() {
     let result = parse_query(query);
     assert!(result.is_err(), "Self-referential fragment should error");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular fragment reference"),
+        result.unwrap_err().to_string().contains("within itself"),
         "Expected error about circular fragment"
     );
 }

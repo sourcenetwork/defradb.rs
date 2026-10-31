@@ -184,3 +184,56 @@ The merge asks the filter once the commit's blocks are local and before anything
 - **Scenarios:** ["db::merge::replication_filter::a_branchable_collection_is_not_filtered"]
 
 A branchable collection's head commits many documents at once, so its documents are not filtered one by one: they merge whatever the filter says.
+
+# `defra.request`: Request validation
+
+- **Parents:** ["defra"]
+
+How a GraphQL request is validated before it runs.
+
+# `defra.request.cyclic_fragments`: Cyclic fragment spreads fail validation
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::cyclic_fragments::fragments_spreading_each_other_fail_validation", "query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation", "query::cyclic_fragments::a_fragment_spreading_itself_fails_validation"]
+
+A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing, whether or not a field spreads into the cycle, in a query or a subscription: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.` These are graphql-js's and Go's texts; defradb.rs said `circular fragment reference` before, and only when a field spread into the cycle.
+
+# `defra.index.range_filter`: A two-sided range filter fetches only the range
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::range_filter::a_closed_range_fetches_only_the_range", "index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range", "index::range_filter::an_empty_range_fetches_nothing"]
+
+Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), `User(filter: {age: {_geq: 28, _leq: 33}}) { name }` on `age: Int @index` returns Fred, John, Islam, Andy with `indexFetches: 4`; `filter: {age: {_gt: 28, _lt: 44}}` on `age: Int @index(direction: DESC)` returns Addo, Andy, Islam, John with `indexFetches: 4`; and the empty range `{_gt: 44, _lt: 30}` returns `[]` with `indexFetches: 0`. Both bounds limit the index scan, not just the lower one.
+
+# `defra.txn`: Transactions
+
+- **Parents:** ["defra"]
+
+Transaction behaviour beyond what Go's integration suite checks.
+
+# `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["txn::neighbour::updating_alice_survives_a_rewrite_of_bob", "txn::neighbour::updating_bob_survives_a_rewrite_of_alice"]
+
+A transaction that reads document alice and updates her `age` to 10 commits successfully even though another writer rewrote every field of bob (the next document in the collection) and committed in between.
+
+# `defra.document`: Building documents from client values
+
+- **Parents:** ["defra"]
+
+How client values become document fields.
+
+# `defra.document.typed_nillable_arrays`: Typed lists fill nillable-element arrays
+
+- **Parents:** ["defra.document"]
+- **Scenarios:** ["mutation::add::field_kinds::typed_nillable_arrays::string_and_datetime_lists_fill_nillable_element_arrays"]
+
+A `[String]` field given a string list (`["bafyA", "bafyB", "bafyC"]`) and a `[DateTime]` field given a time list (`2026-07-07T12:00:00Z`, `2026-07-08T12:00:00Z`) are stored with every element present, in order.
+
+# `defra.collection.deterministic_id`: Collection IDs are deterministic
+
+- **Parents:** ["defra.collection"]
+- **Scenarios:** ["collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id"]
+
+Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node gives `Foo` the same version ID on every run, `bafyreigj37qgcjknekn3jqcmpai5ut6gqsfvjgczmu5iopkeeznjojbqri`, even though `Foo` is a name prefix of `FooBar`.
