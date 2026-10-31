@@ -1,7 +1,6 @@
 //! Input validation utilities for HTTP handlers.
 
 use crate::error::HttpError;
-use defra_core::types::DocId;
 
 /// Validate that a string is a valid identifier (collection name, field name, etc.)
 ///
@@ -42,34 +41,6 @@ pub fn validate_collection_name(name: &str) -> Result<(), HttpError> {
             name
         ))
     })
-}
-
-/// Validate a P2P peer address format.
-///
-/// Accepts both libp2p multiaddr format (starts with '/') and iroh
-/// transport addresses (hex endpoint IDs or `iroh://` URIs).
-/// Full validation happens in the P2P transport layer.
-pub fn validate_multiaddr(address: &str) -> Result<(), HttpError> {
-    if address.trim().is_empty() {
-        return Err(HttpError::BadRequest("address cannot be empty".to_string()));
-    }
-
-    Ok(())
-}
-
-/// Validate a document ID format.
-///
-/// DefraDB document IDs use the canonical DocID parser shared with the document layer.
-pub fn validate_doc_id(doc_id: &str) -> Result<(), HttpError> {
-    if doc_id.trim().is_empty() {
-        return Err(HttpError::BadRequest(
-            "document ID cannot be empty".to_string(),
-        ));
-    }
-
-    DocId::new(doc_id)
-        .map(|_| ())
-        .map_err(|e| HttpError::BadRequest(format!("invalid document ID '{}': {}", doc_id, e)))
 }
 
 /// Parse an optional request-body timeout expressed as a Go duration string.
@@ -320,30 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_multiaddr_valid() {
-        // libp2p multiaddr format
-        assert!(validate_multiaddr("/ip4/127.0.0.1/tcp/9000").is_ok());
-        assert!(validate_multiaddr("/ip4/127.0.0.1/tcp/9000/p2p/12D3KooWtest").is_ok());
-        assert!(validate_multiaddr("/dns/example.com/tcp/9000").is_ok());
-        assert!(validate_multiaddr("/ip6/::1/tcp/9000").is_ok());
-        // iroh address formats
-        assert!(validate_multiaddr("iroh://abc123def456").is_ok());
-        assert!(validate_multiaddr("abc123def456").is_ok());
-    }
-
-    #[test]
-    fn test_validate_multiaddr_invalid() {
-        assert!(validate_multiaddr("").is_err());
-    }
-
-    #[test]
-    fn test_validate_multiaddr_whitespace() {
-        assert!(validate_multiaddr("   ").is_err());
-        assert!(validate_multiaddr("\t").is_err());
-        assert!(validate_multiaddr("\n").is_err());
-    }
-
-    #[test]
     fn test_validate_collection_name_valid() {
         assert!(validate_collection_name("Users").is_ok());
         assert!(validate_collection_name("_private").is_ok());
@@ -355,22 +302,6 @@ mod tests {
         assert!(validate_collection_name("").is_err());
         assert!(validate_collection_name("123Collection").is_err());
         assert!(validate_collection_name("User-Name").is_err());
-    }
-
-    #[test]
-    fn test_validate_doc_id_valid() {
-        assert!(validate_doc_id("bae-3fc941b7-505c-5ce2-91a0-b180930ec8a9").is_ok());
-        assert!(validate_doc_id("bae-c94acbfa-dd53-40d0-97f3-29ce16c333fc").is_ok());
-    }
-
-    #[test]
-    fn test_validate_doc_id_invalid() {
-        assert!(validate_doc_id("").is_err());
-        assert!(validate_doc_id("   ").is_err());
-        assert!(validate_doc_id("invalid-id").is_err());
-        assert!(validate_doc_id("bae-").is_err());
-        assert!(validate_doc_id("bae-GHIJK").is_err()); // G-Z are not hex
-        assert!(validate_doc_id("BAE-abc").is_err()); // Must be lowercase bae-
     }
 
     use std::time::Duration;

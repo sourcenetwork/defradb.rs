@@ -1,11 +1,6 @@
 use super::*;
 
-async fn wait_for_acknowledged(
-    sender: &EmbeddedNode,
-    peer_id: &str,
-    collection: &str,
-    doc_id: &str,
-) {
+async fn wait_for_acknowledged(sender: &Node, peer_id: &str, collection: &str, doc_id: &str) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let acknowledged = sender
@@ -28,12 +23,12 @@ async fn wait_for_acknowledged(
 }
 
 async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: &str) {
-    let node0 = EmbeddedNode::builder()
+    let node0 = Node::builder()
         .with_p2p(test_p2p_config())
         .build()
         .await
         .expect("build node0");
-    let node1 = EmbeddedNode::builder()
+    let node1 = Node::builder()
         .with_p2p(test_p2p_config())
         .build()
         .await
@@ -101,8 +96,8 @@ async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: 
             .await;
     }
 
-    node0.shutdown().await;
-    node1.shutdown().await;
+    node0.shutdown().await.unwrap();
+    node1.shutdown().await.unwrap();
 }
 
 #[test]
@@ -122,12 +117,12 @@ fn filtered_replicator_acknowledges_branchable_document_heads() {
         .block_on(async {
             init_tracing();
             let schema = "type AgentDoc @branchable { agent_did: String @immutable  body: String }";
-            let node0 = EmbeddedNode::builder()
+            let node0 = Node::builder()
                 .with_p2p(test_p2p_config())
                 .build()
                 .await
                 .expect("build node0");
-            let node1 = EmbeddedNode::builder()
+            let node1 = Node::builder()
                 .with_p2p(test_p2p_config())
                 .build()
                 .await
@@ -176,8 +171,8 @@ fn filtered_replicator_acknowledges_branchable_document_heads() {
                 "the peer never received this document"
             );
 
-            node0.shutdown().await;
-            node1.shutdown().await;
+            node0.shutdown().await.unwrap();
+            node1.shutdown().await.unwrap();
         })
         .unwrap()
 }
@@ -201,12 +196,12 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
     edge::testing::edge()
         .block_on(async {
             init_tracing();
-            let node0 = EmbeddedNode::builder()
+            let node0 = Node::builder()
                 .with_p2p(test_p2p_config())
                 .build()
                 .await
                 .unwrap();
-            let node1 = EmbeddedNode::builder()
+            let node1 = Node::builder()
                 .with_p2p(test_p2p_config())
                 .build()
                 .await
@@ -354,8 +349,8 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
             );
             assert!(sender.get_collections().await.unwrap().is_empty());
             assert!(receiver.get_collections().await.unwrap().is_empty());
-            node0.shutdown().await;
-            node1.shutdown().await;
+            node0.shutdown().await.unwrap();
+            node1.shutdown().await.unwrap();
         })
         .unwrap()
 }

@@ -115,6 +115,8 @@ RUNS=(
   "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
+  "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
+  "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
@@ -164,6 +166,17 @@ RUNS=(
   "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
   "MC_WritePipeline_Red_Direct.cfg WritePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
   "MC_WritePipeline_Red_FirstMiss.cfg WritePipeline.tla RED" # the first missing key ends the attempt: a second wave (INV_OneWave)
+  "MC_AddCollection_Green.cfg AddCollection.tla GREEN" # #2319: add_collection checks nac, parse, validate, policy in order, then creates all collections or none
+  "MC_AddCollection_Red_Nac.cfg AddCollection.tla RED" # NAC check left out: a caller without CollectionPatch creates collections (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Parse.cfg AddCollection.tla RED" # parse check left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Validate.cfg AddCollection.tla RED" # schema validation left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_Policy.cfg AddCollection.tla RED" # @policy check left out (INV_NoCollectionUnlessAllChecksPass)
+  "MC_AddCollection_Red_OneByOne.cfg AddCollection.tla RED" # collections created one at a time: a later failure leaves earlier ones (INV_AllOrNone)
+  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
+  "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
+  "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
+  "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
+  "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
@@ -254,6 +267,15 @@ RUNS=(
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED" # NAC: admin write accepted while disabled
   "MC_TxnRegistry_Green.cfg        MC_TxnRegistry_Green.tla        GREEN" # txn cleanup never evicts a live transaction
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn
+  "MC_TxnContext_Green.cfg TxnContext.tla GREEN" # a transaction in the request context: only its opener runs in it, read-only writes nothing, finished runs nothing, discard leaves nothing, clashing commit fails
+  "MC_TxnContext_Red_NoOwnerCheck.cfg TxnContext.tla RED" # another caller's transaction ID trusted (INV_OnlyOwnerRuns)
+  "MC_TxnContext_Red_ReadOnlyWrites.cfg TxnContext.tla RED" # read-only flag unchecked at the write (INV_ReadOnlyNeverWrites)
+  "MC_TxnContext_Red_RunAfterEnd.cfg TxnContext.tla RED" # a finished transaction still runs requests (INV_FinishedNeverRuns)
+  "MC_TxnContext_Red_DiscardLeaks.cfg TxnContext.tla RED" # discard applies its writes (INV_DiscardLeavesNothing)
+  "MC_TxnContext_Red_NoConflictCheck.cfg TxnContext.tla RED" # commit skips the conflict check (INV_NoLostUpdate)
+  "MC_CoreDispatch_Green.cfg CoreDispatch.tla GREEN" # schema-evolution ops: NAC before any effect, a named transaction holds the write, a patch in one is refused
+  "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
+  "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
   "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)
@@ -381,6 +403,7 @@ RUNS=(
   "MC_SharedQuantizer_Green.cfg SharedQuantizer.tla GREEN" # a writer encodes only with its snapshot's codebooks
   "MC_SharedQuantizer_Red_NoTagCheck.cfg SharedQuantizer.tla RED" # a shared quantizer used whatever its tag encodes with a rebuilt index's old codebooks
   "MC_SharedQuantizer_Red_TagPerRequest.cfg SharedQuantizer.tla RED" # a tag drawn once per request names an aborted attempt's codebooks and the retry's
+  "MC_SharedQuantizer_Red_OneSlot.cfg SharedQuantizer.tla RED" # one slot: writers on the two sides of a rebuild evict each other's quantizer
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)
@@ -455,13 +478,13 @@ RUNS=(
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller
-  "MC_EmbeddedStartup_Green.cfg EmbeddedStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
-  "MC_EmbeddedStartup_Red_IrohDefaultLadder.cfg EmbeddedStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
-  "MC_EmbeddedStartup_Red_ListenLeak.cfg EmbeddedStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
-  "MC_EmbeddedStartup_Red_LateNacCheck.cfg EmbeddedStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
-  "MC_EmbeddedStartup_Red_NacUnowned.cfg EmbeddedStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
-  "MC_EmbeddedStartup_Red_DialBeforeNac.cfg EmbeddedStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
-  "MC_EmbeddedStartup_Red_BootstrapFatal.cfg EmbeddedStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
+  "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
+  "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
+  "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
+  "MC_NodeStartup_Red_LateNacCheck.cfg NodeStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
+  "MC_NodeStartup_Red_NacUnowned.cfg NodeStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
+  "MC_NodeStartup_Red_DialBeforeNac.cfg NodeStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
+  "MC_NodeStartup_Red_BootstrapFatal.cfg NodeStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
 )
 
 parallelism="${TLA_JOBS:-4}"

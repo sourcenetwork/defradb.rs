@@ -1,4 +1,4 @@
-//! Type-erased document-ACP operations bridging DB to EmbeddedNode's public DAC API.
+//! Type-erased document-ACP operations bridging DB to Node's public DAC API.
 
 use crate::{Error, Result};
 use std::sync::Arc;
@@ -72,6 +72,18 @@ impl PolicyLookup {
                 .map_err(Error::VeraPolicyLookup);
         }
         Err(Error::AcpUnavailable)
+    }
+}
+
+#[async_trait::async_trait]
+impl acp::PolicyLookup for PolicyLookup {
+    async fn get_policy(
+        &self,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, String> {
+        PolicyLookup::get_policy(self, policy_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

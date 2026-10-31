@@ -69,6 +69,7 @@ fn default_start_args() -> StartArgs {
         query_max_depth: None,
         query_max_width: None,
         query_max_filter_depth: None,
+        query_max_fragment_nesting: None,
         p2p_transport: None,
         #[cfg(feature = "postgres")]
         pg_address: None,
@@ -201,6 +202,7 @@ fn test_apply_to_config_all_flags() {
         query_max_depth: Some(12),
         query_max_width: Some(64),
         query_max_filter_depth: Some(24),
+        query_max_fragment_nesting: Some(48),
         p2p_transport: Some("libp2p".to_string()),
         #[cfg(feature = "postgres")]
         pg_address: Some("127.0.0.1:5433".to_string()),
@@ -261,6 +263,7 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.api.query_max_depth, 12);
     assert_eq!(config.api.query_max_width, 64);
     assert_eq!(config.api.query_max_filter_depth, 24);
+    assert_eq!(config.api.query_max_fragment_nesting, 48);
     assert_eq!(config.net.transport, TransportType::Libp2p);
     #[cfg(feature = "postgres")]
     assert_eq!(config.api.pg_address, "127.0.0.1:5433");
@@ -411,6 +414,7 @@ const QUERY_START_FLAGS: &[&str] = &[
     "query-max-depth",
     "query-max-width",
     "query-max-filter-depth",
+    "query-max-fragment-nesting",
 ];
 
 // Consumed by start/server_acp.rs provider construction.

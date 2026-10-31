@@ -18,12 +18,14 @@ mod acp;
 mod backup;
 mod block;
 mod collection;
+mod definitions;
+mod documents;
 mod dump;
 mod encrypted_index;
 mod graphql;
 mod index;
-mod lens;
 mod p2p;
+mod peer;
 mod transaction;
 mod types;
 mod view;
@@ -31,10 +33,8 @@ mod view;
 pub use acp::{AcpAddPolicyRequest, AcpAddPolicyResponse, AcpPolicy, NacRelationshipRequest};
 pub use encrypted_index::EncryptedIndexInfo;
 pub use index::{IndexFieldInfo, IndexInfo};
-pub use lens::LensSetMigrationResponse;
 pub use p2p::{
-    mint_manage_token, ManageQueryResultResponse, P2pCollectionRequest, P2pConnectRequest,
-    P2pDocumentRequest, P2pInfo, P2pReplicatorInfo, P2pReplicatorRequest,
+    mint_manage_token, ManageQueryResultResponse, P2pReplicatorInfo, P2pReplicatorRequest,
 };
 pub use types::{ErrorResponse, GraphQLError, GraphQLRequest, GraphQLResponse, TxBeginResponse};
 pub use view::{AddViewRequest, ViewRefreshSelectors};
@@ -302,14 +302,19 @@ impl HttpClient {
         }))
     }
 
-    /// Extract error details from a failed response and return an error.
+    /// Extract error details from a failed response and return an error: the
+    /// server's `{"error": …}` text unchanged, as Go's client returns it, or
+    /// the status and raw body when the body is not that shape.
     async fn extract_error(response: Response) -> Error {
         let status = response.status();
         let body = response
             .text()
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
-        Error::Server(format!("HTTP {}: {}", status, body.trim()))
+        match serde_json::from_str::<types::ErrorResponse>(&body) {
+            Ok(parsed) => Error::Server(parsed.error),
+            Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
+        }
     }
 
     /// Helper for POST requests with plain text body
@@ -427,11 +432,6 @@ impl HttpClient {
     endpoint!(action_list, GET "/api/v0/actions" => Vec<defra_core::ActionExecution>);
 
     // P2P
-    endpoint!(p2p_info,            GET  "/api/v0/p2p/info"           => Vec<String>);
-    endpoint!(p2p_replicator_list, GET  "/api/v0/p2p/replicators"     => Vec<P2pReplicatorInfo>);
-    endpoint!(p2p_collection_list, GET  "/api/v0/p2p/collections"    => Vec<String>);
-    endpoint!(p2p_active_peers,    GET  "/api/v0/p2p/active-peers"   => JsonValue);
-    endpoint!(p2p_document_list,   GET  "/api/v0/p2p/documents"      => JsonValue);
     endpoint!(collection_versions, GET  "/api/v0/collections?get_inactive=true" => Vec<schema::CollectionVersion>);
     // ACP / NAC
     endpoint!(acp_list_policies,   GET  "/api/v0/acp/policy"         => Vec<AcpPolicy>);
@@ -440,8 +440,6 @@ impl HttpClient {
     endpoint!(nac_re_enable,       POST "/api/v0/acp/node/re-enable" => JsonValue);
 
     // Lens
-    endpoint!(lens_list,           GET  "/api/v0/lens"               => JsonValue);
-    endpoint!(lens_reload,         POST "/api/v0/lens/reload");
 
     // Node
     endpoint!(node_identity,       GET  "/api/v0/node/identity"      => JsonValue);

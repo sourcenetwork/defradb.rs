@@ -205,7 +205,7 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
             "invalid document",
             "invalid entityset",
             "filtered truncate is not supported",
-            "cannot execute mutation in read-only transaction",
+            "no sets or deletes are allowed in a read-only transaction",
             "invalid lens configuration",
             "invalid patch",
             "invalid policy",
@@ -266,7 +266,6 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::InvalidCollectionName(_)
         | DbError::CollectionVersionIDEmpty
         | DbError::ExplicitTxnMustUseForce
-        | DbError::FilteredTruncateBranchableCollection
         | DbError::UnsafePolicyTransition(_)
         | DbError::JsonPatch(_) => HttpError::UnprocessableEntity(message),
         DbError::DatabaseClosed => HttpError::ServiceUnavailable(message),
@@ -276,6 +275,11 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         }
         _ => HttpError::BadRequest(message),
     }
+}
+
+/// A peer operation's refusal, with Go's status for it and its text unchanged.
+pub(crate) fn peer_refused(error: defra_p2p_adapter::peer::Error) -> HttpError {
+    http_error_from_backend_message(error.to_string())
 }
 
 pub(crate) fn http_error_from_backend_message(message: String) -> HttpError {
@@ -308,7 +312,9 @@ impl From<TransactionError> for HttpError {
         match err {
             TransactionError::NotFound(_) => HttpError::NotFound(message),
             TransactionError::AlreadyFinalized(_) => HttpError::Conflict(message),
-            TransactionError::Execution(message) => http_error_from_backend_message(message),
+            TransactionError::Execution(message) | TransactionError::Operation(message) => {
+                http_error_from_backend_message(message)
+            }
             TransactionError::Storage(cause) if cause.is_storage_full() => {
                 HttpError::StorageFull(message)
             }
@@ -406,10 +412,6 @@ mod tests {
                 DbError::UnsafePolicyTransition("collection policy changed".into()),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
-            (
-                DbError::FilteredTruncateBranchableCollection,
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
             (DbError::DatabaseClosed, StatusCode::SERVICE_UNAVAILABLE),
             (DbError::Other("unknown".into()), StatusCode::BAD_REQUEST),
         ];
@@ -475,7 +477,9 @@ mod tests {
         let cases = [
             (TransactionError::not_found("1"), StatusCode::NOT_FOUND),
             (
-                TransactionError::execution("cannot execute mutation in read-only transaction"),
+                TransactionError::execution(
+                    "No sets or deletes are allowed in a read-only transaction",
+                ),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (

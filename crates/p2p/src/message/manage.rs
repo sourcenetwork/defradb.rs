@@ -21,7 +21,7 @@ pub struct ManageDocRef {
 }
 
 /// Mutating management operations (ack reply).
-// NOTE: keep in sync with defra_http::RemoteManageOp (the http-native mirror).
+// NOTE: keep in sync with defra_p2p_adapter::RemoteManageOp (the http-native mirror).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "Kind")]
 pub enum ManageMutateOp {
@@ -70,7 +70,7 @@ pub enum ManageMutateOp {
 }
 
 /// Read-only management operations (typed reply).
-// NOTE: keep in sync with defra_http::RemoteManageQueryOp (the http-native mirror).
+// NOTE: keep in sync with defra_p2p_adapter::RemoteManageQueryOp (the http-native mirror).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "Kind")]
 pub enum ManageQueryOp {

@@ -1,39 +1,13 @@
-//! Trait implementations bridging DB to the embedded node's type-erased traits.
+//! Trait implementations bridging DB to the node's type-erased traits.
 
 use std::sync::Arc;
 
 use defra_core::RequestContext;
 use identity::Did;
-use lens::{LensConfig, TransformId};
 use schema::CollectionVersion;
 
 use crate::acp_ops::PolicyLookup;
 use crate::{BlockOps, Error, Result, SchemaOps};
-
-#[cfg(feature = "http")]
-pub(crate) struct DbCollectionVersionOps<S: storage::corekv::Store + 'static> {
-    database: Arc<db::DB<S>>,
-}
-
-#[cfg(feature = "http")]
-impl<S: storage::corekv::Store + 'static> DbCollectionVersionOps<S> {
-    pub(crate) fn new(database: Arc<db::DB<S>>) -> Self {
-        Self { database }
-    }
-}
-
-#[cfg(feature = "http")]
-#[async_trait::async_trait]
-impl<S: storage::corekv::Store + 'static> defra_http::router::CollectionVersionOperations
-    for DbCollectionVersionOps<S>
-{
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.database
-            .get_all_collection_versions()
-            .await
-            .map_err(|error| error.to_string())
-    }
-}
 
 pub(crate) struct DbBlockOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
@@ -166,30 +140,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         context: &RequestContext,
         sdl: &str,
     ) -> Result<Vec<CollectionVersion>> {
-        let creator = Self::creator(context)?;
-        self.database
-            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await
-            .map_err(Error::from)?;
-
-        let collections = query::parse_sdl(sdl).map_err(Error::SchemaParse)?;
-
-        schema::definition_validation::validate_new_collections(&collections)
-            .map_err(Error::SchemaValidation)?;
-
-        self.validate_policies(&collections).await?;
-
-        let created = self
-            .database
-            .create_collections_atomic_with_acp_registration_as(
-                context,
-                collections,
-                self.document_acp.clone(),
-                creator,
-            )
-            .await
-            .map_err(Error::CollectionCreate)?;
-        Ok(created)
+        Ok(self.database.add_collection(context, sdl).await?)
     }
 
     async fn ensure_ordinary_index(
@@ -291,42 +242,6 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         }
 
         Ok(())
-    }
-
-    async fn patch_collection(
-        &self,
-        context: &RequestContext,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion> {
-        db::DB::patch_collection_as(&self.database, context, collection_name, patch)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn set_active_collection_version(
-        &self,
-        context: &RequestContext,
-        version_id: &str,
-    ) -> Result<()> {
-        self.database
-            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await
-            .map_err(Error::from)?;
-
-        db::DB::set_active_collection_version_as(&self.database, context, version_id)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn set_migration(
-        &self,
-        context: &RequestContext,
-        config: LensConfig,
-    ) -> Result<TransformId> {
-        db::DB::set_migration_as(&self.database, context, config)
-            .await
-            .map_err(Error::from)
     }
 
     async fn materialize_collection(

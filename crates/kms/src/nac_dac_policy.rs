@@ -10,7 +10,7 @@
 //!   - NAC `read-document` check on the actor.
 //!
 //! `node_acp` is held in an `OnceCell` because NAC initializes after the
-//! KMS service in `EmbeddedNode::build_with_store` (mirrors Go's
+//! KMS service in the defra-node assembly (mirrors Go's
 //! `func() NACInfo` getter pattern from PR #4778).
 
 use async_trait::async_trait;

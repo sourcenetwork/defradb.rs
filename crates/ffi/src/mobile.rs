@@ -495,6 +495,7 @@ pub extern "C" fn defra_mobile_execute(node_ptr: usize, request_json: *const c_c
         unsafe {
             exec_request(
                 node_ptr,
+                std::ptr::null(),
                 c_string_ptr(&identity_did),
                 query.as_ptr(),
                 c_string_ptr(&operation_name),

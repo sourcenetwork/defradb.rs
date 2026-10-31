@@ -20,6 +20,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     ) -> Result<JsonValue> {
         // Handle encrypted search queries - return a simple seScanNode explanation
         if select.is_encrypted {
+            self.encrypted_search_transport(&select.collection_name)?;
             return Ok(serde_json::json!({
                 "selectNode": {
                     "seScanNode": {

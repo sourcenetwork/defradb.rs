@@ -7,8 +7,20 @@ license = "Apache-2.0 OR MIT"
 autotests = false
 
 [[test]]
+name = "matchers"
+path = "tests/matchers.rs"
+
+[[test]]
+name = "export"
+path = "tests/export.rs"
+
+[[test]]
 name = "basic"
 path = "tests/basic.rs"
+
+[[test]]
+name = "collection_version"
+path = "tests/collection_version.rs"
 
 [[test]]
 name = "query"
@@ -114,6 +126,7 @@ path = "tests/http_contract.rs"
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
+crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = [
@@ -128,12 +141,36 @@ serde_json = "1.0"
 futures = "0.3"
 paste = "1.0"
 ctor = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4" }
+defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
+events = { path = "../../crates/events" }
+async-channel = "2"
+cli = { path = "../../crates/cli" }
+query = { path = "../../crates/query" }
+schema = { path = "../../crates/schema" }
+defra-core = { path = "../../crates/defra-core" }
+serde.workspace = true
+tempfile = "3.17"
+thiserror.workspace = true
+workers = { path = "../../crates/workers" }
+edge = { path = "../../crates/edge" }
+testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "79d83b0adedf00f85f9fd9aecc6fd009ed41332a" }
 kovan.workspace = true
 regolith.workspace = true
+rapidhash.workspace = true
+cid = { workspace = true }
+base64 = "0.23"
+
+[features]
+generator = ["serde_json/preserve_order"]
+
+[[bin]]
+name = "gen_scenarios"
+path = "src/bin/gen_scenarios/main.rs"
+required-features = ["generator"]
 
 [dev-dependencies]
-rapidhash.workspace = true
+mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
 vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
 vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
@@ -141,15 +178,10 @@ vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a61
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
-tempfile = "3.17"
 libc = "0.2"
 identity = { path = "../../crates/identity" }
-crypto = { path = "../../crates/crypto" }
 p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
-base64 = "0.23"
 hex = "0.4"
-cid = { workspace = true }
-defra-core = { path = "../../crates/defra-core" }
 ciborium = { workspace = true }
 serial_test = "3"
 
@@ -166,3 +198,67 @@ path = "tests/acp_replay_outage_repro.rs"
 [[test]]
 name = "acp_replay_outage_cross_runtime"
 path = "tests/acp_replay_outage_cross_runtime.rs"
+
+[[test]]
+name = "index"
+path = "tests/index.rs"
+
+[[test]]
+name = "query_scenarios"
+path = "tests/query_scenarios.rs"
+
+[[test]]
+name = "acp_scenarios"
+path = "tests/acp_scenarios.rs"
+
+[[test]]
+name = "backup_scenarios"
+path = "tests/backup_scenarios.rs"
+
+[[test]]
+name = "collection"
+path = "tests/collection.rs"
+
+[[test]]
+name = "encryption_scenarios"
+path = "tests/encryption_scenarios.rs"
+
+[[test]]
+name = "explain"
+path = "tests/explain.rs"
+
+[[test]]
+name = "issues"
+path = "tests/issues.rs"
+
+[[test]]
+name = "mutation"
+path = "tests/mutation.rs"
+
+[[test]]
+name = "net"
+path = "tests/net.rs"
+
+[[test]]
+name = "node"
+path = "tests/node.rs"
+
+[[test]]
+name = "searchable_encryption"
+path = "tests/searchable_encryption.rs"
+
+[[test]]
+name = "signature"
+path = "tests/signature.rs"
+
+[[test]]
+name = "subscription"
+path = "tests/subscription.rs"
+
+[[test]]
+name = "txn"
+path = "tests/txn.rs"
+
+[[test]]
+name = "view"
+path = "tests/view.rs"

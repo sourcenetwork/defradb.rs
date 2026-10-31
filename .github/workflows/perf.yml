@@ -94,11 +94,15 @@ jobs:
   # matrix buys duplicate answers to questions Linux already answered. A family
   # macOS does not run is drawn as an explicit gap on that platform, never as a
   # zero.
+  #
+  # macOS runs its families in one job: the org has five macOS runners, and one
+  # job per family queued every push to main behind itself and everyone else.
+  # A row's `family` is a space-separated list, and `name` labels a list.
   bench:
-    name: ${{ matrix.family }} (${{ matrix.target }})
+    name: ${{ matrix.name || matrix.family }} (${{ matrix.target }})
     needs: scope
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.timeout || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -140,15 +144,11 @@ jobs:
           - { family: vector_mutations, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_search, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: write_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { family: backup, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: crypto, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: document_read, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: document_write, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: memory, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: query_e2e, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: startup, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: transaction, os: macos-latest, target: aarch64-apple-darwin }
-          - { family: transport, os: macos-latest, target: aarch64-apple-darwin }
+          - name: macos
+            family: backup crypto document_read document_write memory query_e2e startup transaction transport
+            os: macos-latest
+            target: aarch64-apple-darwin
+            timeout: 150
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -177,35 +177,48 @@ jobs:
         run: just setup-sift
       - name: Record how quiet the host is
         run: python3 tools/perf-site/loadguard.py --out loadguard.json
-      - name: Run ${{ matrix.family }}
+      # Each family writes criterion's output under its own CRITERION_HOME, and
+      # only the estimate files are kept: the rest is plots and raw samples this
+      # pipeline never reads. They are filed under the bench target that made
+      # them, because criterion records only the group name and the target is
+      # what gives each set its own section on the dashboard. A failed family
+      # does not stop the rest of its row; the step fails at the end and names it.
+      - name: Run ${{ matrix.name || matrix.family }}
         env:
-          DEFRA_BENCH_OUT: ${{ github.workspace }}/bench-${{ matrix.family }}.jsonl
+          FAMILIES: ${{ matrix.family }}
           DEFRA_BASELINE_LOAD_GUARD: ${{ github.workspace }}/loadguard.json
           DEFRA_BASELINE_PROFILE: bench
-        run: cargo bench -p benches --bench ${{ matrix.family }} -- $DEFRA_BENCH_CRITERION_ARGS
-      - name: Collect what criterion recorded
         run: |
-          set -euo pipefail
-          mkdir -p "criterion-out/${{ matrix.family }}"
-          # Only the estimate files, which are small; the rest of criterion's
-          # output is plots and raw samples this pipeline never reads. Filed
-          # under the bench target that produced them, because criterion records
-          # only the group name and the target is what gives each set its own
-          # section on the dashboard.
-          if [ -d target/criterion ]; then
-            find target/criterion -name estimates.json -path '*/new/*' -print0 \
-              | while IFS= read -r -d '' f; do
-                  dest="criterion-out/${{ matrix.family }}/${f#target/criterion/}"
-                  mkdir -p "$(dirname "$dest")"
-                  cp "$f" "$dest"
-                done
+          set -uo pipefail
+          failed=""
+          for family in $FAMILIES; do
+            echo "::group::$family"
+            raw="$GITHUB_WORKSPACE/criterion-raw/$family"
+            CRITERION_HOME="$raw" DEFRA_BENCH_OUT="$GITHUB_WORKSPACE/bench-$family.jsonl" \
+              cargo bench -p benches --bench "$family" -- $DEFRA_BENCH_CRITERION_ARGS \
+              || failed="$failed $family"
+            mkdir -p "criterion-out/$family"
+            if [ -d "$raw" ]; then
+              find "$raw" -name estimates.json -path '*/new/*' -print0 \
+                | while IFS= read -r -d '' f; do
+                    dest="criterion-out/$family/${f#"$raw"/}"
+                    mkdir -p "$(dirname "$dest")"
+                    cp "$f" "$dest"
+                  done
+            fi
+            touch "bench-$family.jsonl"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed:$failed" >&2
+            exit 1
           fi
-          touch "bench-${{ matrix.family }}.jsonl"
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
-          name: perf-${{ matrix.target }}-${{ matrix.family }}
+          name: perf-${{ matrix.target }}-${{ matrix.name || matrix.family }}
           path: |
-            bench-${{ matrix.family }}.jsonl
+            bench-*.jsonl
             loadguard.json
             criterion-out
           if-no-files-found: error

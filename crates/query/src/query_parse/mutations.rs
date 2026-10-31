@@ -10,13 +10,15 @@
 //! - `parse_json_vector()` - Parse vector from JSON array
 
 use graphql_parser::query::{Field, Value};
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
 use crate::error::{QueryError, Result};
+use crate::limits::QueryLimits;
 use crate::mapper::{parse_mutation_name, FullTextSearch, Mutation, MutationType, Similarity};
 
 use super::filters::parse_filter_value;
+use super::limits::FragmentPath;
 use super::parser::{parse_selection_set, FragmentMap};
 use super::values::{graphql_value_to_json, parse_doc_ids_value};
 
@@ -234,7 +236,7 @@ pub(super) fn parse_field_to_mutation(
     // Parse selection set (fields to return after mutation)
     // For mutations, we don't support fragments in return fields
     let empty_fragments: FragmentMap<'_> = RapidHashMap::new();
-    let mut empty_visiting = RapidHashSet::new();
+    let mut empty_visiting = FragmentPath::new(QueryLimits::default());
     let (fields, mapping) = parse_selection_set(
         &field.selection_set,
         &collection_name,
@@ -447,7 +449,9 @@ pub(super) fn parse_similarity_field(
     variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Similarity> {
     if field.arguments.is_empty() {
-        return Err(QueryError::parse("_similarity requires a field argument"));
+        return Err(QueryError::execution(
+            "similarity requires a target field argument",
+        ));
     }
 
     let (target_field, value) = &field.arguments[0];

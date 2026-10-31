@@ -2,8 +2,9 @@
 //! model that proves it, the source it is anchored to, and how it is bound to
 //! the real binary.
 //!
-//! This table is the spine. `matrix::every_modeled_family_is_bound` asserts that
-//! each family in `proofs/README.md`'s *Modeled* list appears here, so a new
+//! This table is the spine: its distinct `family` values are the modeled
+//! families. `matrix::readme_lists_exactly_the_modeled_families` asserts that
+//! `proofs/README.md`'s *Modeled families* table lists exactly these, so a new
 //! model cannot land without declaring how it is kept honest against the code.
 
 /// Which proof tool establishes the property.
@@ -30,7 +31,7 @@ pub enum Tier {
 }
 
 pub struct Property {
-    /// Family name — must match a row in `proofs/README.md`'s Modeled table.
+    /// Family name — must match a row in `proofs/README.md`'s Modeled families table.
     pub family: &'static str,
     /// The headline invariant or theorem.
     pub name: &'static str,
@@ -61,6 +62,16 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/http/src/server.rs Server::router; router_transform_tests::forwarding_filter_matches_executed_model",
         model_ref: "HttpRouterComposition (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Disconnect answers only once the peer's last connection closed, so
+        // ActivePeers right after it no longer lists the peer, as in Go.
+        family: "Peer connection observation",
+        name: "INV_AnsweredMeansClosed / PROP_CallerAnswered",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_disconnect; crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/net/info/disconnect_peers.rs",
+        model_ref: "MC_PeerDisconnect_{Green,Red_EarlyAck}.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -340,7 +351,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_EncodesWithItsCodebooks — a write sharing the node's quantizer encodes only with its own snapshot's codebooks, across rebuilds and retried trainings",
         axis: Tla,
         anchor: "crates/db/src/index/vector/engine/diskann/mod.rs DiskAnn::quantizer; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer; crates/db/src/index/vector/engine/diskann/build.rs train_and_build",
-        model_ref: "MC_SharedQuantizer_Green.cfg (GREEN) / MC_SharedQuantizer_Red_NoTagCheck.cfg / MC_SharedQuantizer_Red_TagPerRequest.cfg (RED)",
+        model_ref: "MC_SharedQuantizer_Green.cfg (GREEN) / MC_SharedQuantizer_Red_NoTagCheck.cfg / MC_SharedQuantizer_Red_TagPerRequest.cfg / MC_SharedQuantizer_Red_OneSlot.cfg (RED)",
         tiers: &[Contract],
     },
     Property {
@@ -348,7 +359,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "decode_encode — the trained record reads back as written in both encodings, and the shared quantizer answers a tag only with that tag's codebooks",
         axis: Lean,
         anchor: "crates/db/src/index/vector/engine/diskann/codec.rs encode_trained, decode_trained; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer",
-        model_ref: "SharedQuantizer.Tagged.decode_encode / lookup_is_books / share_keeps_consistent / reused_tag_serves_other_books",
+        model_ref: "SharedQuantizer.Tagged.decode_encode / lookup_is_books / share_keeps_consistent / reused_tag_serves_other_books / share_keeps_previous / one_slot_evicts",
         tiers: &[Contract],
     },
     Property {
@@ -615,6 +626,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral, Boundary],
     },
     Property {
+        // A write asks the KMS once per key scope: every field under document
+        // encryption shares the document key, and a field key is never it.
+        // Exercised by the testo scenarios
+        // encryption::field_commit::*_should_use_dedicated_enc_key_for_individual_fields.
+        family: "KMS key distribution",
+        name: "DocKeyScopes.same_scope_same_key / different_scope_different_key",
+        axis: Lean,
+        anchor: "crates/db/src/write/prepare.rs KMS key preparation (`generated` memo)",
+        model_ref: "DocKeyScopes (lake build)",
+        tiers: &[Behavioral],
+    },
+    Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and
         // key timing affect when a value can materialize, not which value wins.
         // The behavioral legs preserve encrypted fields selected for filtered
@@ -776,6 +799,54 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/ack_scope.rs AckScope::new; crates/p2p/src/replicator.rs ReplicatorInfo::ack_scope; crates/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs; crates/db/src/merge/replication_ack.rs replication_acknowledged",
         model_ref: "MC_ReplicationAckScope_{Green,Red_MainRule,Red_PushToFiltered}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A transaction ID travels in the request context. Only the caller
+        // that opened the transaction runs in it, a read-only transaction
+        // refuses writes, a finished transaction runs nothing, a discard
+        // leaves nothing in the store, and a commit that clashes with a
+        // newer commit fails.
+        family: "Explicit transactions in the request context",
+        name: "INV_OnlyOwnerRuns / INV_ReadOnlyNeverWrites / INV_FinishedNeverRuns / INV_DiscardLeavesNothing / INV_NoLostUpdate",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/basic/txn_context.rs",
+        model_ref: "MC_TxnContext_{Green,Red_NoOwnerCheck,Red_ReadOnlyWrites,Red_RunAfterEnd,Red_DiscardLeaks,Red_NoConflictCheck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Collection patch, set-active, set-migration, add/list lens and get
+        // collections each have one core function every edge calls: it
+        // checks NAC before any effect, runs in the transaction the context
+        // carries or else autocommits, and refuses a patch inside one.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits / INV_PatchInTxnChangesNothing",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/defra-node/src/ops/collection.rs; crates/http/src/handlers/{collections,lens}.rs",
+        model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Listing lenses returns every module of every lens, in order, as
+        // Go's `model.Lens`; it used to keep only the first.
+        family: "Schema-evolution operations in the core",
+        name: "LensListing.listed_keeps_modules / listed_length",
+        axis: Lean,
+        anchor: "crates/lens/src/wasm.rs WasmLensStore::list; crates/lens/src/store.rs list; crates/db/src/txn/registry/lifecycle.rs list_lenses_as",
+        model_ref: "LensListing (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // An explicit transaction's ID is `sequence * workers + worker`. The
+        // owner is the ID modulo the worker count and the sequence is the
+        // quotient, so the round trip is exact for every worker below the
+        // count, the owner is always a real worker, and two different
+        // (sequence, worker) pairs never share an ID.
+        family: "Explicit transactions in the request context",
+        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode",
+        axis: Lean,
+        anchor: "crates/db/src/txn/owner/id.rs TxnId::new, TxnId::owner; crates/db/src/txn/owner/tests.rs",
+        model_ref: "TxnId (lake build)",
         tiers: &[Boundary],
     },
     Property {
@@ -992,6 +1063,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // `sort_in_key_order` is private to the planner, so no contract test
+        // reaches it; crates/defra-node/tests/in_filter_order.rs runs the
+        // queries it orders over an ASC, a DESC and no index. Boundary.
+        family: "Order-preserving key encoding",
+        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing — `_in` point lookups run in key order, each once",
+        axis: Lean,
+        anchor: "crates/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
+        model_ref: "OrderEncoding.InLookup (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // The flat code table is a pure in-memory structure loaded once per
         // graph generation; its laws are proven, and the unit tests in
         // crates/db/tests/vector/diskann_resident.rs exercise the Rust side.
@@ -1011,11 +1093,38 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        // Pure functions over the schema; the Rust side is exercised by
+        // crates/query/src/planner/joins/relation_paths_tests.rs and the
+        // validate_select tests in crates/query/src/runner/plan_validation.rs.
+        family: "Filter relation paths and scalar leaves",
+        name: "cut_eq_longest / longest_max / cut_idem / relationPaths_of_allRel — a filter path is cut at its first non-relation field, idempotently, and all-relation paths are unchanged",
+        axis: Lean,
+        anchor: "crates/query/src/planner/joins/relation_paths.rs Planner::relation_filter_paths, Planner::relation_prefix",
+        model_ref: "JsonSubPathCut.cut_eq_longest / longest_allRel / longest_max / cut_idem / cut_of_allRel / relationPaths_of_allRel",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Filter relation paths and scalar leaves",
+        name: "newValidate_false_iff / newRun_eq_mainRun — validation rejects exactly a sub-selection on a non-relation field, and the queries that run are main's",
+        axis: Lean,
+        anchor: "crates/query/src/runner/plan_validation.rs validate_select; crates/query/src/planner/joins/selection_join.rs Planner::apply_selection_relation_join",
+        model_ref: "JsonSubPathCut.leafOk_false_iff / newValidate_false_iff / newValidate_of_main / newRun_eq_mainRun",
+        tiers: &[Contract],
+    },
+    Property {
         family: "PQ distance four sums",
         name: "four_eq_sum — four running sums over a code's lookups add up to the one running sum, in exact arithmetic",
         axis: Lean,
         anchor: "crates/db/src/index/vector/quantize/pq.rs ProductQuantizer::distance",
         model_ref: "PqFourSums.four_eq_sum / dropped_tail_loses_lookups",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Query fragment nesting bound",
+        name: "reach_le / walk_none_iff — the fragment walk never calls itself deeper than max_fragment_nesting, and refuses exactly the queries that nest deeper",
+        axis: Lean,
+        anchor: "crates/query/src/query_parse/limits.rs FragmentPath::check_nesting; crates/query/src/subscription.rs collect_root_fields",
+        model_ref: "FragmentNesting.reach_le / walk_none_iff / off_by_one_accepts_too_deep",
         tiers: &[Contract],
     },
     Property {
@@ -1046,25 +1155,25 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node shutdown order",
         name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
         tiers: &[Boundary],
     },
     Property {
-        // An embedded node checks its config before it opens anything, hands
+        // A node checks its config before it opens anything, hands
         // its retry ladder to every retry site of either transport, stops a
         // host whose listen failed, enables NAC owned by the node identity,
         // and dials bootstrap peers only once NAC is in place, logging a peer
         // that does not answer.
-        family: "Embedded node startup",
+        family: "Node startup",
         name: "INV_FailedHoldsNothing / INV_OneSchedule / INV_NacAsAsked / INV_NoPeerBeforeNac / INV_BootstrapNonFatal / LIVE_StartupEnds: a failed start holds nothing, a started node is configured as asked",
         axis: Tla,
-        anchor: "crates/embedded/src/node.rs build_node; crates/embedded/src/node_p2p.rs setup_libp2p, assemble_libp2p, setup_iroh; crates/embedded/src/node_acp.rs create_nac_manager",
-        model_ref: "MC_EmbeddedStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
+        anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/libp2p_runtime.rs setup_libp2p, assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/defra-node/src/node_acp.rs create_nac_manager",
+        model_ref: "MC_NodeStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
         tiers: &[Boundary],
     },
     Property {
-        family: "Embedded node startup",
+        family: "Node startup",
         name: "new_keeps / new_valid / new_accepts_valid / cap_mem / cap_positive / cap_follows_ladder / cap_repeats_last / default_accepted",
         axis: Lean,
         anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
@@ -1163,6 +1272,22 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity; crates/db/src/write/update.rs write_local, write_blocks; crates/db/src/write/autocommit/update.rs run_update_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::update_as; crates/db/src/block/builder/write.rs build_document_blocks, encrypt_with_new_key",
         model_ref: "MC_WritePipeline_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Add collection",
+        name: "INV_NoCollectionUnlessAllChecksPass / INV_AllOrNone",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
+        model_ref: "MC_AddCollection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Collection truncate",
+        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {

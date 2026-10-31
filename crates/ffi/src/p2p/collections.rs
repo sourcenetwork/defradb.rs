@@ -9,6 +9,8 @@ use crate::state::NODES;
 use crate::try_ffi;
 use crate::types::FfiResult;
 
+use defra_p2p_adapter::peer;
+
 use super::{into_ffi_ok, into_ffi_result, parse_collections_json, FfiP2PError};
 
 /// Add P2P-enabled collections to the node.
@@ -49,9 +51,7 @@ pub unsafe extern "C" fn p2p_add_collections(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .add_collections(collections)
+                    peer::add_p2p_collections(&*p2p.system.ops_for(&context), &collections)
                         .await
                         .map_err(FfiP2PError::from)
                 })
@@ -101,9 +101,7 @@ pub unsafe extern "C" fn p2p_delete_collections(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .remove_collections(collections)
+                    peer::delete_p2p_collections(&*p2p.system.ops_for(&context), &collections)
                         .await
                         .map_err(FfiP2PError::from)
                 })
@@ -146,12 +144,8 @@ pub unsafe extern "C" fn p2p_list_collections(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    let collections = p2p
-                        .system
-                        .ops_for(&context)
-                        .get_collections()
-                        .await
-                        .map_err(FfiP2PError::from)?;
+                    let collections =
+                        peer::list_p2p_collections(&*p2p.system.ops_for(&context)).await?;
                     serde_json::to_string(&collections)
                         .map_err(|error| {
                             FfiP2PError::internal(format!(

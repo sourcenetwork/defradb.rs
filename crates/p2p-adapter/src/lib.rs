@@ -1,4 +1,5 @@
-//! Shared P2P adapters implementing the HTTP P2P operation surface.
+//! The P2P operation surface (`P2POperations` and the `peer` core every edge
+//! calls) and the adapters that implement it over libp2p and iroh.
 
 use std::sync::Arc;
 
@@ -19,6 +20,8 @@ mod iroh_restore;
 #[cfg(feature = "libp2p")]
 mod libp2p;
 pub mod manage;
+mod operations;
+pub mod peer;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod peer_details;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
@@ -79,9 +82,12 @@ pub use transport_version_syncer::{DbTransportVersionSyncer, TransportVersionSyn
 #[cfg(feature = "libp2p")]
 pub use version_syncer::DbVersionSyncer;
 
-pub use defra_http::router::{
-    ExplicitReplayCapabilityInput, P2PError, P2POperations, P2PResult, P2pDocumentInfo,
-    P2pDocumentRequest, ReplicationFilter, ReplicationFilters, ReplicatorInfo, TransportPeerId,
+pub use operations::{
+    ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations, P2PResult,
+    P2pDocumentInfo, P2pDocumentRequest, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp,
+    RemoteManageQueryResult, ReplicationFilter, ReplicationFilters, ReplicatorInfo,
+    SyncBranchableRequest, SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId,
+    MANAGE_UNAUTHORIZED,
 };
 
 /// Resolve replicator-delete collection arguments from names to CIDs.
@@ -435,21 +441,16 @@ pub(crate) fn to_http_replicator_info(info: p2p::ReplicatorInfo) -> ReplicatorIn
 /// `_gt`, etc.) are encoded via the `Conditions` field.
 pub(crate) fn p2p_filter_to_http(
     filter: &p2p::ReplicationFilter,
-) -> Option<defra_http::router::ReplicationFilter> {
+) -> Option<crate::ReplicationFilter> {
     match filter {
         p2p::ReplicationFilter::Predicate(conds) => {
             if conds.len() == 1 {
                 let (field, condition) = conds.iter().next()?;
                 if let Some(value) = condition.as_object().and_then(|op| op.get("_eq")).cloned() {
-                    return Some(defra_http::router::ReplicationFilter::eq(
-                        field.clone(),
-                        value,
-                    ));
+                    return Some(crate::ReplicationFilter::eq(field.clone(), value));
                 }
             }
-            Some(defra_http::router::ReplicationFilter::predicate(
-                conds.clone(),
-            ))
+            Some(crate::ReplicationFilter::predicate(conds.clone()))
         }
         p2p::ReplicationFilter::Acp { .. } | p2p::ReplicationFilter::All(_) => {
             tracing::warn!(

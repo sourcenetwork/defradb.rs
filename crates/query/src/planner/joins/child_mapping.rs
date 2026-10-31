@@ -163,27 +163,21 @@ pub(super) fn enrich_child_scan_mapping_from_order_by(
 
 /// Multi-level filter paths starting with this relation, with the leading segment stripped.
 pub(super) fn multi_level_paths_for_relation(
-    select: &Select,
+    relation_paths: Vec<Vec<String>>,
     relation_field_name: &str,
 ) -> Vec<Vec<String>> {
     // Check if parent's filter has multi-level paths starting with this relation.
     // If so, we need to add nested relation fields to the child mapping and build
     // sub-joins for them so the filter can be evaluated on the merged document.
-    select
-        .filter
-        .as_ref()
-        .map(|f| {
-            f.get_multi_level_relation_paths()
-                .into_iter()
-                .filter(|path| {
-                    path.first()
-                        .is_some_and(|first| first == relation_field_name)
-                })
-                .map(|path| path[1..].to_vec()) // Get remaining path after this relation
-                .filter(|remaining| !remaining.is_empty())
-                .collect()
+    relation_paths
+        .into_iter()
+        .filter(|path| {
+            path.first()
+                .is_some_and(|first| first == relation_field_name)
         })
-        .unwrap_or_default()
+        .map(|path| path[1..].to_vec()) // Get remaining path after this relation
+        .filter(|remaining| !remaining.is_empty())
+        .collect()
 }
 
 /// Add render_keys for nested relation fields needed by multi-level filters.

@@ -16,15 +16,6 @@ use crate::{QueryLimits, QueryResponse};
 
 type FragmentMap<'a> = RapidHashMap<String, &'a FragmentDefinition<'static, String>>;
 
-/// How deep a chain of fragment spreads may be at a subscription root.
-///
-/// Expansion recurses, so a chain bounded only by the document is a stack
-/// overflow reachable from a request body. Cycle detection does not help: a
-/// chain of distinct fragments never repeats a name. Legitimate documents nest
-/// a handful deep, so this is far above any real use and far below the depth
-/// that exhausts the stack.
-const MAX_ROOT_FRAGMENT_DEPTH: usize = 32;
-
 /// Check whether the provided request resolves to a subscription operation.
 pub fn is_subscription_operation(
     query: &str,
@@ -89,6 +80,25 @@ pub fn subscription_to_scoped_query(
     event_cid: &str,
     operation_name: Option<&str>,
 ) -> Result<String> {
+    subscription_to_scoped_query_with_limits(
+        subscription_query,
+        event_doc_id,
+        event_cid,
+        operation_name,
+        QueryLimits::default(),
+    )
+}
+
+/// [`subscription_to_scoped_query`] under the node's `limits`: the root's
+/// fragments nest no deeper than `max_fragment_nesting`, the bound the
+/// parser keeps, since expanding them recurses.
+pub fn subscription_to_scoped_query_with_limits(
+    subscription_query: &str,
+    event_doc_id: &str,
+    event_cid: &str,
+    operation_name: Option<&str>,
+    limits: QueryLimits,
+) -> Result<String> {
     let document = graphql_parser::parse_query::<String>(subscription_query)
         .map_err(|err| QueryError::parse(err.to_string()))?
         .into_static();
@@ -113,6 +123,7 @@ pub fn subscription_to_scoped_query(
         &fragment_map,
         event_doc_id,
         event_cid,
+        limits.max_fragment_nesting,
     )?));
 
     let mut definitions = Vec::with_capacity(1 + fragments.len());
@@ -140,6 +151,15 @@ fn fragment_map<'a>(definitions: &'a [Definition<'static, String>]) -> FragmentM
 /// answered with a healthy stream that then delivers nothing. Calling this
 /// before the stream opens is what lets the caller be told instead.
 pub fn validate_subscription(subscription_query: &str, operation_name: Option<&str>) -> Result<()> {
+    validate_subscription_with_limits(subscription_query, operation_name, QueryLimits::default())
+}
+
+/// [`validate_subscription`] under the node's `limits`.
+pub fn validate_subscription_with_limits(
+    subscription_query: &str,
+    operation_name: Option<&str>,
+    limits: QueryLimits,
+) -> Result<()> {
     let document = graphql_parser::parse_query::<String>(subscription_query)
         .map_err(|err| QueryError::parse(err.to_string()))?
         .into_static();
@@ -156,7 +176,12 @@ pub fn validate_subscription(subscription_query: &str, operation_name: Option<&s
     else {
         return Err(QueryError::parse("subscription operation not found"));
     };
-    single_root_field(&subscription.selection_set, &fragment_map).map(|_| ())
+    single_root_field(
+        &subscription.selection_set,
+        &fragment_map,
+        limits.max_fragment_nesting,
+    )
+    .map(|_| ())
 }
 
 /// Index of the one subscription operation a request selects.
@@ -207,9 +232,16 @@ fn scoped_subscription_query(
     fragments: &FragmentMap<'_>,
     event_doc_id: &str,
     event_cid: &str,
+    max_nesting: usize,
 ) -> Result<GqlQuery<'static, String>> {
     let mut selection_set = subscription.selection_set;
-    scope_root_selection(&mut selection_set, fragments, event_doc_id, event_cid)?;
+    scope_root_selection(
+        &mut selection_set,
+        fragments,
+        event_doc_id,
+        event_cid,
+        max_nesting,
+    )?;
 
     Ok(GqlQuery {
         position: subscription.position,
@@ -225,8 +257,9 @@ fn scope_root_selection(
     fragments: &FragmentMap<'_>,
     event_doc_id: &str,
     event_cid: &str,
+    max_nesting: usize,
 ) -> Result<()> {
-    let mut field = single_root_field(selection_set, fragments)?;
+    let mut field = single_root_field(selection_set, fragments, max_nesting)?;
     scope_root_field(&mut field, event_doc_id, event_cid);
     // The root becomes the resolved field. A fragment that fed only the root
     // is left unreferenced in the emitted document, which the executor's
@@ -245,11 +278,16 @@ fn scope_root_selection(
 fn single_root_field(
     selection_set: &SelectionSet<'static, String>,
     fragments: &FragmentMap<'_>,
+    max_nesting: usize,
 ) -> Result<Field<'static, String>> {
     let mut fields = Vec::new();
+    let walk = RootWalk {
+        fragments,
+        max_nesting,
+    };
     collect_root_fields(
         &selection_set.items,
-        fragments,
+        &walk,
         &mut RapidHashSet::new(),
         0,
         &mut fields,
@@ -264,30 +302,30 @@ fn single_root_field(
     Ok(fields.remove(0))
 }
 
+/// What a root walk reads: the document's fragments and how deep they may
+/// nest.
+struct RootWalk<'walk, 'doc> {
+    fragments: &'walk FragmentMap<'doc>,
+    max_nesting: usize,
+}
+
 fn collect_root_fields(
     items: &[Selection<'static, String>],
-    fragments: &FragmentMap<'_>,
+    walk: &RootWalk<'_, '_>,
     visiting: &mut RapidHashSet<String>,
     depth: usize,
     out: &mut Vec<Field<'static, String>>,
 ) -> Result<()> {
-    if depth > MAX_ROOT_FRAGMENT_DEPTH {
-        return Err(QueryError::parse(format!(
-            "subscription root nests fragments more than {MAX_ROOT_FRAGMENT_DEPTH} deep"
-        )));
+    if depth > walk.max_nesting {
+        return Err(crate::query_parse::fragment_nesting_error(walk.max_nesting));
     }
+    let fragments = walk.fragments;
 
     for item in items {
         match item {
             Selection::Field(field) => out.push(field.clone()),
             Selection::InlineFragment(inline) => {
-                collect_root_fields(
-                    &inline.selection_set.items,
-                    fragments,
-                    visiting,
-                    depth + 1,
-                    out,
-                )?;
+                collect_root_fields(&inline.selection_set.items, walk, visiting, depth + 1, out)?;
             }
             Selection::FragmentSpread(spread) => {
                 if !visiting.insert(spread.fragment_name.clone()) {
@@ -301,7 +339,7 @@ fn collect_root_fields(
                 })?;
                 collect_root_fields(
                     &fragment.selection_set.items,
-                    fragments,
+                    walk,
                     visiting,
                     depth + 1,
                     out,
@@ -436,6 +474,53 @@ mod tests {
         }
         validate_subscription(&document, None).unwrap();
         assert!(subscription_to_scoped_query(&document, "bae-1", "cid-1", None).is_ok());
+    }
+
+    /// A subscription whose root sits behind a chain of `count` fragments.
+    fn root_chain(count: usize) -> String {
+        let mut document = String::from("subscription { ...F0 }");
+        for i in 0..count {
+            match i + 1 == count {
+                true => document.push_str(&format!(
+                    " fragment F{i} on Subscription {{ User {{ name }} }}"
+                )),
+                false => document.push_str(&format!(
+                    " fragment F{i} on Subscription {{ ...F{} }}",
+                    i + 1
+                )),
+            }
+        }
+        document
+    }
+
+    #[test]
+    fn scoping_follows_the_node_fragment_nesting_limit() {
+        let deep = root_chain(48);
+        let raised = QueryLimits {
+            max_fragment_nesting: 48,
+            ..QueryLimits::default()
+        };
+        validate_subscription_with_limits(&deep, None, raised).unwrap();
+        let scoped =
+            subscription_to_scoped_query_with_limits(&deep, "bae-1", "cid-1", None, raised)
+                .unwrap();
+        assert!(scoped.contains("bae-1"), "{scoped}");
+
+        let error = subscription_to_scoped_query(&deep, "bae-1", "cid-1", None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("more than 32 deep"), "{error}");
+        assert!(error.contains("--query-max-fragment-nesting"), "{error}");
+        let error = subscription_to_scoped_query_with_limits(
+            &root_chain(49),
+            "bae-1",
+            "cid-1",
+            None,
+            raised,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("more than 48 deep"), "{error}");
     }
 
     #[test]

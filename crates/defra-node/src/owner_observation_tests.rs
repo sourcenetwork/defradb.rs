@@ -1,4 +1,4 @@
-use super::EmbeddedNode;
+use super::Node;
 use defra_core::RequestContext;
 use identity::Did;
 
@@ -6,8 +6,8 @@ const A: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
 
-async fn fixture() -> (EmbeddedNode, String, String) {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn fixture() -> (Node, String, String) {
+    let node = Node::builder().build().await.unwrap();
     let policy = node.add_dac_policy(A, POLICY).await.unwrap();
     node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}"))
         .await.unwrap();
@@ -102,7 +102,7 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
             .discard_txn_as(&RequestContext::default(), &hidden)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }
@@ -174,7 +174,7 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
             .discard_txn_as(&RequestContext::default(), &next)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }
@@ -226,7 +226,7 @@ fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() 
             .discard_txn_as(&context, &handle)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }
@@ -265,7 +265,7 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
             .discard_txn_as(&context, &handle)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }
@@ -304,7 +304,7 @@ fn owner_observation_reports_the_registrant_to_a_different_authorized_reader() {
             .discard_txn_as(&context, &handle)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }
@@ -359,7 +359,7 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
             .discard_txn_as(&context, &handle)
             .await
             .unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }

@@ -6,16 +6,14 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 
-use acp::nac::NodePermission;
 use identity::Did;
 
 use crate::ffi_entry;
 use crate::helpers::{get_node_database, require_c_str};
-use crate::nac_check::check_nac_for_node;
 use crate::policy_yaml;
-use crate::state::{PolicyStore, NODES};
+use crate::state::PolicyStore;
 use crate::types::FfiResult;
-use crate::{ffi_async, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, try_ffi};
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn parse_optional_identity_did(
@@ -58,57 +56,19 @@ pub unsafe extern "C" fn add_schema(
     schema_sdl: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionPatch
-        ));
         let schema_str = try_ffi!(require_c_str(schema_sdl, "schema_sdl"));
 
-        let (database, policy_store, document_acp) = match NODES.get(node_ptr, |state| {
-            (
-                state.database.clone(),
-                state.policy_store.clone(),
-                state.document_acp.clone(),
-            )
-        }) {
-            Some(tuple) => tuple,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let (identity_str, creator) = try_ffi!(parse_optional_identity_did(identity_did));
+        let database = try_ffi!(get_node_database(node_ptr));
+        let (identity_str, _) = try_ffi!(parse_optional_identity_did(identity_did));
 
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
+        // The caller acts in the call's context, so the NAC checks the core
+        // makes resolve the actual caller instead of the wildcard.
         let context = defra_core::RequestContext::default().with_identity(identity_str);
 
         ffi_async!(node_ptr, {
-            // Get existing collection names so the SDL parser can resolve external type references
-            // (e.g., relations to already-created collections)
-            let known_types: rapidhash::RapidHashSet<String> = database
-                .list_collections()
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
-
-            // Parse the SDL into collection versions, passing known types for resolution
-            let collections = query::parse_sdl_with_known_types(&schema_str, known_types)
-                .map_err(|e| format!("failed to parse schema: {}", e))?;
-
-            // Run global validators (embedding type checks, etc.)
-            schema::definition_validation::validate_new_collections(&collections)
-                .map_err(|e| format!("failed to validate schema: {}", e))?;
-
-            // Validate policies on collections before creating them
-            for collection in &collections {
-                if let Some(ref policy) = collection.policy {
-                    validate_collection_policy(policy, &policy_store)?;
-                }
-            }
-
-            let created_versions = database
-                .create_collections_atomic_with_acp_registration_as(&context, collections, document_acp.clone(), creator)
+            let created_versions = database.add_collection(&context, &schema_str)
                 .await
-                .map_err(|e| format!("failed to create collection: {}", e))?;
+                .map_err(|e| e.to_string())?;
 
             // Return JSON array of created collection versions
             let json = serde_json::to_string(&created_versions)
@@ -134,55 +94,26 @@ pub unsafe extern "C" fn add_schema_in_txn(
     schema_sdl: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionPatch
-        ));
         let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
         let schema_str = try_ffi!(require_c_str(schema_sdl, "schema_sdl"));
 
-        let (registry, policy_store, document_acp) = match NODES.get(node_ptr, |state| {
-            (
-                state.txn_registry.clone(),
-                state.policy_store.clone(),
-                state.document_acp.clone(),
-            )
-        }) {
-            Some(tuple) => tuple,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let (identity_str, creator) = try_ffi!(parse_optional_identity_did(identity_did));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_str
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let (identity_str, _) = try_ffi!(parse_optional_identity_did(identity_did));
 
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(identity_str);
+        // The caller acts in the call's context, so the NAC checks the core
+        // makes resolve the actual caller instead of the wildcard.
+        let context = defra_core::RequestContext::default()
+            .with_identity(identity_str)
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let known_types: rapidhash::RapidHashSet<String> = registry
-                .get_collections_in_txn_as(&context, &txn_str)
+            let created_versions = runner
+                .add_collection_as(&context, &schema_str)
                 .await
-                .map_err(|e| format!("failed to get collections in txn: {}", e))?
-                .into_iter()
-                .map(|col| col.name)
-                .collect();
-
-            let collections = query::parse_sdl_with_known_types(&schema_str, known_types)
-                .map_err(|e| format!("failed to parse schema: {}", e))?;
-
-            schema::definition_validation::validate_new_collections(&collections)
-                .map_err(|e| format!("failed to validate schema: {}", e))?;
-
-            for collection in &collections {
-                if let Some(ref policy) = collection.policy {
-                    validate_collection_policy(policy, &policy_store)?;
-                }
-            }
-
-            let created_versions = registry
-                .add_collection_in_txn_with_acp_as(&context, &txn_str, &schema_str, Some(document_acp.clone()), creator.clone())
-                .await
-                .map_err(|e| format!("failed to create collection in txn: {}", e))?;
+                .map_err(|e| e.to_string())?;
 
             let json = serde_json::to_string(&created_versions)
                 .map_err(|e| format!("failed to serialize result: {}", e))?;
@@ -192,86 +123,53 @@ pub unsafe extern "C" fn add_schema_in_txn(
     }
 }
 
-/// Get all collections from the database.
-///
-/// Returns a JSON array of collection descriptions.
+/// Every collection version, active or not, as a JSON array; the Go
+/// wrapper applies Go's `GetCollections` options to it.
 ///
 /// # Safety
 ///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn get_collections(
     node_ptr: usize,
     identity_did: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionGet
-        ));
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        ffi_async!(node_ptr, {
-            // Return all collection versions from the system store (active + inactive + placeholders).
-            // The Go wrapper handles GetInactive filtering on its side.
-            let collections = database
-                .get_all_collection_versions()
-                .await
-                .map_err(|e| format!("failed to get collections: {}", e))?;
-
-            // Return JSON array
-            let json = serde_json::to_string(&collections)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-        })
-    }
+    ffi_entry! { collections(node_ptr, std::ptr::null(), identity_did) }
 }
 
-/// Get all collection versions visible within a specific transaction.
-///
-/// This reads from the transaction's systemstore, which includes uncommitted
-/// writes (e.g., placeholders from set_migration_in_txn).
+/// [`get_collections`] in transaction `txn_id`, its uncommitted writes
+/// included.
 ///
 /// # Safety
 ///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// Both string pointers must be null or valid null-terminated UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn get_collections_in_txn(
     node_ptr: usize,
     txn_id: *const c_char,
     identity_did: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::CollectionGet
-        ));
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
+    ffi_entry! { collections(node_ptr, txn_id, identity_did) }
+}
 
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        ffi_async!(caller, {
-            let collections = registry
-                .get_collections_in_txn_as(&context, &txn_str)
-                .await
-                .map_err(|e| format!("failed to get collections in txn: {}", e))?;
-
-            let json = serde_json::to_string(&collections)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-        })
-    }
+unsafe fn collections(
+    node_ptr: usize,
+    txn_id: *const c_char,
+    identity_did: *const c_char,
+) -> FfiResult {
+    let context = try_ffi!(crate::lens::call_context(identity_did, txn_id));
+    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+    let selector = schema::CollectionSelector {
+        get_inactive: true,
+        ..Default::default()
+    };
+    ffi_async!(caller, {
+        let collections = runner
+            .get_collections_as(&context, &selector)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&collections).map_err(|e| format!("failed to serialize result: {e}"))
+    })
 }
 
 /// Validate that a collection's policy references a valid, well-formed policy.
@@ -309,6 +207,47 @@ mod tests {
     use crate::node::{new_node, node_close};
     use crate::types::NodeInitOptions;
     use std::ffi::CString;
+
+    #[test]
+    fn test_add_schema_policy_must_exist() {
+        assert!(crate::runtime::init_runtime());
+        let result = new_node(NodeInitOptions::default());
+        assert_eq!(result.status, 0);
+        let node = result.node_ptr;
+        let owner =
+            CString::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+
+        let policy = CString::new(
+            "name: P\nresources:\n  - name: users\n    relations:\n      - name: viewer\n    permissions:\n      - name: read\n        expr: viewer\n      - name: update\n        expr: viewer\n      - name: delete\n        expr: viewer\n",
+        )
+        .unwrap();
+        let added = unsafe { crate::acp::add_dac_policy(node, owner.as_ptr(), policy.as_ptr()) };
+        assert_eq!(added.status, 0, "add_dac_policy should succeed");
+        let json = unsafe { std::ffi::CStr::from_ptr(added.value) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        let id = serde_json::from_str::<serde_json::Value>(&json).unwrap()["PolicyID"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let known = CString::new(format!(
+            "type Known @policy(id: \"{id}\", resource: \"users\") {{ name: String }}"
+        ))
+        .unwrap();
+        let ok = unsafe { add_schema(node, owner.as_ptr(), known.as_ptr()) };
+        assert_eq!(ok.status, 0, "a policy added through FFI must be found");
+
+        let missing = CString::new(
+            "type Lost @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
+        )
+        .unwrap();
+        let bad = unsafe { add_schema(node, owner.as_ptr(), missing.as_ptr()) };
+        assert_ne!(bad.status, 0, "a missing policy must be rejected");
+
+        assert_eq!(node_close(node).status, 0);
+    }
 
     #[test]
     fn test_add_schema_and_get_collections() {

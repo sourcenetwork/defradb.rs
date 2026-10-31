@@ -25,7 +25,8 @@ where
 }
 use query::subscription::{
     is_subscription_operation_with_limits, response_has_data, subscription_accepts_doc_id,
-    subscription_doc_ids_with_limits, subscription_to_scoped_query, validate_subscription,
+    subscription_doc_ids_with_limits, subscription_to_scoped_query_with_limits,
+    validate_subscription_with_limits,
 };
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
@@ -291,8 +292,12 @@ pub async fn graphql_transactional(
         // Validate before opening the stream. The per-event path enforces the
         // same rules, but by then the only place left to report a failure is
         // the log -- the caller would hold a healthy stream that never fires.
-        validate_subscription(&request.query, request.operation_name.as_deref())
-            .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+        validate_subscription_with_limits(
+            &request.query,
+            request.operation_name.as_deref(),
+            state.query_limits,
+        )
+        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
         return graphql_sse(state, identity, request)
             .await
             .map(|sse| sse.into_response());
@@ -390,6 +395,7 @@ async fn graphql_sse(
         state.query_limits,
     );
 
+    let query_limits = state.query_limits;
     let executor = state.executor.clone();
 
     let stream = async_stream::stream! {
@@ -405,11 +411,12 @@ async fn graphql_sse(
                 }
 
                 let cid_str = update.cid.to_string();
-                let query_text = match subscription_to_scoped_query(
+                let query_text = match subscription_to_scoped_query_with_limits(
                     &query_str,
                     &event_doc_id,
                     &cid_str,
                     operation_name.as_deref(),
+                    query_limits,
                 ) {
                     Ok(query) => query,
                     Err(error) => {

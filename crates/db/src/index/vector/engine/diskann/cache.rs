@@ -68,11 +68,21 @@ impl Codes {
 pub struct CodeCache {
     loaded: Atom<Arc<Loaded>>,
     pub pending: PendingCache,
-    quantizer: Atom<Option<Arc<SharedQuantizer>>>,
+    quantizers: Atom<SharedQuantizers>,
 }
 
+/// The quantizers of the last [`SHARED_TRAININGS`] trainings shared, newest
+/// first.
+type SharedQuantizers = [Option<SharedQuantizer>; SHARED_TRAININGS];
+
+/// Two, so writers on each side of a rebuild (old snapshots and new) both
+/// find theirs instead of evicting each other's on every transaction.
+// ponytail: a third training live at once still rebuilds per transaction;
+// widen if a rebuild can start before the previous one's writers drain.
+const SHARED_TRAININGS: usize = 2;
+
 /// A quantizer and the training whose codebooks it was built from.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SharedQuantizer {
     training: u128,
     quantizer: Arc<ProductQuantizer>,
@@ -92,19 +102,35 @@ impl CodeCache {
     /// Codebooks are written once, by the training that names them, so a
     /// match is the stored codebooks whatever snapshot the caller reads.
     pub fn quantizer(&self, training: u128) -> Option<Arc<ProductQuantizer>> {
-        match &*self.quantizer.load() {
-            Some(shared) if shared.training == training => Some(shared.quantizer.clone()),
-            _ => None,
-        }
+        self.quantizers
+            .load()
+            .iter()
+            .flatten()
+            .find(|shared| shared.training == training)
+            .map(|shared| shared.quantizer.clone())
     }
 
-    /// Shares `quantizer`, built from `training`'s codebooks. Whichever share
-    /// lands last stays; a caller with the other training builds its own.
+    /// Shares `quantizer`, built from `training`'s codebooks, as the newest.
+    /// A training already shared keeps the quantizer it has; otherwise the
+    /// oldest of the [`SHARED_TRAININGS`] is dropped to make room.
     pub fn share_quantizer(&self, training: u128, quantizer: Arc<ProductQuantizer>) {
-        self.quantizer.store(Some(Arc::new(SharedQuantizer {
+        let fresh = SharedQuantizer {
             training,
             quantizer,
-        })));
+        };
+        self.quantizers.rcu(|current| {
+            if current
+                .iter()
+                .flatten()
+                .any(|shared| shared.training == training)
+            {
+                return current.clone();
+            }
+            std::array::from_fn(|slot| match slot {
+                0 => Some(fresh.clone()),
+                older => current[older - 1].clone(),
+            })
+        });
     }
 
     pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {

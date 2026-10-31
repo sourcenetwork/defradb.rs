@@ -17,16 +17,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = ["native", "wasmtime-runtime", "vera", "libp2p"]
-native = ["db/native", "embedded/native"]
-iroh = ["embedded/iroh", "p2p/iroh-transport"]
-libp2p = ["db/p2p", "p2p/libp2p-transport", "embedded/libp2p"]
-vera = ["dep:vera", "embedded/vera"]
+native = ["db/native", "defra-node/native"]
+iroh = ["defra-node/p2p", "p2p/iroh-transport"]
+libp2p = ["db/p2p", "p2p/libp2p-transport", "defra-node/libp2p"]
+vera = ["dep:vera", "defra-node/vera"]
 sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
     
     
-    "embedded/wasmtime-runtime",
+    "defra-node/wasmtime-runtime",
     "lens/wasmtime-runtime",
 ]
 profiling = ["dep:tracing-chrome", "dep:tracing-subscriber"]
@@ -37,7 +37,6 @@ rapidhash.workspace = true
 edge = { path = "../edge" }
 # The worker pool the node's data path runs on.
 workers = { path = "../workers" }
-async-trait.workspace = true
 
 # Serialization
 serde.workspace = true
@@ -73,7 +72,7 @@ hex.workspace = true
 crypto = { path = "../crypto" }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
-defra-http = { path = "../http" }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }
 storage = { path = "../storage" }
@@ -85,7 +84,7 @@ vera = { path = "../vera", optional = true }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p" }
 blockstore = { path = "../blockstore" }
-embedded = { path = "../embedded", default-features = false }
+defra-node = { path = "../defra-node", default-features = false, features = ["managed-p2p"] }
 
 # IPLD
 cid.workspace = true

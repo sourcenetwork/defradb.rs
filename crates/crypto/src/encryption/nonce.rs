@@ -2,22 +2,31 @@
 //!
 //! This module provides nonce generation for AES-GCM authenticated encryption.
 //! In production, nonces are generated using cryptographically secure random numbers.
-//! Deterministic nonces are only for Go-compatibility tests. Release builds
-//! require `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1` before the hidden test
-//! switch can be enabled; production deployments must never set that variable.
+//! Deterministic nonces are only for Go-compatibility tests, the way Go switches
+//! to `generateTestNonce` inside a test binary. A test harness turns them on for
+//! a process and every node it spawns with `DEFRA_DETERMINISTIC_TEST_NONCE=1`, or
+//! in-process with [`set_deterministic_nonce`]. Release builds also require
+//! `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1`; production deployments must never
+//! set either variable.
 
 use rand::rngs::OsRng;
 use rand::RngCore;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use defra_core::Result;
 
 use crate::types::AES_NONCE_SIZE;
 
 const DETERMINISTIC_TEST_CRYPTO_ENV: &str = "DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO";
+const DETERMINISTIC_TEST_NONCE_ENV: &str = "DEFRA_DETERMINISTIC_TEST_NONCE";
 
-#[doc(hidden)]
-static USE_DETERMINISTIC_NONCE: AtomicBool = AtomicBool::new(false);
+const MODE_UNSET: u8 = 0;
+const MODE_RANDOM: u8 = 1;
+const MODE_DETERMINISTIC: u8 = 2;
+
+/// The nonce mode, read from the environment on first use unless
+/// [`set_deterministic_nonce`] set it first.
+static NONCE_MODE: AtomicU8 = AtomicU8::new(MODE_UNSET);
 
 /// Generate a cryptographically secure random nonce for AES-GCM
 ///
@@ -30,7 +39,7 @@ static USE_DETERMINISTIC_NONCE: AtomicBool = AtomicBool::new(false);
 /// assert_eq!(nonce.len(), 12);
 /// ```
 pub fn generate_nonce() -> Result<[u8; AES_NONCE_SIZE]> {
-    if USE_DETERMINISTIC_NONCE.load(Ordering::Acquire) {
+    if deterministic_nonce_enabled() {
         return generate_deterministic_nonce();
     }
 
@@ -68,24 +77,69 @@ pub fn generate_deterministic_nonce() -> Result<[u8; AES_NONCE_SIZE]> {
 /// Only use for testing with reproducible nonces. In release builds this
 /// function refuses to enable deterministic mode unless
 /// `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1` is present in the process
-/// environment.
+/// environment. Overrides `DEFRA_DETERMINISTIC_TEST_NONCE`.
 #[doc(hidden)]
 pub fn set_deterministic_nonce(enabled: bool) {
-    USE_DETERMINISTIC_NONCE.store(
-        enabled && deterministic_test_crypto_allowed(),
-        Ordering::Release,
-    );
+    NONCE_MODE.store(mode(enabled), Ordering::Release);
 }
 
 #[doc(hidden)]
 pub fn deterministic_nonce_enabled() -> bool {
-    USE_DETERMINISTIC_NONCE.load(Ordering::Acquire)
+    let current = NONCE_MODE.load(Ordering::Acquire);
+    let current = if current == MODE_UNSET {
+        let from_env = mode(env_is_one(DETERMINISTIC_TEST_NONCE_ENV));
+        // A racing set_deterministic_nonce wins over the environment.
+        match NONCE_MODE.compare_exchange(MODE_UNSET, from_env, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => from_env,
+            Err(set) => set,
+        }
+    } else {
+        current
+    };
+    current == MODE_DETERMINISTIC
+}
+
+fn mode(deterministic: bool) -> u8 {
+    if deterministic && deterministic_test_crypto_allowed() {
+        MODE_DETERMINISTIC
+    } else {
+        MODE_RANDOM
+    }
 }
 
 fn deterministic_test_crypto_allowed() -> bool {
-    cfg!(debug_assertions)
-        || matches!(
-            std::env::var(DETERMINISTIC_TEST_CRYPTO_ENV).as_deref(),
-            Ok("1")
-        )
+    cfg!(debug_assertions) || env_is_one(DETERMINISTIC_TEST_CRYPTO_ENV)
+}
+
+fn env_is_one(name: &str) -> bool {
+    matches!(std::env::var(name).as_deref(), Ok("1"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_nonce_is_gos_test_nonce() {
+        assert_eq!(&generate_deterministic_nonce().unwrap(), b"deterministi");
+    }
+
+    #[test]
+    fn env_mode_is_read_once_and_an_explicit_set_overrides_it() {
+        let saved = NONCE_MODE.load(Ordering::Acquire);
+        NONCE_MODE.store(MODE_UNSET, Ordering::Release);
+        let allowed = deterministic_test_crypto_allowed();
+        let expected = env_is_one(DETERMINISTIC_TEST_NONCE_ENV) && allowed;
+        assert_eq!(deterministic_nonce_enabled(), expected);
+        assert_ne!(NONCE_MODE.load(Ordering::Acquire), MODE_UNSET);
+
+        set_deterministic_nonce(true);
+        assert_eq!(deterministic_nonce_enabled(), allowed);
+        set_deterministic_nonce(false);
+        assert!(!deterministic_nonce_enabled());
+        assert_ne!(generate_nonce().unwrap(), generate_nonce().unwrap());
+
+        NONCE_MODE.store(saved, Ordering::Release);
+    }
 }

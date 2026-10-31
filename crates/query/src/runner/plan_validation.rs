@@ -44,6 +44,20 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
     }
 
+    // graphql-go's ScalarLeafs rule (proofs/lean/JsonSubPathCut.lean, leaf rule).
+    for requestable in &select.fields {
+        if let Requestable::Select(nested) = requestable {
+            if let Some(field) = collection.field_by_name(&nested.field.name) {
+                if !field.kind.is_relation() {
+                    return Err(QueryError::sub_selection_on_leaf(
+                        &field.name,
+                        field.kind.graphql_type_name(),
+                    ));
+                }
+            }
+        }
+    }
+
     // Validate aggregate target fields exist in schema
     // Note: For relation-based aggregates (e.g., _sum(books: {field: score})),
     // the field belongs to the related collection, not the current one.
@@ -137,7 +151,6 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
 
         // Validate that non-special fields selected at group level are in the groupBy list
-        let group_fields: Vec<&str> = group_by.fields.iter().map(|s| s.as_str()).collect();
         for requestable in &select.fields {
             match requestable {
                 Requestable::Field(field) => {
@@ -146,24 +159,18 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
                     if name == "_docID" || name == "GROUP" || name == "__typename" {
                         continue;
                     }
-                    if group_fields.contains(&name) {
-                        continue;
+                    if !group_by.allows_field(name) {
+                        return Err(QueryError::parse(
+                            "cannot select a non-group-by field at group-level",
+                        ));
                     }
-                    // Allow FK fields for relation groupBy fields (e.g. _authorID for author)
-                    let is_fk_for_group = group_fields
-                        .iter()
-                        .any(|gb_field| name == format!("_{}ID", gb_field));
-                    if is_fk_for_group {
-                        continue;
-                    }
-                    return Err(QueryError::parse(
-                        "cannot select a non-group-by field at group-level",
-                    ));
                 }
                 Requestable::Select(nested) => {
-                    if nested.field.name == "GROUP" {
-                        // _group is always allowed in groupBy queries
-                        continue;
+                    let name = nested.field.name.as_str();
+                    if name != "GROUP" && !group_by.allows_select(name) {
+                        return Err(QueryError::parse(
+                            "cannot select a non-group-by field at group-level",
+                        ));
                     }
                 }
                 Requestable::Aggregate(_) => {
@@ -297,5 +304,49 @@ mod tests {
             err.to_string(),
             "parse error: cannot group by array or object field. Field: published"
         );
+    }
+
+    #[test]
+    fn sub_selection_on_scalar_returns_go_scalar_leafs_error() {
+        let collection = CollectionVersion::new(
+            "jsonBlob",
+            "json-version",
+            "json-id",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "jsonField",
+                    FieldKind::json(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("3", "name", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        );
+        let cases = [
+            (
+                "jsonField",
+                "Field \"jsonField\" of type \"JSON\" must not have a sub selection.",
+            ),
+            (
+                "name",
+                "Field \"name\" of type \"String\" must not have a sub selection.",
+            ),
+        ];
+        for (field, expected) in cases {
+            let nested = Select::new(field)
+                .with_field_name(field)
+                .with_field(crate::mapper::Field::new("i"));
+            let select = Select::new("jsonBlob").with_select(nested);
+
+            let err = validate_select(&select, &collection).unwrap_err();
+
+            assert_eq!(err.to_string(), expected);
+        }
     }
 }

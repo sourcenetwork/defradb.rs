@@ -107,7 +107,7 @@ impl Node {
 
         // Build the KMS pubsub transport and install it on the coordinator so
         // raw gossip on the encryption topic is routed to it (mirrors
-        // crates/embedded/src/node_p2p.rs::setup_libp2p).
+        // crates/defra-node/src/libp2p_runtime.rs::setup_libp2p).
         let kms_transport = p2p::kms::PubsubKeyTransport::new(
             p2p::Libp2pTransport::new(handle.clone()),
             Arc::new(p2p::HandlePeerIdentityResolver::new(handle.clone())),
@@ -501,11 +501,11 @@ impl Node {
 
         info!("P2P sync coordinator initialized");
 
-        let manage_controller: Arc<dyn defra_http::router::P2POperations> = Arc::new(adapter);
+        let manage_controller: Arc<dyn defra_p2p_adapter::P2POperations> = Arc::new(adapter);
 
         // Outbound management requester over the same libp2p transport, sharing
         // the requester-side manage correlators (Task 7a).
-        let manage_requester: Arc<dyn defra_http::router::ManageRequester> =
+        let manage_requester: Arc<dyn defra_p2p_adapter::ManageRequester> =
             Arc::new(defra_p2p_adapter::manage::client::ManageClient::new(
                 p2p::Libp2pTransport::new(handle.clone()),
                 manage_correlator.clone(),

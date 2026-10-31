@@ -1,14 +1,14 @@
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use serde_json::{json, Value};
 
-async fn data(node: &EmbeddedNode, query: &str) -> Value {
+async fn data(node: &Node, query: &str) -> Value {
     let response = node.execute(query).await;
     assert!(!response.has_errors(), "{:?}", response.errors);
     response.data.unwrap()
 }
 
-async fn fixture() -> EmbeddedNode {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn fixture() -> Node {
+    let node = Node::builder().build().await.unwrap();
     node.add_collection(
         "type Note { tag: String embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
     ).await.unwrap();

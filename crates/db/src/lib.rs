@@ -83,9 +83,9 @@ pub use collection::acp::{
 };
 pub use collection::cache::CollectionCache;
 pub use collection::name::CollectionName;
+pub use collection::ops::{AddCollectionError, TruncateError};
 pub use collection::provider::DbCollectionProvider;
 pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
-pub use collection::selector::CollectionSelector;
 pub use collection::snapshot::CollectionSnapshot;
 #[allow(deprecated)]
 pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
@@ -106,6 +106,7 @@ pub use read::doc::DbDocFetcher;
 pub use read::lensed::autocommit::LensedAutoCommitFetcher;
 pub use read::lensed::fetcher::LensedDocFetcher;
 pub use read::versioned::VersionedFetcher;
+pub use schema::CollectionSelector;
 pub use txn::context::DbTransactionContext;
 pub use txn::registry::{
     CleanupResult, DbTransactionRegistry, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,

@@ -28,6 +28,17 @@ env:
   # pull requests evicted main's and every new pull request compiled from
   # scratch. Only main saves, and one job saves each shared key.
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
+  # Every RunsOn job shares compiled crates through this bucket. sccache refuses
+  # to start when it cannot reach the bucket, so each job sets RUSTC_WRAPPER only
+  # after the server is up, and compiles locally otherwise (#1429). The server
+  # never idles out, since a restart while the bucket is unreachable fails the build.
+  # CI owns the ci/ prefix: the runner role may only read and write there, and
+  # other bucket users can read it but not write it.
+  SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
+  SCCACHE_REGION: us-east-2
+  SCCACHE_S3_KEY_PREFIX: ci/
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  SCCACHE_IDLE_TIMEOUT: '0'
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
@@ -70,7 +81,7 @@ jobs:
 
   lint-default:
     name: Lint (default)
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -79,6 +90,8 @@ jobs:
           components: clippy, rustfmt
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -94,7 +107,7 @@ jobs:
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +140,8 @@ jobs:
         with:
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: feature
@@ -136,11 +151,13 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -173,18 +190,20 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     uses: ./.github/workflows/unit-tests.yml
     with:
-      os: ubuntu-latest
+      os: linux
 
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -222,7 +241,7 @@ jobs:
     name: Feature tests
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -231,6 +250,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -243,7 +264,7 @@ jobs:
     name: WASM Build Check
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -252,6 +273,8 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
@@ -292,7 +315,7 @@ jobs:
 
   lean-conformance:
     name: Lean Conformance
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 20
     steps:
       - uses: runs-on/action@v2
@@ -307,6 +330,8 @@ jobs:
           java-version: '21'
       - name: Check TLA ownership and convergence models
         run: proofs/tla/run-all.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lean-conformance
@@ -336,7 +361,7 @@ jobs:
     name: Conformance
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 45
     env:
       DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
@@ -351,6 +376,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -375,7 +402,7 @@ jobs:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -396,6 +423,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -555,7 +584,7 @@ jobs:
     name: P2P Integration (Linux)
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 90
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
@@ -571,6 +600,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration

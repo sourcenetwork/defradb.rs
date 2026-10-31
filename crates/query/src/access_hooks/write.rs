@@ -50,7 +50,6 @@ pub(crate) struct WriteValidationInput {
 }
 
 impl WriteValidationInput {
-    #[cfg(test)]
     pub(crate) fn prepared_request(
         &self,
     ) -> serde_json::Result<crate::prepared::PreparedInputRequest> {

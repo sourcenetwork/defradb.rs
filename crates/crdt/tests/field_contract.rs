@@ -37,16 +37,19 @@ fn counters_meet_the_contract() {
             &[NormalValue::Int(0), NormalValue::Int(41)],
             &[NormalValue::Int(1), NormalValue::Int(i64::MAX)],
         );
-        for (kind, input) in [
-            (FieldKind::float64(), NormalValue::Float64(2.25)),
-            (FieldKind::float32(), NormalValue::Float32(2.25)),
+        for (kind, stored, input) in [
+            (
+                FieldKind::float64(),
+                NormalValue::Float64(0.5),
+                NormalValue::Float64(2.25),
+            ),
+            (
+                FieldKind::float32(),
+                NormalValue::Float32(0.5),
+                NormalValue::Float32(2.25),
+            ),
         ] {
-            check_field_crdt(
-                crdt(ctype),
-                &field(kind, ctype),
-                &[NormalValue::Float64(0.5)],
-                &[input],
-            );
+            check_field_crdt(crdt(ctype), &field(kind, ctype), &[stored], &[input]);
         }
     }
     check_field_crdt(
@@ -119,7 +122,7 @@ fn a_float32_counter_adds_at_f32_precision() {
     let expected = 0.1f32 + 0.1f32 + 0.1f32;
     assert_eq!(
         counter.materialize(state.part()),
-        Some(NormalValue::Float64(f64::from(expected)))
+        Some(NormalValue::Float32(expected))
     );
 }
 

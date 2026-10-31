@@ -6,7 +6,7 @@
 //! operation via NAC.
 
 use clap::{Args, Subcommand};
-use defra_http::router::{
+use defra_p2p_adapter::{
     RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, ReplicationFilter, ReplicationFilters,
 };
 

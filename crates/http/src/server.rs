@@ -26,9 +26,8 @@ use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
-    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
-    P2POperations, TransactionOperations, ViewOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -110,14 +109,11 @@ pub struct Server {
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
     schema: Option<Arc<dyn CollectionOperations>>,
-    lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
-    collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
-    txn_ops: Option<Arc<dyn TransactionOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -181,14 +177,11 @@ impl Server {
             backup: None,
             block: None,
             schema: None,
-            lens: None,
             nac: None,
-            collection_versions: None,
             collection_mgmt: None,
             doc_acp: None,
             view: None,
             dump: None,
-            txn_ops: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -315,22 +308,6 @@ impl Server {
         self
     }
 
-    /// Set lens operations for schema migration endpoints.
-    ///
-    /// When lens operations are configured, the server enables:
-    /// - `POST /api/v0/collections/migrations` - Set a migration between schema versions
-    /// - `POST /api/v0/lens/reload` - Reload all lens modules
-    pub fn with_lens<L: LensOperations + 'static>(mut self, lens: L) -> Self {
-        self.lens = Some(Arc::new(lens));
-        self
-    }
-
-    /// Set lens operations from an Arc.
-    pub fn with_lens_arc(mut self, lens: Arc<dyn LensOperations>) -> Self {
-        self.lens = Some(lens);
-        self
-    }
-
     /// Set NAC (Node Access Control) operations from an Arc.
     pub fn with_nac_arc(mut self, nac: Arc<dyn NodeAcpOperations>) -> Self {
         self.nac = Some(nac);
@@ -352,15 +329,6 @@ impl Server {
         self
     }
 
-    /// Set read-only collection-version operations from an Arc.
-    pub fn with_collection_versions_arc(
-        mut self,
-        collection_versions: Arc<dyn CollectionVersionOperations>,
-    ) -> Self {
-        self.collection_versions = Some(collection_versions);
-        self
-    }
-
     /// Set view operations from an Arc.
     pub fn with_view_arc(mut self, view: Arc<dyn ViewOperations>) -> Self {
         self.view = Some(view);
@@ -370,12 +338,6 @@ impl Server {
     /// Set dump operations from an Arc.
     pub fn with_dump_arc(mut self, dump: Arc<dyn DumpOperations>) -> Self {
         self.dump = Some(dump);
-        self
-    }
-
-    /// Set transaction operations from an Arc.
-    pub fn with_txn_ops_arc(mut self, txn_ops: Arc<dyn TransactionOperations>) -> Self {
-        self.txn_ops = Some(txn_ops);
         self
     }
 
@@ -464,14 +426,8 @@ impl Server {
         if let Some(ref schema) = self.schema {
             builder = builder.with_schema(Arc::clone(schema));
         }
-        if let Some(ref lens) = self.lens {
-            builder = builder.with_lens(Arc::clone(lens));
-        }
         if let Some(ref nac) = self.nac {
             builder = builder.with_nac(Arc::clone(nac));
-        }
-        if let Some(ref collection_versions) = self.collection_versions {
-            builder = builder.with_collection_versions(Arc::clone(collection_versions));
         }
         if let Some(ref collection_mgmt) = self.collection_mgmt {
             builder = builder.with_collection_mgmt(Arc::clone(collection_mgmt));
@@ -484,9 +440,6 @@ impl Server {
         }
         if let Some(ref dump) = self.dump {
             builder = builder.with_dump(Arc::clone(dump));
-        }
-        if let Some(ref txn_ops) = self.txn_ops {
-            builder = builder.with_txn_ops(Arc::clone(txn_ops));
         }
         if let Some(ref event_bus) = self.event_bus {
             builder = builder.with_event_bus(Arc::clone(event_bus));

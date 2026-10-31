@@ -1,10 +1,6 @@
 //! Lens migration endpoint handlers.
 //!
-//! These handlers provide HTTP access to lens migration management:
-//! - Set migration between schema versions
-//! - Reload lens modules
-//!
-//! All endpoints enforce NAC permissions when NAC is enabled.
+//! Each calls the core through the executor, which checks NAC.
 //!
 //! Security: File-path-based WASM loading is rejected via HTTP unless
 //! dev_mode is enabled. Only inline module bytes are allowed.
@@ -14,161 +10,80 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::Serialize;
 
-use crate::error::{http_error_from_backend_message, HttpError};
-use crate::handlers::txn_header::txn_id_from_headers;
+use crate::error::HttpError;
+use crate::handlers::txn_header::call_context;
 use crate::identity_extractor::ExtractIdentity;
-use crate::nac_guard::require_permission;
-use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission};
+use crate::router::AppState;
 
-/// Response for setting a migration.
-#[derive(Debug, Clone, Serialize)]
+/// The ID of a stored lens.
+#[derive(Debug, Serialize)]
 pub struct SetMigrationResponse {
     #[serde(rename = "lensId")]
     pub lens_id: String,
 }
 
-/// Set a lens migration between schema versions.
+/// A lens configuration from the wire; outside dev mode it may not name a
+/// file on the server's disk.
+fn lens_config(state: &AppState, body: &str) -> Result<lens::LensConfig, HttpError> {
+    let config: lens::LensConfig = serde_json::from_str(body)
+        .map_err(|e| HttpError::BadRequest(format!("invalid lens config JSON: {e}")))?;
+    if !state.dev_mode {
+        config
+            .validate_for_http()
+            .map_err(|e| HttpError::BadRequest(e.to_string()))?;
+    }
+    Ok(config)
+}
+
+/// Set the migration between two collection versions: Go's `LensConfig`.
 ///
 /// POST /api/v0/collections/migrations
-///
-/// Accepts lens configuration in JSON format in the request body.
-/// The configuration should include source and destination schema version IDs
-/// and the path to the WASM transform module.
-///
-/// Example body:
-/// ```json
-/// {
-///   "SourceSchemaVersionID": "bafyreiciz2hrrmt7ritk5gf5fyruw46v2tfhq5dc7qto4wgpzluben2smu",
-///   "DestinationSchemaVersionID": "bafyreigqfjat435ghyt66tdaucp7oi2mke5jafx3jw3rozanopihr2vf44",
-///   "Lens": {
-///     "Path": "/path/to/transform.wasm"
-///   }
-/// }
-/// ```
-///
-/// Requires `MigrationSet` permission when NAC is enabled.
 pub async fn set_migration(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
     body: String,
 ) -> Result<Json<SetMigrationResponse>, HttpError> {
-    require_permission(&state, &identity, NodePermission::MigrationSet).await?;
-
-    if body.trim().is_empty() {
-        return Err(HttpError::BadRequest(
-            "lens configuration cannot be empty".into(),
-        ));
-    }
-
-    if !state.dev_mode {
-        let config: lens::LensConfig = serde_json::from_str(&body)
-            .map_err(|e| HttpError::BadRequest(format!("invalid lens config JSON: {}", e)))?;
-        config
-            .validate_for_http()
-            .map_err(|e| HttpError::BadRequest(e.to_string()))?;
-    }
-
-    let lens_id = if let Some(txn_id) = txn_id_from_headers(&headers)? {
-        let txn_ops = bound(state.require_txn_ops()?, &identity.context());
-        txn_ops
-            .set_migration_in_txn(txn_id, &body)
-            .await
-            .map_err(http_error_from_backend_message)?
-    } else {
-        let lens = bound(state.require_lens()?, &identity.context());
-        lens.set_migration(&body)
-            .await
-            .map_err(http_error_from_backend_message)?
-    };
-
+    let context = call_context(&identity, &headers)?;
+    lens_config(&state, &body)?;
+    let lens_id = state.executor.set_migration_as(&context, &body).await?;
     Ok(Json(SetMigrationResponse { lens_id }))
 }
 
-/// Reload all lens modules.
-///
-/// POST /api/v0/lens/reload
-///
-/// Reloads all registered lens WASM modules from disk.
-/// This is useful after updating WASM files to pick up changes.
-///
-/// Requires `CollectionPatch` permission when NAC is enabled.
-pub async fn reload(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-) -> Result<(), HttpError> {
-    require_permission(&state, &identity, NodePermission::CollectionPatch).await?;
-
-    let lens = bound(state.require_lens()?, &identity.context());
-
-    lens.reload().await.map_err(HttpError::Internal)?;
-
-    Ok(())
+/// Go's request body for storing a lens.
+#[derive(Debug, serde::Deserialize)]
+pub struct AddLensRequest {
+    pub lens: serde_json::Value,
 }
 
-/// Add a lens migration.
+/// Store a lens: `{"lens": <Go's model.Lens>}`.
 ///
 /// POST /api/v0/lens
-///
-/// Accepts lens configuration wrapped as `{"lens": <config>}`.
-///
-/// Requires `LensCreate` permission when NAC is enabled.
 pub async fn add_lens(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-    body: String,
+    headers: HeaderMap,
+    Json(body): Json<AddLensRequest>,
 ) -> Result<Json<SetMigrationResponse>, HttpError> {
-    require_permission(&state, &identity, NodePermission::LensCreate).await?;
-
-    let lens = bound(state.require_lens()?, &identity.context());
-
-    if body.trim().is_empty() {
-        return Err(HttpError::BadRequest(
-            "lens configuration cannot be empty".into(),
-        ));
-    }
-
-    let parsed: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| HttpError::BadRequest(format!("invalid JSON: {}", e)))?;
-    let inner = parsed
-        .get("lens")
-        .ok_or_else(|| HttpError::BadRequest("missing \"lens\" wrapper".into()))?;
-    let config_str = serde_json::to_string(inner)
-        .map_err(|e| HttpError::BadRequest(format!("failed to serialize lens config: {}", e)))?;
-
-    if !state.dev_mode {
-        let config: lens::LensConfig = serde_json::from_str(&config_str)
-            .map_err(|e| HttpError::BadRequest(format!("invalid lens config JSON: {}", e)))?;
-        config
-            .validate_for_http()
-            .map_err(|e| HttpError::BadRequest(e.to_string()))?;
-    }
-
-    let lens_id = lens
-        .add(&config_str)
-        .await
-        .map_err(http_error_from_backend_message)?;
-
+    let context = call_context(&identity, &headers)?;
+    let config = lens_config(&state, &body.lens.to_string())?;
+    let lens_id = state.executor.add_lens_as(&context, config).await?;
     Ok(Json(SetMigrationResponse { lens_id }))
 }
 
-/// List lens migrations.
+/// Every stored lens, by content ID: `{"lenses": {...}}`.
 ///
 /// GET /api/v0/lens
-///
-/// Requires `LensList` permission when NAC is enabled.
 pub async fn list_lenses(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    require_permission(&state, &identity, NodePermission::LensList).await?;
-
-    let lens = bound(state.require_lens()?, &identity.context());
-
-    let modules = lens.list().await.map_err(HttpError::Internal)?;
-
-    Ok(Json(serde_json::json!({"lenses": modules})))
+    let context = call_context(&identity, &headers)?;
+    let listed = state.executor.list_lenses_as(&context).await?;
+    let lenses: serde_json::Value =
+        serde_json::from_str(&listed).map_err(|e| HttpError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "lenses": lenses })))
 }
 
 #[cfg(test)]
@@ -181,7 +96,7 @@ mod tests {
 
     use crate::handlers::graphql::TX_HEADER_NAME;
     use crate::identity_extractor::ExtractIdentity;
-    use crate::mock::{MockQueryExecutor, MockTransactionOperations};
+    use crate::mock::MockQueryExecutor;
     use crate::router::AppStateBuilder;
 
     #[test]
@@ -194,16 +109,16 @@ mod tests {
         assert!(json.contains("lens-123"));
     }
 
-    #[tokio::test]
-    async fn set_migration_uses_tx_header_without_global_lens_ops() {
+    #[test]
+    fn set_migration_uses_tx_header_without_global_lens_ops() {
+        workers::block_on(async {
         let state = AppStateBuilder::new(
             Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
         )
-        .with_txn_ops(Arc::new(MockTransactionOperations::new()))
         .build();
         let mut headers = HeaderMap::new();
-        headers.insert(TX_HEADER_NAME, HeaderValue::from_static("txn-123"));
+        headers.insert(TX_HEADER_NAME, HeaderValue::from_static("123"));
 
         let response = set_migration(
             State(state),
@@ -216,5 +131,45 @@ mod tests {
         .expect("set migration via transaction header should succeed");
 
         assert_eq!(response.0.lens_id, "mock-transform-id");
+        })
+        .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod finished_txn_tests {
+    use std::sync::Arc;
+
+    use axum::extract::State;
+    use axum::http::{HeaderMap, HeaderValue};
+    use query::executor::QueryExecutor;
+
+    use super::set_migration;
+    use crate::error::HttpError;
+    use crate::identity_extractor::ExtractIdentity;
+    use crate::mock::FailingMockExecutor;
+    use crate::router::AppStateBuilder;
+
+    #[test]
+    fn a_finished_transaction_answers_conflict() {
+        let executor = Arc::new(FailingMockExecutor::with_finished_txn()) as Arc<dyn QueryExecutor>;
+        let state = AppStateBuilder::new(executor, edge::testing::edge())
+            .with_dev_mode(true)
+            .build();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-defradb-tx", HeaderValue::from_static("1"));
+        let result = edge::testing::edge()
+            .block_on(set_migration(
+                State(state),
+                ExtractIdentity::anonymous(),
+                headers,
+                "{}".to_owned(),
+            ))
+            .unwrap();
+        assert!(
+            matches!(result, Err(HttpError::Conflict(_))),
+            "{:?}",
+            result.err()
+        );
     }
 }

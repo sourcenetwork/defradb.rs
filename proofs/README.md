@@ -20,18 +20,20 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 54 families (bounded model claims)
+### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
+| Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
 | Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
-| KMS key distribution | TLA+ | kms, db-merge |
+| KMS key distribution | TLA+ / Lean | kms, db, db-merge |
 | Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
 | Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
 | ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
@@ -47,6 +49,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
+| Query fragment nesting bound | Lean | query |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
@@ -72,11 +75,14 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Iroh solicited replies | TLA+ | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Index drop during backfill | TLA+ | db-index |
-| Embedded node startup | TLA+, Lean | embedded, storage |
+| Node startup | TLA+, Lean | embedded, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
+| Add collection | TLA+ | db |
+| Collection truncate | TLA+ | db |
+| Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -131,8 +137,10 @@ to its headline invariant, source anchor, the model that proves it, and its
 binding tier (`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
 *assumed*, never asserted (crypto, eventual connectivity, bounded-N, foreign
 substrate) — so a green run never reads as "this was proven against the
-artifact." `matrix::every_modeled_family_is_bound` fails if a model lands without
-a binding.
+artifact." The modeled families are the registry's families, so adding a model
+is one `PROPERTIES` entry and one row above;
+`matrix::readme_lists_exactly_the_modeled_families` names any family that has
+one without the other.
 
 ### Realized status — all 21 families bound
 

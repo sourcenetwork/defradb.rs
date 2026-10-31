@@ -39,18 +39,9 @@ impl<S: Store + 'static> query::CollectionTruncator for DbCollectionTruncator<S>
         collection_name: &str,
         filter: Option<query::Filter>,
     ) -> query::Result<()> {
-        let result = match filter {
-            Some(filter) => {
-                self.db
-                    .truncate_collection_with_filter_as(context, collection_name, filter)
-                    .await
-            }
-            None => {
-                self.db
-                    .truncate_collection_as(context, collection_name)
-                    .await
-            }
-        };
-        result.map_err(|error| query::QueryError::execution(error.to_string()))
+        self.db
+            .truncate_parsed_as(context, collection_name, filter.as_ref())
+            .await
+            .map_err(|error| query::QueryError::execution(error.to_string()))
     }
 }

@@ -1,5 +1,5 @@
+use crate::P2PResult;
 use async_trait::async_trait;
-use defra_http::P2PResult;
 use p2p::message::DocSyncRequest;
 
 use crate::{P2PError, P2PErrorExt as _};
