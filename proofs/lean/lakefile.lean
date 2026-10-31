@@ -134,3 +134,12 @@ lean_lib JsonSubPathCut where
 
 @[default_target]
 lean_lib DocumentSave where
+
+@[default_target]
+lean_lib Rfc3339Nano where
+
+@[default_target]
+lean_lib DocIdText where
+
+@[default_target]
+lean_lib SecondaryRelation where
