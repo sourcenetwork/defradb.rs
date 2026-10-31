@@ -272,7 +272,7 @@ pub fn match_explain_scan(want: &Map<String, Value>, actual: &Value) -> bool {
     let Some(mut node) = operation.get("selectTopNode").and_then(Value::as_object) else {
         return false;
     };
-    for key in ["limitNode", "orderNode", "similarityNode"] {
+    for key in ["limitNode", "orderNode", "similarityNode", "cursorNode"] {
         if let Some(child) = object(node, key) {
             node = child;
         }

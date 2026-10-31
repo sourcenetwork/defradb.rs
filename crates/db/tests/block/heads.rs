@@ -268,3 +268,31 @@ fn appends_through_the_db_store_only_the_live_head() {
     })
     .unwrap()
 }
+
+/// Heads read inside a transaction see that transaction's own writes: none
+/// before the first, then exactly the head it wrote, then only its
+/// replacement.
+#[test]
+#[mantra_macros::req_test("go.shinzo.heads.within_txn")]
+fn heads_read_inside_a_transaction_reflect_its_writes() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let (a, b) = (cid_of(b"first"), cid_of(b"second"));
+        let shared = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
+        let heads = |shared: &Arc<SharedTxn>| {
+            let view = headstore(shared);
+            async move { live_collection_heads(&view, COLLECTION).await.unwrap().live }
+        };
+        assert!(heads(&shared).await.is_empty());
+        publish_in(&shared, a, 1, &[]).await;
+        assert_eq!(heads(&shared).await, vec![a]);
+        publish_in(&shared, b, 2, &[a]).await;
+        assert_eq!(heads(&shared).await, vec![b]);
+        commit(shared).await;
+        assert_eq!(live(&store).await, (vec![b], 0));
+    })
+    .unwrap()
+}
