@@ -86,6 +86,7 @@ RUNS=(
   "MC_ShinzoCarExchange_Red_Fallback.cfg ShinzoCarExchange.tla RED"
   "MC_ShinzoCarExchange_Red_Blame.cfg ShinzoCarExchange.tla RED"
   "MC_ShinzoCarExchange_Red_Oversize.cfg ShinzoCarExchange.tla RED"
+  "MC_ShinzoCarExchange_Red_WireOff.cfg ShinzoCarExchange.tla RED"
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"

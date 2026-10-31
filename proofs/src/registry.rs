@@ -1308,9 +1308,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Shinzo CAR exchange",
-        name: "INV_RootMatches / INV_NoLeak / INV_NoStrayEntry / INV_RoundsBounded / INV_Accounted / INV_BlameOnlyFaults / INV_Served",
+        name: "INV_RootMatches / INV_NoLeak / INV_NoStrayEntry / INV_RoundsBounded / INV_Accounted / INV_BlameOnlyFaults / INV_Served / INV_EveryNodeAnswers",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/shinzo_car.rs serve_cars, accept_reply, CarPeerBackoff; crates/p2p/src/two_stream/handler/shinzo_car.rs",
+        anchor: "crates/p2p/src/sync/shinzo_car.rs serve_cars, accept_reply, CarPeerBackoff; crates/p2p/src/two_stream/handler/shinzo_car.rs; crates/p2p/src/host/p2p_host/shinzo_car.rs P2PHost::serve_shinzo_cars",
         model_ref: "MC_ShinzoCarExchange_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },

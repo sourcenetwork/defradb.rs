@@ -296,8 +296,13 @@ pub struct P2PHost<S: Store> {
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
-    /// Go Shinzo's wire, when `P2PHostConfig::shinzo_wire` is on.
+    /// Go Shinzo's wire, when `P2PHostConfig::shinzo_wire` is on: Go-shaped
+    /// CAR requests, batched pushes and inline CARs.
     pub(crate) shinzo: Option<shinzo_car::ShinzoCars<S>>,
+    /// Serves Go Shinzo's CAR requests whether or not the wire is on, so a
+    /// Shinzo node asking a Rust peer with it off gets an answer, not a
+    /// timeout. The switch picks what this node sends, never what it serves.
+    pub(crate) shinzo_server: shinzo_car::ShinzoCars<S>,
     /// CARs that came inline with Go Shinzo updates, until asked for.
     pub(crate) shinzo_inline: crate::sync::shinzo_batch::InlineCars,
     /// This node's collection-topic updates, batched as Go Shinzo does.
@@ -458,16 +463,17 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let replicators = Arc::new(ReplicatorRegistry::new());
 
         // Go Shinzo CARs are served under the same gate Bitswap applies.
-        let shinzo = config.shinzo_wire.then(|| {
-            let access = make_peer_block_access_filter(
+        let shinzo_server = shinzo_car::ShinzoCars::new(
+            bitswap_store.clone(),
+            Arc::new(make_peer_block_access_filter(
                 config.access_mode,
                 Arc::clone(&replicators),
                 bitswap_store.clone(),
                 Arc::clone(&classifier),
                 Arc::clone(&serve_acp),
-            );
-            shinzo_car::ShinzoCars::new(bitswap_store.clone(), Arc::new(access))
-        });
+            )),
+        );
+        let shinzo = config.shinzo_wire.then(|| shinzo_server.clone());
 
         // Pass keypair and blockstore to behaviour for message signing and block exchange
         let mut behaviour = DefraBehaviour::new(
@@ -648,6 +654,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
             shinzo,
+            shinzo_server,
             shinzo_inline: Default::default(),
             shinzo_batcher: Default::default(),
         };
