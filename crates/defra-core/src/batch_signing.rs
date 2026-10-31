@@ -50,6 +50,20 @@ pub enum MerkleScheme {
     /// unchanged. No two different CID lists share a root, and no leaf
     /// stands for an inner node. Go Shinzo does not verify it yet.
     DomainSeparated,
+    /// Rust's tree before Go Shinzo's became the default: Go's untagged
+    /// hashes, but a layer's odd last node moves up unchanged. Signatures
+    /// made then carry no scheme, so they read back as `GoShinzo`; a verifier
+    /// that still holds them selects this scheme to check them. Nothing
+    /// signs with it by default.
+    RustLegacy,
+}
+
+impl MerkleScheme {
+    /// Whether a layer's odd last node moves up unchanged, rather than being
+    /// paired with itself as Go does.
+    fn promotes_odd(self) -> bool {
+        matches!(self, Self::DomainSeparated | Self::RustLegacy)
+    }
 }
 
 const LEAF_TAG: u8 = 0x00;
@@ -96,12 +110,12 @@ fn leaf_layer(cids: &[Cid], scheme: MerkleScheme) -> Vec<[u8; 32]> {
 }
 
 /// One layer up: neighbours hashed in pairs; a last hash alone is paired
-/// with itself (Go) or moves up unchanged (domain-separated).
+/// with itself (Go) or moves up unchanged (domain-separated, Rust legacy).
 fn up(layer: &[[u8; 32]], scheme: MerkleScheme) -> Vec<[u8; 32]> {
     layer
         .chunks(2)
         .map(|pair| match (scheme, pair) {
-            (MerkleScheme::DomainSeparated, [alone]) => *alone,
+            (scheme, [alone]) if scheme.promotes_odd() => *alone,
             (_, [alone]) => inner_hash(alone, alone, scheme),
             _ => inner_hash(&pair[0], &pair[1], scheme),
         })
@@ -157,7 +171,7 @@ pub fn root_from_path(cid: &Cid, path: &MerklePath, scheme: MerkleScheme) -> Opt
         hash = match (index % 2, index + 1 < count) {
             (1, _) => inner_hash(siblings.next()?, &hash, scheme),
             (_, true) => inner_hash(&hash, siblings.next()?, scheme),
-            _ if scheme == MerkleScheme::DomainSeparated => hash,
+            _ if scheme.promotes_odd() => hash,
             _ => inner_hash(&hash, &hash, scheme),
         };
         index /= 2;

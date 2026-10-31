@@ -153,9 +153,10 @@ pub fn verify_batch_signature_with(
     cids: &[Cid],
     options: BatchOptions,
 ) -> Result<bool, BatchVerifyError> {
-    if sig.merkle_scheme != options.scheme
+    if !scheme_matches(sig, options)
         || sig.batch_scope != options.scope
         || sig.cid_count != cids.len()
+        || has_duplicates(cids)
     {
         return Ok(false);
     }
@@ -193,7 +194,7 @@ pub fn verify_batch_inclusion(
     options: BatchOptions,
 ) -> Result<bool, BatchVerifyError> {
     let sig = &proof.signature;
-    if sig.merkle_scheme != options.scheme
+    if !scheme_matches(sig, options)
         || sig.batch_scope != options.scope
         || sig.cid_count != proof.path.count
     {
@@ -203,6 +204,23 @@ pub fn verify_batch_inclusion(
         Some(root) => verify_signed_root(sig, &root),
         None => Ok(false),
     }
+}
+
+/// Whether the signature's scheme is the one the verifier chose. A signature
+/// made with Rust's old tree carries no scheme and reads back as Go Shinzo's,
+/// so a verifier that selects `RustLegacy` takes that too.
+fn scheme_matches(sig: &BatchSignature, options: BatchOptions) -> bool {
+    sig.merkle_scheme == options.scheme
+        || (options.scheme == MerkleScheme::RustLegacy
+            && sig.merkle_scheme == MerkleScheme::GoShinzo)
+}
+
+/// Whether a CID appears twice. The count is not signed, and Go's tree gives
+/// `[a, b, c]` and `[a, b, c, c]` one root, so a repeat is refused outright.
+fn has_duplicates(cids: &[Cid]) -> bool {
+    let mut sorted: Vec<Vec<u8>> = cids.iter().map(Cid::to_bytes).collect();
+    sorted.sort();
+    sorted.windows(2).any(|pair| pair[0] == pair[1])
 }
 
 /// Whether `root` is the signature's root and the signature over it holds.
@@ -534,6 +552,31 @@ mod tests {
         );
         assert!(verify_batch_signature(&sig, &[a, b, c]).unwrap());
         assert!(!verify_batch_signature(&sig, &[a, b, c, c]).unwrap());
+        // The count is not signed: forging it alongside the repeat still fails.
+        let forged = BatchSignature {
+            cid_count: 4,
+            ..sig.clone()
+        };
+        assert!(!verify_batch_signature(&forged, &[a, b, c, c]).unwrap());
+    }
+
+    /// A signature that the base revision of #2454 made over "doc0".."doc2"
+    /// with the Go fixture's Ed25519 key: Rust's old tree, no scheme field.
+    const LEGACY_SIGNATURE: &str = r#"{"sig_type":"EdDSA","identity":"fabd7aa83c1055a21d6c176138011a96035dbc2ef1af10708067e8af2b15a427","value":"ba768beb92db641e431301c51ee83661e4dc7c2d90ca9e456817bac810407cc30ad69f506adfef8aa5b401522ec76b6b6de1cb2e7a3c6646e18359cb72b8c300","merkle_root":"fc8f2a4d773c6db591bdb6b6e122a3fb44274049c8d7d4b0b68212a1dcc8bfc9","cid_count":3}"#;
+
+    /// An old-tree signature reads back as Go's scheme, so the default
+    /// verifier refuses it; a verifier that selects `RustLegacy` accepts it.
+    #[test]
+    fn a_signature_from_rusts_old_tree_verifies_when_selected() {
+        let sig: BatchSignature = serde_json::from_str(LEGACY_SIGNATURE).unwrap();
+        assert_eq!(sig.merkle_scheme, MerkleScheme::GoShinzo);
+        assert!(!verify_batch_signature(&sig, &go_cids()).unwrap());
+        let legacy = BatchOptions {
+            scheme: MerkleScheme::RustLegacy,
+            ..Default::default()
+        };
+        assert!(verify_batch_signature_with(&sig, &go_cids(), legacy).unwrap());
+        assert!(!verify_batch_signature_with(&sig, &go_cids()[..2], legacy).unwrap());
     }
 
     /// Go signs an empty batch over SHA256 of nothing; so does Rust.
