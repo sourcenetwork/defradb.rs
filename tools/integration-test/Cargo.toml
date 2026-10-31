@@ -43,6 +43,10 @@ name = "p2p"
 path = "tests/p2p.rs"
 
 [[test]]
+name = "shinzo"
+path = "tests/shinzo.rs"
+
+[[test]]
 name = "p2p_admission"
 path = "tests/p2p_admission.rs"
 
