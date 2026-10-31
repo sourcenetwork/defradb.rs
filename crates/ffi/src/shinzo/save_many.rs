@@ -21,6 +21,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 /// * `collection_name` - The collection to save into
 /// * `docs_json` - JSON array of document objects
 /// * `options_json` - Optional (nullable) `{"encryptDoc": bool, "encryptedFields": [..]}`
+/// * `batch_session_id` - Optional (nullable) batch-signing session the writes are collected in
 ///
 /// # Returns
 ///
@@ -39,6 +40,7 @@ pub unsafe extern "C" fn save_many_documents(
     collection_name: *const c_char,
     docs_json: *const c_char,
     options_json: *const c_char,
+    batch_session_id: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
         let collection = try_ffi!(require_c_str(collection_name, "collection_name"));
@@ -48,10 +50,11 @@ pub unsafe extern "C" fn save_many_documents(
         let options = try_ffi!(add_options(c_str_to_string(options_json)));
         let identity = c_str_to_string(identity_did).filter(|did| !did.is_empty());
         let txn = c_str_to_string(txn_id).filter(|id| !id.is_empty());
+        let batch_session = c_str_to_string(batch_session_id).filter(|id| !id.is_empty());
 
         ffi_async!(caller, {
             let run = |request| {
-                crate::query::run_typed(node_ptr, identity, txn, NodePermission::DocumentUpdate, request)
+                crate::query::run_typed(node_ptr, identity, txn, batch_session, NodePermission::DocumentUpdate, request)
             };
             let doc_ids = query::documents::save_many(run, &collection, &docs, &options)
                 .await

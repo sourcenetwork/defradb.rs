@@ -49,6 +49,23 @@ impl<S> crate::database::DB<S>
 where
     S: Store + 'static,
 {
+    /// The field mapping a KV snapshot of `collection` is read with (Go
+    /// Shinzo's `ExportFieldMapping`), without exporting anything.
+    pub fn kv_field_mapping(&self, collection: &str) -> Result<FieldMapping, KvSnapshotError> {
+        if collection.is_empty() {
+            return Err(KvSnapshotError::CollectionNameEmpty);
+        }
+        let collection = self
+            .get_collection(collection)?
+            .ok_or_else(|| KvSnapshotError::CollectionNotFound(collection.to_owned()))?;
+        Ok(FieldMapping {
+            collection_name: collection.name().to_owned(),
+            collection_short_id: collection.resolved_root_id(),
+            fields: field_entries(collection.schema()),
+            documents: Vec::new(),
+        })
+    }
+
     /// Write `doc_ids` of `collection` to `out` as a KV snapshot, reading as
     /// the identity acting in `context`: a document it cannot read is left
     /// out, as one this node does not have is. No DocIDs exports every
