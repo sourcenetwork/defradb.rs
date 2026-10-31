@@ -777,7 +777,8 @@ mod tests {
             .find(|f| f.name == "truncate_User")
             .unwrap();
         assert_eq!(truncate.field_type.to_sdl(), "Boolean!");
-        assert_eq!(truncate.args[0].to_sdl(), "filter: UserFilterInput");
+        assert_eq!(truncate.args[0].to_sdl(), "docID: [ID!]");
+        assert_eq!(truncate.args[1].to_sdl(), "filter: UserFilterInput");
     }
 
     #[test]
