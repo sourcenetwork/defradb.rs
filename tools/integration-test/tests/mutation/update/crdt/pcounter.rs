@@ -1,9 +1,10 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/update/crdt/pcounter_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/update/crdt/pcounter_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddCollection, AddDoc, Request, UpdateDoc};
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -103,6 +104,7 @@ fn p_counter_update_int_kind_with_positive_increment_overflow_rolls_over_to_min_
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess, ClientType::Cli, ClientType::RustHttp, ClientType::GoHttp]),
         ..Default::default()
     }
     .execute();

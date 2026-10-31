@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/update/concurrent_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/update/concurrent_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
@@ -7,6 +7,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -78,6 +79,7 @@ fn mutation_update_concurrent_commit() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::GoHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
@@ -160,6 +162,12 @@ fn mutation_update_concurrent_discard() {
             }
             .into(),
         ],
+        client_types: Some(&[
+            ClientType::InProcess,
+            ClientType::RustHttp,
+            ClientType::GoHttp,
+            ClientType::Cli,
+        ]),
         ..Default::default()
     }
     .execute();

@@ -192,6 +192,10 @@ pub struct TestCase {
     pub without_db: bool,
     /// Why the Go scenario does not apply to defradb.rs; it is not run.
     pub not_applying: Option<NotApplying>,
+    /// The only clients the test runs under, Go's `SupportedClientTypes`:
+    /// Go's in-process client is `InProcess`, its HTTP client `RustHttp` and
+    /// `GoHttp`, its CLI `Cli`. Unset, every client.
+    pub client_types: Option<&'static [ClientType]>,
 }
 
 /// Why a Go conformance scenario does not apply to defradb.rs. The scenario
@@ -248,8 +252,16 @@ impl TestCase {
             eprintln!("not applying: {reason}");
             return;
         }
+        let clients: Vec<ClientType> = active_client_types()
+            .into_iter()
+            .filter(|client| self.client_types.is_none_or(|only| only.contains(client)))
+            .collect();
+        if clients.is_empty() {
+            eprintln!("skipped: runs only under {:?}", self.client_types);
+            return;
+        }
         let actions = with_stub_embedder(&self.actions);
-        for client_type in active_client_types() {
+        for client_type in clients {
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
         }

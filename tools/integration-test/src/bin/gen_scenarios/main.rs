@@ -1,13 +1,19 @@
 //! Generates the Rust conformance tests from the scenario corpus, and checks
 //! that exporting them again gives the corpus back.
 //!
-//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR [--mantra DIR] --drift FILE [--area NAME]...
-//!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--area NAME]...
+//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR [--mantra DIR] --drift FILE
+//!       [--go-repo DIR --pin COMMIT] [--area NAME]...
+//!
+//! With `--go-repo` and `--pin`, each test carries its Go `SupportedClientTypes`
+//! read at the pin, files are stamped with the pin, and a scenario already
+//! ported at the pin is generated even when its file drifted.
+//!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--pin COMMIT] [--area NAME]...
 
 mod check;
 mod corpus;
 mod emit;
 mod error;
+mod go_source;
 mod lifecycle;
 mod literal;
 mod mantra;
@@ -84,6 +90,20 @@ fn generate(args: &Args) -> Result<()> {
     let drifted = drift(args)?;
     let areas = args.many("area");
     let all = corpus::load(&args.one("scenarios")?)?;
+    let mut go = match (
+        args.one("go-repo"),
+        args.values.get("pin").and_then(|v| v.first()),
+    ) {
+        (Ok(repo), Some(pin)) => Some(go_source::GoSource::new(repo, pin.clone())),
+        (Err(_), None) => None,
+        _ => {
+            return Err(GenError::Usage(
+                "--go-repo and --pin go together".to_owned(),
+            ))
+        }
+    };
+    let pin = go.as_ref().map(|go| go.pin().to_owned());
+    let mut unresolved: Vec<String> = Vec::new();
 
     let mut skipped_drift: Vec<String> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
@@ -95,7 +115,8 @@ fn generate(args: &Args) -> Result<()> {
 
     for item in all.iter().filter(|l| selected(l, &areas)) {
         let top = item.dir[0].clone();
-        if drifted.contains(&item.scenario.source.path) {
+        let at_pin = pin.as_deref() == Some(item.scenario.source.revision.as_str());
+        if drifted.contains(&item.scenario.source.path) && !at_pin {
             skipped_drift.push(format!(
                 "{} ({})",
                 item.scenario.id, item.scenario.source.path
@@ -152,15 +173,28 @@ fn generate(args: &Args) -> Result<()> {
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }
+            let clients = match go
+                .as_mut()
+                .map(|go| go.clients(&item.scenario.source.path, &item.scenario.source.test))
+            {
+                Some(go_source::Clients::Only(clients)) => Some(clients),
+                Some(go_source::Clients::Unresolved(reason)) => {
+                    unresolved.push(format!("{} ({reason})", item.scenario.id));
+                    None
+                }
+                Some(go_source::Clients::All) | None => None,
+            };
             body.push_str(&emit::test_fn(
                 item,
                 &name,
                 leaf.map(|s| s.as_str()),
+                clients.as_deref(),
                 &mut used,
             ));
             body.push('\n');
         }
-        let header = emit::file_header(items[0], body.contains("m::"), &used, &body);
+        let header =
+            emit::file_header(items[0], pin.as_deref(), body.contains("m::"), &used, &body);
         let file = tree::file_path(&tests, &bin, path);
         tree::write_file(&file, &format!("{header}{body}"))?;
         formatted.push(file);
@@ -210,6 +244,10 @@ fn generate(args: &Args) -> Result<()> {
     for line in &unmapped {
         println!("  unmapped: {line}");
     }
+    println!("client types unresolved: {}", unresolved.len());
+    for line in &unresolved {
+        println!("  clients: {line}");
+    }
     println!("steps by op (corpus names):");
     for (op, count) in &ops {
         println!("  op {op}: {count}");
@@ -246,11 +284,13 @@ fn check(args: &Args) -> Result<()> {
     let scenarios = args.one("scenarios")?;
     let drifted = drift(args)?;
     let areas = args.many("area");
+    let pin = args.values.get("pin").and_then(|v| v.first());
     let loaded: Vec<corpus::Loaded> = corpus::load(&scenarios)?
         .into_iter()
         .filter(|l| {
             selected(l, &areas)
-                && !drifted.contains(&l.scenario.source.path)
+                && (!drifted.contains(&l.scenario.source.path)
+                    || pin == Some(&l.scenario.source.revision))
                 && !HAND_PORTED.contains(&l.scenario.source.path.as_str())
         })
         .collect();
