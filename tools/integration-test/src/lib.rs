@@ -5,7 +5,7 @@ mod feature_binaries;
 mod purge;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
-pub use feature_binaries::{build_cli_variant, vera_cli_binary};
+pub use feature_binaries::{build_cli_variant, listing_tests, vera_cli_binary, TestBuild};
 pub use purge::purge_node;
 
 // Re-export modules from defra-harness
@@ -71,11 +71,12 @@ pub fn workspace_root() -> PathBuf {
         .expect("failed to canonicalize workspace root")
 }
 
-/// Return the configured Rust CLI binary, falling back to Cargo's debug output.
+/// Return the configured Rust CLI binary, falling back to the CLI built on
+/// the tests' own profile.
 pub fn rust_binary() -> PathBuf {
     std::env::var_os("DEFRA_RUST_BINARY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target/debug/defra"))
+        .unwrap_or_else(|| TestBuild::current(&workspace_root()).out_dir.join("defra"))
 }
 
 /// Generate `rust_<name>` and `go_<name>` test wrappers for a single-node test.

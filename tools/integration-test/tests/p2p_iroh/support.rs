@@ -7,6 +7,9 @@ static VERA_IROH_BINARY: OnceCell<PathBuf> = OnceCell::new();
 
 #[ctor::ctor]
 fn prepare_iroh_binary() {
+    if integration_test::listing_tests() {
+        return;
+    }
     if std::env::var_os("DEFRA_IROH_BINARY")
         .zip(std::env::var_os("DEFRA_RUST_BINARY"))
         .is_some_and(|(iroh, rust)| PathBuf::from(iroh).is_file() && PathBuf::from(rust).is_file())
