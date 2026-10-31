@@ -61,6 +61,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Iroh solicited replies",
     "Reply-driven DAG fetch",
     "Index drop during backfill",
+    "Purge by DocID",
     "Node startup",
     "Text CRDT convergence",
     "JSON CRDT per-path merge",
