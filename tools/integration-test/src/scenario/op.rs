@@ -62,6 +62,12 @@ pub trait Op:
     /// What the result must match; `null` when it is not checked.
     fn expected_data(&self) -> &Value;
 
+    /// What the result must match on a Go node, where Go's answer differs
+    /// on purpose (an explain metric); `null` uses `expected_data`.
+    fn expected_data_go(&self) -> &Value {
+        &Value::Null
+    }
+
     /// A substring of the error the action must fail with.
     fn expected_error(&self) -> Option<&str>;
 

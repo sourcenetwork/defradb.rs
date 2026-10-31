@@ -28,6 +28,9 @@ pub struct Request {
     pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
+    /// `expected_data` on a Go node, where Go's answer differs on purpose.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub expected_data_go: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_extensions: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +48,10 @@ impl Op for Request {
 
     fn expected_data(&self) -> &Value {
         &self.expected_data
+    }
+
+    fn expected_data_go(&self) -> &Value {
+        &self.expected_data_go
     }
 
     fn expected_error(&self) -> Option<&str> {

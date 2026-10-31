@@ -65,7 +65,7 @@ pub(crate) fn expand_cursor_plan(
     // on any IndexScanNode found inside.
     // (configure_scan_for_cursor also bounds the scan inside set_cursor_seek
     // when the seek applies on a residual-filter-free scan.)
-    let (mut plan, index_seek_active) = configure_scan_for_cursor(
+    let (mut plan, index_seek_active, keyed_by_value) = configure_scan_for_cursor(
         plan,
         &after,
         &before,
@@ -106,16 +106,19 @@ pub(crate) fn expand_cursor_plan(
     }
 
     // Wrap with CursorNode.
-    Ok(Box::new(CursorNode::new(
-        plan,
-        direction,
-        limit,
-        after,
-        before,
-        select.cursor_page_info.clone(),
-        order_fields,
-        index_seek_active,
-    )))
+    Ok(Box::new(
+        CursorNode::new(
+            plan,
+            direction,
+            limit,
+            after,
+            before,
+            select.cursor_page_info.clone(),
+            order_fields,
+            index_seek_active,
+        )
+        .with_boundary_keyed_by_value(keyed_by_value),
+    ))
 }
 
 fn decode_optional(token: &Option<String>) -> Result<Option<Cursor>> {
@@ -206,10 +209,12 @@ fn index_covers_ordering(idx: &IndexDescription, order_fields: &[OrderCondition]
 
 /// Walk the plan tree to configure cursor seek on the underlying `IndexScanNode`.
 ///
-/// Returns `(plan, applied)` where `applied` is `true` when a seek was
-/// successfully set on an `IndexScanNode` inside the plan tree.
+/// Returns `(plan, applied, keyed_by_value)`: `applied` is `true` when a seek
+/// was set on an `IndexScanNode` inside the plan tree, and `keyed_by_value`
+/// when a backward seek's boundary key holds no short ID (a unique index with
+/// non-null values), so any row at that key sits in the boundary's slot.
 ///
-/// Falls back to `(plan, false)` — the slow path — when:
+/// Falls back to `(plan, false, false)` — the slow path — when:
 /// - No cursor token is present.
 /// - The cursor token has no keys.
 /// - No index is matched (doc-ID order or empty order).
@@ -225,7 +230,7 @@ fn configure_scan_for_cursor(
     collection: &CollectionVersion,
     matched_index: Option<&IndexDescription>,
     fetch_limit: Option<u64>,
-) -> Result<(Box<dyn PlanNode>, bool)> {
+) -> Result<(Box<dyn PlanNode>, bool, bool)> {
     let active_cursor = match direction {
         CursorDirection::Forward => after.as_ref(),
         CursorDirection::Backward => before.as_ref(),
@@ -233,15 +238,15 @@ fn configure_scan_for_cursor(
 
     // No cursor token → slow path.
     let Some(cursor_token) = active_cursor else {
-        return Ok((plan, false));
+        return Ok((plan, false, false));
     };
     if cursor_token.keys.is_empty() {
-        return Ok((plan, false));
+        return Ok((plan, false, false));
     }
 
     // No matched index → no index seek possible.
     let Some(idx) = matched_index else {
-        return Ok((plan, false));
+        return Ok((plan, false, false));
     };
 
     // Unique composite-prefix case: the seek key encodes only `order_fields`
@@ -252,17 +257,20 @@ fn configure_scan_for_cursor(
     // because the latter is untrusted client input — a stale or malicious
     // token could carry extra unrelated keys and bypass this guard.
     if idx.unique && order_fields.len() < idx.fields.len() {
-        return Ok((plan, false));
+        return Ok((plan, false, false));
     }
 
     let (seek_key, boundary_doc_id) =
         build_cursor_seek_key(cursor_token, order_fields, collection, idx)?;
+    let backward = direction == CursorDirection::Backward;
+    let keyed_by_value = backward && boundary_doc_id.is_none();
     let seek = CursorSeek {
         seek_key,
         boundary_doc_id,
-        // Both `after` (forward) and `before` (backward) identify the boundary
-        // row that should NOT appear in the page — both are exclusive.
-        inclusive: false,
+        // `after` excludes its row. `before` includes its key, so the cursor
+        // node sees whether the boundary row still exists (Go's hasNext) and
+        // drops it; that costs one more fetched entry.
+        inclusive: backward,
         // `reversed` from validate_cursor_index means "must scan in reverse to
         // satisfy ORDER BY". For a forward cursor we keep that direction; for a
         // backward cursor we flip it so we scan against the ORDER BY direction
@@ -272,11 +280,11 @@ fn configure_scan_for_cursor(
             CursorDirection::Backward => !reversed,
         },
         expected_index_name: idx.name.clone(),
-        fetch_limit,
+        fetch_limit: fetch_limit.map(|n| n + u64::from(backward)),
     };
 
     let applied = plan.set_cursor_seek(seek);
-    Ok((plan, applied))
+    Ok((plan, applied, applied && keyed_by_value))
 }
 
 /// Build the storage-encoded seek key for a cursor token.
@@ -490,7 +498,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("score");
 
@@ -531,7 +538,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 
@@ -586,7 +592,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 
@@ -635,7 +640,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: doc_id.to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 

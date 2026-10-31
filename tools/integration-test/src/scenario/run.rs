@@ -43,11 +43,14 @@ where
     unreachable!("the last attempt returns")
 }
 
-fn expectation<A>(action: &A) -> Option<Value>
+fn expectation<A>(action: &A, go_node: bool) -> Option<Value>
 where
     A: Op,
 {
-    let data = action.expected_data();
+    let data = match action.expected_data_go() {
+        go if go_node && !go.is_null() => go,
+        _ => action.expected_data(),
+    };
     if data.is_null() {
         return None;
     }
@@ -142,7 +145,7 @@ where
     let args = resolve(&args, &state.captures).map_err(|e| e.to_string())?;
     let action: A = serde_json::from_value(args).map_err(|e| e.to_string())?;
     let common = action.common();
-    let expected = expectation(&action);
+    let expected = expectation(&action, state.is_go_node(common.node()));
     let outcome = match (&common.eventually, &expected) {
         (Some(timing), Some(expected)) => poll_until(state, &action, expected, timing, call),
         _ if common.retry => with_retry(|| call(&action, state)),
