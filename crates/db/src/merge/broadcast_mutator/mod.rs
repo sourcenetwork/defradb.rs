@@ -399,6 +399,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                     &broadcast_with_retry_with_creator(
                         &sync,
                         bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -412,6 +413,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                         &broadcast_with_retry_with_creator(
                             &sync,
                             bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,
@@ -736,6 +738,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     &broadcast_with_retry_with_creator(
                         &sync,
                         bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -750,6 +753,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                         &broadcast_with_retry_with_creator(
                             &sync,
                             bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,
@@ -960,6 +964,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                             &broadcast_with_retry_with_creator(
                                 &sync,
                                 bus.as_ref(),
+                                &block_result.doc_id,
                                 block_result,
                                 &collection_id,
                                 &collection_name_owned,
@@ -973,6 +978,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                                 &broadcast_with_retry_with_creator(
                                     &sync,
                                     bus.as_ref(),
+                                    &block_result.doc_id,
                                     col_block_result,
                                     &collection_id,
                                     &collection_name_owned,
@@ -1218,6 +1224,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     &broadcast_with_retry_with_creator(
                         &sync,
                         bus.as_ref(),
+                        &block_result.doc_id,
                         &block_result,
                         &collection_id,
                         &collection_name_owned,
@@ -1232,6 +1239,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                         &broadcast_with_retry_with_creator(
                             &sync,
                             bus.as_ref(),
+                            &block_result.doc_id,
                             &col_block_result,
                             &collection_id,
                             &collection_name_owned,

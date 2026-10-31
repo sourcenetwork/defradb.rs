@@ -256,6 +256,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if matches!(
             event,
             TransportEvent::PushLogRequest { .. }
+                | TransportEvent::TwoStreamRequest { .. }
                 | TransportEvent::GossipMessage { .. }
                 | TransportEvent::GossipRawMessage { .. }
         ) {

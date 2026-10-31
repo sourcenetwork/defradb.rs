@@ -92,12 +92,10 @@ impl HttpRun for GetCollections {
 }
 
 impl CliRun for GetCollections {
+    /// The Rust CLI prints no collection descriptions (its `collection
+    /// describe` is GraphQL introspection), so the CLI client reads them from
+    /// the same node over its HTTP API, which a CLI node serves.
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI has no collection lookup by selector",
-                Self::name()
-            )))
-        });
+        HttpRun::execute_http(self, state);
     }
 }

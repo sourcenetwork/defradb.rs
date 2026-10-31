@@ -136,7 +136,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .retention_floor(collection.schema())
                 .and_then(|floor| floor.refusal(&doc))
             {
-                self.db.merge_stats().record_retention_refusal(refusal);
                 return Err(MergeError::RetentionRefused(refusal));
             }
         }
