@@ -83,7 +83,7 @@ Aggregates explain as their node names in debug mode.
 
 - **Parents:** ["go"]
 
-Documents created with `encrypt: true` (whole document) or `encryptFields: [...]` (selected fields) store their commit deltas encrypted, read back decrypted locally, and share keys with authorised peers through the KMS.
+Documents created with `encrypt: true` store every commit delta encrypted, and with `encryptFields: [...]` only the deltas of the named fields (the rest stay plaintext); both read back decrypted locally and share keys with authorised peers through the KMS.
 
 # `go.encryption.doc`: Whole-document encryption on one node
 
