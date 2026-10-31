@@ -1259,4 +1259,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ShinzoWire (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Shinzo batching",
+        name: "INV_BatchBounded / INV_NoLongWait / INV_ExactlyOnce / INV_WithinBudget / INV_BytesMatch / INV_UsedOnce / INV_OwnPeer",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/shinzo_batch.rs ShinzoBatcher::add, ShinzoBatcher::due, InlineCars::offer, InlineCars::take, InlineCars::expire",
+        model_ref: "MC_ShinzoBatching_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Shinzo batching",
+        name: "total_split / offer_valid / take_valid / take_removes / split_keeps_documents / split_parts_fit",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/shinzo_batch.rs InlineCars::offer, InlineCars::take, InlineCars::expire, encode_batch",
+        model_ref: "ShinzoBatch (lake build)",
+        tiers: &[Boundary],
+    },
 ];

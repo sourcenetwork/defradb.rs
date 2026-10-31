@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 58 families (bounded model claims)
+### Modeled: 59 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
@@ -81,6 +81,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Add collection | TLA+ | db |
 | Shinzo CAR exchange | TLA+ & Lean | p2p |
+| Shinzo batching | TLA+ & Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
