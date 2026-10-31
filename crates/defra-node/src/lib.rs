@@ -90,8 +90,8 @@ pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
 pub use config::{
-    DocumentAcpConfig, NodeConfig, NodeSigning, Persistence, ReplicationFilterHandle, SigningKey,
-    TransportConfig,
+    DocumentAcpConfig, NodeConfig, NodeSigning, Persistence, ReplicationFilterHandle,
+    RetentionRuleHandle, SigningKey, TransportConfig,
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};

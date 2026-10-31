@@ -160,3 +160,46 @@ where
         None => Ok(T::default()),
     }
 }
+
+/// Start (or reset) collecting the CIDs of the blocks that writes tagged
+/// with `session_id` (their `batch_session_id`) produce, of the kinds
+/// `batch_scope` names (null: composites, as Go Shinzo collects them), for a
+/// caller that signs the batch itself. No signing identity is needed.
+///
+/// # Safety
+///
+/// `session_id` must be a valid null-terminated UTF-8 string; `batch_scope`
+/// null or such a string.
+#[no_mangle]
+pub unsafe extern "C" fn batch_collect_start(
+    session_id: *const c_char,
+    batch_scope: *const c_char,
+) -> FfiResult {
+    ffi_entry! {
+        let session = try_ffi!(crate::helpers::require_c_str(session_id, "session_id"));
+        let scope: BatchScope = try_ffi!(option(batch_scope, "batch_scope"));
+        defra_core::batch_signing::batch_start_with(&session, scope);
+        FfiResult::ok()
+    }
+}
+
+/// End the collection `session_id` names and return its CIDs as a JSON
+/// array of CID strings, in the order they were collected.
+///
+/// # Safety
+///
+/// `session_id` must be a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn batch_collect_take(session_id: *const c_char) -> FfiResult {
+    ffi_entry! {
+        let session = try_ffi!(crate::helpers::require_c_str(session_id, "session_id"));
+        let Some((_, cids)) = defra_core::batch_signing::batch_take(&session) else {
+            return FfiResult::error("no batch session active");
+        };
+        let cids: Vec<String> = cids.iter().map(ToString::to_string).collect();
+        match serde_json::to_string(&cids) {
+            Ok(json) => FfiResult::success(json),
+            Err(e) => FfiResult::error(format!("failed to serialize batch CIDs: {e}")),
+        }
+    }
+}

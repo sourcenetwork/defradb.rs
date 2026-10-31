@@ -5,7 +5,7 @@ use std::ffi::{c_char, c_int, CString};
 use std::sync::Arc;
 
 use db::replication_filter::{FieldValues, ReplicationFilter};
-use db::retention::{RetentionFloor, StaticRetentionRule};
+use db::retention::{RetentionFloor, RetentionRule, StaticRetentionRule};
 use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::types::{c_str_to_string, NodeInitOptions};
@@ -75,7 +75,58 @@ pub unsafe fn with_node_options(
             context: options.replication_filter_context,
         }));
     }
+    if let Some(callback) = options.retention_rule {
+        builder = builder.with_retention_rule(Arc::new(CallbackRetention {
+            callback,
+            context: options.retention_rule_context,
+        }));
+    }
     Ok(builder)
+}
+
+/// A C caller's retention rule: `NodeInitOptions::retention_rule`.
+type RetentionCallback = unsafe extern "C" fn(
+    context: usize,
+    collection_id: *const c_char,
+    field_out: *mut c_char,
+    field_capacity: usize,
+    floor_out: *mut i64,
+) -> c_int;
+
+struct CallbackRetention {
+    callback: RetentionCallback,
+    context: usize,
+}
+
+/// The longest height field name the callback may write.
+const FIELD_CAPACITY: usize = 256;
+
+impl RetentionRule for CallbackRetention {
+    fn retention_floor(&self, collection_id: &str) -> Option<RetentionFloor> {
+        let collection_id = CString::new(collection_id).ok()?;
+        let mut field = [0 as c_char; FIELD_CAPACITY];
+        let mut floor = 0i64;
+        // SAFETY: the caller promised a thread-safe callback that writes at
+        // most `FIELD_CAPACITY` bytes, null-terminated, and one i64.
+        let covered = unsafe {
+            (self.callback)(
+                self.context,
+                collection_id.as_ptr(),
+                field.as_mut_ptr(),
+                FIELD_CAPACITY,
+                &mut floor,
+            )
+        };
+        if covered == 0 {
+            return None;
+        }
+        field[FIELD_CAPACITY - 1] = 0;
+        // SAFETY: the buffer is null-terminated just above.
+        let field = unsafe { std::ffi::CStr::from_ptr(field.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        Some(RetentionFloor { field, floor })
+    }
 }
 
 /// The rule `{"<collectionID>": {"field": …, "floor": …}}` names.

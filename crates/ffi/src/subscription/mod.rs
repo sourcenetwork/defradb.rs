@@ -21,7 +21,9 @@ use std::ptr;
 use crate::types::{sanitize_to_cstring, FfiPanicResult};
 
 pub(crate) use create::response_has_data;
-pub use create::{create_merge_complete_subscription, create_subscription};
+pub use create::{
+    create_event_subscription, create_merge_complete_subscription, create_subscription,
+};
 pub use manage::{
     close_graphql_subscription, close_subscription, poll_graphql_subscription, poll_subscription,
 };
