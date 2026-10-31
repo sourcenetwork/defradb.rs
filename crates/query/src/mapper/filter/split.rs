@@ -6,6 +6,16 @@ use super::filter_impl::Filter;
 use super::op::FilterOp;
 
 impl Filter {
+    /// The conditions a stored document can be checked against alone: the whole
+    /// filter, or its scalar part when it also reaches related documents,
+    /// which only a select with joins decides. `None` when nothing is local.
+    pub fn local_part(&self) -> Option<Filter> {
+        match self.has_relation_filters() || self.has_alias_filter() {
+            true => self.split_by_relation().0,
+            false => Some(self.clone()),
+        }
+    }
+
     /// Split this filter into scalar filters and relation filters.
     ///
     /// Returns (scalar_filter, relation_filter) where:
