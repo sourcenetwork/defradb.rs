@@ -9,6 +9,7 @@
 mod error;
 mod request;
 mod response;
+mod save_many;
 mod types;
 
 use std::future::Future;
@@ -17,7 +18,7 @@ pub use error::{Error, Result};
 use serde_json::Value;
 pub use types::{AddOptions, DocumentsResult, Filter};
 
-use crate::executor::QueryResponse;
+use crate::executor::{QueryRequest, QueryResponse};
 
 /// Add `docs` to `collection` and return their IDs in order.
 pub async fn add<R, F>(
@@ -69,12 +70,14 @@ where
     )?)
 }
 
-/// Save every document of `docs` in one mutation: one that carries a
-/// `_docID` naming a stored document is updated with its other fields, any
-/// other is added, and one naming a deleted document fails the batch. Either
-/// all are saved or none is; their IDs, in order. Go Shinzo's
-/// `SaveManyDocuments`. `run` runs each request (the check, then the
-/// mutation) in the one transaction the caller holds.
+/// Save every document of `docs` as one request, so in one transaction: one
+/// that carries a `_docID` naming a stored document is updated with its other
+/// fields, any other is added, and one naming a deleted document fails the
+/// batch. Either all are saved or none is; their IDs, in order. Go Shinzo's
+/// `SaveManyDocuments`. The request carries typed mutations, not GraphQL
+/// text, and `run` runs it on the caller's request path, which gives it a
+/// mutation's preparation, NAC and document ACP checks, signing and
+/// encryption.
 pub async fn save_many<R, F>(
     run: R,
     collection: &str,
@@ -82,17 +85,14 @@ pub async fn save_many<R, F>(
     options: &AddOptions,
 ) -> Result<Vec<String>>
 where
-    R: Fn(String) -> F,
+    R: FnOnce(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
     if docs.is_empty() {
         return Ok(Vec::new());
     }
-    let mutation = request::save_many(collection, docs, options)?;
-    if let Some(check) = request::deleted_among(collection, docs)? {
-        response::none_deleted(run(check).await, collection)?;
-    }
-    response::saved_doc_ids(run(mutation).await, docs.len())
+    let request = QueryRequest::parsed(save_many::operation(collection, docs, options)?);
+    response::saved_doc_ids(run(request).await, docs.len())
 }
 
 /// Delete document `doc_id`.

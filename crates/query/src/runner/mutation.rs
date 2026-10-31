@@ -162,16 +162,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         execution.await
     }
 
-    /// Execute a GraphQL mutation with a specific mutator, caller_identity, and variables.
-    pub(crate) async fn execute_mutation_internal_with_vars(
+    /// Execute already-parsed `mutations` as `caller_identity`, the one
+    /// that creates what they write.
+    pub(crate) async fn execute_mutations_as_caller(
         &self,
-        mutation_str: &str,
+        mutations: Vec<Mutation>,
         mutator: Arc<dyn DocMutator>,
         caller_identity: Option<Did>,
-        variables: Option<&RapidHashMap<String, JsonValue>>,
         fetcher_override: Option<Arc<dyn crate::fetcher::DocFetcher>>,
     ) -> Result<JsonValue> {
-        let mutations = parse_mutations_with_limits(mutation_str, variables, self.query_limits)?;
         // What this request writes is created by its caller.
         let runner = self.for_caller(caller_identity.as_ref());
         // Keep the large mutation state machine off the Tokio worker stack.
@@ -653,6 +652,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             }
             selected_mutation.doc_ids = Some(ids);
         }
+        // An upsert that names its one document by DocID instead of a filter
+        // is a save (`query::documents::save_many`): with no match, a named
+        // document that is deleted or hidden is refused, not added.
+        let named_doc_id = match (&mutation.mutation_type, &mutation.filter, &mutation.doc_ids) {
+            (MutationType::Upsert, None, Some(ids)) if ids.len() == 1 => Some(ids[0].clone()),
+            _ => None,
+        };
         let mutation = &selected_mutation;
         let AuthorizedMutation {
             collection,
@@ -903,6 +909,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         .with_collection(collection.clone())
                         .with_request_time(request_time)
                         .with_prepared_writes(prepared.cloned());
+                if let Some(doc_id) = named_doc_id.clone() {
+                    node = node.with_named_doc_id(doc_id);
+                }
 
                 // Set create_input (from Go's 'add' argument)
                 if !mutation.create_input.is_empty() {

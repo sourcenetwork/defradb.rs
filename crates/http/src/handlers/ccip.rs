@@ -87,6 +87,7 @@ async fn execute(
             variables: request.variables,
             identity: identity.did().cloned(),
             context: Default::default(),
+            parsed: None,
         },
     )
     .await;

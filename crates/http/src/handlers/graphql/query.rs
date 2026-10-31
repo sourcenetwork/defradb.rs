@@ -210,6 +210,7 @@ pub async fn graphql_get(
         variables,
         identity: identity.did().cloned(),
         context: Default::default(),
+        parsed: None,
     };
 
     let response = execute_with_context(&state, &identity, request).await;
@@ -304,6 +305,7 @@ pub async fn graphql_transactional(
         variables: request.variables,
         identity: identity.did().cloned(),
         context: Default::default(),
+        parsed: None,
     };
 
     // Check for transaction ID in header first (Go-compatible), then body
