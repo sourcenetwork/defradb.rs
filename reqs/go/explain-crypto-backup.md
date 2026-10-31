@@ -71,7 +71,7 @@ Aggregates explain as their node names in debug mode.
 - **Go-Tests:** ["explain/debug/with_similarity_test.go::TestDebugExplainRequestWith_WithSimilarity", "explain/debug/with_view_test.go::TestDebugExplainRequestWithView", "explain/debug/with_view_transform_test.go::TestDebugExplainRequestWithViewWithTransform"]
 - **Scope:** "view tests: cacheless view type only"
 
-`SIMILARITY(pointsList: {vector: [...]})` explains as `selectTopNode > similarityNode > selectNode > scanNode`; querying a non-materialized view explains with a `viewNode` over the view's source plan, and a view with a Lens transform adds a `lensNode` between them.
+`SIMILARITY(pointsList: {vector: [...]})` explains as `selectTopNode > similarityNode > selectNode > scanNode`; a query on a non-materialized view explains as a `viewNode` over the view's source query, and a view with a Lens transform adds a `lensNode` between the two.
 
 # `go.explain.execute`: Execute explain: run the plan and report counters
 

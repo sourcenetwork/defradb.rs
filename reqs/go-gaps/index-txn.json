@@ -772,7 +772,7 @@
   },
   {
     "id": "go.index.vector.create",
-    "verdict": "partial",
+    "verdict": "diverges",
     "rust_tests": [
       "crates/db/tests/index/manager.rs::a_unique_vector_request_is_refused",
       "crates/query/tests/vector_index_sdl.rs::competing_kind_selectors_are_refused",
@@ -806,7 +806,7 @@
   },
   {
     "id": "go.index.vector.fallback-warning",
-    "verdict": "partial",
+    "verdict": "diverges",
     "rust_tests": [
       "crates/defra-node/tests/vector_index_query_path.rs::dropping_the_limit_warns_vector_index_unused",
       "crates/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",

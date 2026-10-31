@@ -56,7 +56,7 @@ Below the heading are a few optional lines:
 
 - **`defra/`** holds requirements our own tests already cover. A requirement moves here from `go/` when its tests pass. It keeps its ID, and its `Go-Tests` line becomes a `Scenarios` line. New behaviour that only the Rust version has gets its requirement here from the start.
 
-- **`go-gaps/`** is a one-time audit that compared every `go/` requirement with the Rust tests we had when it was written. Each entry says whether the behaviour was `covered`, `partial` or `missing`, which tests showed it, and what was left unchecked. It's a good place to look for a test that still needs writing.
+- **`go-gaps/`** is a one-time audit that compared every `go/` requirement with the Rust tests we had when it was written. Each entry says whether the behaviour was `covered`, `partial`, `missing`, or `diverges` (Rust deliberately does something else), which tests showed it, and what was left unchecked. It's a good place to look for a test that still needs writing.
 
 ## Tying a test to a requirement
 
