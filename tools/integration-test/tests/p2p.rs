@@ -24,6 +24,8 @@ mod no_peers;
 mod peer_details;
 #[path = "p2p/quarantine.rs"]
 mod quarantine;
+#[path = "p2p/receive_gate.rs"]
+mod receive_gate;
 #[path = "p2p/receiver_pull.rs"]
 mod receiver_pull;
 #[path = "p2p/replication.rs"]
