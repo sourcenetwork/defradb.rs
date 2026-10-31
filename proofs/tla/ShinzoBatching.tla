@@ -4,7 +4,12 @@
 \* Sending: each document it writes is added to its collection topic's
 \* batch. A batch is published as soon as it holds BatchMax documents, and
 \* otherwise when a clock tick finds that its first document has waited
-\* FlushInterval ticks.
+\* FlushInterval ticks. Publishing can fail. A failure that can pass (no
+\* subscribed peer yet, full send queues) keeps the batch to try again,
+\* until it has failed MaxTries times, as a single update's gossip is
+\* retried; then, or on a failure that never passes (a batch that will not
+\* encode), the batch is dropped, and its documents reach peers through
+\* replicators and document sync instead.
 \*
 \* Receiving: a CAR that arrives inline with an update is kept for its head
 \* and the peer that offered it, within a byte budget, until the node asks
@@ -14,14 +19,19 @@
 \* What must never happen:
 \*   - a published batch holds more than BatchMax documents;
 \*   - a document waits in a batch past FlushInterval;
-\*   - a document is lost or published twice;
+\*   - a document is lost or published twice: each one is published, still
+\*     waiting, kept to retry, or dropped, exactly once;
+\*   - a batch is dropped over a failure that can pass before it has used
+\*     every try;
 \*   - the kept CARs are over the byte budget, or the byte count drifts from
 \*     what is really kept;
 \*   - one offered CAR is used twice;
 \*   - a CAR is used for a peer other than the one that offered it.
 \*
 \* Rust: crates/p2p/src/sync/shinzo_batch.rs ShinzoBatcher::add,
-\* ShinzoBatcher::due (run on the host's flush tick), InlineCars::offer,
+\* ShinzoBatcher::due (run on the host's flush tick), ShinzoBatcher::retry;
+\* crates/p2p/src/host/p2p_host/shinzo_batch.rs P2PHost::publish_batch;
+\* InlineCars::offer,
 \* InlineCars::take, InlineCars::expire. Go: shinzo-develop
 \* internal/db/p2p/batcher.go.
 EXTENDS Naturals, Sequences, FiniteSets
@@ -34,6 +44,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 \*   "count"    forget to count a replaced CAR's bytes out -> INV_BytesMatch
 \*   "reuse"    leave a CAR in the store after using it    -> INV_UsedOnce
 \*   "anypeer"  use a CAR whoever is asked for its head    -> INV_OwnPeer
+\*   "nokeep"   drop a batch on its first passing failure  -> INV_RetryableKept
 CONSTANT Bug
 
 \* Sending side: three documents, batches of two, a two-tick flush, and
@@ -42,6 +53,8 @@ Docs == 1..3
 BatchMax == 2
 FlushInterval == 2
 MaxTime == 4
+\* A batch is tried at most this many times before it is dropped.
+MaxTries == 2
 
 \* Receiving side: one head, two peers, CARs of size 1 or 2, a budget of 2,
 \* and at most three offers in all.
@@ -55,17 +68,22 @@ MaxOffers == 3
 \* toAdd: the documents not written yet.
 \* pending: the open batch, oldest first; since: when its first one came.
 \* published: every batch published so far.
+\* retrying: batches kept after a failure that can pass, as <<batch, failures>>.
+\* dropped: batches given up on, as <<batch, failures, why>>, why being
+\*   "retryable" (it used every try) or "permanent".
 \* store: the kept CARs, a function from (head, peer) to <<id, size>>.
 \* bytes: the byte count the store keeps.
 \* nextId: the id the next offered CAR gets.
 \* used: every use of a CAR, as <<id, offerer, asker, n>>, n counting uses so
 \*   two uses of one offer stay two entries.
-VARIABLES now, toAdd, pending, since, published, store, bytes, nextId, used
+VARIABLES now, toAdd, pending, since, published, retrying, dropped, store,
+          bytes, nextId, used
 
 \* Every variable, for UNCHANGED.
-vars == <<now, toAdd, pending, since, published, store, bytes, nextId, used>>
+vars == <<now, toAdd, pending, since, published, retrying, dropped, store,
+          bytes, nextId, used>>
 \* The sending side's variables, and the receiving side's.
-sendVars == <<now, toAdd, pending, since, published>>
+sendVars == <<now, toAdd, pending, since, published, retrying, dropped>>
 recvVars == <<store, bytes, nextId, used>>
 
 \* The sum of a function's values' sizes (the second item of each value).
@@ -83,12 +101,32 @@ Init ==
   /\ pending = <<>>
   /\ since = 0
   /\ published = <<>>
+  /\ retrying = {}
+  /\ dropped = {}
   /\ store = [k \in {} |-> <<0, 0>>]
   /\ bytes = 0
   /\ nextId = 1
   /\ used = {}
 
 \* ---- Sending ----
+
+\* Try to publish `batch`, which has failed `f` times so far, with `kept` the
+\* retrying set to start from. It is published, or fails in a way that can
+\* pass and is kept to retry (dropped once it has failed MaxTries times; the
+\* "nokeep" bug drops it at once), or fails for good and is dropped.
+Attempt(batch, f, kept) ==
+  \/ /\ published' = Append(published, batch)
+     /\ retrying' = kept
+     /\ UNCHANGED dropped
+  \/ /\ IF f + 1 < MaxTries /\ Bug # "nokeep"
+        THEN /\ retrying' = kept \cup {<<batch, f + 1>>}
+             /\ UNCHANGED dropped
+        ELSE /\ dropped' = dropped \cup {<<batch, f + 1, "retryable">>}
+             /\ retrying' = kept
+     /\ UNCHANGED published
+  \/ /\ dropped' = dropped \cup {<<batch, f, "permanent">>}
+     /\ retrying' = kept
+     /\ UNCHANGED published
 
 \* Write document d: it joins the open batch, which starts its wait when it
 \* was empty. A batch that is now full is published at once (the "overfull"
@@ -99,10 +137,10 @@ Add ==
     IN /\ toAdd' = toAdd \ {d}
        /\ since' = IF pending = <<>> THEN now ELSE since
        /\ IF Len(batch) >= BatchMax /\ Bug # "overfull"
-          THEN /\ published' = Append(published, batch)
+          THEN /\ Attempt(batch, 0, retrying)
                /\ pending' = <<>>
-          ELSE /\ published' = published
-               /\ pending' = batch
+          ELSE /\ pending' = batch
+               /\ UNCHANGED <<published, retrying, dropped>>
        /\ UNCHANGED <<now>> /\ UNCHANGED recvVars
 
 \* The clock ticks, and the flush that runs on it publishes the open batch
@@ -112,10 +150,16 @@ Tick ==
   /\ now < MaxTime
   /\ now' = now + 1
   /\ IF pending # <<>> /\ now + 1 - since >= FlushInterval /\ Bug # "noflush"
-     THEN /\ published' = Append(published, pending)
+     THEN /\ Attempt(pending, 0, retrying)
           /\ pending' = <<>>
-     ELSE UNCHANGED <<published, pending>>
+     ELSE UNCHANGED <<published, pending, retrying, dropped>>
   /\ UNCHANGED <<toAdd, since>> /\ UNCHANGED recvVars
+
+\* A kept batch's backoff has passed: try it again.
+Retry ==
+  \E r \in retrying :
+    /\ Attempt(r[1], r[2], retrying \ {r})
+    /\ UNCHANGED <<now, toAdd, pending, since>> /\ UNCHANGED recvVars
 
 \* ---- Receiving ----
 
@@ -160,7 +204,7 @@ Expire ==
     /\ UNCHANGED <<nextId, used>> /\ UNCHANGED sendVars
 
 \* Every step the node can take.
-Next == Add \/ Tick \/ Offer \/ Take \/ Expire
+Next == Add \/ Tick \/ Retry \/ Offer \/ Take \/ Expire
 
 \* ---- What must hold ----
 
@@ -176,10 +220,23 @@ INV_BatchBounded == \A i \in DOMAIN published : Len(published[i]) <= BatchMax
 \* An open batch's first document has waited less than FlushInterval.
 INV_NoLongWait == pending # <<>> => now - since < FlushInterval
 
-\* Every written document is in exactly one place: published once, or still
-\* in the open batch.
+\* How often d appears in the batches of a set of records, each record's
+\* batch being its first item.
+RECURSIVE CountIn(_, _)
+CountIn(d, rs) ==
+  IF rs = {} THEN 0
+  ELSE LET r == CHOOSE r \in rs : TRUE
+       IN Count(d, <<r[1]>>) + CountIn(d, rs \ {r})
+
+\* Every written document is in exactly one place: published once, still in
+\* the open batch, kept to retry, or dropped.
 INV_ExactlyOnce ==
-  \A d \in Docs \ toAdd : Count(d, Append(published, pending)) = 1
+  \A d \in Docs \ toAdd :
+    Count(d, Append(published, pending)) + CountIn(d, retrying) + CountIn(d, dropped) = 1
+
+\* A batch dropped over a failure that can pass had used every try.
+INV_RetryableKept ==
+  \A r \in dropped : r[3] = "retryable" => r[2] = MaxTries
 
 \* The kept CARs never exceed the byte budget.
 INV_WithinBudget == bytes <= Budget
