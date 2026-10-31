@@ -131,6 +131,7 @@ jobs:
           - { family: replication_filter, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: retry_markers, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: schema_validate, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: shinzo_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: sift, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: startup, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: text_merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

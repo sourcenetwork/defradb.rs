@@ -21,6 +21,7 @@ use blockstore::DefraBlockstore;
 use db::merge::DbMergeHandler;
 use db::DB;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use defra_perf::emit::{Family, Group, Row, Trust};
 use defra_perf::measure::{median, min_max, percentile_ms};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
@@ -217,10 +218,48 @@ where
     }
 }
 
+/// One sample's numbers: name, unit, whether lower is better, value.
+fn metrics(sample: &Sample) -> [(&'static str, &'static str, bool, f64); 5] {
+    let commits = sample.commits as f64;
+    [
+        (
+            "commits",
+            "commits/s",
+            false,
+            commits / sample.elapsed.as_secs_f64(),
+        ),
+        (
+            "storage conflicts",
+            "conflicts/commit",
+            true,
+            sample.storage_conflicts as f64 / commits,
+        ),
+        (
+            "engine retries",
+            "retries/commit",
+            true,
+            sample.engine_retries as f64 / commits,
+        ),
+        (
+            "latency p50",
+            "ms",
+            true,
+            percentile_ms(&sample.latencies, 50),
+        ),
+        (
+            "latency p99",
+            "ms",
+            true,
+            percentile_ms(&sample.latencies, 99),
+        ),
+    ]
+}
+
 fn main() {
     let writers = counts("DEFRA_BASELINE_WRITERS", "1,16");
     let operations = positive("DEFRA_BASELINE_OPERATIONS", 128);
     let repetitions = positive("DEFRA_BASELINE_REPETITIONS", 3);
+    let guard = common::load_guard();
     println!(
         "{}",
         serde_json::json!({
@@ -228,13 +267,15 @@ fn main() {
                 "revision": std::env::var("DEFRA_BASELINE_REVISION").unwrap_or_default(),
                 "writers": writers, "operations_per_writer": operations,
                 "repetitions": repetitions, "durability": "Immediate", "store": "disk",
+                "load_guard": guard,
             }
         })
     );
     let rt = common::owned_runtime();
     for workload in ["merges", "truncates"] {
+        let mut groups: Vec<Group> = Vec::new();
         for &count in &writers {
-            let mut rates = Vec::new();
+            let mut values: Vec<Vec<f64>> = Vec::new();
             for repetition in 0..repetitions {
                 let sample = rt.block_on(async {
                     match workload {
@@ -242,34 +283,51 @@ fn main() {
                         _ => truncates(count, operations).await,
                     }
                 });
-                let commits = sample.commits as f64;
-                let rate = commits / sample.elapsed.as_secs_f64();
-                rates.push(rate);
+                let metrics = metrics(&sample);
+                if groups.is_empty() {
+                    groups = metrics
+                        .iter()
+                        .map(|(name, unit, lower, _)| {
+                            match lower {
+                                true => Group::lower_better(*name, *unit),
+                                false => Group::higher_better(*name, *unit),
+                            }
+                            .over("writers")
+                        })
+                        .collect();
+                }
+                values.resize_with(metrics.len(), Vec::new);
                 println!(
                     "{}",
                     serde_json::json!({
                         "baseline_sample": {
                             "workload": workload, "writers": count, "repetition": repetition,
                             "commits": sample.commits,
-                            "commits_per_second": rate,
-                            "storage_conflicts_per_commit": sample.storage_conflicts as f64 / commits,
-                            "engine_retries_per_commit": sample.engine_retries as f64 / commits,
-                            "latency_p50_ms": percentile_ms(&sample.latencies, 50),
-                            "latency_p99_ms": percentile_ms(&sample.latencies, 99),
+                            "metrics": metrics.iter().map(|(name, _, _, value)| (*name, *value)).collect::<std::collections::BTreeMap<_, _>>(),
                         }
                     })
                 );
+                for (samples, (_, _, _, value)) in values.iter_mut().zip(metrics) {
+                    samples.push(value);
+                }
             }
-            let (lo, hi) = min_max(&rates);
-            println!(
-                "{}",
-                serde_json::json!({
-                    "baseline_summary": {
-                        "workload": workload, "writers": count,
-                        "commits_per_second_median": median(&mut rates), "min": lo, "max": hi,
-                    }
-                })
-            );
+            for (group, mut samples) in groups.iter_mut().zip(values) {
+                let (lo, hi) = min_max(&samples);
+                group.rows.push(
+                    Row::new(count.to_string(), median(&mut samples))
+                        .range(lo, hi)
+                        .at(count as f64),
+                );
+            }
         }
+        let mut family = Family::new(
+            format!("Shinzo core data paths: {workload}"),
+            format!("On-disk Immediate durability; {operations} documents per writer; {repetitions} fresh-store repetitions. merges: each writer merges its own new documents through DbMergeHandler::handle_block. truncates: one filtered truncate removes every writer's documents (a collection runs one truncate at a time), so writers scales its size."),
+        )
+        .trust(if guard.passed { Trust::Clean } else { Trust::Contaminated });
+        for group in groups {
+            family = family.group(group);
+        }
+        family.emit(&format!("shinzo_baseline_{workload}"));
     }
 }
