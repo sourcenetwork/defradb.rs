@@ -463,6 +463,10 @@ pub fn generate_mutation_type(collections: &[&CollectionVersion]) -> GqlObjectTy
                 GqlType::non_null(GqlType::boolean()),
             )
             .with_arg(GqlArg::new(
+                "docID",
+                GqlType::list(GqlType::non_null(GqlType::id())),
+            ))
+            .with_arg(GqlArg::new(
                 "filter",
                 GqlType::named(format!("{}FilterInput", type_name)),
             )),
