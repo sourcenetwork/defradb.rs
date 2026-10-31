@@ -390,6 +390,34 @@ pub async fn get_doc_ids_for_block(
     Ok(doc_ids)
 }
 
+/// Whether any document owns `block_cid`, by a validated scan: an owner edge
+/// for the block written by a transaction that commits first aborts the
+/// decision, so a block a concurrent merge adopts is never deleted.
+pub async fn block_has_owners(systemstore: &NamespaceView, block_cid: &str) -> Result<bool> {
+    use storage::corekv::IterOptions;
+
+    let prefix = BlockCIDToDocIDKey::block_prefix(block_cid);
+    let prefix_len = prefix.len();
+    let mut iter = systemstore
+        .iterator(
+            IterOptions::new()
+                .with_prefix(prefix)
+                .with_keys_only(true)
+                .with_validation(true),
+        )
+        .await
+        .map_err(Error::Storage)?;
+    let mut owned = false;
+    while let Some(kv) = iter.next().await.map_err(Error::Storage)? {
+        if kv.key.len() > prefix_len {
+            owned = true;
+            break;
+        }
+    }
+    iter.close().await.map_err(Error::Storage)?;
+    Ok(owned)
+}
+
 /// Resolve the document owners used to authorize a block.
 ///
 /// `Some([])` identifies collection-level/non-document blocks, `Some(owners)`

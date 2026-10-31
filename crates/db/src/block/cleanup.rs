@@ -6,12 +6,9 @@ use datastore::NamespaceView;
 use defra_core::Block;
 
 async fn remove_owner(systemstore: &NamespaceView, cid: &Cid, doc_id: &str) -> Result<bool> {
-    crate::docid::map::delete_block_doc_id_mapping(systemstore, &cid.to_string(), doc_id).await?;
-    Ok(
-        crate::docid::map::get_doc_ids_for_block(systemstore, &cid.to_string())
-            .await?
-            .is_empty(),
-    )
+    let cid = cid.to_string();
+    crate::docid::map::delete_block_doc_id_mapping(systemstore, &cid, doc_id).await?;
+    Ok(!crate::docid::map::block_has_owners(systemstore, &cid).await?)
 }
 
 pub(crate) async fn load_block(blockstore: &NamespaceView, cid: &Cid) -> Result<Option<Block>> {
@@ -179,41 +176,23 @@ pub async fn delete_owned_dag_for_owners(
     roots: &[Cid],
     doc_ids: &[String],
 ) -> Result<()> {
-    let mut stack = roots.to_vec();
-    let mut edges: RapidHashMap<Cid, Vec<Cid>> = RapidHashMap::new();
-    let mut signatures: RapidHashMap<Cid, Cid> = RapidHashMap::new();
-    let mut visited = RapidHashSet::new();
-
-    while let Some(cid) = stack.pop() {
-        if !visited.insert(cid) {
-            continue;
-        }
-        let Some(block) = load_block(blockstore, &cid).await? else {
-            continue;
-        };
-        let mut children = block.all_links();
-        if let Some(encryption_cid) = block.encryption {
-            children.push(encryption_cid);
-        }
-        if let Some(signature_cid) = block.signature {
-            signatures.insert(cid, signature_cid);
-        }
-        stack.extend(children.iter().copied());
-        edges.insert(cid, children);
-    }
-
+    let DagWalk {
+        visited,
+        edges,
+        signatures,
+    } = DagWalk::from_roots(blockstore, roots).await?;
     let mut retained = RapidHashSet::new();
     for cid in &visited {
-        let mut has_owner = true;
+        let key = cid.to_string();
         for doc_id in doc_ids {
-            has_owner = !remove_owner(systemstore, cid, doc_id).await?;
+            crate::docid::map::delete_block_doc_id_mapping(systemstore, &key, doc_id).await?;
         }
-        if has_owner {
+        if crate::docid::map::block_has_owners(systemstore, &key).await? {
             retained.insert(*cid);
         }
     }
 
-    stack.extend(retained.iter().copied());
+    let mut stack: Vec<Cid> = retained.iter().copied().collect();
     while let Some(cid) = stack.pop() {
         if let Some(children) = edges.get(&cid) {
             for child in children {
@@ -226,6 +205,7 @@ pub async fn delete_owned_dag_for_owners(
 
     for cid in visited.difference(&retained) {
         if let Some(signature_cid) = signatures.get(cid) {
+            drop_owners(systemstore, signature_cid, doc_ids).await?;
             blockstore
                 .delete(&signature_cid.to_bytes())
                 .await
@@ -237,4 +217,66 @@ pub async fn delete_owned_dag_for_owners(
             .map_err(Error::Storage)?;
     }
     Ok(())
+}
+
+/// Remove several aliases' ownership from every block reachable from `roots`
+/// and from their signature blocks, keeping every block. A purge without
+/// history pruning leaves no owner edge naming a document that is gone, so
+/// the blocks stay reclaimable.
+pub async fn drop_dag_owners(
+    blockstore: &NamespaceView,
+    systemstore: &NamespaceView,
+    roots: &[Cid],
+    doc_ids: &[String],
+) -> Result<()> {
+    let walk = DagWalk::from_roots(blockstore, roots).await?;
+    for cid in walk.visited.iter().chain(walk.signatures.values()) {
+        drop_owners(systemstore, cid, doc_ids).await?;
+    }
+    Ok(())
+}
+
+async fn drop_owners(systemstore: &NamespaceView, cid: &Cid, doc_ids: &[String]) -> Result<()> {
+    let key = cid.to_string();
+    for doc_id in doc_ids {
+        crate::docid::map::delete_block_doc_id_mapping(systemstore, &key, doc_id).await?;
+    }
+    Ok(())
+}
+
+/// The blocks reachable from some roots, with each one's links and
+/// signature block.
+struct DagWalk {
+    visited: RapidHashSet<Cid>,
+    edges: RapidHashMap<Cid, Vec<Cid>>,
+    signatures: RapidHashMap<Cid, Cid>,
+}
+
+impl DagWalk {
+    async fn from_roots(blockstore: &NamespaceView, roots: &[Cid]) -> Result<Self> {
+        let mut stack = roots.to_vec();
+        let mut walk = Self {
+            visited: RapidHashSet::new(),
+            edges: RapidHashMap::new(),
+            signatures: RapidHashMap::new(),
+        };
+        while let Some(cid) = stack.pop() {
+            if !walk.visited.insert(cid) {
+                continue;
+            }
+            let Some(block) = load_block(blockstore, &cid).await? else {
+                continue;
+            };
+            let mut children = block.all_links();
+            if let Some(encryption_cid) = block.encryption {
+                children.push(encryption_cid);
+            }
+            if let Some(signature_cid) = block.signature {
+                walk.signatures.insert(cid, signature_cid);
+            }
+            stack.extend(children.iter().copied());
+            walk.edges.insert(cid, children);
+        }
+        Ok(walk)
+    }
 }
