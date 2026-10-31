@@ -157,10 +157,8 @@ fn shinzo_a_discarded_purge_removes_nothing() {
     .execute();
 }
 
-#[test]
-#[mantra_macros::req_test("go.shinzo.purge.count")]
-fn shinzo_a_purge_in_a_transaction_lands_on_commit() {
-    TestCase::from_actions(vec![
+fn purge_in_a_transaction(read_before_commit: bool) -> Vec<Actions> {
+    let mut actions = vec![
         collection(USERS),
         add("Alice", 40, "alice"),
         add("Bob", 50, "bob"),
@@ -171,13 +169,31 @@ fn shinzo_a_purge_in_a_transaction_lands_on_commit() {
             ..purge(&["alice"], true)
         }
         .into(),
-        names(json!([{ "name": "Alice" }, { "name": "Bob" }])),
+    ];
+    if read_before_commit {
+        actions.push(names(json!([{ "name": "Alice" }, { "name": "Bob" }])));
+    }
+    actions.push(
         TxnCommit {
             txn: 0,
             ..Default::default()
         }
         .into(),
-        names(json!([{ "name": "Bob" }])),
-    ])
-    .execute();
+    );
+    actions.push(names(json!([{ "name": "Bob" }])));
+    actions
+}
+
+#[test]
+#[mantra_macros::req_test("go.shinzo.purge.count")]
+fn shinzo_a_purge_in_a_transaction_lands_on_commit() {
+    TestCase::from_actions(purge_in_a_transaction(false)).execute();
+}
+
+/// Go's purge holds a collection lock until its transaction ends, so a read
+/// outside the transaction waits for it; this one runs on Rust nodes only.
+#[test]
+#[mantra_macros::req_test("go.shinzo.purge.count")]
+fn a_purge_in_a_transaction_is_invisible_until_commit() {
+    TestCase::from_actions(purge_in_a_transaction(true)).execute();
 }

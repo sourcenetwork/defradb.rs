@@ -33,7 +33,7 @@ A `PurgeByDocIDs(..., true)` commits successfully even when another transaction 
 # `go.shinzo.purge.count`: Purged documents are counted once they commit
 
 - **Parents:** ["go.shinzo.purge"]
-- **Scenarios:** ["db::collection::purge::the_count_names_each_stored_document_once", "shinzo::purge::shinzo_purge_counts_each_stored_document_once", "shinzo::purge::shinzo_a_discarded_purge_removes_nothing", "shinzo::purge::shinzo_a_purge_in_a_transaction_lands_on_commit"]
+- **Scenarios:** ["db::collection::purge::the_count_names_each_stored_document_once", "shinzo::purge::shinzo_purge_counts_each_stored_document_once", "shinzo::purge::shinzo_a_discarded_purge_removes_nothing", "shinzo::purge::shinzo_a_purge_in_a_transaction_lands_on_commit", "shinzo::purge::a_purge_in_a_transaction_is_invisible_until_commit"]
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 A DocID that names no document is not an error and is not counted: `PurgeByDocIDs([alice, bob, alice])` succeeds and counts 2. A purge run in a caller's transaction removes nothing until that transaction commits, and nothing at all if it is discarded. defradb.rs returns the count to the caller; the periodic `purge stats` log line is `go.shinzo.telemetry.merge.report`.
