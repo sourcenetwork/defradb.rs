@@ -101,6 +101,10 @@ name = "contention"
 harness = false
 
 [[bench]]
+name = "shinzo_baseline"
+harness = false
+
+[[bench]]
 name = "write_baseline"
 harness = false
 
