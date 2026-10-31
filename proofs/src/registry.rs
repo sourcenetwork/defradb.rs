@@ -1261,9 +1261,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Shinzo batching",
-        name: "INV_BatchBounded / INV_NoLongWait / INV_ExactlyOnce / INV_WithinBudget / INV_BytesMatch / INV_UsedOnce / INV_OwnPeer",
+        name: "INV_BatchBounded / INV_NoLongWait / INV_ExactlyOnce / INV_RetryableKept / INV_WithinBudget / INV_BytesMatch / INV_UsedOnce / INV_OwnPeer",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/shinzo_batch.rs ShinzoBatcher::add, ShinzoBatcher::due, InlineCars::offer, InlineCars::take, InlineCars::expire",
+        anchor: "crates/p2p/src/sync/shinzo_batch.rs ShinzoBatcher::add, ShinzoBatcher::due, ShinzoBatcher::retry, InlineCars::offer, InlineCars::take, InlineCars::expire; crates/p2p/src/host/p2p_host/shinzo_batch.rs P2PHost::publish_batch",
         model_ref: "MC_ShinzoBatching_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },

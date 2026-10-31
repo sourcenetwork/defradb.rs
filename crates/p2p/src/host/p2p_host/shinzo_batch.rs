@@ -8,7 +8,7 @@ use std::time::Instant;
 use ::bitswap::Store;
 use bytes::Bytes;
 use cid::Cid;
-use libp2p::gossipsub::MessageId;
+use libp2p::gossipsub::{MessageId, PublishError};
 use libp2p::PeerId;
 use tracing::{debug, warn};
 
@@ -16,7 +16,7 @@ use super::P2PHost;
 use crate::error::Result;
 use crate::host::event::HostEvent;
 use crate::message::{DocumentInfo, PushLogBroadcast};
-use crate::sync::shinzo_batch::encode_batch;
+use crate::sync::shinzo_batch::{encode_batch, Batch};
 use crate::topics::DefraTopic;
 
 impl<S> P2PHost<S>
@@ -97,7 +97,7 @@ where
             .shinzo_batcher
             .add(collection, document, Instant::now())
         {
-            self.publish_batch(collection.clone(), full);
+            self.publish_batch(full);
         }
         Some(Ok(MessageId::new(message.cid.as_ref())))
     }
@@ -108,13 +108,23 @@ where
             true => self.shinzo_batcher.drain(),
             false => self.shinzo_batcher.due(Instant::now()),
         };
-        for (topic, documents) in batches {
-            self.publish_batch(topic, documents);
+        for batch in batches {
+            self.publish_batch(batch);
         }
     }
 
-    fn publish_batch(&mut self, topic: String, documents: Vec<DocumentInfo>) {
+    /// Publish a batch. A message whose publish fails for a reason that can
+    /// pass (no subscribed peer yet, full send queues) is kept to try again,
+    /// as a single update's gossip is retried; a batch that will never
+    /// encode or publish, or has failed too often, is dropped with a warning,
+    /// and its documents reach peers through replicators and document sync.
+    fn publish_batch(&mut self, batch: Batch) {
         let creator = self.swarm.local_peer_id().to_string();
+        let Batch {
+            topic,
+            documents,
+            failures,
+        } = batch;
         let count = documents.len();
         let messages = match encode_batch(&topic, &creator, documents) {
             Ok(messages) => messages,
@@ -124,9 +134,25 @@ where
             }
         };
         let ident = DefraTopic::Collection(topic.clone()).to_ident_topic();
-        for data in messages {
-            if let Err(error) = self.swarm.behaviour_mut().publish(ident.clone(), data) {
-                warn!(%topic, ?error, count, "Failed to publish a Go Shinzo batch");
+        for (data, documents) in messages {
+            let error = match self.swarm.behaviour_mut().publish(ident.clone(), data) {
+                Ok(_) | Err(PublishError::Duplicate) => continue,
+                Err(error) => error,
+            };
+            let retryable = matches!(
+                error,
+                PublishError::NoPeersSubscribedToTopic | PublishError::AllQueuesFull(_)
+            );
+            let count = documents.len();
+            let failed = Batch {
+                topic: topic.clone(),
+                documents,
+                failures,
+            };
+            if retryable && self.shinzo_batcher.retry(failed, Instant::now()) {
+                debug!(%topic, ?error, count, failures, "Go Shinzo batch not published; will retry");
+            } else {
+                warn!(%topic, ?error, count, failures, "Dropped a Go Shinzo batch that could not be published");
             }
         }
     }
