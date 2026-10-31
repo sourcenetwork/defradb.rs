@@ -81,6 +81,7 @@ where
         node_acp_enabled,
         query_timeout,
         introspection_cache,
+        retention_rule,
         replication_filter,
         retention,
     } = config;
@@ -147,11 +148,13 @@ where
     if let Some(size) = chunk_size {
         db_options = db_options.with_chunk_size(size);
     }
+    if let Some(rule) = retention_rule {
+        db_options = db_options.with_retention_rule(rule.0);
+    } else if let Some(rule) = retention {
+        db_options = db_options.with_retention_rule(Arc::new(rule));
+    }
     if let Some(filter) = replication_filter {
         db_options = db_options.with_replication_filter(filter.0);
-    }
-    if let Some(rule) = retention {
-        db_options = db_options.with_retention_rule(Arc::new(rule));
     }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());
