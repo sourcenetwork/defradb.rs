@@ -82,6 +82,9 @@ lean_lib GossipFrame where
 lean_lib KvSnapshot where
 
 @[default_target]
+lean_lib OrphanMarker where
+
+@[default_target]
 lean_lib ServiceRecord where
 
 @[default_target]

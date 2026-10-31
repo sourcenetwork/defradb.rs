@@ -97,6 +97,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .map_err(|e| MergeError::BlockDecode(e.to_string()))?;
             crate::replication_filter::add_field_values(&mut filtered_fields, &linked_block);
             state.owned_field_cids.push(*link_cid);
+            state.linked_signature_cids.extend(linked_block.signature);
             if let Some(encryption_cid) = &linked_block.encryption {
                 state.linked_encryption_cids.push(*encryption_cid);
             }

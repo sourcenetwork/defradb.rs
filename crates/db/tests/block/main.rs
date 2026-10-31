@@ -14,5 +14,6 @@ mod document_heads;
 mod head_conformance;
 mod head_set_migration;
 mod heads;
+mod orphan_gc;
 mod priority;
 mod verify;

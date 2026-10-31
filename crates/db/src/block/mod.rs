@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod cleanup;
 pub mod heads;
+pub mod orphan_gc;
 pub mod priority;
 pub mod reader;
 pub mod verify;

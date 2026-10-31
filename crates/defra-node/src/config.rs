@@ -202,6 +202,9 @@ pub struct Libp2pConfig {
     /// block. Tests only.
     #[cfg(feature = "test-utils")]
     pub car_requests: bool,
+    /// Run the orphan block sweep (`db::block::orphan_gc`), configured from
+    /// the environment. The node turns it on for a persistent store.
+    pub orphan_sweep: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -218,6 +221,7 @@ impl Default for Libp2pConfig {
             resource_limits: p2p::ResourceLimits::default(),
             #[cfg(feature = "test-utils")]
             car_requests: true,
+            orphan_sweep: false,
         }
     }
 }
