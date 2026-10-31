@@ -229,7 +229,7 @@ pub struct StartArgs {
     #[arg(long)]
     pub query_max_filter_depth: Option<usize>,
 
-    /// Max fragments one spread chain nests (0 = unlimited, default: 32)
+    /// Max fragments one spread chain nests, from 1 to what a query thread's stack holds (default: 32)
     #[arg(long, env = "DEFRA_QUERY_MAX_FRAGMENT_NESTING")]
     pub query_max_fragment_nesting: Option<usize>,
 

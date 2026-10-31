@@ -421,6 +421,7 @@ impl NodeBuilder {
         };
         let config = self.config.clone();
         let query_limits = config.query_limits;
+        query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
 

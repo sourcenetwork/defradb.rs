@@ -89,7 +89,8 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
-    /// Max fragments one spread chain nests (0 = unlimited). Default: 32.
+    /// Max fragments one spread chain nests, from 1 to what a query thread's
+    /// stack holds (checked at startup). Default: 32.
     #[serde(default = "default_query_max_fragment_nesting")]
     pub query_max_fragment_nesting: usize,
     /// Cache the built introspection schema for the committed collection
@@ -180,6 +181,13 @@ impl ApiConfig {
         if has_pub != has_priv {
             return Err(Error::IncompleteTlsConfig);
         }
+
+        query::QueryLimits {
+            max_fragment_nesting: self.query_max_fragment_nesting,
+            ..query::QueryLimits::default()
+        }
+        .check_fragment_nesting()
+        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
         if self.transaction_idle_timeout > 0 && self.transaction_cleanup_interval == 0 {
             return Err(Error::InvalidConfig(

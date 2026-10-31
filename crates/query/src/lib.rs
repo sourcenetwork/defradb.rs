@@ -56,7 +56,8 @@ pub use error::{QueryError, Result, TransactionError};
 pub use executor::{QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
 pub use fetcher::{CollectionProvider, StaticCollectionProvider};
 pub use limits::{
-    QueryLimits, DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
+    max_fragment_nesting_for_stack, query_thread_stack_bytes, FragmentNestingError, QueryLimits,
+    DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
     DEFAULT_MAX_QUERY_WIDTH,
 };
 pub use mapper::{Filter, Mutation, MutationType, Select};

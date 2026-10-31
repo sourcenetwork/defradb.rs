@@ -7,6 +7,9 @@
 /// Failure of a node operation.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The fragment nesting limit does not fit a query thread's stack.
+    #[error(transparent)]
+    FragmentNesting(#[from] query::FragmentNestingError),
     /// The database rejected the operation.
     #[error(transparent)]
     Db(#[from] db::Error),

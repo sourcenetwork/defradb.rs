@@ -25,7 +25,7 @@ pub const MAX_QUERY_WIDTH: usize = DEFAULT_MAX_QUERY_WIDTH;
 pub const MAX_FRAGMENT_NESTING: usize = DEFAULT_MAX_FRAGMENT_NESTING;
 
 /// The fragments on the spread chain being expanded, bounded by
-/// `QueryLimits::max_fragment_nesting` (`0` = unlimited).
+/// `QueryLimits::max_fragment_nesting`.
 pub(super) struct FragmentPath {
     names: RapidHashSet<String>,
     max_nesting: usize,
@@ -54,12 +54,8 @@ impl FragmentPath {
     /// Refuse a spread that would nest more fragments than the limit, given
     /// the fragments already on the chain.
     pub(super) fn check_nesting(&self) -> Result<()> {
-        if self.max_nesting > 0 && self.names.len() >= self.max_nesting {
-            return Err(QueryError::parse(format!(
-                "query nests fragments more than {} deep; raise the node's \
-                 api.query_max_fragment_nesting (--query-max-fragment-nesting) to allow it",
-                self.max_nesting
-            )));
+        if self.names.len() >= self.max_nesting {
+            return Err(fragment_nesting_error(self.max_nesting));
         }
         Ok(())
     }
@@ -115,4 +111,13 @@ fn validate_requestables_at_depth(
     }
 
     Ok(())
+}
+
+/// The refusal of a query whose fragments nest deeper than `max_nesting`,
+/// naming the option that raises the bound.
+pub(crate) fn fragment_nesting_error(max_nesting: usize) -> QueryError {
+    QueryError::parse(format!(
+        "query nests fragments more than {max_nesting} deep; raise the node's \
+         api.query_max_fragment_nesting (--query-max-fragment-nesting) to allow it"
+    ))
 }
