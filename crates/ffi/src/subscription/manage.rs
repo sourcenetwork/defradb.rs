@@ -75,6 +75,49 @@ pub extern "C" fn poll_subscription(subscription_handle: usize) -> PollSubscript
     }
 }
 
+/// Wait up to `timeout_ms` for the subscription's next event, blocking the
+/// caller's thread (never a database worker) on the event channel: a caller
+/// with nothing else to do parks here instead of polling.
+///
+/// # Returns
+///
+/// As `poll_subscription`; status 2 means the timeout passed with no event.
+#[no_mangle]
+pub extern "C" fn wait_subscription(
+    subscription_handle: usize,
+    timeout_ms: u64,
+) -> PollSubscriptionResult {
+    ffi_entry! {
+        let Some(state) = SUBSCRIPTIONS.get(subscription_handle) else {
+            return PollSubscriptionResult::error("invalid subscription handle");
+        };
+        let rt = match crate::helpers::get_rt() {
+            Ok(rt) => rt,
+            Err(_) => return PollSubscriptionResult::error(crate::helpers::ERR_RUNTIME_NOT_INITIALIZED),
+        };
+        let next = async {
+            loop {
+                let message = state.subscription.take().await?;
+                let filtered_out = match (&state.collection_filter, message.as_update()) {
+                    (Some(filter), Some(update)) => !update.collection_id.contains(filter.as_str()),
+                    _ => false,
+                };
+                if !filtered_out {
+                    return Some(message);
+                }
+            }
+        };
+        let waited = rt.block_on(rt.timeout(std::time::Duration::from_millis(timeout_ms), next));
+        let dropped = state.subscription.check_and_reset_dropped();
+        match waited {
+            Ok(Ok(Some(message))) => PollSubscriptionResult::event(message_to_json(&message), dropped),
+            Ok(Ok(None)) => PollSubscriptionResult::closed(),
+            Ok(Err(edge::EdgeError::Deadline(_))) => PollSubscriptionResult::no_event(dropped),
+            Ok(Err(error)) | Err(error) => PollSubscriptionResult::error(format!("wait_subscription: {error}")),
+        }
+    }
+}
+
 /// Poll a GraphQL subscription for new results.
 ///
 /// Results have already been processed by the background task at event time,

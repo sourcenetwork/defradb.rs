@@ -270,6 +270,27 @@ pub struct NodeInitOptions {
     >,
     /// Passed back to `retention_rule` on every call.
     pub retention_rule_context: usize,
+    /// Optional Ed25519 peer key, 64 bytes (seed then public key, as Go's
+    /// libp2p `PrivKey.Raw()` gives it): the node's peer ID on every start.
+    /// A store that already holds a different, stored peer key refuses it.
+    pub p2p_private_key: *const u8,
+    /// Length of `p2p_private_key`.
+    pub p2p_private_key_len: usize,
+    /// Optional JSON array of libp2p listen multiaddrs; when set it replaces
+    /// `new_node_with_p2p`'s single address.
+    pub p2p_listen_addrs_json: *const c_char,
+    /// Optional JSON array of peers the libp2p host connects to at start.
+    pub p2p_bootstrap_peers_json: *const c_char,
+    /// Non-zero runs libp2p without GossipSub.
+    pub p2p_disable_pubsub: c_int,
+    /// Non-zero runs libp2p without the relay client transport.
+    pub p2p_disable_relay: c_int,
+    /// libp2p resource manager memory budget in MiB; zero keeps the default.
+    pub p2p_resource_memory_mib: u64,
+    /// libp2p resource manager file-descriptor budget; zero keeps the default.
+    pub p2p_resource_file_descriptors: u64,
+    /// Streams one peer may hold open; zero keeps the default.
+    pub p2p_max_streams_per_peer: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -308,6 +329,15 @@ impl Default for NodeInitOptions {
             replication_filter_context: 0,
             retention_rule: None,
             retention_rule_context: 0,
+            p2p_private_key: ptr::null(),
+            p2p_private_key_len: 0,
+            p2p_listen_addrs_json: ptr::null(),
+            p2p_bootstrap_peers_json: ptr::null(),
+            p2p_disable_pubsub: 0,
+            p2p_disable_relay: 0,
+            p2p_resource_memory_mib: 0,
+            p2p_resource_file_descriptors: 0,
+            p2p_max_streams_per_peer: 0,
         }
     }
 }
