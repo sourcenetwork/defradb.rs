@@ -104,7 +104,8 @@ fn the_floor_refuses_a_create_whose_height_is_at_hand() {
         for (height, expected) in [
             (Some(100), Some(GateRefusal::BelowFloor)),
             (Some(101), None),
-            (None, Some(GateRefusal::NoHeight)),
+            // No height link: Go's gate lets it go on, and the merge judges it.
+            (None, None),
             (Some(-5), Some(GateRefusal::NoHeight)),
         ] {
             let (doc, head, linked) = pushed(&blocks, height, true).await;

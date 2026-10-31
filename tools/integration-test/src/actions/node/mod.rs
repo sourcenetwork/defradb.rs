@@ -8,6 +8,6 @@ mod start_nac;
 pub use close::Close;
 pub use connect::Connect;
 pub use get_identity::GetNodeIdentity;
-pub use new::NewNode;
+pub use new::{CutoffSpec, NewNode, RetentionSpec};
 pub use restart::Restart;
 pub use start_nac::Start;

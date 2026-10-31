@@ -6177,6 +6177,7 @@ dependencies = [
  "commonware-codec",
  "crypto",
  "ctor",
+ "db",
  "defra-core",
  "defra-harness",
  "defra-node",

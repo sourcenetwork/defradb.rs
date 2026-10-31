@@ -12,7 +12,6 @@ use p2p::sync::receive_gate::{GateBlocks, GateRefusal, ReceiveGate};
 use storage::Store;
 
 use crate::replication_filter::{add_field_values, FieldValues};
-use crate::retention::RetentionFloor;
 
 /// Judges pushed documents against a database's filter and retention rule.
 pub struct DbReceiveGate<S>
@@ -43,39 +42,24 @@ enum Height {
     Unreadable,
 }
 
-/// The height `blocks` hold for `floor.field`, read from a plain (not
-/// encrypted) LWW value of that field, alone or in an immutable block.
-fn height_in(floor: &RetentionFloor, blocks: &[Block], all_at_hand: bool) -> Height {
-    for block in blocks {
-        if block.encryption.is_some() {
-            continue;
+/// The height a create's height block holds, as Go's `heightIn` reads it:
+/// only a plain (not encrypted) LWW value of `field` is read; a
+/// non-negative integer up to `i64::MAX` is a height, any other value is no
+/// valid height, and bytes that do not decode are unreadable.
+fn height_in(field: &str, block: &Block) -> Height {
+    let data = match &block.delta {
+        CrdtDelta::Lww(delta) if block.encryption.is_none() && delta.field_name == field => {
+            &delta.data
         }
-        let data = match &block.delta {
-            CrdtDelta::Lww(delta) if delta.field_name == floor.field => Some(delta.data.clone()),
-            CrdtDelta::Immutable(payload) => payload
-                .lww_deltas()
-                .find(|delta| delta.field_name == floor.field)
-                .map(|delta| delta.data),
-            _ => None,
-        };
-        let Some(data) = data else {
-            continue;
-        };
-        return match ciborium::from_reader::<ciborium::Value, _>(data.as_slice()) {
-            Ok(ciborium::Value::Integer(value)) => match i64::try_from(i128::from(value)) {
-                Ok(height) if height >= 0 => Height::Value(height),
-                _ => Height::Invalid,
-            },
-            Ok(_) => Height::Invalid,
-            Err(_) => Height::Unreadable,
-        };
-    }
-    // A create links every field it sets: with every linked block at hand
-    // and none holding the field, the field is unset.
-    if all_at_hand {
-        Height::Invalid
-    } else {
-        Height::Unreadable
+        _ => return Height::Unreadable,
+    };
+    match ciborium::from_reader::<ciborium::Value, _>(data.as_slice()) {
+        Ok(ciborium::Value::Integer(value)) => match i64::try_from(i128::from(value)) {
+            Ok(height) if height >= 0 => Height::Value(height),
+            _ => Height::Invalid,
+        },
+        Ok(_) => Height::Invalid,
+        Err(_) => Height::Unreadable,
     }
 }
 
@@ -103,20 +87,19 @@ where
             return None;
         };
         let mut linked = Vec::new();
-        let mut all_at_hand = true;
         for link in head.links.iter().flatten() {
-            match blocks.block(&link.link).await {
-                Some(data) => match Block::from_dag_cbor(&data) {
-                    Ok(block) => linked.push(block),
-                    Err(_) => all_at_hand = false,
-                },
-                None => all_at_hand = false,
+            if let Some(Ok(block)) = blocks
+                .block(&link.link)
+                .await
+                .map(|data| Block::from_dag_cbor(&data))
+            {
+                linked.push((link.name.as_str(), block));
             }
         }
 
         if let Some(filter) = self.db.options().replication_filter.as_ref() {
             let mut fields = FieldValues::default();
-            for block in &linked {
+            for (_, block) in &linked {
                 add_field_values(&mut fields, block);
             }
             if !filter.allow_replication(collection_id, doc_id, &fields) {
@@ -124,12 +107,15 @@ where
             }
         }
 
-        // Only a create (a head of priority 1) is judged by height.
+        // As Go's gate: only a create (a head of priority 1) is judged, on
+        // the block it links under the height field. A create with no such
+        // link, or whose block is not at hand, goes on to the merge.
         if payload.priority != 1 {
             return None;
         }
         let floor = self.db.options().retention_floor(schema)?;
-        match height_in(&floor, &linked, all_at_hand) {
+        let (_, height_block) = linked.iter().find(|(name, _)| *name == floor.field)?;
+        match height_in(&floor.field, height_block) {
             Height::Value(height) if floor.floor > 0 && height <= floor.floor => {
                 Some(GateRefusal::BelowFloor)
             }
