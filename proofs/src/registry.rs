@@ -1239,6 +1239,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The replication filter (#2451): asked between the merge's phases,
+        // so a refused document stores nothing; a refusal skips only its own
+        // event, for good; a branchable collection is not filtered.
+        family: "Replication filter",
+        name: "INV_RefusedNothingStored / INV_KeptMerged / INV_MergedOnce / INV_BranchableUnfiltered",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/replication_filter.rs add_field_values; crates/db/src/merge/merge_handler/batch.rs try_batch_merge",
+        model_ref: "MC_ReplicationFilter_{Green,Green_Branchable,Red_AfterPersist,Red_WholeBatch,Red_Retry,Red_FilterBranchable}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,

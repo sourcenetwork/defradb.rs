@@ -171,6 +171,12 @@ RUNS=(
   "MC_Purge_Red_PlainScan.cfg Purge.tla RED" # a plain owner scan misses a merge adopting a block, which the prune deletes (INV_OthersIntact)
   "MC_Purge_Green_Branchable.cfg Purge.tla GREEN" # #2459 review: a branchable collection's DAG keeps every composite it links
   "MC_Purge_Red_IgnoreCollection.cfg Purge.tla RED" # the prune ignores the collection DAG as an owner (INV_CollectionIntact)
+  "MC_ReplicationFilter_Green.cfg ReplicationFilter.tla GREEN" # #2451: a refused document stores nothing, kept ones merge alone or in a batch
+  "MC_ReplicationFilter_Green_Branchable.cfg ReplicationFilter.tla GREEN" # #2451: a branchable collection is not filtered
+  "MC_ReplicationFilter_Red_AfterPersist.cfg ReplicationFilter.tla RED" # asked after phase 2 wrote the fields (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_WholeBatch.cfg ReplicationFilter.tla RED" # one refusal skips its batch (INV_KeptMerged)
+  "MC_ReplicationFilter_Red_Retry.cfg ReplicationFilter.tla RED" # a refused head is retried and stored later (INV_RefusedNothingStored)
+  "MC_ReplicationFilter_Red_FilterBranchable.cfg ReplicationFilter.tla RED" # a branchable collection is filtered per document (INV_BranchableUnfiltered)
   "MC_Retention_Green.cfg Retention.tla GREEN" # #2450: the merge refuses only what the rule refuses, alone, never relayed, counted
   "MC_Retention_Green_ZeroFloor.cfg Retention.tla GREEN" # #2450: a floor of 0 refuses nothing by height
   "MC_Retention_Green_Branchable.cfg Retention.tla GREEN" # #2450: a branchable collection is not judged

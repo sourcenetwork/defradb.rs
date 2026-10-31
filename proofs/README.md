@@ -76,6 +76,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index drop during backfill | TLA+ | db-index |
 | Purge by DocID | TLA+ | db |
 | Retention floor | TLA+ | db-merge |
+| Replication filter | TLA+ | db-merge |
 | Node startup | TLA+, Lean | embedded, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
