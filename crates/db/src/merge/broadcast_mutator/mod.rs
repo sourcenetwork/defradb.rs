@@ -1248,4 +1248,12 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
     ) -> query::error::Result<Option<Document>> {
         self.inner.get_for_update(collection_name, doc_id).await
     }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        self.inner.is_deleted(collection_name, doc_id).await
+    }
 }

@@ -18,7 +18,7 @@ use crate::error::{QueryError, TransactionError};
 use crate::executor::{GqlWarning, QueryRequest, QueryResponse, QueryResponseError};
 use crate::mutator::DocMutator;
 use crate::prepared::{PreparedInputMemo, PreparedInputRequest};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::{txn_job, TransactionRegistry, TxnJob, TxnTurn};
 
 use super::executor::{check_nac, convert_variables, permission_for_operation};
@@ -118,12 +118,7 @@ where
         let variables = convert_variables(&request.variables);
         let parsed = match parsed {
             Some(parsed) => parsed,
-            None => match parse_request_with_limits(
-                &request.query,
-                variables.as_ref(),
-                request.operation_name.as_deref(),
-                self.query_limits,
-            ) {
+            None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(parsed) => parsed,
                 Err(error) => return Turned::Done(parse_error(error.to_string())),
             },
@@ -246,7 +241,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Mutation { explain, .. } => {
+                ParsedOperation::Mutation { explain, mutations } => {
                     if let Some(explain_type) = explain {
                         self.with_collection_provider(txn_provider)
                             .explain_mutation_with_identity(&request.query, identity, explain_type)
@@ -267,11 +262,10 @@ where
                             .with_prepared_inputs(inputs.clone())
                             .unwrap_or_else(|| mutator.clone());
                         scoped_runner
-                            .execute_mutation_internal_with_vars(
-                                &request.query,
+                            .execute_mutations_as_caller(
+                                mutations,
                                 attempt,
                                 identity,
-                                variables.as_ref(),
                                 Some(txn_ctx.doc_fetcher()),
                             )
                             .await

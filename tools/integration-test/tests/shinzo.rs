@@ -4,3 +4,6 @@
 
 #[path = "shinzo/purge.rs"]
 mod purge;
+
+#[path = "shinzo/save_many.rs"]
+mod save_many;

@@ -54,6 +54,23 @@ impl Node {
         Ok(documents::save(run, collection, doc_id, doc, options).await?)
     }
 
+    /// Save every document of `docs` in one transaction, each updated when
+    /// its `_docID` names a stored document and added otherwise, and return
+    /// their IDs in order. Go Shinzo's `SaveManyDocuments`. One request of
+    /// typed mutations on the node's request path: in the transaction
+    /// `context` carries, or as one engine-retried autocommit batch.
+    pub async fn save_docs(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        docs: &[Value],
+        options: &AddOptions,
+    ) -> Result<Vec<String>> {
+        let identity = acting_identity(context)?;
+        let run = |request| self.run_as_identity(context, identity, request);
+        Ok(documents::save_many(run, collection, docs, options).await?)
+    }
+
     /// Delete document `doc_id`. Go's `DeleteDocument`.
     pub async fn delete_doc(
         &self,

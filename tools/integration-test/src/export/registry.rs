@@ -133,6 +133,7 @@ registry! {
     PeerInfo => [v("peer.infoValidated").all(&["validated"]).implied(&[("validated", "true")]), v("peer.id").all(&["idOnly"]).implied(&[("idOnly", "true")]), v("peer.info")],
     PurgeDocs => [v("document.purge")],
     ReEnableNAC => [v("nac.reEnable")],
+    SaveDocs => [v("document.saveMany")],
     RefreshViews => [v("view.refresh")],
     Request => [v("query.execute")],
     Restart => [v("node.stop").all(&["stop"]).implied(&[("stop", "true")]), v("node.restart")],

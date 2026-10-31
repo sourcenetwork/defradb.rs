@@ -79,3 +79,35 @@ With floor 100, a replicated delete of a document whose `blockNumber` is 5 merge
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 Merging a batch of three Logs at heights 101, 100 and 150 against floor 100 returns the outcomes `[Merged, Rejected, Merged]`; the 101 and 150 documents are stored, the 100 one is not, and no drop is recorded.
+
+# `go.shinzo.save_many.create_or_update`: Each document is added or updated
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Scenarios:** ["shinzo::save_many::save_many_updates_a_stored_document_and_adds_a_new_one"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+With `User { name: String, age: Int }` holding Alice (`age: 40`), saving `[{_docID: <alice>, age: 41}, {name: "Bob", age: 50}]` leaves Alice at `age: 41` with her name unchanged and adds Bob. defradb.rs returns the saved documents' DocIDs in the order given.
+
+# `go.shinzo.save_many.atomic`: One document that fails saves none
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Scenarios:** ["shinzo::save_many::one_document_that_fails_saves_none"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+When one document of the batch cannot be saved, the call fails with that document's error and no document of the batch is stored, including the ones before it: saving `[{name: "Bob"}, {name: "Carol", nickname: "C"}]` on a `User` with no `nickname` field fails, and neither Bob nor Carol exists afterwards.
+
+# `go.shinzo.save_many.deleted`: A deleted document is not saved again
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Scenarios:** ["shinzo::save_many::a_deleted_document_is_not_saved_again"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A document whose DocID names a document that was deleted fails the batch with `a document with the given ID has been deleted`, and nothing of the batch is stored.
+
+# `go.shinzo.save_many.transaction`: In a caller's transaction, the batch lands on commit
+
+- **Parents:** ["go.shinzo.save_many"]
+- **Scenarios:** ["shinzo::save_many::a_batch_in_a_transaction_lands_on_commit", "shinzo::save_many::a_discarded_batch_stores_nothing", "shinzo::save_many::an_empty_batch_stores_nothing"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Saved in a caller's transaction, the documents are not visible outside it until it commits, and are never stored if it is discarded. An empty batch succeeds and stores nothing.
