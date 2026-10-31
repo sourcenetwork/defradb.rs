@@ -29,6 +29,7 @@ pub mod pending_store;
 mod push_backlog;
 mod queue;
 pub(crate) mod rate_limiter;
+pub mod receive_gate;
 mod replication;
 pub mod shinzo_batch;
 pub mod shinzo_car;

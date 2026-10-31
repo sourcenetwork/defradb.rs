@@ -221,6 +221,11 @@ where
 
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
+    // The filter and retention floor also judge pushes before their blocks
+    // are fetched (#2456); the merge keeps its own checks.
+    if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+        coordinator.set_receive_gate(Arc::new(gate));
+    }
     let stats_coordinator = coordinator.clone();
     let stats_db = Arc::clone(&database);
     coordinator.spawn_background_task("p2p_stats_report", async move {

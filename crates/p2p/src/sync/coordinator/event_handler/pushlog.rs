@@ -151,15 +151,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         tracing::trace!(?cid, "Parsed valid CID from PushLog request");
 
         let broadcast = PushLogBroadcast::from_request(&request);
-        let process_result = self
-            .manager
-            .process_pushlog_from_dag_provider(
-                &broadcast,
-                Some(peer_id.as_str()),
-                is_explicit_replicator,
-                None,
-            )
-            .await;
+        // A document the receive gate refuses is a deliberate skip: the push
+        // is answered as handled, and nothing of it is stored or fetched.
+        let process_result = if self.gate_arrival(&broadcast, Some(&peer_id)).await {
+            self.manager
+                .process_pushlog_from_dag_provider(
+                    &broadcast,
+                    Some(peer_id.as_str()),
+                    is_explicit_replicator,
+                    None,
+                )
+                .await
+        } else {
+            Ok(())
+        };
 
         if let Err(e) = &process_result {
             tracing::warn!(
@@ -260,15 +265,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let is_explicit_replicator =
             is_explicit_replicator || explicit_replay_authorization.is_some();
         let broadcast = PushLogBroadcast::from_request(&request);
-        let process_result = self
-            .manager
-            .process_pushlog_from_dag_provider(
-                &broadcast,
-                Some(peer_id.as_str()),
-                is_explicit_replicator,
-                explicit_replay_authorization,
-            )
-            .await;
+        // Go gates a replicator's direct push too: its filter and retention
+        // checks run whatever `isReplicator` is.
+        let process_result = if self.gate_arrival(&broadcast, Some(&peer_id)).await {
+            self.manager
+                .process_pushlog_from_dag_provider(
+                    &broadcast,
+                    Some(peer_id.as_str()),
+                    is_explicit_replicator,
+                    explicit_replay_authorization,
+                )
+                .await
+        } else {
+            Ok(())
+        };
 
         let mut reply = build_pushlog_reply(
             &request.message_id,
