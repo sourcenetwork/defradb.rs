@@ -172,6 +172,17 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
+  "MC_Purge_Green_Prune.cfg Purge.tla GREEN" # #2449: a pruning purge keeps shared blocks, counts once on commit, and commits despite a sync re-storing a block
+  "MC_Purge_Green_NoPrune.cfg Purge.tla GREEN" # #2449: a purge without pruning keeps the blocks and drops the purged owner edges
+  "MC_Purge_Red_Blind.cfg Purge.tla RED" # the prune deletes a block another document owns (INV_OthersIntact)
+  "MC_Purge_Red_KeepEdges.cfg Purge.tla RED" # Go's no-prune purge keeps owner edges of gone documents (INV_NoStaleOwner)
+  "MC_Purge_Red_KeepIndex.cfg Purge.tla RED" # index entries survive the purge (INV_Gone)
+  "MC_Purge_Red_CountRequests.cfg Purge.tla RED" # a DocID named twice is counted twice (INV_Count)
+  "MC_Purge_Red_CountAttempt.cfg Purge.tla RED" # a conflicted attempt is counted (INV_Count)
+  "MC_Purge_Red_Fail.cfg Purge.tla RED" # a conflict fails the purge instead of re-running it (PROP_Commits)
+  "MC_Purge_Red_PlainScan.cfg Purge.tla RED" # a plain owner scan misses a merge adopting a block, which the prune deletes (INV_OthersIntact)
+  "MC_Purge_Green_Branchable.cfg Purge.tla GREEN" # #2459 review: a branchable collection's DAG keeps every composite it links
+  "MC_Purge_Red_IgnoreCollection.cfg Purge.tla RED" # the prune ignores the collection DAG as an owner (INV_CollectionIntact)
   "MC_IndexDropBackfill_Green.cfg IndexDropBackfill.tla GREEN" # #2233: a drop during a backfill leaves no record and no entry, and finishes after a restart
   "MC_IndexDropBackfill_Red_KeepRecord.cfg IndexDropBackfill.tla RED" # the drop leaves the backfill record (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)

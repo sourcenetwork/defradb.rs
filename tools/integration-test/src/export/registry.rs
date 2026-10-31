@@ -131,6 +131,7 @@ registry! {
     Parallel => [v("scenario.expectPending").all(&["expectPending"]).implied(&[("expectPending", "true")]), v("action.parallel").when(all_safe), v("document.parallel")],
     PatchCollection => [v("schema.patchWhileCreating").all(&["collection", "document"]), v("schema.patchWithLensAsync").all(&["lens", "async"]).implied(&[("async", "true")]), v("schema.patchWithLens").all(&["lens"]), v("schema.patch")],
     PeerInfo => [v("peer.infoValidated").all(&["validated"]).implied(&[("validated", "true")]), v("peer.id").all(&["idOnly"]).implied(&[("idOnly", "true")]), v("peer.info")],
+    PurgeDocs => [v("document.purge")],
     ReEnableNAC => [v("nac.reEnable")],
     RefreshViews => [v("view.refresh")],
     Request => [v("query.execute")],
