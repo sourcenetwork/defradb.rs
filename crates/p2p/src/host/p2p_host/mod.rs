@@ -5,6 +5,7 @@
 
 mod connection_manager;
 mod protocols;
+mod shinzo_car;
 mod swarm;
 mod two_stream;
 
@@ -34,7 +35,8 @@ use tracing::{debug, info, warn};
 
 use crate::behaviour::DefraBehaviour;
 use crate::bitswap::{
-    AccessMode, BlockClassifier, DefaultBlockClassifier, LateBoundServeAcp, ReplicatorRegistry,
+    make_peer_block_access_filter, AccessMode, BlockClassifier, DefaultBlockClassifier,
+    LateBoundServeAcp, ReplicatorRegistry,
 };
 use crate::error::{Error, Result};
 use crate::message::PushLogReply;
@@ -217,6 +219,10 @@ pub struct P2PHostConfig {
     /// are filtered per-peer against the shared `ReplicatorRegistry`,
     /// matching Go's `WithPeerBlockRequestFilter` wiring. Default: `Open`.
     pub access_mode: AccessMode,
+    /// Speak Go `shinzo-develop`'s wire: serve and send its `CARRequest` on
+    /// the CAR protocols, and read its batched gossip pushes. Off keeps
+    /// today's protocol unchanged. Default: false.
+    pub shinzo_wire: bool,
 }
 
 impl Default for P2PHostConfig {
@@ -233,6 +239,7 @@ impl Default for P2PHostConfig {
             connection_manager_grace_period: DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD,
             max_connections_per_peer: 4,
             access_mode: AccessMode::Open,
+            shinzo_wire: false,
         }
     }
 }
@@ -288,6 +295,8 @@ pub struct P2PHost<S: Store> {
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
+    /// Go Shinzo's wire, when `P2PHostConfig::shinzo_wire` is on.
+    pub(crate) shinzo: Option<shinzo_car::ShinzoCars<S>>,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -442,6 +451,18 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         // access filter (installed at behaviour construction time) needs
         // the same Arc that SyncCoordinator will later populate.
         let replicators = Arc::new(ReplicatorRegistry::new());
+
+        // Go Shinzo CARs are served under the same gate Bitswap applies.
+        let shinzo = config.shinzo_wire.then(|| {
+            let access = make_peer_block_access_filter(
+                config.access_mode,
+                Arc::clone(&replicators),
+                bitswap_store.clone(),
+                Arc::clone(&classifier),
+                Arc::clone(&serve_acp),
+            );
+            shinzo_car::ShinzoCars::new(bitswap_store.clone(), Arc::new(access))
+        });
 
         // Pass keypair and blockstore to behaviour for message signing and block exchange
         let mut behaviour = DefraBehaviour::new(
@@ -621,6 +642,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 config.connection_manager_grace_period,
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
+            shinzo,
         };
 
         Ok((host, handle, event_rx, replicators))

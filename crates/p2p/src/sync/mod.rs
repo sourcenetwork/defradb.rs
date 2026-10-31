@@ -30,6 +30,7 @@ mod push_backlog;
 mod queue;
 pub(crate) mod rate_limiter;
 mod replication;
+pub mod shinzo_car;
 
 pub use broadcaster::{BroadcastResult, Broadcaster};
 pub use collection_store::{MemoryCollectionStorage, P2PCollectionStorage, P2PCollectionStore};

@@ -346,6 +346,11 @@ pub struct NetConfig {
     /// Max established connections per peer. Default: 4.
     #[serde(default = "default_max_connections_per_peer")]
     pub max_connections_per_peer: u32,
+    /// Speak Go `shinzo-develop`'s wire over libp2p (its CAR channel and
+    /// batched pushes), so this node replicates with Go Shinzo nodes.
+    /// Default: false.
+    #[serde(default)]
+    pub shinzo_wire: bool,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -507,6 +512,7 @@ impl Default for NetConfig {
             connection_manager_high_water: default_connection_manager_high_water(),
             connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
             max_connections_per_peer: default_max_connections_per_peer(),
+            shinzo_wire: false,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,
