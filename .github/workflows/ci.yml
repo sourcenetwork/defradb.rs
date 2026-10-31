@@ -70,6 +70,9 @@ jobs:
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
               { suite: 'go-compat', needs_go: true },
+              // Go Shinzo (GO_SHINZO_COMMIT): the go-shinzo client, mixed
+              // Rust and Go Shinzo clusters, and the drift check.
+              { suite: 'go-shinzo', needs_go: false },
               { suite: 'iroh', needs_go: false },
               // The same data path on a pool of one worker.
               { suite: 'one-worker', needs_go: false },
@@ -438,7 +441,7 @@ jobs:
           chmod +x target/ci/defra target/ci/defra-iroh
           target/ci/defra version --format json
       - name: Install Go toolchain
-        if: matrix.suite == 'go-compat'
+        if: matrix.suite == 'go-compat' || matrix.suite == 'go-shinzo'
         uses: actions/setup-go@v5
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
@@ -490,6 +493,55 @@ jobs:
         with:
           path: ~/.cache/defra-harness
           key: ${{ steps.go-defradb.outputs.cache-primary-key }}
+      - name: Restore Go Shinzo
+        id: go-shinzo
+        if: matrix.suite == 'go-shinzo'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/defra-shinzo
+          key: go-shinzo-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+      - name: Prepare Go Shinzo binary
+        if: matrix.suite == 'go-shinzo'
+        run: |
+          SHINZO_REF=$(grep 'pub const GO_SHINZO_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          SHINZO_BRANCH=$(grep 'pub const GO_SHINZO_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          test -n "$SHINZO_REF"
+          test -n "$SHINZO_BRANCH"
+          CACHE_DIR="$HOME/.cache/defra-shinzo/${SHINZO_REF}"
+          mkdir -p "$CACHE_DIR"
+          if [ ! -x "$CACHE_DIR/defradb" ]; then
+            WORK_DIR="$RUNNER_TEMP/defradb-shinzo-${SHINZO_REF}"
+            git clone --filter=blob:none --branch "$SHINZO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
+            git -C "$WORK_DIR" checkout "$SHINZO_REF"
+            make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
+            chmod +x "$CACHE_DIR/defradb"
+          fi
+          "$CACHE_DIR/defradb" version --format json
+          echo "DEFRA_GO_SHINZO_BINARY=$CACHE_DIR/defradb" >> "$GITHUB_ENV"
+
+          # The drift check finds `defradb` on the PATH. This one is Go Shinzo,
+          # kept on disk: its in-memory Badger keeps a 256-byte value threshold
+          # and refuses a collection definition.
+          SHIM_DIR="$RUNNER_TEMP/shinzo-as-defradb"
+          mkdir -p "$SHIM_DIR"
+          cat > "$SHIM_DIR/defradb" <<EOF
+          #!/usr/bin/env bash
+          args=(); prev=
+          for a in "\$@"; do
+            [ "\$prev" = "--store" ] && [ "\$a" = "memory" ] && a=badger
+            [ "\$a" = "--store=memory" ] && a=--store=badger
+            args+=("\$a"); prev=\$a
+          done
+          exec "$CACHE_DIR/defradb" "\${args[@]}"
+          EOF
+          chmod +x "$SHIM_DIR/defradb"
+          echo "SHINZO_AS_DEFRADB=$SHIM_DIR" >> "$GITHUB_ENV"
+      - name: Save Go Shinzo
+        if: matrix.suite == 'go-shinzo' && env.SAVE_CACHE == 'true' && steps.go-shinzo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-shinzo
+          key: ${{ steps.go-shinzo.outputs.cache-primary-key }}
       - name: Verify Go fixtures still match Rust constants
         if: matrix.suite == 'go-compat'
         run: |
@@ -514,14 +566,14 @@ jobs:
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test basic
-          -- --skip ::go_
+          -- --skip ::go_ --skip shinzo_
       - name: Run rust integration tests (core suites)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
-          -- --skip ::go_
+          -- --skip ::go_ --skip shinzo_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:
@@ -529,12 +581,12 @@ jobs:
           DEFRA_WORKERS: '1'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test basic --test query
-          -- --skip ::go_
+          -- --skip ::go_ --skip shinzo_
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          -- --skip ::go_ --skip shinzo_
       - name: Run go-compat integration tests
         if: matrix.suite == 'go-compat'
         run: >-
@@ -558,6 +610,24 @@ jobs:
           parity_indexed_lww parity_mixed_fields_3node parity_lww_tie_partition
           parity_samedoc_mixed_restart
           parity_unique_twins_rust_rust parity_unique_twins_go_go parity_unique_twins_mixed
+      - name: Run mixed Rust and Go Shinzo clusters
+        if: matrix.suite == 'go-shinzo'
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          -- shinzo_
+      - name: Run the go-shinzo client
+        if: matrix.suite == 'go-shinzo'
+        env:
+          DEFRA_CLIENT: go-shinzo
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          -- shinzo_
+      - name: Check Go Shinzo for drift from Go develop (document IDs, block CIDs, P2P sync)
+        if: matrix.suite == 'go-shinzo'
+        run: |
+          export PATH="$SHINZO_AS_DEFRADB:$PATH"
+          cargo nextest run --cargo-profile super-dev -p integration-test \
+            --test basic --test p2p -E 'test(/::go_/)'
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
         run: >-
@@ -614,7 +684,7 @@ jobs:
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          -- --skip ::go_ --skip shinzo_
       - name: Run P2P ownership durability fences
         run: |
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission

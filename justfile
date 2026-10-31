@@ -578,7 +578,7 @@ integration-one-worker *args:
 [doc("Pure-Rust P2P topologies, serialized (skips the go_ variants).")]
 [group('test')]
 integration-p2p:
-    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- --skip ::go_
+    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- --skip ::go_ --skip shinzo_
 
 # The go_* half, which needs a Go DefraDB binary on PATH.
 [group('test')]
