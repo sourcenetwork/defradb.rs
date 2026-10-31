@@ -29,6 +29,15 @@ fn selected_document_transfers_match_executed_model() {
     let mut stop_count = 0;
     for line in cases.lines() {
         let fields: Vec<_> = line.split('\t').collect();
+        if let ["pause_limit", stops, ok] = fields.as_slice() {
+            workers::block_on(super::push_docs_selected_stop::exercise_pause_budget_case(
+                stops.parse().unwrap(),
+                ok.parse().unwrap(),
+            ))
+            .unwrap();
+            stop_count += 1;
+            continue;
+        }
         if let ["stop", outcome, stops, sends, ok] = fields.as_slice() {
             workers::block_on(super::push_docs_selected_stop::exercise_stop_case(
                 outcome,

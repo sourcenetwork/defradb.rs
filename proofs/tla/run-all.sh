@@ -73,6 +73,7 @@ RUNS=(
   "MC_SelectedCarAuthority_Red_scope.cfg SelectedCarAuthority.tla RED"
   "MC_SelectedCarAuthority_Red_revoke.cfg SelectedCarAuthority.tla RED"
   "MC_SelectedPushIsolation_Green.cfg SelectedPushIsolation.tla GREEN"
+  "MC_SelectedPushIsolation_Red_pause.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_filter.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_backoff.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_hint.cfg SelectedPushIsolation.tla RED"

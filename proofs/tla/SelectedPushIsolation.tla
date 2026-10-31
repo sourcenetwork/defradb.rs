@@ -6,8 +6,8 @@
 \* refuse the chosen documents, and a receiver hint for this call must not touch
 \* that subscription's schedule.
 \* Things go wrong: a send times out (the peer is silent), the connection drops,
-\* or the receiver asks for a pause. The caller may also give up and drop the
-\* call. Any of these means the transfer cannot finish now, so the call stops:
+\* or the receiver asks for a pause. A pause is retried within a fixed deadline.
+\* A send deadline, disconnect, expired pause budget or caller drop stops the call:
 \* it schedules no more documents and no waiting task sends again. Sends already
 \* on the wire end on their own deadline and are joined before the call returns.
 \* Never: scheduling the rest of the selection after a stop, more sends after a
@@ -21,6 +21,8 @@ EXTENDS Naturals, FiniteSets
 \* Bug names the one guard a RED configuration removes; "none" keeps them all.
 \* N is how many documents were chosen; Cap is the slot count (8 in Rust).
 CONSTANTS Bug, N, Cap
+\* Two abstract ticks stand for the fixed configured send-timeout budget.
+Budget == 2
 \* The chosen documents, numbered 1 to N.
 Docs == 1..N
 \* Document 1 has two head blocks, so a running task meets a block boundary.
@@ -40,10 +42,10 @@ Blocks(d) == IF d = 1 THEN 2 ELSE 1
 \* result: the call's answer. refused: subscription state refused the call.
 \* hint / replicatorHint: a receiver hint arrived / leaked into the subscription.
 VARIABLES phase, task, blocksDone, checked, stopped, stopSeen, cancelled, silent,
-          lateSchedules, lateSends, timeouts, result, refused, hint, replicatorHint
+          lateSchedules, lateSends, timeouts, result, refused, hint, replicatorHint, paused, elapsed
 \* Every variable, for steps that leave the rest unchanged.
 vars == <<phase, task, blocksDone, checked, stopped, stopSeen, cancelled, silent,
-          lateSchedules, lateSends, timeouts, result, refused, hint, replicatorHint>>
+          lateSchedules, lateSends, timeouts, result, refused, hint, replicatorHint, paused, elapsed>>
 \* Tasks holding a document slot: started and not yet ended.
 InFlight == {d \in Docs : task[d] \in {"queued", "admitted", "sending"}}
 \* Tasks holding a send slot: past the stop check or on the wire.
@@ -54,6 +56,7 @@ Init == /\ phase = "idle" /\ task = [d \in Docs |-> "new"]
         /\ stopped = FALSE /\ stopSeen = FALSE /\ cancelled = FALSE /\ silent = FALSE
         /\ lateSchedules = 0 /\ lateSends = 0 /\ timeouts = 0 /\ result = "pending"
         /\ refused = FALSE /\ hint = FALSE /\ replicatorHint = FALSE
+        /\ paused = FALSE /\ elapsed = 0
 \* The call starts. Selected sends never consult the subscription's filter or
 \* backoff; the "filter" and "backoff" bugs let that state refuse the call.
 Start == /\ phase = "idle"
@@ -62,7 +65,7 @@ Start == /\ phase = "idle"
          /\ phase' = IF refused' THEN "done" ELSE "running"
          /\ result' = IF refused' THEN "err" ELSE "pending"
          /\ UNCHANGED <<task, blocksDone, checked, stopped, stopSeen, cancelled, silent,
-                        lateSchedules, lateSends, timeouts, hint, replicatorHint>>
+                        lateSchedules, lateSends, timeouts, hint, replicatorHint, paused, elapsed>>
 \* A failure that proves the transfer cannot progress: the task raises the stop
 \* flag before it releases its slots. The "stall" bug forgets to raise it.
 RaiseStop == /\ stopSeen' = TRUE
@@ -77,7 +80,7 @@ Check(d) == /\ phase = "running" /\ checked = 0 /\ task[d] = "new"
             /\ checked' = d
             /\ UNCHANGED <<phase, task, blocksDone, stopped, stopSeen, cancelled, silent,
                            lateSchedules, lateSends, timeouts, result, refused, hint,
-                           replicatorHint>>
+                           replicatorHint, paused, elapsed>>
 \* The checked document's task starts. A stop can land between the read and the
 \* start (another thread raised it); that one document is counted as late.
 Spawn == /\ checked # 0
@@ -85,74 +88,93 @@ Spawn == /\ checked # 0
          /\ lateSchedules' = lateSchedules + (IF stopSeen THEN 1 ELSE 0)
          /\ checked' = 0
          /\ UNCHANGED <<phase, blocksDone, stopped, stopSeen, cancelled, silent,
-                        lateSends, timeouts, result, refused, hint, replicatorHint>>
+                        lateSends, timeouts, result, refused, hint, replicatorHint, paused, elapsed>>
 \* A waiting task takes a send slot and reads the stop flag before its next
 \* PushLog; this is also every block boundary. The "admission" bug skips it.
 Admit(d) == /\ task[d] = "queued" /\ Cardinality(SendSlots) < Cap
+            /\ ~paused
             /\ (~stopped \/ Bug = "admission")
             /\ task' = [task EXCEPT ![d] = "admitted"]
             /\ UNCHANGED <<phase, blocksDone, checked, stopped, stopSeen, cancelled, silent,
                            lateSchedules, lateSends, timeouts, result, refused, hint,
-                           replicatorHint>>
+                           replicatorHint, paused, elapsed>>
 \* A waiting task reads a raised flag and ends without sending.
 Abandon(d) == /\ task[d] = "queued" /\ stopped /\ Bug # "admission"
               /\ task' = [task EXCEPT ![d] = "abandoned"]
               /\ UNCHANGED <<phase, blocksDone, checked, stopped, stopSeen, cancelled,
                              silent, lateSchedules, lateSends, timeouts, result, refused,
-                             hint, replicatorHint>>
+                             hint, replicatorHint, paused, elapsed>>
 \* An admitted task puts its PushLog on the wire; one starting after a stop is late.
 Send(d) == /\ task[d] = "admitted"
            /\ task' = [task EXCEPT ![d] = "sending"]
            /\ lateSends' = lateSends + (IF stopSeen THEN 1 ELSE 0)
            /\ UNCHANGED <<phase, blocksDone, checked, stopped, stopSeen, cancelled, silent,
-                          lateSchedules, timeouts, result, refused, hint, replicatorHint>>
+                          lateSchedules, timeouts, result, refused, hint, replicatorHint, paused, elapsed>>
 \* The receiver acknowledges the block; the task finishes or waits for its next one.
 Ack(d) == /\ task[d] = "sending" /\ ~silent
           /\ blocksDone' = [blocksDone EXCEPT ![d] = @ + 1]
           /\ task' = [task EXCEPT ![d] = IF blocksDone'[d] = Blocks(d) THEN "acked" ELSE "queued"]
           /\ UNCHANGED <<phase, checked, stopped, stopSeen, cancelled, silent,
                          lateSchedules, lateSends, timeouts, result, refused, hint,
-                         replicatorHint>>
+                         replicatorHint, paused, elapsed>>
 \* The receiver refuses this head without a hint: only this document fails.
 Refuse(d) == /\ task[d] = "sending" /\ ~silent
              /\ task' = [task EXCEPT ![d] = "failed"]
              /\ UNCHANGED <<phase, blocksDone, checked, stopped, stopSeen, cancelled,
                             silent, lateSchedules, lateSends, timeouts, result, refused,
-                            hint, replicatorHint>>
+                            hint, replicatorHint, paused, elapsed>>
 \* The send's own deadline passes: the peer is stalled, so the call stops.
 Timeout(d) == /\ task[d] = "sending"
               /\ task' = [task EXCEPT ![d] = "failed"]
               /\ timeouts' = timeouts + 1
               /\ RaiseStop
               /\ UNCHANGED <<phase, blocksDone, checked, cancelled, silent, lateSchedules,
-                             lateSends, result, refused, hint, replicatorHint>>
+                             lateSends, result, refused, hint, replicatorHint, paused, elapsed>>
 \* The connection drops under the send: the call stops.
 Disconnect(d) == /\ task[d] = "sending"
                  /\ task' = [task EXCEPT ![d] = "failed"]
                  /\ RaiseStop
                  /\ UNCHANGED <<phase, blocksDone, checked, cancelled, silent,
                                 lateSchedules, lateSends, timeouts, result, refused, hint,
-                                replicatorHint>>
-\* The receiver asks for a pause: the call stops, and the hint stays with this
-\* call. The "hint" bug writes it into the subscription's retry schedule.
+                                replicatorHint, paused, elapsed>>
+\* A pause keeps the head pending and holds all new sends until Resume.
+\* The pause-stop bug mistakes temporary capacity for a terminal failure.
 Hint(d) == /\ task[d] = "sending" /\ ~silent
-           /\ task' = [task EXCEPT ![d] = "failed"]
+           /\ task' = [task EXCEPT ![d] = "queued"]
            /\ hint' = TRUE /\ replicatorHint' = (replicatorHint \/ Bug = "hint")
-           /\ RaiseStop
-           /\ UNCHANGED <<phase, blocksDone, checked, cancelled, silent, lateSchedules,
-                          lateSends, timeouts, result, refused>>
+           /\ paused' = TRUE
+           /\ stopped' = (stopped \/ Bug = "pause-stop")
+           /\ UNCHANGED <<phase, blocksDone, checked, stopSeen, cancelled, silent,
+                          lateSchedules, lateSends, timeouts, result, refused, elapsed>>
+\* Receiver-advised waiting ends before the fixed budget; no acknowledgement is added.
+Resume == /\ phase = "running" /\ paused /\ ~stopped /\ elapsed < Budget
+          /\ paused' = FALSE
+          /\ UNCHANGED <<phase, task, blocksDone, checked, stopped, stopSeen, cancelled,
+                         silent, lateSchedules, lateSends, timeouts, result, refused,
+                         hint, replicatorHint, elapsed>>
+\* Time consumes a fixed call budget; acknowledgements and hints never reset it.
+Tick == /\ phase = "running" /\ hint /\ elapsed < Budget /\ elapsed' = elapsed + 1
+        /\ UNCHANGED <<phase, task, blocksDone, checked, stopped, stopSeen, cancelled,
+                       silent, lateSchedules, lateSends, timeouts, result, refused,
+                       hint, replicatorHint, paused>>
+\* A peer that stays paused cannot keep the call alive beyond its allowance.
+PauseExpired == /\ phase = "running" /\ paused /\ elapsed = Budget /\ ~stopped
+                /\ RaiseStop
+                /\ UNCHANGED <<phase, task, blocksDone, checked, cancelled, silent,
+                               lateSchedules, lateSends, timeouts, result, refused,
+                               hint, replicatorHint, paused, elapsed>>
 \* From now on the peer answers nothing; every send on the wire times out.
 GoSilent == /\ phase = "running" /\ ~silent /\ silent' = TRUE
             /\ UNCHANGED <<phase, task, blocksDone, checked, stopped, stopSeen, cancelled,
                            lateSchedules, lateSends, timeouts, result, refused, hint,
-                           replicatorHint>>
+                           replicatorHint, paused, elapsed>>
 \* The caller drops the call; its drop guard raises the stop flag. The "cancel"
 \* bug drops it without raising the flag, so the work it left runs on.
 Cancel == /\ phase = "running" /\ ~cancelled
           /\ cancelled' = TRUE /\ stopSeen' = TRUE
           /\ stopped' = (stopped \/ Bug # "cancel")
           /\ UNCHANGED <<phase, task, blocksDone, checked, silent, lateSchedules, lateSends,
-                         timeouts, result, refused, hint, replicatorHint>>
+                         timeouts, result, refused, hint, replicatorHint, paused, elapsed>>
 \* Scheduling has ended: the flag stopped it, or every document was started.
 SchedulingOver == checked = 0 /\ (stopped \/ \A d \in Docs : task[d] # "new")
 \* The call returns once scheduling is over and every started task is joined.
@@ -166,9 +188,9 @@ Finish == /\ phase = "running" /\ SchedulingOver
                                              ELSE \A d \in Docs : task[d] = "acked"
                        THEN "ok" ELSE "err"
           /\ UNCHANGED <<task, blocksDone, checked, stopped, stopSeen, cancelled, silent,
-                         lateSchedules, lateSends, timeouts, refused, hint, replicatorHint>>
+                         lateSchedules, lateSends, timeouts, refused, hint, replicatorHint, paused, elapsed>>
 \* Any of the steps above, in any order.
-Next == \/ Start \/ Spawn \/ GoSilent \/ Cancel \/ Finish
+Next == \/ Start \/ Spawn \/ GoSilent \/ Cancel \/ Finish \/ Resume \/ Tick \/ PauseExpired
         \/ \E d \in Docs : \/ Check(d) \/ Admit(d) \/ Abandon(d) \/ Send(d) \/ Ack(d)
                            \/ Refuse(d) \/ Timeout(d) \/ Disconnect(d) \/ Hint(d)
 \* The whole behaviour: start from Init and take any Next step.
@@ -179,10 +201,13 @@ TypeOK == /\ phase \in {"idle", "running", "done"}
                                 "abandoned"}]
           /\ blocksDone \in [Docs -> 0..2] /\ checked \in 0..N
           /\ result \in {"pending", "ok", "err"}
+          /\ paused \in BOOLEAN /\ elapsed \in 0..Budget
 \* Subscription filters and backoff never refuse an explicit selection.
 INV_Independent == ~refused
 \* A receiver hint for this call never changes the subscription's schedule.
 INV_HintOwner == ~replicatorHint
+\* A hint alone cannot manufacture a terminal stop.
+INV_PauseNotTerminal == (hint /\ ~stopSeen) => ~stopped
 \* The call returns only after every task it started has been joined.
 INV_Drained == phase = "done" => InFlight = {}
 \* After a stop, at most the one document already past its check is started.
