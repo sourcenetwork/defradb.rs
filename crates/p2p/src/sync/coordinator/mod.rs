@@ -1051,6 +1051,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// Logs Go Shinzo's `p2p stats` report every `interval`, each covering
+    /// that interval only, until shutdown.
+    pub async fn run_stats_report(&self, interval: Duration) {
+        let mut tick = n0_future::time::interval(interval);
+        tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
+        tick.tick().await;
+        loop {
+            tokio::select! {
+                _ = tick.tick() => self.manager.diagnostics().arrivals().drain().log(),
+                _ = self.runtime.shutdown.cancelled() => return,
+            }
+        }
+    }
+
     fn dispatch_due_pending_dag_fetches(&self, now: n0_future::time::Instant) -> usize {
         let due = self.manager.due_pending_dag_retries(now);
         let event_tx = self.manager.event_sender();

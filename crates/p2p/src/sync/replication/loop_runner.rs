@@ -79,6 +79,11 @@ impl ReplicationLoop {
             let mut should_break = false;
             for result in &results {
                 on_result(result);
+                coordinator
+                    .manager()
+                    .diagnostics()
+                    .arrivals()
+                    .record(result);
                 match result {
                     ReplicationResult::Merged {
                         cid,

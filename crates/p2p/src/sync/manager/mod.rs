@@ -12,6 +12,7 @@
 //! The actual CRDT merge is performed by the database layer.
 //! This matches Go's architecture where p2p calls db.Merge().
 
+pub mod arrival_stats;
 mod config;
 pub(crate) mod diagnostics;
 mod events;
