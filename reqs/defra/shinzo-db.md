@@ -291,3 +291,11 @@ In a batch where one event's head has a parent this node never received, every o
 - **Go-Bug-Suspect:** "Go's text is `reached maximum transaction reties` (a typo for retries); a Rust node should match the text clients match on, so decide which spelling the requirement fixes."
 
 When every attempt to commit a merge conflicts, `Merge` returns an error containing `maximum transaction` (Go: `merge event dropped: reached maximum transaction reties: <conflict>. DocID: <docID>, CID: <head CID>`), and the batch path reports `[MergeDropped]` with an error; in both cases the document is not readable. A retry budget (`MaxTxnRetries`) of 0 still makes one attempt: a merge that does not conflict commits. (Go also checks that a head whose block is absent fails with `failed to load block for merge`; a defradb.rs merge is handed the block itself, so there is no head to load.)
+
+# `go.shinzo.unique_index`: Unique-index errors name only the writer
+
+- **Parents:** ["go.shinzo"]
+- **Scenarios:** ["shinzo::unique_index::shinzo_a_unique_index_error_names_the_writer_and_its_value"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read.
