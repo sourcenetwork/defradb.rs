@@ -32,6 +32,8 @@ pub struct NodeSpec {
     pub go_shinzo: bool,
     /// A Rust node that speaks Go Shinzo's wire, under every client.
     pub shinzo_wire: bool,
+    /// A Rust node under every client, its wire off.
+    pub rust: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -52,11 +54,14 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // A node that speaks Go Shinzo's wire is a Rust node under every
-        // client; the Go clients reach it over HTTP, as rust-http does.
+        // A node that speaks Go Shinzo's wire, or is pinned to Rust, is a
+        // Rust node under every client; the Go clients reach it over HTTP,
+        // as rust-http does.
         let client_type = match client_type {
             _ if spec.go_shinzo => ClientType::GoShinzo,
-            ClientType::GoHttp | ClientType::GoShinzo if spec.shinzo_wire => ClientType::RustHttp,
+            ClientType::GoHttp | ClientType::GoShinzo if spec.shinzo_wire || spec.rust => {
+                ClientType::RustHttp
+            }
             other => other,
         };
         match client_type {

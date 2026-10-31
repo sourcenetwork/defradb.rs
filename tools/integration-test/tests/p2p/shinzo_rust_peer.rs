@@ -34,6 +34,7 @@ fn a_shinzo_node_fetches_from_a_rust_peer_with_the_wire_off() {
         .into(),
         NewNode {
             network: true,
+            rust: true,
             common: on(PLAIN),
             ..Default::default()
         }
