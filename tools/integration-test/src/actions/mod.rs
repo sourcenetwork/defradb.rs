@@ -183,6 +183,7 @@ client_actions! {
         PurgeDocs,
         ReEnableNAC,
         RefreshViews,
+        SaveDocs,
         Restart,
         Start,
         SubscriptionRequest,
