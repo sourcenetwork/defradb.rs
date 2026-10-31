@@ -38,3 +38,28 @@ pub(super) fn one(response: QueryResponse, op: &str, collection: &str) -> Result
 pub(super) fn single(ids: Vec<String>) -> Result<String> {
     ids.into_iter().next().ok_or(Error::DocumentNotFound)
 }
+
+/// The `_docID` each of `count` aliased fields `s0`, `s1`, … saved, in
+/// order, or the request's first error with its text unchanged.
+pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec<String>> {
+    if let Some(error) = response.errors.first() {
+        return Err(match error.code() == Some(TXN_CONFLICT_ERROR_CODE) {
+            true => Error::Conflict,
+            false => Error::Request(error.message.clone()),
+        });
+    }
+    (0..count)
+        .map(|index| {
+            response
+                .data
+                .as_ref()
+                .and_then(|data| data.get(super::save_many::alias(index)))
+                .and_then(Value::as_array)
+                .and_then(|docs| docs.first())
+                .and_then(|doc| doc.get("_docID"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(Error::DocumentNotFound)
+        })
+        .collect()
+}

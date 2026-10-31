@@ -8,7 +8,7 @@ use crate::error::{QueryError, Result};
 use crate::executor::QueryRequest;
 use crate::mapper::MutationType;
 use crate::prepared::{PreparedMutation, PreparedMutations};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::TransactionRegistry;
 
 use super::{DocFetcher, QueryRunner};
@@ -24,16 +24,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let crdts = mutator.crdts();
         // Only an operation spelled with the `mutation` keyword is a mutation,
         // so a request without it is left to execution to parse, once.
-        if !request.query.contains("mutation") {
+        if request.parsed.is_none() && !request.query.contains("mutation") {
             return Ok(None);
         }
         let variables = super::executor::convert_variables(&request.variables);
-        let parsed = parse_request_with_limits(
-            &request.query,
-            variables.as_ref(),
-            request.operation_name.as_deref(),
-            self.query_limits,
-        )?;
+        let parsed = request.operation(variables.as_ref(), self.query_limits)?;
         let ParsedOperation::Mutation {
             mutations,
             explain: None,

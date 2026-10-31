@@ -76,6 +76,7 @@ mod mutation {
         mod with_multiple_operations;
         mod with_txn;
     }
+    mod save_many;
     mod special {
         mod invalid_operation;
     }

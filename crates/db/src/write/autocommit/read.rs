@@ -1,10 +1,13 @@
 use super::*;
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    /// Whether `doc_id` names a live document, or with `deleted` one this
+    /// collection deleted.
     pub(super) async fn exists_impl(
         &self,
         collection_name: &str,
         doc_id: &DocID,
+        deleted: bool,
     ) -> query::error::Result<bool> {
         let collection = self.get_collection_or_err(collection_name)?;
 
@@ -31,10 +34,19 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
             })?;
 
-            let r = collection
-                .exists_by_doc_id(&datastore, &systemstore, doc_id)
-                .await
-                .map_err(|e| query::error::QueryError::execution(format!("exists error: {}", e)));
+            let r = match deleted {
+                false => {
+                    collection
+                        .exists_by_doc_id(&datastore, &systemstore, doc_id)
+                        .await
+                }
+                true => {
+                    collection
+                        .is_deleted_by_doc_id(&datastore, &systemstore, doc_id)
+                        .await
+                }
+            }
+            .map_err(|e| query::error::QueryError::execution(format!("exists error: {}", e)));
 
             drop(datastore);
             drop(systemstore);

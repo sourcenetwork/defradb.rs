@@ -132,6 +132,7 @@ registry! {
     PatchCollection => [v("schema.patchWhileCreating").all(&["collection", "document"]), v("schema.patchWithLensAsync").all(&["lens", "async"]).implied(&[("async", "true")]), v("schema.patchWithLens").all(&["lens"]), v("schema.patch")],
     PeerInfo => [v("peer.infoValidated").all(&["validated"]).implied(&[("validated", "true")]), v("peer.id").all(&["idOnly"]).implied(&[("idOnly", "true")]), v("peer.info")],
     ReEnableNAC => [v("nac.reEnable")],
+    SaveDocs => [v("document.saveMany")],
     RefreshViews => [v("view.refresh")],
     Request => [v("query.execute")],
     Restart => [v("node.stop").all(&["stop"]).implied(&[("stop", "true")]), v("node.restart")],
