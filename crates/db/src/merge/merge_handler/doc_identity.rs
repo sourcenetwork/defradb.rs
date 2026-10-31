@@ -90,6 +90,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             Pending(Cid, usize),
         }
 
+        // The first head this node never received, which Go names.
+        let mut missing = None;
         let mut worklist: Vec<IdentityFrame> = vec![IdentityFrame::Loaded(
             *cid,
             Box::new(block.clone()),
@@ -128,7 +130,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         // A genuinely absent head can't help resolve
                         // identity; a blockstore failure is infrastructure
                         // and must not be silently treated as "head missing".
-                        Ok(None) => continue,
+                        Ok(None) => {
+                            missing.get_or_insert(head_cid);
+                            continue;
+                        }
                         Err(e) => return Err(MergeError::Storage(e.to_string())),
                     };
                     let Ok(head_block) = Block::from_dag_cbor(&head_data) else {
@@ -171,6 +176,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
+        if let Some(missing) = missing {
+            // Go's blockstore text for a block it does not hold.
+            return Err(MergeError::MergeFailed(format!(
+                "ipld: could not find {missing}"
+            )));
+        }
         Err(MergeError::MergeFailed(format!(
             "cannot resolve document identity for composite block {cid}: no recorded owner and no reachable genesis"
         )))

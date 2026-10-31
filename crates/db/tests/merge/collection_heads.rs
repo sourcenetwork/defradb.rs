@@ -80,3 +80,112 @@ fn branchable_collection_writes_expose_collection_heads() {
     })
     .unwrap()
 }
+
+/// Without a batch collector, a signing-enabled write signs each block,
+/// the branchable collection's block included.
+#[test]
+#[mantra_macros::req_test("go.shinzo.signing.per_block_without_batch")]
+fn a_signed_write_without_a_collector_signs_the_collection_block() {
+    use crypto::{Key, PrivateKey};
+    use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        db.create_collection(branchable_schema()).await.unwrap();
+        let transcript = db
+            .get_collection("Transcript")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let mut doc = Document::new(transcript);
+        doc.set("body", "first".to_string()).unwrap();
+
+        let key = crypto::generate_secp256k1().unwrap();
+        let public_key = key.public_key();
+        set_signing_config(Some(SigningConfig {
+            key_type: SigningKeyType::Secp256k1,
+            private_key_bytes: key.raw_owned(),
+            public_key_bytes: public_key.raw_owned(),
+            public_key_hex: hex::encode(public_key.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        let created = AutoCommitMutator::new(db.clone())
+            .create("Transcript", doc)
+            .await;
+        set_signing_config(None);
+        let created = created.unwrap();
+        let composite =
+            defra_core::Block::from_dag_cbor(created.commit_block.as_ref().unwrap()).unwrap();
+        assert!(composite.signature.is_some(), "{composite:?}");
+
+        let heads = DbHeadProvider::new(db.clone())
+            .get_collection_heads("col-transcript")
+            .await
+            .unwrap();
+        let txn = db.new_txn(true).await.unwrap();
+        let blocks = txn.blockstore().unwrap();
+        assert!(!heads.is_empty());
+        for head in heads {
+            let bytes = blocks
+                .get(&head.to_bytes())
+                .await
+                .unwrap()
+                .expect("collection block stored");
+            let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+            assert!(
+                block.signature.is_some(),
+                "the collection block is signed: {block:?}"
+            );
+        }
+    })
+    .unwrap()
+}
+
+/// Each document created in a branchable collection links the collection
+/// chain to the head before it.
+#[test]
+#[mantra_macros::req_test("go.shinzo.heads.within_txn")]
+fn each_create_links_the_collection_chain_to_the_previous_head() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        db.create_collection(branchable_schema()).await.unwrap();
+        let transcript = db
+            .get_collection("Transcript")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let provider = DbHeadProvider::new(db.clone());
+        let mut previous = Vec::new();
+        for body in ["first", "second", "third"] {
+            let mut doc = Document::new(transcript.clone());
+            doc.set("body", body.to_string()).unwrap();
+            AutoCommitMutator::new(db.clone())
+                .create("Transcript", doc)
+                .await
+                .unwrap();
+            let heads = provider
+                .get_collection_heads("col-transcript")
+                .await
+                .unwrap();
+            assert_eq!(heads.len(), 1, "one collection head after {body}");
+            let txn = db.new_txn(true).await.unwrap();
+            let bytes = txn
+                .blockstore()
+                .unwrap()
+                .get(&heads[0].to_bytes())
+                .await
+                .unwrap()
+                .unwrap();
+            let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+            assert_eq!(
+                block.heads.clone().unwrap_or_default(),
+                previous,
+                "{body} links the head before it"
+            );
+            previous = heads;
+        }
+    })
+    .unwrap()
+}

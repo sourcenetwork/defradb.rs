@@ -627,3 +627,86 @@ fn a_truncate_chunk_reruns_after_a_conflicting_owner_write() {
     })
     .unwrap()
 }
+
+/// Ownership is a set: one field block two documents share is owned by both,
+/// and by each until its own edge goes.
+#[test]
+#[mantra_macros::req_test("go.shinzo.block_owner.set")]
+fn a_shared_field_block_has_both_documents_as_owners() {
+    workers::block_on(async {
+        let db = Arc::new(DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let (first, second) = (
+            create(&db, "Shared", 1).await,
+            create(&db, "Shared", 2).await,
+        );
+        assert_ne!(first, second);
+        let shared: Vec<Cid> = history(&db, &first)
+            .await
+            .intersection(&history(&db, &second).await)
+            .copied()
+            .collect();
+        let [shared] = shared[..] else {
+            panic!("one shared name block, got {shared:?}");
+        };
+        let mut both = owners(&db, &shared).await;
+        both.sort();
+        let mut want = vec![first.to_string(), second.to_string()];
+        want.sort();
+        assert_eq!(both, want);
+
+        let unown = |doc_id: String| {
+            let db = db.clone();
+            async move {
+                let txn = db.new_txn(false).await.unwrap();
+                db::docid::map::delete_block_doc_id_mapping(
+                    &txn.systemstore().unwrap(),
+                    &shared.to_string(),
+                    &doc_id,
+                )
+                .await
+                .unwrap();
+                txn.commit().await.unwrap();
+            }
+        };
+        unown(first.to_string()).await;
+        assert_eq!(owners(&db, &shared).await, vec![second.to_string()]);
+        unown(second.to_string()).await;
+        assert!(owners(&db, &shared).await.is_empty());
+
+        // Nothing recorded, and nothing to record, is no owner, not an error.
+        let txn = db.new_txn(false).await.unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let never = Cid::default();
+        assert!(
+            db::docid::map::get_doc_ids_for_block(&systemstore, &never.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db::docid::map::get_doc_ids_for_block(&systemstore, "")
+            .await
+            .unwrap()
+            .is_empty());
+        db::docid::map::set_block_doc_id_mapping(&systemstore, &never.to_string(), "")
+            .await
+            .unwrap();
+        assert!(
+            db::docid::map::get_doc_ids_for_block(&systemstore, &never.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db::docid::map::get_doc_ref(&systemstore, "bae-never")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(db::docid::map::get_doc_id(&systemstore, 999_999)
+            .await
+            .unwrap()
+            .is_none());
+        drop(systemstore);
+        let _ = txn.discard();
+    })
+    .unwrap()
+}

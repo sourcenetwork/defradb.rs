@@ -177,3 +177,117 @@ Go commits an import in transactions of 1000 frames, so one that fails part-way 
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 After an import, a query that uses a secondary index of the collection finds the imported documents. defradb.rs's merge maintains the indexes as it writes each document, so nothing more is needed. Go keeps them only once `RebuildCollectionIndexes(collection)` (`kv import --rebuild-indexes`) has dropped and recreated every index of the collection, keeping each index's name and fields; it fails with `collection not found` for an unknown collection.
+
+# `go.shinzo.purge`: Hard purge of documents by DocID
+
+- **Parents:** ["go.shinzo"]
+
+`Collection.PurgeByDocIDs(docIDs, pruneHistory)` permanently removes documents from this node. Unlike a delete, it writes no CRDT operation and replicates nothing: the documents are gone from this node only. It is checked against the same node permission as `Truncate`.
+
+# `go.shinzo.retention`: Retention floor for replicated documents
+
+- **Parents:** ["go.shinzo"]
+
+A node configured with a `client.RetentionRule` refuses replicated documents below a per-collection height. `RetentionFloor(collectionID) (field string, floor int64, ok bool)` names the integer height field and the floor for a covered collection. The rule applies only to documents arriving by P2P merge, never to local writes.
+
+# `go.shinzo.save_many`: Save many documents in one transaction
+
+- **Parents:** ["go.shinzo"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+`Collection.SaveManyDocuments(docs)` saves each document in order, as `SaveDocument` does: a document whose DocID names a stored document is updated with the fields it gives, any other is added. Every document is saved in one transaction, so either all are stored or none is. It is checked against the update-document node permission. Go's HTTP client and CLI refuse it with `ErrNotSupportedViaHTTP` (a stateless request cannot hold the shared transaction), so it is reached in-process only; Go has no tests for it, and these requirements are written from `internal/db/document.go` (`SaveManyDocuments`, `SaveDocument`).
+
+# `go.shinzo.document`: Building documents from client values
+
+- **Parents:** ["go.shinzo"]
+
+# `go.shinzo.telemetry.merge.report`: Creates, updates, conflicts and exhausted chunks
+
+- **Parents:** ["go.shinzo.telemetry.merge"]
+- **Scenarios:** ["db::merge::merge_stats::a_replicated_create_then_update_count_once_each_on_the_merging_node"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+The `merge stats` info line carries `creates`, `updates`, `txnConflicts`, `chunkExhausted`, `rejectedBelowFloor` and `rejectedNoHeight`, and is logged only when one of them is non-zero; a separate `purge stats` info line carries `deleted`. A merge of a document with no local heads counts as a create, a later merge of the same document as an update. A merge counts once, when it commits: an event merged in a batch attempt that then failed and was re-run alone counts one create. Every abandoned transaction counts one `txnConflicts`. A single-event `Merge` that exhausts its attempts counts `txnConflicts` equal to its attempt count, no `chunkExhausted`, one `retryExhausted` drop, and its error names `DocID: <docID>` and `CID: <head CID>`. A batch of 8 whose shared attempt exhausts counts `chunkExhausted: 1` whether its per-event re-runs then all succeed (no drops) or all fail (8 `retryExhausted` drops); a batch of one that exhausts counts no `chunkExhausted` and one `retryExhausted` drop.
+
+# `go.shinzo.telemetry.merge.drops`: Dropped events are counted by cause
+
+- **Parents:** ["go.shinzo.telemetry.merge"]
+- **Scenarios:** ["db::merge::merge_stats::a_merge_that_stores_nothing_counts_a_drop_by_cause"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A dropped event (one not stored) is counted under one cause: `missingBlock` (a block of the DAG could not be found), `uniqueIndex` (`can not index a doc's field(s) that violates unique index`), `retryExhausted`, `collectionNotFound` (the event names a collection this node does not hold; `Merge` returns `collection not found`), `contextDone` (cancelled or past its deadline, including a collection lookup that fails because the node is shutting down, on both `Merge` and `MergeBatchWithTxn`, where the outcome is `MergeDropped`), and `other` for anything else. The causes that occurred in an interval are logged on their own `merge drops` error line, one count per cause (e.g. `missingBlock: 2, uniqueIndex: 1`), then reset; an interval with no drops logs no such line.
+
+# `go.shinzo.telemetry.merge`: Merge and purge counters
+
+- **Parents:** ["go.shinzo"]
+
+Merge and purge activity is counted and reported every 30 seconds; each report resets its counters, so a line carries that interval's numbers.
+
+# `go.shinzo.kv_snapshot`: Export and import a collection's documents as a KV snapshot
+
+- **Parents:** ["go.shinzo"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+`DB.ExportDocKVs(collection, docIDs, w, datastoreOnly)` writes the named documents of one collection to a byte stream; `DB.ExportFieldMapping(collection)` writes the JSON that lets another node read it; `DB.ImportRawKVs(r)` and `DB.ImportRawKVsWithMapping(r, mapping)` load a stream into a node; `DB.RebuildCollectionIndexes(collection)` restores that collection's secondary indexes afterwards. Short IDs are local to a node, so a snapshot moves between nodes only through the field mapping. Go reaches these only in-process: its CLI `client kv export|import` always runs through the HTTP client, which refuses all five with `ErrNotSupportedViaHTTP`. Go has no tests for them, and these requirements are written from `internal/db/kv_export.go`, `internal/db/kv_import.go`, `cli/kv_export.go` and `cli/kv_import.go`. defradb.rs offers `DB::export_kv_snapshot_as` and `DB::import_kv_snapshot_as`; `tools/go-shinzo-kv` runs Go's side in-process for the interop tests.
+
+# `go.shinzo.merge.merged_state`: Whether a block is merged follows the store
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["blockstore::blockstore_tests::merged_state::a_discarded_mark_leaves_the_block_unmerged_and_a_committed_one_merges_it", "blockstore::blockstore_tests::merged_state::an_absent_or_deleted_block_reads_as_not_merged", "blockstore::blockstore_tests::merged_state::storing_a_merged_block_again_leaves_it_merged_through_put_and_put_many"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+A block fetched from a peer but not yet merged reads as not merged. Marking it merged takes effect only when that transaction commits; a discarded transaction leaves it unmerged. A block that was never stored, or was merged and then deleted (by a history prune), reads as not merged, so it is fetched again. Storing a block the node already holds as merged, through a single put or a batch put (as a CAR import does), leaves it merged.
+
+# `go.shinzo.docid.concurrent_creates`: Concurrent creates all succeed with distinct documents
+
+- **Parents:** ["go.shinzo.docid"]
+- **Scenarios:** ["shinzo::merge::shinzo_concurrent_creates_all_store_their_own_documents"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+24 `AddDocument` calls for 24 different `User` documents, started together, all return no error, and each document is stored as its own document: no two of them share an internal document number, and each reads back with its own values.
+
+# `go.shinzo.merge.concurrent_creates`: Concurrent new documents all merge
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["shinzo::merge::concurrently_created_documents_all_merge_on_the_receiver"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+24 `Merge` calls for 24 different new documents, started together, all return no error, and every document is readable afterwards.
+
+# `go.shinzo.merge.local_ids`: A replicated document gets its own local IDs and keeps its DocID
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["shinzo::merge::a_replicated_document_keeps_its_doc_id_on_the_receiver", "db::merge::batch_isolation::a_merged_document_owns_its_field_blocks_under_its_doc_id"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "the DocID is derived from the genesis composite block's CID (DocID V0) and must be the same on a Go Shinzo node and a Rust node for the same blocks"
+
+A document created on one node as `{"name":"John","age":30}` and merged on another from its blocks reads back on the receiver as `{_docID: <same DocID>, name: "John", age: 30}`, even though the two nodes allocate their internal document numbers independently. On the receiver, the document's field blocks are owned by that DocID.
+
+# `go.shinzo.block_owner.set`: A block can have several owners
+
+- **Parents:** ["go.shinzo.block_owner"]
+- **Scenarios:** ["db::collection::purge::a_shared_field_block_has_both_documents_as_owners"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Two `User` documents created with the same `name: "Shared"` and different `age` have different DocIDs but one shared `name` block, owned by both. Removing one owner leaves the block owned by the other; removing both leaves it unowned. An undefined CID, a block with no recorded owners, and an empty DocID record no owner. Looking up a DocID, document number or block that was never recorded returns not-found, not an error.
+
+# `go.shinzo.docid`: Document identity under concurrency
+
+- **Parents:** ["go.shinzo"]
+
+# `go.shinzo.merge.batch_isolation`: One event that cannot merge does not stop the others
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["db::merge::batch_isolation::an_event_whose_parent_never_arrived_stops_no_other_event"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+In a batch where one event's head has a parent this node never received, every other event is stored and its outcome is `MergeCommitted`; the bad event's outcome is `MergeDropped` and it is not readable. This holds wherever the bad event sits: first in a batch of two, or at position 9 of 18. The returned error contains `could not find <missing CID>` and the bad event's DocID, wrapped as `merge event dropped: <cause>. DocID: <docID>, CID: <head CID>`. The outcomes agree with what a read returns for each document.
+
+# `go.shinzo.merge.retry`: Retries are bounded, and exhaustion is reported as a failure
+
+- **Parents:** ["go.shinzo.merge"]
+- **Scenarios:** ["db::merge::retry_exhaustion::exhausted_retries_drop_the_event_with_gos_text", "db::merge::retry_exhaustion::a_budget_of_zero_still_makes_one_attempt"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Go-Bug-Suspect:** "Go's text is `reached maximum transaction reties` (a typo for retries); a Rust node should match the text clients match on, so decide which spelling the requirement fixes."
+
+When every attempt to commit a merge conflicts, `Merge` returns an error containing `maximum transaction` (Go: `merge event dropped: reached maximum transaction reties: <conflict>. DocID: <docID>, CID: <head CID>`), and the batch path reports `[MergeDropped]` with an error; in both cases the document is not readable. A retry budget (`MaxTxnRetries`) of 0 still makes one attempt: a merge that does not conflict commits. (Go also checks that a head whose block is absent fails with `failed to load block for merge`; a defradb.rs merge is handed the block itself, so there is no head to load.)

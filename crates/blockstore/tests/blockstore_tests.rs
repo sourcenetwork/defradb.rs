@@ -1606,3 +1606,83 @@ mod one_view_of_the_store {
         .unwrap()
     }
 }
+
+/// Whether a block is merged follows the store (`go.shinzo.merge.merged_state`).
+mod merged_state {
+    use super::*;
+
+    /// A P2P blockstore holding `cid`, received and not yet merged.
+    async fn received(cid: &Cid) -> DefraBlockstore<RegolithStore> {
+        let blockstore = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
+        blockstore.put(cid, b"received").await.unwrap();
+        blockstore
+    }
+
+    /// Marks `cid` merged in a transaction that commits when `commit`.
+    async fn mark_in_txn(blockstore: &DefraBlockstore<RegolithStore>, cid: &Cid, commit: bool) {
+        let mut txn = blockstore.new_store_txn(false).await.unwrap();
+        let bs_txn = txn.as_any_mut().downcast_mut::<BlockstoreTxn>().unwrap();
+        bs_txn.mark_as_merged(cid).await.unwrap();
+        if commit {
+            txn.commit().await.unwrap();
+        }
+    }
+
+    #[test]
+    #[mantra_macros::req_test("go.shinzo.merge.merged_state")]
+    fn a_discarded_mark_leaves_the_block_unmerged_and_a_committed_one_merges_it() {
+        workers::block_on(async {
+            let cid = test_cid();
+            let blockstore = received(&cid).await;
+            assert!(!blockstore.is_merged(&cid).await.unwrap());
+            mark_in_txn(&blockstore, &cid, false).await;
+            assert!(
+                !blockstore.is_merged(&cid).await.unwrap(),
+                "a discarded mark changes nothing"
+            );
+            mark_in_txn(&blockstore, &cid, true).await;
+            assert!(blockstore.is_merged(&cid).await.unwrap());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    #[mantra_macros::req_test("go.shinzo.merge.merged_state")]
+    fn an_absent_or_deleted_block_reads_as_not_merged() {
+        workers::block_on(async {
+            let (cid, other) = (test_cid(), test_cid2());
+            let blockstore = received(&cid).await;
+            assert!(!blockstore.is_merged(&other).await.unwrap(), "never stored");
+            blockstore.mark_as_merged(&cid).await.unwrap();
+            blockstore.delete(&cid).await.unwrap();
+            assert!(
+                !blockstore.is_merged(&cid).await.unwrap(),
+                "merged, then pruned"
+            );
+        })
+        .unwrap()
+    }
+
+    #[test]
+    #[mantra_macros::req_test("go.shinzo.merge.merged_state")]
+    fn storing_a_merged_block_again_leaves_it_merged_through_put_and_put_many() {
+        workers::block_on(async {
+            let (cid, waiting) = (test_cid(), test_cid3());
+            let blockstore = received(&cid).await;
+            blockstore.mark_as_merged(&cid).await.unwrap();
+            blockstore.put(&cid, b"received").await.unwrap();
+            assert!(blockstore.is_merged(&cid).await.unwrap(), "single put");
+            blockstore
+                .put_many(&[(&cid, &b"received"[..]), (&waiting, &b"waiting"[..])])
+                .await
+                .unwrap();
+            assert!(blockstore.is_merged(&cid).await.unwrap(), "batch put");
+            assert!(
+                !blockstore.is_merged(&waiting).await.unwrap(),
+                "a new block in the batch waits"
+            );
+            assert_eq!(blockstore.get_unmerged().await.unwrap(), vec![waiting]);
+        })
+        .unwrap()
+    }
+}
