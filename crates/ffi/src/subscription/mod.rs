@@ -26,6 +26,7 @@ pub use create::{
 };
 pub use manage::{
     close_graphql_subscription, close_subscription, poll_graphql_subscription, poll_subscription,
+    wait_subscription,
 };
 
 /// Result type for subscription creation.

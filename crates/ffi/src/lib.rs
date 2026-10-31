@@ -291,7 +291,7 @@ pub use shinzo::{kv_export, kv_field_mapping, kv_import, purge_documents, save_m
 pub use subscription::{
     close_graphql_subscription, close_subscription, create_event_subscription,
     create_merge_complete_subscription, create_subscription, poll_graphql_subscription,
-    poll_subscription,
+    poll_subscription, wait_subscription,
 };
 pub use txn::{begin_txn, commit_txn, rollback_txn};
 pub use types::defra_free_string;

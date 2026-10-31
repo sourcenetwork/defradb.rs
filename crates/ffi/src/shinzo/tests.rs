@@ -473,3 +473,157 @@ fn batch_collection_returns_the_composites_a_tagged_write_produces() {
     assert_eq!(error, "no batch session active");
     node_close(node);
 }
+
+#[cfg(feature = "libp2p")]
+fn p2p_node(options: NodeInitOptions) -> Result<usize, String> {
+    assert!(crate::runtime::init_runtime());
+    let listen = cstr("/ip4/127.0.0.1/tcp/0");
+    let result = unsafe { crate::p2p::new_node_with_p2p(options, listen.as_ptr()) };
+    match result.status {
+        0 => Ok(result.node_ptr),
+        _ => {
+            let error = unsafe { CStr::from_ptr(result.error) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { defra_free_string(result.error) };
+            Err(error)
+        }
+    }
+}
+
+/// The node's peer ID and its listen addresses.
+#[cfg(feature = "libp2p")]
+fn peer(node: usize) -> (String, Vec<String>) {
+    let info = take(unsafe { crate::p2p::p2p_peer_info(node, null()) }).unwrap();
+    let addrs: Vec<String> = serde_json::from_value(info).unwrap();
+    let id = addrs[0].rsplit("/p2p/").next().unwrap().to_owned();
+    (id, addrs)
+}
+
+#[cfg(feature = "libp2p")]
+#[test]
+fn a_supplied_peer_key_is_the_node_peer_id_on_every_start() {
+    use crypto::Key;
+    let key = crypto::generate_ed25519().unwrap().raw().to_vec();
+    assert_eq!(key.len(), 64);
+    let with_key = || NodeInitOptions {
+        p2p_private_key: key.as_ptr(),
+        p2p_private_key_len: key.len(),
+        ..NodeInitOptions::default()
+    };
+    let first = p2p_node(with_key()).unwrap();
+    let second = p2p_node(with_key()).unwrap();
+    let other = p2p_node(NodeInitOptions::default()).unwrap();
+    assert_eq!(peer(first).0, peer(second).0);
+    assert_ne!(peer(first).0, peer(other).0);
+    for node in [first, second, other] {
+        node_close(node);
+    }
+    let short = [7u8; 32];
+    let refused = p2p_node(NodeInitOptions {
+        p2p_private_key: short.as_ptr(),
+        p2p_private_key_len: short.len(),
+        ..NodeInitOptions::default()
+    });
+    assert!(refused.unwrap_err().contains("64 bytes"));
+}
+
+#[cfg(feature = "libp2p")]
+#[test]
+fn every_listen_address_and_the_resource_limits_reach_the_host() {
+    let addrs = cstr(r#"["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.2/tcp/0"]"#);
+    let node = p2p_node(NodeInitOptions {
+        p2p_listen_addrs_json: addrs.as_ptr(),
+        p2p_resource_memory_mib: 256,
+        p2p_resource_file_descriptors: 512,
+        p2p_max_streams_per_peer: 64,
+        p2p_disable_relay: 1,
+        ..NodeInitOptions::default()
+    })
+    .unwrap();
+    let (_, listening) = peer(node);
+    assert!(
+        listening.iter().any(|a| a.starts_with("/ip4/127.0.0.1/")),
+        "{listening:?}"
+    );
+    assert!(
+        listening.iter().any(|a| a.starts_with("/ip4/127.0.0.2/")),
+        "{listening:?}"
+    );
+    node_close(node);
+    let bad = cstr("not json");
+    let refused = p2p_node(NodeInitOptions {
+        p2p_listen_addrs_json: bad.as_ptr(),
+        ..NodeInitOptions::default()
+    });
+    assert!(refused.unwrap_err().contains("p2p_listen_addrs_json"));
+}
+
+#[test]
+fn waiting_on_a_subscription_parks_until_an_event_or_the_timeout() {
+    use crate::subscription::{close_subscription, create_event_subscription, wait_subscription};
+    let node = node();
+    let names = cstr(r#"["update"]"#);
+    let subscription = unsafe { create_event_subscription(node, names.as_ptr()) };
+    assert_eq!(subscription.status, 0);
+    let handle = subscription.subscription_handle;
+
+    let started = std::time::Instant::now();
+    let idle = wait_subscription(handle, 200);
+    assert_eq!(idle.status, 2);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(190));
+
+    let waiter = std::thread::spawn(move || {
+        let waited = wait_subscription(handle, 10_000);
+        assert_eq!(waited.status, 0);
+        let text = unsafe { CStr::from_ptr(waited.value) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { defra_free_string(waited.value) };
+        serde_json::from_str::<Value>(&text).unwrap()
+    });
+    let alice = add(node, "Alice", 40);
+    let event = waiter.join().unwrap();
+    assert_eq!(event["type"], "update");
+    assert_eq!(event["doc_id"], alice);
+
+    let _ = close_subscription(handle);
+    let closed = wait_subscription(handle, 10);
+    assert_eq!(closed.status, 1);
+    unsafe { defra_free_string(closed.error) };
+    node_close(node);
+}
+
+#[test]
+fn waiting_past_the_deadline_stops_skipping_filtered_events() {
+    use crate::state::SUBSCRIPTIONS;
+    use crate::subscription::{close_subscription, create_subscription, wait_subscription};
+    let node = node();
+    let nothing = cstr("no-such-collection");
+    let filtered = unsafe { create_subscription(node, nothing.as_ptr()) };
+    let witness = unsafe { create_subscription(node, null()) };
+    assert_eq!((filtered.status, witness.status), (0, 0));
+    for (name, age) in [("Alice", 40), ("Bob", 7), ("Carol", 3)] {
+        add(node, name, age);
+    }
+    for _ in 0..3 {
+        let seen = wait_subscription(witness.subscription_handle, 10_000);
+        assert_eq!(seen.status, 0);
+        unsafe { defra_free_string(seen.value) };
+    }
+
+    assert_eq!(wait_subscription(filtered.subscription_handle, 0).status, 2);
+    let queued = SUBSCRIPTIONS
+        .get(filtered.subscription_handle)
+        .unwrap()
+        .subscription
+        .try_take();
+    assert!(
+        queued.is_ok(),
+        "a wait past its deadline drained every filtered-out event"
+    );
+
+    let _ = close_subscription(filtered.subscription_handle);
+    let _ = close_subscription(witness.subscription_handle);
+    node_close(node);
+}
