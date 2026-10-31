@@ -277,6 +277,110 @@ theorem up_hashes_every_entry :
   -- Nothing: no hash to account for.
   | [], _, hy => by simp [up] at hy
 
+-- Promise (a flaw, kept on purpose): in Go's tree, `[a, b, c]` and
+-- `[a, b, c, c]` give the same layer above the leaves, so the same root.
+-- This is why a verifier must check the signed CID count.
+theorem go_odd_leaf_collides (a b c : α) : up H [a, b, c] = up H [a, b, c, c] := by
+  -- Both layers are `[H a b, H c c]`.
+  simp [up]
+
 end Merkle
+
+/-! ## The domain-separated Merkle tree
+
+The fixed tree hashes a leaf as `SHA256(0x00 || cid)` and an inner node as
+`SHA256(0x01 || left || right)`, and moves a layer's odd last node up
+unchanged. Modelling the tagged hash as a tree that remembers its shape (a
+collision-free hash), the root keeps every leaf, in order, and nothing else:
+two different CID lists never share a root (`root_determines_cids`).
+
+Rust anchor: `compute_merkle_root_with` with `MerkleScheme::DomainSeparated`
+in `crates/defra-core/src/batch_signing.rs`.
+-/
+
+section DomainSeparated
+
+variable {α : Type}
+
+-- A node of the tree: a tagged leaf over one CID, or a tagged inner node.
+inductive Tree (α : Type) where
+  -- `SHA256(0x00 || cid)`.
+  | leaf : α → Tree α
+  -- `SHA256(0x01 || left || right)`.
+  | node : Tree α → Tree α → Tree α
+
+-- The CIDs under a node, left to right.
+def Tree.leaves : Tree α → List α
+  -- A leaf holds its CID.
+  | .leaf a => [a]
+  -- An inner node holds its left side's CIDs, then its right side's.
+  | .node l r => l.leaves ++ r.leaves
+
+-- One layer up: pair neighbours; a last node alone moves up unchanged.
+def upDS : List (Tree α) → List (Tree α)
+  -- Two or more: join the first pair, then do the rest.
+  | a :: b :: rest => .node a b :: upDS rest
+  -- One left over: it moves up as it is, with no copy of itself.
+  | [a] => [a]
+  -- Nothing left: nothing more.
+  | [] => []
+
+-- Promise: a layer up keeps every CID, in order, and adds none.
+theorem upDS_leaves :
+    ∀ l : List (Tree α), ((upDS l).map Tree.leaves).flatten = (l.map Tree.leaves).flatten
+  -- A pair: the joined node holds both sides; the rest keeps its CIDs.
+  | a :: b :: rest => by
+    simp [upDS, Tree.leaves, upDS_leaves rest, List.append_assoc]
+  -- One left over: unchanged.
+  | [_] => by simp [upDS]
+  -- Nothing: nothing.
+  | [] => by simp [upDS]
+
+-- Climb `n` layers.
+def climb : List (Tree α) → Nat → List (Tree α)
+  -- No more layers: this one.
+  | l, 0 => l
+  -- One more: go up, then climb the rest.
+  | l, n + 1 => climb (upDS l) n
+
+-- Promise: however many layers are climbed, every CID stays, in order.
+theorem climb_leaves (n : Nat) :
+    ∀ l : List (Tree α), ((climb l n).map Tree.leaves).flatten = (l.map Tree.leaves).flatten := by
+  -- One layer at a time.
+  induction n with
+  -- No layers: nothing changes.
+  | zero => intro l; rfl
+  -- One more layer keeps the CIDs, then the rest does too.
+  | succ n ih => intro l; simp only [climb]; rw [ih, upDS_leaves]
+
+-- Promise: the leaf layer over a CID list holds exactly that list.
+theorem leaves_of_leaf_layer (xs : List α) :
+    ((xs.map Tree.leaf).map Tree.leaves).flatten = xs := by
+  -- One CID at a time.
+  induction xs with
+  -- No CIDs: nothing.
+  | nil => rfl
+  -- A CID's leaf holds just it, then the rest holds the rest.
+  | cons x xs ih =>
+    simp only [List.map_cons, List.flatten_cons, Tree.leaves, ih, List.singleton_append]
+
+-- Promise: if two CID lists climb to the same single root, they are the
+-- same list. So no CID can be added, dropped, repeated or reordered without
+-- changing the root.
+theorem root_determines_cids (xs ys : List α) (n m : Nat) (t : Tree α)
+    -- Given `xs` climbs to the single root `t`,
+    (hx : climb (xs.map Tree.leaf) n = [t])
+    -- and `ys` climbs to the same root,
+    (hy : climb (ys.map Tree.leaf) m = [t]) :
+    -- the two lists are equal.
+    xs = ys := by
+  -- Both lists are the CIDs under `t`.
+  have ex := climb_leaves n (xs.map Tree.leaf)
+  have ey := climb_leaves m (ys.map Tree.leaf)
+  rw [hx, leaves_of_leaf_layer] at ex
+  rw [hy, leaves_of_leaf_layer] at ey
+  exact ex.symm.trans ey
+
+end DomainSeparated
 
 end ShinzoWire

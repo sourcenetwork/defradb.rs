@@ -31,13 +31,48 @@ pub use crate::ambient::{get_batch_session_key, set_batch_session_key};
 ///    A layer's odd last hash is paired with itself.
 ///
 /// An empty set's root is SHA256 of nothing.
+///
+/// This is [`MerkleScheme::GoShinzo`]: `[a, b, c]` and `[a, b, c, c]` (with
+/// `c` last in sorted order) share a root, and a leaf hash can stand for an
+/// inner node. A verifier must also check the signed CID count.
 pub fn compute_merkle_root(cids: &[Cid]) -> [u8; 32] {
+    compute_merkle_root_with(cids, MerkleScheme::GoShinzo)
+}
+
+/// How a batch signature's Merkle tree is built.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MerkleScheme {
+    /// Go `shinzo-develop`'s tree, which today's Go Shinzo nodes verify.
+    #[default]
+    GoShinzo,
+    /// Leaves hashed as `SHA256(0x00 || cid)` and inner nodes as
+    /// `SHA256(0x01 || left || right)`; a layer's odd last node moves up
+    /// unchanged. No two different CID lists share a root, and no leaf
+    /// stands for an inner node. Go Shinzo does not verify it yet.
+    DomainSeparated,
+}
+
+const LEAF_TAG: u8 = 0x00;
+const INNER_TAG: u8 = 0x01;
+
+/// Compute a batch signature's Merkle root over `cids` with `scheme`. CIDs
+/// are sorted by their binary encoding first, so the order they were
+/// collected in does not matter. An empty set's root is SHA256 of nothing.
+pub fn compute_merkle_root_with(cids: &[Cid], scheme: MerkleScheme) -> [u8; 32] {
     let mut sorted: Vec<Vec<u8>> = cids.iter().map(Cid::to_bytes).collect();
     sorted.sort();
 
+    let tagged = scheme == MerkleScheme::DomainSeparated;
     let mut hashes: Vec<[u8; 32]> = sorted
         .iter()
-        .map(|bytes| Sha256::digest(bytes).into())
+        .map(|bytes| {
+            let mut hasher = Sha256::new();
+            if tagged {
+                hasher.update([LEAF_TAG]);
+            }
+            hasher.update(bytes);
+            hasher.finalize().into()
+        })
         .collect();
     if hashes.is_empty() {
         return Sha256::digest([]).into();
@@ -46,12 +81,18 @@ pub fn compute_merkle_root(cids: &[Cid]) -> [u8; 32] {
     while hashes.len() > 1 {
         hashes = hashes
             .chunks(2)
-            .map(|pair| {
-                let right = pair.get(1).unwrap_or(&pair[0]);
-                let mut hasher = Sha256::new();
-                hasher.update(pair[0]);
-                hasher.update(right);
-                hasher.finalize().into()
+            .map(|pair| match (scheme, pair) {
+                (MerkleScheme::DomainSeparated, [alone]) => *alone,
+                _ => {
+                    let right = pair.get(1).unwrap_or(&pair[0]);
+                    let mut hasher = Sha256::new();
+                    if tagged {
+                        hasher.update([INNER_TAG]);
+                    }
+                    hasher.update(pair[0]);
+                    hasher.update(right);
+                    hasher.finalize().into()
+                }
             })
             .collect();
     }
