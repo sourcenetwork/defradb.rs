@@ -220,35 +220,35 @@ impl TestCase {
             eprintln!("skipped: {reason}");
             return;
         }
-        if self.generates_embeddings() && !vector_embedding_tests_enabled() {
-            eprintln!(
-                "skipped: test involves vector embedding generation (DEFRA_VECTOR_EMBEDDING)"
-            );
-            return;
-        }
+        let actions = with_stub_embedder(&self.actions);
         for client_type in active_client_types() {
-            let actions = client_type.apply(&self.actions);
+            let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
         }
     }
 }
 
-/// Whether tests that generate vector embeddings run. They need a model
-/// server (Ollama with nomic-embed-text), so, as in Go's suite, they run
-/// only when `DEFRA_VECTOR_EMBEDDING` is true.
-fn vector_embedding_tests_enabled() -> bool {
-    std::env::var("DEFRA_VECTOR_EMBEDDING").is_ok_and(|value| value.trim() == "true")
+/// `actions` with every embedding provider URL pointed at the stub
+/// embedder, so tests that generate embeddings need no model server.
+fn with_stub_embedder(actions: &[ActionInstance<Actions>]) -> Vec<ActionInstance<Actions>> {
+    let route = |action: &Actions| {
+        let text = serde_json::to_string(action).expect("an action serializes");
+        let routed = crate::stub_embedder::route(&text);
+        match routed == text {
+            true => action.clone(),
+            false => serde_json::from_str(&routed).expect("a routed action deserializes"),
+        }
+    };
+    actions
+        .iter()
+        .map(|instance| match instance {
+            ActionInstance::Sync(action) => ActionInstance::Sync(route(action)),
+            ActionInstance::Async(action) => ActionInstance::Async(route(action)),
+        })
+        .collect()
 }
 
 impl TestCase {
-    /// Whether a collection the test adds generates embeddings, the rule
-    /// Go's `skipIfVectorEmbeddingTest` applies.
-    fn generates_embeddings(&self) -> bool {
-        self.actions().iter().any(|action| {
-            matches!(action, Actions::AddCollection(add) if add.sdl.as_str().contains("@embedding"))
-        })
-    }
-
     fn export(&self, dir: &std::path::Path) {
         let steps: Vec<_> = self.actions().iter().flat_map(Actions::wires).collect();
         let id = self.id.split("::").skip(1).collect::<Vec<_>>().join(".");
