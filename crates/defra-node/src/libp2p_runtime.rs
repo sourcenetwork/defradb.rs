@@ -218,6 +218,11 @@ where
             .await;
     });
 
+    // A replication filter also judges pushes before their blocks are
+    // fetched; the merge keeps its own check.
+    if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+        coordinator.set_receive_gate(Arc::new(gate));
+    }
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
     let coordinator_for_retry_clock = coordinator.clone();

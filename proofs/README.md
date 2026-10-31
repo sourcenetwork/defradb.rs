@@ -87,6 +87,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
+| Receive gate | TLA+ | p2p, db |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

@@ -260,6 +260,11 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .run_pending_dag_resync(std::time::Duration::from_secs(60))
                 .await;
         });
+        // A replication filter also judges pushes before their blocks are
+        // fetched; the merge keeps its own check.
+        if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+            coordinator.set_receive_gate(Arc::new(gate));
+        }
         let retry_clock_coordinator = Arc::clone(&coordinator);
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             retry_clock_coordinator
