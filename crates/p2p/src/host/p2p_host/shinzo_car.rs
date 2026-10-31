@@ -82,12 +82,9 @@ impl<S> P2PHost<S>
 where
     S: Store,
 {
-    /// Answer a Go CAR request, if the Shinzo wire is on.
+    /// Answer a Go CAR request, whether or not this node's Shinzo wire is on.
     pub(super) fn serve_shinzo_cars(&mut self, peer_id: PeerId, request: CarRequest) {
-        let Some(cars) = self.shinzo.clone() else {
-            debug!(%peer_id, "Ignoring a Go Shinzo CAR request: the Shinzo wire is off");
-            return;
-        };
+        let cars = self.shinzo_server.clone();
         let keypair = self.keypair.clone();
         let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
