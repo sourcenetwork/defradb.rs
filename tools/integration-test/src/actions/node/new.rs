@@ -43,6 +43,9 @@ pub struct NewNode {
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_document_acp_test: bool,
+    /// A Rust node that speaks Go Shinzo's wire.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shinzo_wire: bool,
     /// A Go node built from the Shinzo pin (`DEFRA_GO_SHINZO_BINARY`),
     /// whatever the test's client: the Go side of a mixed cluster. Actions
     /// aimed at it run as the go-shinzo client.
@@ -77,6 +80,7 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        probe.shinzo_wire = false;
         probe.go_shinzo = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
@@ -92,6 +96,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            shinzo_wire: self.shinzo_wire,
             go_shinzo: self.go_shinzo,
         };
         state.start_node(self.common.node(), spec);
