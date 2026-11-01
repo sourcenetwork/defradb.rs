@@ -5,12 +5,12 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use blockstore::DefraBlockstore;
+use blockstore::{Blockstore as _, DefraBlockstore};
 use db::database::{DbOptions, DB};
 use db::merge::merge_handler::DbMergeHandler;
 use db::replication_filter::{add_field_values, FieldValues, ReplicationFilter};
-use defra_core::block::{Block, CrdtDelta, LwwDeltaPayload};
-use defra_core::merge::{MergeHandler, MergeOutcome};
+use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+use defra_core::merge::{MergeBlock, MergeHandler, MergeOutcome};
 use regolith::sync::Atom;
 use storage::RegolithStore;
 
@@ -170,6 +170,104 @@ fn a_branchable_collection_is_not_filtered() {
         let (handler, blockstore, _) = node(schema.clone(), 100).await;
         let block = log(&blockstore, &schema, "low", Some(1)).await;
         assert_eq!(merge(&handler, &block).await, MergeOutcome::Merged);
+    })
+    .unwrap()
+}
+
+/// A replicated update of `parent`'s document that sets only `address`,
+/// so the filter alone would keep it.
+async fn readdress(
+    blockstore: &Arc<DefraBlockstore<RegolithStore>>,
+    parent: &MergeBlock,
+    address: &str,
+) -> MergeBlock {
+    let parent_block = Block::from_dag_cbor(&parent.block_data).unwrap();
+    let previous = parent_block
+        .links
+        .iter()
+        .flatten()
+        .find(|link| link.name == "address")
+        .unwrap()
+        .link;
+    let mut data = Vec::new();
+    ciborium::into_writer(address, &mut data).unwrap();
+    let field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "address".into(),
+            priority: 2,
+            collection_version_id: "v1".into(),
+            data,
+        }),
+        vec![previous],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    blockstore
+        .put(&field_cid, &field.to_dag_cbor().unwrap())
+        .await
+        .unwrap();
+    let composite = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "v1".into(),
+            priority: 2,
+            status: 1,
+        }),
+        vec![parent.cid],
+        vec![DAGLink::new("address", field_cid)],
+    );
+    let mut update = parent.clone();
+    update.cid = composite.generate_cid().unwrap();
+    update.block_data = composite.to_dag_cbor().unwrap().into();
+    blockstore
+        .put(&update.cid, &update.block_data)
+        .await
+        .unwrap();
+    update
+}
+
+#[test]
+#[mantra_macros::req_test("defra.replication_filter.refusal")]
+fn a_commit_after_a_refused_one_is_refused_in_the_same_walk() {
+    workers::block_on(async {
+        let schema = logs("col-log");
+        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let create = log(&blockstore, &schema, "low", Some(1)).await;
+        let update = readdress(&blockstore, &create, "moved").await;
+
+        assert_eq!(merge(&handler, &update).await, refused());
+        assert!(!stored(&handler, "col-log", &update.doc_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.replication_filter.refusal")]
+fn a_commit_after_a_refused_one_is_refused_when_pushed_later() {
+    workers::block_on(async {
+        let schema = logs("col-log");
+        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let create = log(&blockstore, &schema, "low", Some(1)).await;
+        assert_eq!(merge(&handler, &create).await, refused());
+
+        let update = readdress(&blockstore, &create, "moved").await;
+        assert_eq!(merge(&handler, &update).await, refused());
+        assert!(!stored(&handler, "col-log", &update.doc_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.replication_filter.refusal")]
+fn a_commit_after_a_kept_one_is_merged() {
+    workers::block_on(async {
+        let schema = logs("col-log");
+        let (handler, blockstore, _) = node(schema.clone(), 100).await;
+        let create = log(&blockstore, &schema, "high", Some(101)).await;
+        assert_eq!(merge(&handler, &create).await, MergeOutcome::Merged);
+
+        let update = readdress(&blockstore, &create, "moved").await;
+        assert_eq!(merge(&handler, &update).await, MergeOutcome::Merged);
+        assert!(stored(&handler, "col-log", &update.doc_id).await);
     })
     .unwrap()
 }

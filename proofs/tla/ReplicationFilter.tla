@@ -4,7 +4,10 @@
 \* field blocks it links, phase 2 writes the field values and the document.
 \* Between them the filter is asked, given the values phase 1 read, whether
 \* to keep the document. A refused document leaves nothing of itself behind,
-\* and the refusal is final: its head is skipped for good.
+\* and the refusal is final: its head is skipped for good. A refusal drops
+\* the whole document, so a later commit of it is refused too, even when its
+\* own fields would pass: a later commit merges after the ones before it,
+\* and finds no heads only when one of them was refused.
 \*
 \* Who acts: the replication path, which merges events one at a time or in
 \* batches of two (each event of a batch gets its own outcome).
@@ -14,12 +17,14 @@
 \*   - an event the filter keeps is not merged because another event of its
 \*     batch was refused;
 \*   - a refused event is merged later, or merged again by a retry;
+\*   - a later commit of a refused document is merged on its own fields;
 \*   - a document of a branchable collection is filtered one by one.
 \*
 \* Code it models (crates/db/src/merge/merge_handler):
 \*   composite_fields.rs process_linked_field_blocks (phase 1 collects the
 \*   values with crate::replication_filter::add_field_values, the filter is
-\*   asked before phase 2 persists, a refusal is a terminal skip),
+\*   asked before phase 2 persists, a refusal is a terminal skip, and a
+\*   commit with parents that finds no heads follows a refusal),
 \*   batch.rs try_batch_merge (a skip is that event's outcome; the others go on).
 EXTENDS Naturals, FiniteSets
 
@@ -28,7 +33,8 @@ CONSTANTS
   AskMode,     \* "BeforePersist": the filter is asked between the phases | "AfterPersist": after phase 2 wrote the fields
   BatchMode,   \* "PerEvent": a refusal skips its own event | "Whole": the whole batch
   FinalMode,   \* "Terminal": a refused head is skipped for good | "Retry": it goes back to pending
-  ScopeMode    \* "SkipBranchable": a branchable collection is not filtered | "All": it is
+  ScopeMode,   \* "SkipBranchable": a branchable collection is not filtered | "All": it is
+  FollowMode   \* "Follow": a later commit of a refused document is refused | "Alone": it is judged on its own fields
 
 \* Each switch takes one of its values.
 ASSUME Branchable \in BOOLEAN
@@ -36,16 +42,20 @@ ASSUME AskMode \in {"BeforePersist", "AfterPersist"}
 ASSUME BatchMode \in {"PerEvent", "Whole"}
 ASSUME FinalMode \in {"Terminal", "Retry"}
 ASSUME ScopeMode \in {"SkipBranchable", "All"}
+ASSUME FollowMode \in {"Follow", "Alone"}
 
-\* The replicated events, one per document: the filter keeps k1 and k2 and
-\* refuses r.
-Events == {"k1", "k2", "r"}
-\* What the filter answers for each event, given its fields.
+\* The replicated events: k1, k2 and r each create a document, and r2 is a
+\* later commit of r's document. The filter keeps k1 and k2, refuses r, and
+\* given r2's fields alone would keep it.
+Events == {"k1", "k2", "r", "r2"}
+\* What the filter answers for each event, given its own fields.
 Allows(e) == e # "r"
 \* Whether the filter is asked for an event at all.
 Asked == ~(Branchable /\ ScopeMode = "SkipBranchable")
 \* Whether an event is refused.
 Refused(e) == Asked /\ ~Allows(e)
+\* Whether an event's document is refused: its own commit, or r2 after r.
+DocRefused(e) == Refused(e) \/ (e = "r2" /\ Refused("r"))
 
 VARIABLES
   outcome,   \* each event's outcome: "pending", "merged" or "skipped"
@@ -66,12 +76,17 @@ Init ==
 \* A batch of pending events is merged. Each refused event is skipped; with
 \* the Whole switch a refusal skips the batch. With AfterPersist the refused
 \* event's phase 2 already wrote its fields before the filter said no.
+\* r2 merges only once r has run, as a later commit merges after its parent;
+\* with Follow, it is refused when r was not merged.
 Merge(batch) ==
-  LET refused == {e \in batch : Refused(e)}
+  LET refused == {e \in batch : Refused(e)
+                    \/ (e = "r2" /\ FollowMode = "Follow" /\ outcome["r"] # "merged")}
       kept == IF BatchMode = "Whole" /\ refused # {} THEN {} ELSE batch \ refused
   IN
   /\ batch # {}
   /\ \A e \in batch : outcome[e] = "pending"
+  \* A later commit waits for its parent.
+  /\ "r2" \in batch => outcome["r"] # "pending"
   /\ outcome' = [e \in Events |->
                    IF e \in kept THEN "merged"
                    ELSE IF e \in batch
@@ -101,11 +116,12 @@ Next ==
 \* The run.
 Spec == Init /\ [][Next]_vars
 
-\* Invariant: a refused document has neither field values nor a document.
-INV_RefusedNothingStored == \A e \in Events : Refused(e) => e \notin fields /\ e \notin docs
+\* Invariant: no commit of a refused document has field values or a
+\* document stored.
+INV_RefusedNothingStored == \A e \in Events : DocRefused(e) => e \notin fields /\ e \notin docs
 
-\* Invariant: an event the filter keeps is never skipped.
-INV_KeptMerged == \A e \in Events : ~Refused(e) => outcome[e] # "skipped"
+\* Invariant: a commit of a document the filter keeps is never skipped.
+INV_KeptMerged == \A e \in Events : ~DocRefused(e) => outcome[e] # "skipped"
 
 \* Invariant: no event is merged more than once.
 INV_MergedOnce == \A e \in Events : merges[e] <= 1

@@ -185,7 +185,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .map(|collection| collection.collection_id())
                 .or(context.metadata.collection_id)
                 .unwrap_or_default();
-            if !filter.allow_replication(collection_id, context.doc_id_str, &filtered_fields) {
+            // A refusal drops the whole document, so a commit after the
+            // first finding no heads follows a refused one: the commits
+            // before it merge first, and only a refusal leaves no heads.
+            let follows_refusal = context.block.heads.is_some()
+                && crate::block::heads::document::load(headstore, context.doc_short_id)
+                    .await
+                    .map_err(|e| MergeError::Storage(e.to_string()))?
+                    .live()
+                    .next()
+                    .is_none();
+            if follows_refusal
+                || !filter.allow_replication(collection_id, context.doc_id_str, &filtered_fields)
+            {
                 return Ok(Some(MergeOutcome::terminal_skip(
                     "refused by the replication filter",
                 )));
