@@ -27,8 +27,24 @@ pub enum NodeAcpError {
     InvalidActor,
     /// The node access control store refused or failed.
     #[error(transparent)]
-    Nac(#[from] crate::nac::Error),
+    Nac(crate::nac::Error),
     /// The caller may not run the operation.
     #[error(transparent)]
     Db(#[from] Error),
+}
+
+impl From<crate::nac::Error> for NodeAcpError {
+    /// The manager's refusals as the operation's own, Go's texts included.
+    fn from(error: crate::nac::Error) -> Self {
+        match error {
+            crate::nac::Error::NotConfigured => NodeAcpError::NotConfigured,
+            crate::nac::Error::AlreadyDisabled => NodeAcpError::AlreadyDisabled,
+            crate::nac::Error::AlreadyEnabled => NodeAcpError::AlreadyEnabled,
+            crate::nac::Error::NotAuthorized(permission) => Error::NotAuthorized {
+                permission: permission.as_str().to_owned(),
+            }
+            .into(),
+            other => NodeAcpError::Nac(other),
+        }
+    }
 }

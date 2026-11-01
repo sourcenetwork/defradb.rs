@@ -2,12 +2,14 @@
 
 pub mod error;
 pub mod factory;
+mod toggle;
 mod trait_impl;
 
 pub use error::{Error, Result};
 pub use factory::create_memory_nac_manager;
 #[cfg(not(target_arch = "wasm32"))]
 pub use factory::create_persistent_nac_manager;
+pub use toggle::NacCaller;
 
 use std::sync::Arc;
 
@@ -27,6 +29,10 @@ pub struct NacConfig {
 
     /// Path to store NAC data (if using persistent storage).
     pub data_path: Option<String>,
+
+    /// Re-runs of a status change after a lost commit; `None` keeps the
+    /// engine default.
+    pub max_txn_retries: Option<u32>,
 }
 
 impl NacConfig {
@@ -52,6 +58,21 @@ impl NacConfig {
         self.data_path = Some(path.into());
         self
     }
+
+    /// Re-run a status change up to `retries` times after a lost commit.
+    pub fn with_max_txn_retries(mut self, retries: u32) -> Self {
+        self.max_txn_retries = Some(retries);
+        self
+    }
+
+    /// Runs a status change gets in all, the first included.
+    fn attempts(&self) -> u32 {
+        storage::corekv::engine_retry_options(
+            self.max_txn_retries
+                .unwrap_or(storage::corekv::DEFAULT_MAX_TXN_RETRIES),
+        )
+        .max_attempts
+    }
 }
 
 /// Trait for NAC manager operations, enabling dynamic dispatch over different store backends.
@@ -71,17 +92,14 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<bool> {
         self.check_permission(identity, permission).await
     }
-    async fn check_permission_persisted(
-        &self,
-        identity: &Did,
-        permission: NodePermission,
-    ) -> Result<bool>;
     async fn is_admin(&self, identity: &Did) -> Result<bool>;
     async fn is_admin_persisted(&self, identity: &Did) -> Result<bool>;
     async fn is_owner(&self, identity: &Did) -> bool;
     async fn enable(&self, owner: &Did) -> Result<()>;
-    async fn disable(&self) -> Result<()>;
-    async fn re_enable(&self) -> Result<()>;
+    /// Turn NAC off for `caller`, deciding in the write that changes it.
+    async fn disable_as(&self, caller: &NacCaller) -> Result<()>;
+    /// Turn NAC back on for `caller`, deciding in the write that changes it.
+    async fn re_enable_as(&self, caller: &NacCaller) -> Result<()>;
     async fn purge(&self, requestor: &Did) -> Result<()>;
     async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
     async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
@@ -287,43 +305,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             .map_err(|e| Error::Acp(format!("admin check failed: {}", e)))
     }
 
-    /// Whether `identity` holds `permission` in the stored relationships,
-    /// whatever the current status.
-    pub async fn check_permission_persisted(
-        &self,
-        identity: &Did,
-        permission: NodePermission,
-    ) -> Result<bool> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(true)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            let result = scoped
-                .check_permission_persisted(identity, permission)
-                .await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(result);
-        }
-
-        self.nac
-            .check_permission_persisted(identity, permission)
-            .await
-            .map_err(|e| Error::Acp(format!("permission check failed: {}", e)))
-    }
-
     /// Check if an identity is an admin based on stored relationships.
     pub async fn is_admin_persisted(&self, identity: &Did) -> Result<bool> {
         if let Some(scope) = self
@@ -391,74 +372,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             .enable(owner)
             .await
             .map_err(|e| Error::Acp(format!("failed to enable NAC: {}", e)))
-    }
-
-    /// Temporarily disable NAC.
-    pub async fn disable(&self) -> Result<()> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            scoped.disable().await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(());
-        }
-
-        self.nac
-            .disable()
-            .await
-            .map_err(|e| Error::Acp(format!("failed to disable NAC: {}", e)))
-    }
-
-    /// Re-enable NAC after temporary disable.
-    pub async fn re_enable(&self) -> Result<()> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            scoped.re_enable().await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(());
-        }
-
-        self.nac
-            .re_enable()
-            .await
-            .map_err(|e| Error::Acp(format!("failed to re-enable NAC: {}", e)))
     }
 
     /// Purge all NAC state (dev mode only).
@@ -534,7 +447,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         self.nac
             .add_admin(requestor, target)
             .await
-            .map_err(|e| Error::Acp(format!("failed to add admin: {}", e)))
+            .map_err(|error| Error::acp("add admin", error))
     }
 
     /// Remove an admin relationship.
@@ -568,7 +481,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         self.nac
             .remove_admin(requestor, target)
             .await
-            .map_err(|e| Error::Acp(format!("failed to remove admin: {}", e)))
+            .map_err(|error| Error::acp("remove admin", error))
     }
 
     /// Grant a specific permission to an identity.
@@ -609,7 +522,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         self.nac
             .add_permission_grant(requestor, target, permission)
             .await
-            .map_err(|e| Error::Acp(format!("failed to grant permission: {}", e)))
+            .map_err(|error| Error::acp("grant permission", error))
     }
 
     /// Revoke a specific permission from an identity.
@@ -650,7 +563,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         self.nac
             .remove_permission_grant(requestor, target, permission)
             .await
-            .map_err(|e| Error::Acp(format!("failed to revoke permission: {}", e)))
+            .map_err(|error| Error::acp("revoke permission", error))
     }
 
     /// Get the underlying NAC config.

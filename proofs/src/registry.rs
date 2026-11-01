@@ -2140,10 +2140,26 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
+        name: "INV_NoStatusWithoutPermission / INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
         axis: Tla,
-        anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted",
+        anchor: "crates/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/db/src/nac/mod.rs NacManager::initialize",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Node access control operations",
+        name: "INV_RaceNoChangeWithoutPermission / INV_RaceOneWinner / INV_RaceLoserHearsAlready",
+        axis: Tla,
+        anchor: "crates/db/src/nac/toggle.rs NacManager::toggle_as, NacManager::decide_toggle; crates/acp/src/zanzibar/store/transaction.rs OwnedZanzibarScope::commit; crates/db/tests/access/nac_toggle_race.rs",
+        model_ref: "MC_NodeAcpOps_{Race_Green,Red_SplitScope,Red_OutsideGuard,Red_NoRetry}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Node access control operations",
+        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle",
+        model_ref: "NacToggle (lake build)",
         tiers: &[Boundary],
     },
     Property {

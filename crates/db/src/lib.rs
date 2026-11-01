@@ -124,7 +124,9 @@ pub use write::doc::DbDocMutator;
 // NAC exports
 #[cfg(not(target_arch = "wasm32"))]
 pub use nac::create_persistent_nac_manager;
-pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacManagerApi};
+pub use nac::{
+    create_memory_nac_manager, NacCaller, NacConfig, NacInfo, NacManager, NacManagerApi,
+};
 
 // Re-export related crate types for convenience
 pub use datastore::{BasicTxn, NamespaceView};

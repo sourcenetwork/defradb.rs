@@ -32,9 +32,8 @@ pub unsafe extern "C" fn get_nac_status(node_ptr: usize, identity_did: *const c_
         };
 
         ffi_async!(node_ptr, {
-            let status = runner.nac_status_as(&context).await.map_err(|e| e.to_string())?;
-            let mut info = nac_manager.info().await;
-            info.status = status.to_string();
+            runner.nac_status_as(&context).await.map_err(|e| e.to_string())?;
+            let info = nac_manager.info().await;
             serde_json::to_string(&info).map_err(|e| format!("failed to serialize NAC info: {}", e))
         })
     }

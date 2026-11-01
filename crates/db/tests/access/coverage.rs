@@ -22,9 +22,8 @@ use acp::nac::NodePermission::*;
 ///   `patch/mod.rs`); `add_collection_in_txn` also gates on the registry.
 /// - `CollectionTruncate`: `truncate_collection_as` (`collection_ops/truncate/`).
 /// - `DacPolicyAdd`: `add_dac_policy_as` (`access/dac/`).
-/// - `NacStatus`, `NacDisable`, `NacReEnable`, `NacRelationAdd`,
-///   `NacRelationDelete`: the NAC operations in `access/nac_ops/`; re-enable
-///   checks the stored relationships while NAC is off, as Go does.
+/// - `NacStatus`, `NacRelationAdd`, `NacRelationDelete`: the NAC operations in
+///   `access/nac_ops/`.
 /// - `ActionList`: `list_actions` (`action.rs`).
 /// - `MigrationSet`: raw `set_migration` (`migration/set_migration.rs`) +
 ///   `set_migration_in_txn` (registry).
@@ -36,8 +35,6 @@ const DB_METHOD_GATED: &[NodePermission] = &[
     CollectionTruncate,
     DacPolicyAdd,
     NacStatus,
-    NacDisable,
-    NacReEnable,
     NacRelationAdd,
     NacRelationDelete,
     ActionList,
@@ -86,10 +83,12 @@ const ADAPTER_GATED: &[NodePermission] = &[
     P2pDocumentList,
 ];
 
-/// Authorization enforced inside `NacManager` itself: each method takes an
-/// explicit `requestor: &Did` and checks `is_admin`/ownership. A DB-layer
-/// `check_node_access` here would be redundant and could conflict.
-const NAC_MANAGER_ENFORCED: &[NodePermission] = &[NacPurge];
+/// Authorization enforced inside `NacManager` itself, in the write it guards:
+/// purge checks `is_admin`, and `disable_as`/`re_enable_as` (`nac/toggle.rs`)
+/// check `NacDisable` live and `NacReEnable` in the stored relationships, as
+/// Go does. A DB-layer `check_node_access` here would decide outside that
+/// write, so a revocation committing first would not stop it.
+const NAC_MANAGER_ENFORCED: &[NodePermission] = &[NacPurge, NacDisable, NacReEnable];
 
 /// Enforced only at the HTTP boundary (`auth_middleware` + `route_permissions`,
 /// plus per-handler `require_permission`). DB-layer gating is either unsafe
