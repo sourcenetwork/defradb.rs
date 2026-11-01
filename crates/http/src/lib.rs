@@ -129,7 +129,7 @@ pub use router::{
 };
 pub use router::{
     BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
-    IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, ViewOperations,
+    IndexOperations, NacStatus, NodeAcpOperations, NodePermission, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};

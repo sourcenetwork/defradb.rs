@@ -80,6 +80,7 @@ where
         max_txn_retries,
         chunk_size,
         node_acp_enabled,
+        node_acp_owner,
         query_timeout,
         introspection_cache,
         replication_filter,
@@ -99,11 +100,14 @@ where
 
     // Everything the config can refuse is checked before anything opens, so a
     // refusal has nothing to close.
-    let nac_owner = nac_owner(
-        node_acp_enabled,
-        &node_identity_did,
-        node_p2p_identity.is_some(),
-    )?;
+    let nac_owner = match node_acp_owner {
+        Some(owner) => Some(identity::Did::new(owner).map_err(Error::InvalidNodeAcpIdentity)?),
+        None => nac_owner(
+            node_acp_enabled,
+            &node_identity_did,
+            node_p2p_identity.is_some(),
+        )?,
+    };
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     match &transport {
         #[cfg(feature = "libp2p")]
