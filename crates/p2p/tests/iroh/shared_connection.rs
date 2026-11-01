@@ -543,7 +543,7 @@ fn lifecycle_with(
 }
 
 /// [`lifecycle_with`] with an explicit per-lane event capacity, so a test can
-/// saturate the inline lane on purpose. Returns the sender too, because the
+/// saturate one event lane on purpose. Returns the sender too, because the
 /// lifecycle's own sender is private to its module.
 fn lifecycle_with_capacity(
     capacity: usize,
@@ -849,7 +849,7 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
 
 /// A cancelled adopt must not leave a counted, cached connection with no pump.
 ///
-/// The inline event lane is filled first, so `adopt_new_connection` publishes
+/// The completion event lane is filled first, so `adopt_new_connection` publishes
 /// the connection (peer-map count and cache entry) and then parks on its
 /// `PeerConnected` send. Dropping the adopt future there is exactly what a
 /// command-loop shutdown does. The pump must already be registered, so closing
@@ -872,7 +872,7 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
             let records = RecordsHandle::new();
             let solicited = Arc::new(Solicited::new());
             let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
-            // One slot per lane, so a single event fills the inline lane.
+            // One slot per lane, so a single event fills the completion lane.
             let (lifecycle, event_tx, mut events) = lifecycle_with_capacity(
                 1,
                 &peer_map,
@@ -885,7 +885,8 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
             );
             let cache = new_adopting_connection_cache(gossip.clone(), lifecycle.clone());
 
-            // Fill the inline lane with a known event.
+            // Fill the completion lane with a known event. PeerConnected is a
+            // Completion-class event, so this is the lane the adopt parks on.
             event_tx
                 .send(TransportEvent::PeerConnected(PeerId::new(
                     "filler-peer".to_string(),
@@ -893,8 +894,8 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
                 .await
                 .expect("the filler event must be queued");
             assert!(
-                events.is_full(crate::sync::DispatchClass::Inline),
-                "the inline lane must be full before the adopt"
+                events.is_full(crate::sync::DispatchClass::Completion),
+                "the completion lane must be full before the adopt"
             );
 
             let (outbound, connection) =
@@ -922,7 +923,7 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
             std::future::poll_fn(|cx| {
                 assert!(
                     std::future::Future::poll(adopt.as_mut(), cx).is_pending(),
-                    "the adopt must park on the full inline lane"
+                    "the adopt must park on the full completion lane"
                 );
                 std::task::Poll::Ready(())
             })
