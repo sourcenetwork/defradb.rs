@@ -286,6 +286,46 @@ pub(super) fn remember_connection(
     connections.insert(connection.remote_id(), connection.clone());
 }
 
+/// The live cache entry a publish for this connection is about to displace.
+///
+/// Taken before the publish so a refusal that is not a revoke can put a healthy
+/// sibling back: the allowlist governs who may open a connection TO us, so an
+/// inbound miss must not cost this node the outbound session it dialled.
+pub(super) fn displaced_connection(
+    cache: &ConnectionCache,
+    connection: &iroh::endpoint::Connection,
+) -> Option<iroh::endpoint::Connection> {
+    let connections = match connection.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return None,
+    };
+    connections
+        .get(&connection.remote_id())
+        .filter(|cached| cached.close_reason().is_none())
+}
+
+/// Put back the live sibling a refused publish displaced.
+///
+/// Evicts only this connection's own entry, so a concurrent dial that already
+/// replaced it wins, and inserts only into an empty slot for the same reason.
+pub(super) fn restore_displaced_connection(
+    cache: &ConnectionCache,
+    connection: &iroh::endpoint::Connection,
+    displaced: Option<iroh::endpoint::Connection>,
+) {
+    let Some(displaced) = displaced else {
+        return;
+    };
+    evict_connection(cache, connection.remote_id(), connection);
+    let connections = match displaced.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return,
+    };
+    connections.insert_if_absent(displaced.remote_id(), displaced);
+}
+
 /// Remove only this handle, leaving replacements visible to concurrent disconnects.
 pub(super) fn evict_connection(
     cache: &ConnectionCache,
@@ -454,7 +494,7 @@ async fn connect_with_cache(
         .as_ref()
         .expect("a production connection cache always adopts its new connections");
 
-    let admitted = super::endpoint_streams::adopt_new_connection(
+    let outcome = super::endpoint_streams::adopt_new_connection(
         lifecycle,
         cache,
         connection.clone(),
@@ -463,13 +503,15 @@ async fn connect_with_cache(
         super::endpoint_streams::ConnectionDirection::Outbound,
     )
     .await;
-    if !admitted {
-        return Err(crate::error::Error::Dial(format!(
-            "dial to {peer_id} raced a revoke: connection closed"
-        )));
+    match outcome {
+        super::endpoint_streams::AdoptionOutcome::Admitted => Ok(connection),
+        super::endpoint_streams::AdoptionOutcome::Refused => Err(crate::error::Error::Dial(
+            format!("dial to {peer_id} raced a revoke: connection closed"),
+        )),
+        super::endpoint_streams::AdoptionOutcome::ShuttingDown => Err(crate::error::Error::Dial(
+            format!("dial to {peer_id} raced endpoint shutdown: connection closed"),
+        )),
     }
-
-    Ok(connection)
 }
 
 /// Dial the mux, preferring a known direct address before falling back to

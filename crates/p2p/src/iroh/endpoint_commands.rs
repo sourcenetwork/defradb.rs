@@ -19,7 +19,9 @@ use super::endpoint_rpc::{
     handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
     handle_two_stream_request, reply_on_stream, BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
 };
-use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
+use super::endpoint_streams::{
+    adopt_new_connection, AdoptionOutcome, ConnectionDirection, ConnectionLifecycle,
+};
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
 use super::protocols;
@@ -703,7 +705,7 @@ async fn handle_dial(
     // it, and pump it. The pump is what serves the peer's streams back over
     // this connection, and its cleanup is what decrements the count.
     let lifecycle = ConnectionLifecycle::new(&ctx.resources, ctx.event_tx.clone());
-    let admitted = adopt_new_connection(
+    let outcome = adopt_new_connection(
         &lifecycle,
         &ctx.resources.connection_cache,
         connection,
@@ -713,13 +715,15 @@ async fn handle_dial(
     )
     .await;
 
-    if !admitted {
-        return Err(crate::error::Error::Dial(format!(
+    match outcome {
+        AdoptionOutcome::Admitted => Ok(()),
+        AdoptionOutcome::Refused => Err(crate::error::Error::Dial(format!(
             "dial to {peer_id} raced a revoke: connection closed"
-        )));
+        ))),
+        AdoptionOutcome::ShuttingDown => Err(crate::error::Error::Dial(format!(
+            "dial to {peer_id} raced endpoint shutdown: connection closed"
+        ))),
     }
-
-    Ok(())
 }
 
 /// Hang up the live connection to a peer.

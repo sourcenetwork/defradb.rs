@@ -227,6 +227,21 @@ impl ConnectionDirection {
     }
 }
 
+/// What became of a connection offered to [`adopt_new_connection`].
+///
+/// The two refusals are different events and callers report them differently:
+/// a peer that is not admitted is a revoke or an allowlist miss, while a closed
+/// task registry is this endpoint shutting down.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum AdoptionOutcome {
+    /// Published, admitted, announced and pumped.
+    Admitted,
+    /// The peer is not admitted: revoked, or an inbound allowlist miss.
+    Refused,
+    /// The task registry is closed, so nothing could pump the connection.
+    ShuttingDown,
+}
+
 /// Adopt a connection this process just created: the one place a new mux is
 /// published, admitted, announced and pumped.
 ///
@@ -234,9 +249,8 @@ impl ConnectionDirection {
 /// is already adopted, and adopting it again would double the peer-map count
 /// and split `accept_bi` between two pumps.
 ///
-/// Returns whether the peer is still admitted after publication. A refused
-/// connection is closed in both stores and still pumped, so the count this
-/// call added is always decremented.
+/// A refused connection is closed and still pumped, so the count this call
+/// added is always decremented.
 pub(super) async fn adopt_new_connection(
     lifecycle: &ConnectionLifecycle,
     cache: &ConnectionCache,
@@ -244,12 +258,16 @@ pub(super) async fn adopt_new_connection(
     remote_id: EndpointId,
     remote_addr: Option<SocketAddr>,
     direction: ConnectionDirection,
-) -> bool {
+) -> AdoptionOutcome {
     let peer_id = endpoint_id_to_peer_id(&remote_id);
 
     // Publish to both stores before re-checking admission. A revoke either
     // closes the published handles or is observed here after a late
     // publication, so one of the two always sees the other.
+    //
+    // The publish displaces whatever the cache held for this peer, so keep it:
+    // a refusal that is not a revoke has to put a live sibling back.
+    let displaced = super::endpoint_rpc::displaced_connection(cache, &connection);
     let is_new =
         lifecycle
             .peer_map
@@ -258,13 +276,23 @@ pub(super) async fn adopt_new_connection(
 
     let admitted = direction.admits(&lifecycle.admission, &remote_id);
     if !admitted {
+        // A revoke bars the peer outright, so every connection it holds goes.
+        // An inbound allowlist miss is narrower: the allowlist only governs who
+        // may open a connection TO us, so a sibling outbound session this node
+        // dialled stays legal and must survive. Closing this handle is enough
+        // for clones of this QUIC connection; the pump evicts the cache entry
+        // published above.
+        let revoked = lifecycle.admission.is_revoked(&remote_id);
         warn!(
             peer_id = %peer_id,
-            "Closing Iroh connection: peer was revoked while it was being established"
+            revoked,
+            "Closing Iroh connection: peer was not admitted while it was being established"
         );
-        // Both stores: the peer map retains a handle the cache never sees, so
-        // closing only the cache would leave the connection live.
-        super::endpoint_rpc::close_peer_connections(&lifecycle.peer_map, cache, &remote_id);
+        if revoked {
+            super::endpoint_rpc::close_peer_connections(&lifecycle.peer_map, cache, &remote_id);
+        } else {
+            super::endpoint_rpc::restore_displaced_connection(cache, &connection, displaced);
+        }
         connection.close(direction.refusal_code().into(), direction.refusal_reason());
     }
 
@@ -292,7 +320,7 @@ pub(super) async fn adopt_new_connection(
         // The connection is not usable, so this is not an admission.
         connection.close(direction.refusal_code().into(), b"endpoint shutting down");
         finish_connection(&connection, remote_id, &context).await;
-        return false;
+        return AdoptionOutcome::ShuttingDown;
     }
 
     if admitted {
@@ -310,7 +338,11 @@ pub(super) async fn adopt_new_connection(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    admitted
+    if admitted {
+        AdoptionOutcome::Admitted
+    } else {
+        AdoptionOutcome::Refused
+    }
 }
 
 /// The one exit path for a connection: drop this handle from the cache,
