@@ -1,8 +1,9 @@
 use super::*;
 
-use super::super::endpoint::EndpointResources;
+use super::super::endpoint::{EndpointResources, SpawnedTasks};
 use super::super::endpoint_config::AllowlistState;
-use super::super::endpoint_streams::handle_incoming;
+use super::super::endpoint_streams::{handle_incoming, ConnectionLifecycle};
+use super::super::inbound_budget::InboundBudget;
 use super::super::records::RecordsHandle;
 use super::super::solicited::Solicited;
 use super::super::task_registry::TaskRegistry;
@@ -24,7 +25,7 @@ fn disconnect_closes_replacement_despite_stale_cleanup() {
                         peer.accept().await.unwrap().await.unwrap()
                     },);
                 let replacement = replacement.unwrap();
-                let cache = new_connection_cache(GossipHandle::new());
+                let cache = new_unmanaged_connection_cache(GossipHandle::new());
                 remember_connection(&cache, &replacement);
                 old.close(0u32.into(), b"old path closed");
                 let start = regolith::sync::Barrier::new(2);
@@ -59,7 +60,7 @@ fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
             let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX_V1.to_vec()]).await;
             let id = PeerId::new(peer.id().to_string());
             let direct = peer.addr().ip_addrs().next().copied();
-            let cache = new_connection_cache(GossipHandle::new());
+            let cache = new_unmanaged_connection_cache(GossipHandle::new());
             let admission = PeerAdmission::new(AllowlistState::AcceptAll);
             let (first, accepted_first) = tokio::join!(
                 connect_with_cache(&endpoint, &id, direct, &cache, &admission),
@@ -112,18 +113,38 @@ async fn peer_endpoint(secret: iroh::SecretKey) -> Endpoint {
 async fn reverse_rpc_uses_inbound(retain_old: bool) {
     let endpoint = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
     let gossip = GossipHandle::new();
+    // The production shape: the cache adopts what it dials, so this fixture
+    // exercises the same lifecycle the endpoint runs.
+    let peer_map = Arc::new(SharedPeerMap::new());
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+    let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+    let inbound_budget: Arc<InboundBudget> = Arc::default();
+    let records = RecordsHandle::new();
+    let solicited = Arc::new(Solicited::new());
+    let (events, mut received) = crate::sync::dispatch_queue(8);
+    let lifecycle = ConnectionLifecycle::from_parts(
+        events.clone(),
+        Arc::clone(&peer_map),
+        None,
+        Arc::clone(&spawned_tasks),
+        Arc::clone(&admission),
+        gossip.clone(),
+        Arc::clone(&inbound_budget),
+        records.clone(),
+        Arc::clone(&solicited),
+    );
     let resources = EndpointResources {
         endpoint: endpoint.clone(),
         gossip: gossip.clone(),
-        peer_map: Arc::new(SharedPeerMap::new()),
-        connection_cache: new_connection_cache(gossip),
-        spawned_tasks: Arc::new(TaskRegistry::default()),
+        peer_map,
+        connection_cache: new_adopting_connection_cache(gossip, lifecycle),
+        spawned_tasks,
         node_identity: None,
-        admission: Arc::new(PeerAdmission::new(AllowlistState::AcceptAll)),
-        inbound_budget: Arc::default(),
+        admission,
+        inbound_budget,
         fetch_stats: Arc::default(),
-        records: RecordsHandle::new(),
-        solicited: Arc::new(Solicited::new()),
+        records,
+        solicited,
     };
     let key = iroh::SecretKey::generate();
     let peer = PeerId::new(key.public().to_string());
@@ -145,7 +166,6 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
         None
     };
     let restarted = peer_endpoint(key).await;
-    let (events, mut received) = crate::sync::dispatch_queue(8);
     let (incoming, ()) = tokio::join!(
         restarted.connect(endpoint.addr(), protocols::ALPN_MUX),
         async {
@@ -260,7 +280,7 @@ fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
                     peer.accept().await.unwrap().await.unwrap()
                 },);
             let modern = modern.unwrap();
-            let cache = new_connection_cache(GossipHandle::new());
+            let cache = new_unmanaged_connection_cache(GossipHandle::new());
             remember_connection(&cache, &modern);
             let (legacy, accepted_legacy) = tokio::join!(
                 endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),

@@ -4,7 +4,7 @@ use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::bitswap::ReplicatorRegistry;
 use crate::sync::DispatchSender;
@@ -17,10 +17,9 @@ use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResource
 use super::endpoint_rpc::{
     close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
     handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
-    handle_two_stream_request, remember_connection, reply_on_stream, BlockSyncResources,
-    REQUEST_RESPONSE_TIMEOUT,
+    handle_two_stream_request, reply_on_stream, BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
 };
-use super::endpoint_streams::ConnectionStreamContext;
+use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
 use super::protocols;
@@ -699,60 +698,20 @@ async fn handle_dial(
 
     let connection = connect_mux(&ctx.resources.endpoint, endpoint_addr).await?;
 
-    // Send over the connection we just opened instead of dialling a second one
-    // on the first message.
-    remember_connection(&ctx.resources.connection_cache, &connection);
-
-    let is_new = ctx.resources.peer_map.increment_connections(
+    // Adopt the connection this dial created: publish it to the peer map and
+    // the cache, re-check for a revoke that landed during the dial, announce
+    // it, and pump it. The pump is what serves the peer's streams back over
+    // this connection, and its cleanup is what decrements the count.
+    let lifecycle = ConnectionLifecycle::new(&ctx.resources, ctx.event_tx.clone());
+    let admitted = adopt_new_connection(
+        &lifecycle,
+        &ctx.resources.connection_cache,
+        connection,
         endpoint_id,
         direct_addresses.first().copied(),
-        connection.clone(),
-    );
-
-    // Re-check AFTER registering. The dial above can run for many seconds, and
-    // a revoke landing inside that window read `peer_map` and the connection
-    // cache before this connection was in either, so it closed nothing.
-    // Registering first and re-checking second means one of the two always
-    // sees the other.
-    let admitted = ctx.resources.admission.admits_outbound(&endpoint_id);
-    if !admitted {
-        close_peer_connections(
-            &ctx.resources.peer_map,
-            &ctx.resources.connection_cache,
-            &endpoint_id,
-        );
-        connection.close(0u32.into(), b"peer revoked");
-    }
-
-    if admitted
-        && is_new
-        && ctx
-            .event_tx
-            .send(TransportEvent::PeerConnected(peer_id.clone()))
-            .await
-            .is_err()
-    {
-        warn!("Event channel closed, cannot emit PeerConnected");
-    }
-
-    if admitted {
-        ctx.resources.gossip.connected(endpoint_id, &connection);
-    }
-
-    // Keep connection alive by spawning a handler for incoming streams.
-    //
-    // Spawned even when the re-check above refused the peer, and deliberately:
-    // `increment_connections` has already counted this connection, and it is
-    // this task's cleanup that decrements it. Returning early instead would
-    // leave the count stuck above zero, which is worse than the race it was
-    // meant to close: the revoked peer would sit in `connected_peers` forever,
-    // looking connected when it holds nothing.
-    let stream_context =
-        ConnectionStreamContext::new(&ctx.resources, endpoint_id, ctx.event_tx.clone());
-    let _ = spawn_task(&ctx.resources.spawned_tasks, async move {
-        super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
-            .await;
-    });
+        ConnectionDirection::Outbound,
+    )
+    .await;
 
     if !admitted {
         return Err(crate::error::Error::Dial(format!(

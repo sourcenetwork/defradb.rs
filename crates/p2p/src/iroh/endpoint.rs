@@ -29,8 +29,8 @@ use super::endpoint_config::{
     relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
 };
 use super::endpoint_records::EndpointNet;
-use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
-use super::endpoint_streams::handle_incoming;
+use super::endpoint_rpc::{new_adopting_connection_cache, ConnectionCache};
+use super::endpoint_streams::{handle_incoming, ConnectionLifecycle};
 use super::fetch_stats::FetchStats;
 use super::gossip::GossipHandle;
 use super::inbound_budget::InboundBudget;
@@ -179,10 +179,26 @@ async fn run_event_loop(
     let peer_map = Arc::new(SharedPeerMap::new());
     let gossip = GossipHandle::new();
     let records = RecordsHandle::new();
-    let connection_cache = new_connection_cache(gossip.clone());
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+    let inbound_budget: Arc<InboundBudget> = Arc::default();
+    let solicited = Arc::new(Solicited::new());
+    // Built before the cache, because the cache holds it: a connection this
+    // endpoint dials is adopted through it, so the peer that dialled us can
+    // open streams back over that same connection.
+    let lifecycle = ConnectionLifecycle::from_parts(
+        event_tx.clone(),
+        Arc::clone(&peer_map),
+        node_identity.clone(),
+        Arc::clone(&spawned_tasks),
+        Arc::clone(&admission),
+        gossip.clone(),
+        Arc::clone(&inbound_budget),
+        records.clone(),
+        Arc::clone(&solicited),
+    );
+    let connection_cache = new_adopting_connection_cache(gossip.clone(), lifecycle);
     let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
-    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
     let mut next_query_id: u64 = 1;
 
     let resources = EndpointResources {
@@ -193,10 +209,10 @@ async fn run_event_loop(
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
         admission,
-        inbound_budget: Arc::default(),
+        inbound_budget,
         fetch_stats: Arc::default(),
         records: records.clone(),
-        solicited: Arc::new(Solicited::new()),
+        solicited,
     };
     gossip.start(
         endpoint.id(),

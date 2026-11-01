@@ -14,6 +14,7 @@ use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
+use super::endpoint_streams::ConnectionLifecycle;
 use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
 use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
@@ -28,16 +29,43 @@ pub(super) struct ConnectionCacheState {
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
     gossip: GossipHandle,
+    /// What a connection this cache creates needs in order to be adopted.
+    /// `None` only for the test-only unmanaged cache; every production cache
+    /// holds one, so a connection it dials is always adopted.
+    lifecycle: Option<ConnectionLifecycle>,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 
-pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
+/// A cache that does not adopt: a test fixture that drives the dial path
+/// directly, with no peer map or task registry to adopt into.
+///
+/// Production always builds [`new_adopting_connection_cache`]; the unmanaged
+/// fallback in `connect_with_cache` is compiled only for tests, so a
+/// production cache cannot skip adoption.
+#[cfg(test)]
+pub(super) fn new_unmanaged_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
         gossip,
+        lifecycle: None,
+    })
+}
+
+/// The endpoint's cache: a connection it dials here is adopted, so the peer
+/// that dialled us can open streams back over it.
+pub(super) fn new_adopting_connection_cache(
+    gossip: GossipHandle,
+    lifecycle: ConnectionLifecycle,
+) -> ConnectionCache {
+    Arc::new(ConnectionCacheState {
+        connections: HopscotchMap::with_hasher(RandomState::default()),
+        legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
+        dial_guards: HopscotchMap::with_hasher(RandomState::default()),
+        gossip,
+        lifecycle: Some(lifecycle),
     })
 }
 
@@ -394,24 +422,48 @@ async fn connect_with_cache(
             return Err(error);
         }
     };
-    remember_connection(cache, &connection);
 
-    // Re-check AFTER caching, not only before the dial. The dial above can run
-    // for many seconds, and a revoke landing inside that window looked at the
-    // connection cache while this connection was still absent from it, so it
-    // closed nothing and the caller would go on to send RPC requests over it.
-    // Caching first and re-checking second means one of the two always sees
-    // the other: either the revoke finds this connection, or this finds the
-    // revoke. Same ordering as the accept and explicit-dial paths.
-    if !admission.admits_outbound(&endpoint_id) {
-        close_cached_connections(cache, &endpoint_id);
-        connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+    // This connection is new, so it is adopted here: published to the peer map
+    // and the cache, re-checked for a revoke that landed during the dial,
+    // announced, and pumped. Without the pump the peer that dialled us can
+    // never open a stream back over this connection, because only the pump
+    // `accept_bi`s it.
+    // Test-only: an unmanaged cache has no peer map or task registry to adopt
+    // into, so it keeps the old publish-and-return path. Production caches
+    // always hold a lifecycle, so this branch cannot be reached there.
+    #[cfg(test)]
+    if cache.lifecycle.is_none() {
+        remember_connection(cache, &connection);
+        if !admission.admits_outbound(&endpoint_id) {
+            close_cached_connections(cache, &endpoint_id);
+            connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+            return Err(crate::error::Error::Dial(format!(
+                "dial to {peer_id} raced a revoke: connection closed"
+            )));
+        }
+        cache.gossip.connected(endpoint_id, &connection);
+        return Ok(connection);
+    }
+    let lifecycle = cache
+        .lifecycle
+        .as_ref()
+        .expect("a production connection cache always adopts its new connections");
+
+    let admitted = super::endpoint_streams::adopt_new_connection(
+        lifecycle,
+        cache,
+        connection.clone(),
+        endpoint_id,
+        direct_addr,
+        super::endpoint_streams::ConnectionDirection::Outbound,
+    )
+    .await;
+    if !admitted {
         return Err(crate::error::Error::Dial(format!(
             "dial to {peer_id} raced a revoke: connection closed"
         )));
     }
 
-    cache.gossip.connected(endpoint_id, &connection);
     Ok(connection)
 }
 
@@ -1397,7 +1449,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         remember_connection(&cache, &connection);
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
@@ -1444,7 +1496,7 @@ mod tests {
         let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
 
         let peer_map = Arc::new(SharedPeerMap::new());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         let id = accept_ep.id();
         peer_map.increment_connections(id, None, conn_a.clone());
         peer_map.increment_connections(id, None, conn_b.clone());
@@ -1484,7 +1536,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         remember_connection(&cache, &connection);
         assert!(cached_connection(&cache, &peer).unwrap().is_some());
 
@@ -1529,7 +1581,7 @@ mod tests {
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         assert_ne!(old.stable_id(), newer.stable_id());
         remember_connection(&cache, &old);
         remember_connection(&cache, &newer);
@@ -1559,7 +1611,7 @@ mod tests {
             .copied()
             .expect("listener direct address");
         let peer_id = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
         let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();
