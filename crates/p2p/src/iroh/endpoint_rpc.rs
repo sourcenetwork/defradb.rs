@@ -282,24 +282,14 @@ fn cached_connection(
 
 /// Keep protocol-specific paths separate so a concurrent legacy publication
 /// cannot overwrite a modern handle. The key comes from QUIC, not the caller.
-pub(super) fn remember_connection(
-    cache: &ConnectionCache,
-    connection: &iroh::endpoint::Connection,
-) {
-    let connections = match connection.alpn() {
-        protocols::ALPN_MUX => &cache.connections,
-        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
-        _ => return,
-    };
-    connections.insert(connection.remote_id(), connection.clone());
-}
-
-/// The live cache entry a publish for this connection is about to displace.
+/// Publish this connection as the peer's shared handle, returning the entry it
+/// displaced.
 ///
-/// Taken before the publish so a refusal that is not a revoke can put a healthy
-/// sibling back: the allowlist governs who may open a connection TO us, so an
-/// inbound miss must not cost this node the outbound session it dialled.
-pub(super) fn displaced_connection(
+/// The returned handle is the one this publish actually replaced, taken from
+/// the same atomic insert rather than a read before it, so a concurrent dial
+/// that got there first is reported instead of a stale snapshot. `None` when
+/// the slot was empty or the ALPN has no shared slot.
+pub(super) fn remember_connection(
     cache: &ConnectionCache,
     connection: &iroh::endpoint::Connection,
 ) -> Option<iroh::endpoint::Connection> {
@@ -308,9 +298,7 @@ pub(super) fn displaced_connection(
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
         _ => return None,
     };
-    connections
-        .get(&connection.remote_id())
-        .filter(|cached| cached.close_reason().is_none())
+    connections.insert(connection.remote_id(), connection.clone())
 }
 
 /// Put back the live sibling a refused publish displaced.
@@ -331,7 +319,7 @@ pub(super) fn restore_displaced_connection(
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
         _ => return,
     };
-    connections.insert_if_absent(displaced.remote_id(), displaced);
+    let _ = connections.insert_if_absent(displaced.remote_id(), displaced);
 }
 
 /// Remove only this handle, leaving replacements visible to concurrent disconnects.
@@ -486,7 +474,7 @@ async fn connect_with_cache(
     // always hold a lifecycle, so this branch cannot be reached there.
     #[cfg(test)]
     if cache.lifecycle.is_none() {
-        remember_connection(cache, &connection);
+        let _ = remember_connection(cache, &connection);
         if !admission.admits_outbound(&endpoint_id) {
             close_cached_connections(cache, &endpoint_id);
             connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
@@ -1505,7 +1493,7 @@ mod tests {
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_unmanaged_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &connection);
+        let _ = remember_connection(&cache, &connection);
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         admission.revoke(accept_ep.id());
@@ -1592,7 +1580,7 @@ mod tests {
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_unmanaged_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &connection);
+        let _ = remember_connection(&cache, &connection);
         assert!(cached_connection(&cache, &peer).unwrap().is_some());
 
         retire_timed_out_connection(&cache, &peer, &connection);
@@ -1638,8 +1626,8 @@ mod tests {
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_unmanaged_connection_cache(GossipHandle::new());
         assert_ne!(old.stable_id(), newer.stable_id());
-        remember_connection(&cache, &old);
-        remember_connection(&cache, &newer);
+        let _ = remember_connection(&cache, &old);
+        let _ = remember_connection(&cache, &newer);
 
         retire_timed_out_connection(&cache, &peer, &old);
 
@@ -1649,6 +1637,51 @@ mod tests {
         assert_eq!(cached.stable_id(), newer.stable_id());
         assert!(newer.close_reason().is_none());
         assert!(old.close_reason().is_some());
+
+        accept_task.abort();
+    }
+
+    /// The publish reports the entry it actually replaced, not a snapshot taken
+    /// before it. A refusal that restores the displaced handle must therefore
+    /// put back the connection the insert displaced, even when another dial
+    /// replaced the slot in between.
+    #[tokio::test]
+    async fn remember_connection_reports_the_entry_it_displaced() {
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+        let accept_task = n0_future::task::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(connection) = incoming.await {
+                        held.push(connection);
+                    }
+                }
+            }
+        });
+
+        let first = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect first");
+        let second = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect second");
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
+
+        assert!(
+            remember_connection(&cache, &first).is_none(),
+            "an empty slot displaces nothing"
+        );
+        let displaced = remember_connection(&cache, &second)
+            .expect("the second publish must report the entry it replaced");
+        assert_eq!(
+            displaced.stable_id(),
+            first.stable_id(),
+            "the reported entry must be the one this insert replaced"
+        );
 
         accept_task.abort();
     }

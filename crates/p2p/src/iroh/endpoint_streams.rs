@@ -265,14 +265,15 @@ pub(super) async fn adopt_new_connection(
     // closes the published handles or is observed here after a late
     // publication, so one of the two always sees the other.
     //
-    // The publish displaces whatever the cache held for this peer, so keep it:
-    // a refusal that is not a revoke has to put a live sibling back.
-    let displaced = super::endpoint_rpc::displaced_connection(cache, &connection);
     let is_new =
         lifecycle
             .peer_map
             .increment_connections(remote_id, remote_addr, connection.clone());
-    super::endpoint_rpc::remember_connection(cache, &connection);
+    // The publish reports the entry it actually displaced, so a refusal that is
+    // not a revoke can put a live sibling back. Taking it from the insert rather
+    // than a read before it means a concurrent dial that got there first is what
+    // gets restored, not a stale snapshot of the slot.
+    let displaced = super::endpoint_rpc::remember_connection(cache, &connection);
 
     let admitted = direction.admits(&lifecycle.admission, &remote_id);
     if !admitted {
