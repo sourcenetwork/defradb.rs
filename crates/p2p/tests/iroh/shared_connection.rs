@@ -1289,3 +1289,127 @@ fn allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling() {
         })
         .unwrap();
 }
+
+/// The complement of the allowlist test: a revoke stays peer-wide.
+///
+/// Narrowing the refusal to the new handle is only correct for the allowlist,
+/// which governs who may open a connection TO us. A revoke bars the peer
+/// outright, so the same post-publication refusal must still hang up the
+/// outbound sibling this node dialled and drop the shared RPC cache entry.
+/// Without this, deleting the peer-wide close from the revoked arm would leave
+/// every other test green: the pump evicts the cache entry and decrements the
+/// count on its own, so only the sibling's liveness distinguishes the two.
+#[test]
+fn revoked_adoption_still_closes_the_outbound_sibling() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let direct = peer.addr().ip_addrs().next().copied();
+
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+            let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (lifecycle, _events) = lifecycle_with(
+                &peer_map,
+                &spawned_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), lifecycle.clone());
+
+            // A healthy outbound sibling, adopted while the peer is admitted.
+            let (sibling, sibling_accepted) =
+                tokio::join!(local.connect(peer.addr(), protocols::ALPN_MUX), async {
+                    peer.accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },);
+            let sibling = sibling.unwrap();
+            assert_eq!(
+                adopt_new_connection(
+                    &lifecycle,
+                    &cache,
+                    sibling.clone(),
+                    peer.id(),
+                    direct,
+                    ConnectionDirection::Outbound,
+                )
+                .await,
+                AdoptionOutcome::Admitted,
+                "the sibling must be adopted before the revoke"
+            );
+
+            // Revoked after the sibling exists, so the refusal below is the
+            // step that has to reach it.
+            assert!(admission.revoke(peer.id()));
+
+            let (refused_outbound, refused) =
+                tokio::join!(peer.connect(local.addr(), protocols::ALPN_MUX), async {
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },);
+            let refused_outbound = refused_outbound.unwrap();
+            assert_eq!(
+                adopt_new_connection(
+                    &lifecycle,
+                    &cache,
+                    refused.clone(),
+                    peer.id(),
+                    None,
+                    ConnectionDirection::Inbound,
+                )
+                .await,
+                AdoptionOutcome::Refused,
+                "a revoked peer must not be adopted"
+            );
+
+            assert!(
+                refused.close_reason().is_some(),
+                "the refused connection's own handle must be closed"
+            );
+            assert!(
+                sibling.close_reason().is_some(),
+                "a revoke is peer-wide: the outbound sibling must be closed too"
+            );
+            assert!(
+                cache.connections.get(&peer.id()).is_none(),
+                "a revoke must drop the shared RPC cache entry"
+            );
+            wait_until(
+                || peer_map.connection(&peer.id()).is_none(),
+                "the revoked peer's peer-map count to reach zero",
+            )
+            .await;
+            wait_until(
+                || peer_map.connected_peers().is_empty(),
+                "the revoked peer to leave connected_peers",
+            )
+            .await;
+
+            for task in spawned_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            peer.close().await;
+            drop((sibling_accepted, refused_outbound));
+        })
+        .unwrap();
+}
