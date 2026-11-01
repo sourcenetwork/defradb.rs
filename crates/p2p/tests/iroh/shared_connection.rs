@@ -529,9 +529,39 @@ fn lifecycle_with(
     ConnectionLifecycle,
     crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
-    let (events, received) = crate::sync::dispatch_queue(8);
+    let (lifecycle, _event_tx, received) = lifecycle_with_capacity(
+        8,
+        peer_map,
+        spawned_tasks,
+        admission,
+        gossip,
+        inbound_budget,
+        records,
+        solicited,
+    );
+    (lifecycle, received)
+}
+
+/// [`lifecycle_with`] with an explicit per-lane event capacity, so a test can
+/// saturate the inline lane on purpose. Returns the sender too, because the
+/// lifecycle's own sender is private to its module.
+fn lifecycle_with_capacity(
+    capacity: usize,
+    peer_map: &Arc<SharedPeerMap>,
+    spawned_tasks: &SpawnedTasks,
+    admission: &Arc<PeerAdmission>,
+    gossip: &GossipHandle,
+    inbound_budget: &Arc<InboundBudget>,
+    records: &RecordsHandle,
+    solicited: &Arc<Solicited>,
+) -> (
+    ConnectionLifecycle,
+    crate::sync::DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
+) {
+    let (events, received) = crate::sync::dispatch_queue(capacity);
     let lifecycle = ConnectionLifecycle::from_parts(
-        events,
+        events.clone(),
         Arc::clone(peer_map),
         None,
         Arc::clone(spawned_tasks),
@@ -541,7 +571,7 @@ fn lifecycle_with(
         records.clone(),
         Arc::clone(solicited),
     );
-    (lifecycle, received)
+    (lifecycle, events, received)
 }
 
 /// Poll a predicate until it holds, bounded by the suite's 2s budget. Used
@@ -817,8 +847,163 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
         .unwrap();
 }
 
-/// Repeated cache hits reuse the one adopted connection: no second dial, no
-/// second pump, and no extra peer-map count.
+/// A cancelled adopt must not leave a counted, cached connection with no pump.
+///
+/// The inline event lane is filled first, so `adopt_new_connection` publishes
+/// the connection (peer-map count and cache entry) and then parks on its
+/// `PeerConnected` send. Dropping the adopt future there is exactly what a
+/// command-loop shutdown does. The pump must already be registered, so closing
+/// the connection lets it run its exit path: cache entry evicted, count back to
+/// zero, and the peer announced gone. The queue is drained while that happens,
+/// because the pump's own `PeerDisconnected` send would otherwise block on the
+/// lane this test filled.
+#[test]
+fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer_id = PeerId::new(peer.id().to_string());
+
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+            let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            // One slot per lane, so a single event fills the inline lane.
+            let (lifecycle, event_tx, mut events) = lifecycle_with_capacity(
+                1,
+                &peer_map,
+                &spawned_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), lifecycle.clone());
+
+            // Fill the inline lane with a known event.
+            event_tx
+                .send(TransportEvent::PeerConnected(PeerId::new(
+                    "filler-peer".to_string(),
+                )))
+                .await
+                .expect("the filler event must be queued");
+            assert!(
+                events.is_full(crate::sync::DispatchClass::Inline),
+                "the inline lane must be full before the adopt"
+            );
+
+            let (outbound, connection) =
+                tokio::join!(peer.connect(local.addr(), protocols::ALPN_MUX), async {
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },);
+            let outbound = outbound.unwrap();
+
+            // Poll the adopt once: it publishes, then parks on the full lane.
+            let mut adopt = Box::pin(adopt_new_connection(
+                &lifecycle,
+                &cache,
+                connection.clone(),
+                peer.id(),
+                None,
+                ConnectionDirection::Inbound,
+            ));
+            std::future::poll_fn(|cx| {
+                assert!(
+                    std::future::Future::poll(adopt.as_mut(), cx).is_pending(),
+                    "the adopt must park on the full inline lane"
+                );
+                std::task::Poll::Ready(())
+            })
+            .await;
+            assert!(
+                cache.connections.get(&peer.id()).is_some(),
+                "the adopt must have published its cache entry before parking"
+            );
+            assert_eq!(
+                peer_map
+                    .connection(&peer.id())
+                    .expect("the adopt must have published its peer-map count")
+                    .open_connections,
+                1
+            );
+
+            // Cancel it, as a shutdown would.
+            drop(adopt);
+
+            // The pump must already be registered, so closing the connection
+            // runs its exit path. Drain the lane meanwhile: the pump's own
+            // PeerDisconnected send would otherwise block on it.
+            let cleanup = async {
+                connection.close(0u32.into(), b"adopt cancelled");
+                wait_until(
+                    || cache.connections.get(&peer.id()).is_none(),
+                    "the cancelled adopt's cache entry to be evicted",
+                )
+                .await;
+                wait_until(
+                    || peer_map.connection(&peer.id()).is_none(),
+                    "the cancelled adopt's peer-map count to reach zero",
+                )
+                .await;
+            };
+            let drain = async {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                loop {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    match n0_future::time::timeout(remaining, events.recv()).await {
+                        Ok(Some(TransportEvent::PeerDisconnected(gone))) if gone == peer_id => {
+                            break
+                        }
+                        Ok(Some(_)) => continue,
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            };
+            let ((), ()) = tokio::join!(cleanup, drain);
+
+            assert!(
+                cache.connections.get(&peer.id()).is_none(),
+                "a cancelled adopt must leave no cache entry"
+            );
+            assert!(
+                peer_map.connection(&peer.id()).is_none(),
+                "a cancelled adopt must leave no peer-map count"
+            );
+            assert!(
+                !peer_map.connected_peers().contains(&peer_id),
+                "a cancelled adopt must not leave the peer looking connected"
+            );
+            assert!(
+                connection.close_reason().is_some(),
+                "the cancelled adopt's own connection must be closed"
+            );
+            wait_until(
+                || outbound.close_reason().is_some(),
+                "the peer to observe the closed connection",
+            )
+            .await;
+
+            for task in spawned_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            peer.close().await;
+        })
+        .unwrap();
+}
+
 #[test]
 fn repeated_cache_hits_reuse_one_adopted_connection() {
     edge::testing::edge()
