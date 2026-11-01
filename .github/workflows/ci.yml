@@ -825,7 +825,12 @@ jobs:
         run: |
           mkdir -p testo-report
           cp target/nextest/ci/junit.xml "testo-report/$CLIENT-${{ matrix.shard }}.xml"
-          bun .github/scripts/testo-report.ts shard target/nextest/ci/junit.xml "$CLIENT" \
+          # JUnit leaves out skipped tests, so the list says what this shard selected.
+          cargo nextest list --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} \
+            --message-format json > target/nextest-list.json
+          bun .github/scripts/testo-report.ts shard target/nextest/ci/junit.xml target/nextest-list.json \
+            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 3 }}" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
           if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then
             echo "::error::nextest exited $STATUS without a failing test"

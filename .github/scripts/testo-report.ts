@@ -2,19 +2,25 @@
 // Counts testo scenario outcomes per binary for one client, and checks the
 // known-failure lists.
 //
-//     bun testo-report.ts shard <junit.xml> <client> <known-failures.txt> <out.json>
+//     bun testo-report.ts shard <junit.xml> <list.json> <client> <shard>/<shards> <known-failures.txt> <out.json>
 //     bun testo-report.ts summary <dir of shard json files> <known-failures dir>
+//
+// `<list.json>` is `cargo nextest list --message-format json` for the shard's
+// selection: the tests it was meant to run, which JUnit alone cannot say,
+// since it leaves out skipped tests.
 //
 // A test whose failure output says `unsupported op:` stopped at an action the
 // client does not implement yet (`Op::run`'s default, or an explicit
 // `Failure::unsupported`). It is counted as unsupported, not as a failure.
 //
 // Each known-failures line is `<binary> <test> #<issue>`; a line starting with
-// `#` is a comment. A shard fails when a test fails that is not listed, or when
-// a listed test passes ("fixed: remove from the list"), so a list only shrinks.
-// `summary` fails on a line without an issue or whose issue is closed, compares
-// each list's size with the base branch's copy, and warns on every entry the
-// pull request adds.
+// `#` is a comment. A shard fails when a test fails that is not listed, when a
+// listed test passes ("fixed: remove from the list"), so a list only shrinks,
+// or when a listed test it selected left no result. `summary` fails on a line
+// without an issue or whose issue is closed, on a listed test no shard selected
+// (renamed, removed or filtered out: "missing"), and on a client with a shard
+// that never reported; it compares each list's size with the base branch's
+// copy, and warns on every entry the pull request adds.
 
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,10 +34,31 @@ type Counts = Record<string, number>;
 type Known = Map<string, number>;
 interface Report {
   client: string;
+  shard: number;
+  shards: number;
   binaries: Record<string, Counts>;
   unsupported_ops: Counts;
   unexpected: string[];
   fixed: string[];
+  missing: string[];
+  /// The listed tests this shard selected, so `summary` can find the ones no shard did.
+  selected_known: string[];
+}
+
+/// The `<binary> <test>` ids a `cargo nextest list --message-format json`
+/// output selects.
+function selectedTests(listJson: string): Set<string> {
+  const listing = JSON.parse(listJson) as {
+    "rust-suites": Record<string, { "binary-id": string; testcases: Record<string, { "filter-match": { status: string } }> }>;
+  };
+  const selected = new Set<string>();
+  for (const suite of Object.values(listing["rust-suites"] ?? {})) {
+    const binary = suite["binary-id"].split("::").at(-1) ?? "";
+    for (const [name, testCase] of Object.entries(suite.testcases ?? {})) {
+      if (testCase["filter-match"]?.status === "matches") selected.add(key(binary, name));
+    }
+  }
+  return selected;
 }
 
 const summaryLines: string[] = [];
@@ -112,17 +139,28 @@ function writeTable(binaries: Record<string, Counts>) {
   write(`| **total** | ${COLUMNS.map((c) => `**${total[c] ?? 0}**`).join(" | ")} |\n`);
 }
 
-function shard(junit: string, client: string, knownPath: string, out: string): number {
+function shard(
+  junit: string,
+  list: string,
+  client: string,
+  part: string,
+  knownPath: string,
+  out: string,
+): number {
   const { known, bad } = readKnown(knownPath);
   for (const line of bad) console.log(`::error::${line}`);
+  const [shardIndex, shards] = part.split("/").map(Number);
+  const selected = selectedTests(readFileSync(list, "utf8"));
   const binaries: Record<string, Counts> = {};
   const ops: Counts = {};
   const unexpected: string[] = [];
   const fixed: string[] = [];
+  const reported = new Set<string>();
   let knownSeen = 0;
   for (const testCase of testCases(readFileSync(junit, "utf8"))) {
     const binary = testCase.classname.split("::").at(-1) ?? "";
     const id = key(binary, testCase.name);
+    reported.add(id);
     let [result, op] = outcome(testCase.body);
     const listed = known.has(id);
     if (op) bump(ops, op);
@@ -137,13 +175,26 @@ function shard(junit: string, client: string, knownPath: string, out: string): n
     binaries[binary] ??= {};
     bump(binaries[binary], result);
   }
-  const report: Report = { client, binaries, unsupported_ops: ops, unexpected, fixed };
+  const selectedKnown = [...known.keys()].filter((id) => selected.has(id));
+  const missing = selectedKnown.filter((id) => !reported.has(id)).map((id) => `${id} #${known.get(id)}`);
+  const report: Report = {
+    client,
+    shard: shardIndex,
+    shards,
+    binaries,
+    unsupported_ops: ops,
+    unexpected,
+    fixed,
+    missing,
+    selected_known: selectedKnown,
+  };
   writeFileSync(out, JSON.stringify(report, null, 1));
-  write(`### ${client}\n\n`);
+  write(`### ${client}, shard ${part}\n\n`);
   writeTable(binaries);
   for (const [title, tests] of [
     ["Failing, not in the known-failures list", unexpected],
     ["fixed: remove from the list", fixed],
+    ["missing: listed and selected, but no result", missing],
   ] as const) {
     if (tests.length) {
       write(`\n**${title}** (${tests.length})\n\n`);
@@ -153,8 +204,12 @@ function shard(junit: string, client: string, knownPath: string, out: string): n
   flushSummary();
   for (const test of unexpected) console.log(`::error::${client}: ${test} failed and is not in ${knownPath}`);
   for (const test of fixed) console.log(`::error::${client}: ${test} passed. fixed: remove from the list ${knownPath}`);
-  console.log(`${client}: ${unexpected.length} unexpected failures, ${knownSeen} known, ${fixed.length} fixed`);
-  return unexpected.length || fixed.length || bad.length ? 1 : 0;
+  for (const test of missing) console.log(`::error::${client}: ${test} was selected but left no result. missing`);
+  console.log(
+    `${client} ${part}: ${unexpected.length} unexpected failures, ${knownSeen} known, ` +
+      `${fixed.length} fixed, ${missing.length} missing`,
+  );
+  return unexpected.length || fixed.length || missing.length || bad.length ? 1 : 0;
 }
 
 function gh(...args: string[]) {
@@ -237,20 +292,56 @@ function* jsonFiles(directory: string): Generator<string> {
   }
 }
 
+interface Merged {
+  binaries: Record<string, Counts>;
+  ops: Counts;
+  shards: number;
+  reported: Set<number>;
+  selectedKnown: Set<string>;
+}
+
+/// Why a client's totals are partial, or `null` when every shard reported.
+function incomplete(merged: Merged): string | null {
+  const absent = Array.from({ length: merged.shards }, (_, i) => i + 1).filter((i) => !merged.reported.has(i));
+  return absent.length ? `incomplete: shard ${absent.join(", ")} of ${merged.shards} never reported` : null;
+}
+
+/// Listed tests that no shard of a fully reported client selected: renamed,
+/// removed or filtered out, so the entry checks nothing.
+function checkMissing(clients: Map<string, Merged>, knownDir: string): number {
+  let errors = 0;
+  for (const [client, merged] of clients) {
+    if (incomplete(merged)) continue;
+    const path = join(knownDir, `${client}.txt`);
+    for (const [id, issue] of readKnown(path).known) {
+      if (!merged.selectedKnown.has(id)) {
+        console.log(`::error::${path}: ${id} #${issue} matches no selected test. missing: remove or rename it`);
+        errors++;
+      }
+    }
+  }
+  return errors;
+}
+
 function summary(directory: string, knownDir: string): number {
-  const clients = new Map<string, { binaries: Record<string, Counts>; ops: Counts }>();
+  const clients = new Map<string, Merged>();
   for (const path of jsonFiles(directory)) {
     const report = JSON.parse(readFileSync(path, "utf8")) as Report;
     if (typeof report !== "object" || Array.isArray(report) || !report.client) continue;
-    if (!clients.has(report.client)) clients.set(report.client, { binaries: {}, ops: {} });
+    if (!clients.has(report.client)) {
+      clients.set(report.client, { binaries: {}, ops: {}, shards: report.shards, reported: new Set(), selectedKnown: new Set() });
+    }
     const merged = clients.get(report.client)!;
+    merged.shards = Math.max(merged.shards, report.shards);
+    merged.reported.add(report.shard);
+    for (const id of report.selected_known) merged.selectedKnown.add(id);
     for (const [binary, counts] of Object.entries(report.binaries)) {
       merged.binaries[binary] ??= {};
       for (const [name, count] of Object.entries(counts)) bump(merged.binaries[binary], name, count);
     }
     for (const [op, count] of Object.entries(report.unsupported_ops)) bump(merged.ops, op, count);
   }
-  let errors = checkLists(knownDir);
+  let errors = checkLists(knownDir) + checkMissing(clients, knownDir);
   write("## Outcomes per client\n\n");
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +
@@ -263,7 +354,12 @@ function summary(directory: string, knownDir: string): number {
       errors++;
       continue;
     }
-    write(`### ${client}\n\n`);
+    const partial = incomplete(merged);
+    if (partial) {
+      console.log(`::error::${client}: ${partial}`);
+      errors++;
+    }
+    write(`### ${client}${partial ? ` (${partial})` : ""}\n\n`);
     writeTable(merged.binaries);
     const ops = Object.entries(merged.ops)
       .sort(([, a], [, b]) => b - a)
@@ -279,7 +375,7 @@ function summary(directory: string, knownDir: string): number {
 }
 
 const [mode, ...args] = process.argv.slice(2);
-if (mode === "shard") process.exit(shard(args[0], args[1], args[2], args[3]));
+if (mode === "shard") process.exit(shard(args[0], args[1], args[2], args[3], args[4], args[5]));
 if (mode === "summary") process.exit(summary(args[0], args[1]));
 console.error(`unknown mode ${mode}`);
 process.exit(2);
