@@ -1,5 +1,6 @@
 //! Incoming connection and stream processing for the iroh endpoint.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use iroh::endpoint::Connection;
@@ -12,6 +13,9 @@ use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 
 use super::endpoint::{spawn_task, EndpointResources, SpawnedTasks};
+use super::endpoint_config::PeerAdmission;
+use super::endpoint_rpc::{ConnectionCache, DISCONNECT_ERROR_CODE};
+use super::gossip::GossipHandle;
 use super::inbound_budget::{InboundBudget, InboundLease, PeerShare};
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
@@ -84,45 +88,16 @@ pub(super) async fn handle_incoming(
         return;
     }
 
-    let is_new =
-        resources
-            .peer_map
-            .increment_connections(remote_id, remote_addr, connection.clone());
-    super::endpoint_rpc::remember_connection(&resources.connection_cache, &connection);
-
-    // Publish both peer-map and RPC-cache handles before rechecking. A revoke
-    // either closes the published handles or is observed here after a late
-    // publication. The stream task also cleans up a refused registration.
-    let admitted = resources.admission.admits_inbound(&remote_id);
-    if !admitted {
-        warn!(
-            peer_id = %endpoint_id_to_peer_id(&remote_id),
-            "Closing inbound Iroh connection: peer was revoked while it was being accepted"
-        );
-        connection.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
-    }
-
-    if admitted
-        && is_new
-        && event_tx
-            .send(TransportEvent::PeerConnected(endpoint_id_to_peer_id(
-                &remote_id,
-            )))
-            .await
-            .is_err()
-    {
-        warn!("Event channel closed, cannot emit PeerConnected");
-    }
-
-    if admitted {
-        resources.gossip.connected(remote_id, &connection);
-    }
-
-    // Spawn handler for this connection's streams
-    let context = ConnectionStreamContext::new(resources, remote_id, event_tx.clone());
-    let _ = spawn_task(&resources.spawned_tasks, async move {
-        handle_connection_streams(connection, remote_id, context).await;
-    });
+    let lifecycle = ConnectionLifecycle::new(resources, event_tx.clone());
+    adopt_new_connection(
+        &lifecycle,
+        &resources.connection_cache,
+        connection,
+        remote_id,
+        remote_addr,
+        ConnectionDirection::Inbound,
+    )
+    .await;
 }
 
 /// Shared state for every stream accepted on one authenticated connection.
@@ -130,7 +105,7 @@ pub(super) async fn handle_incoming(
 pub(super) struct ConnectionStreamContext {
     event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     peer_map: Arc<SharedPeerMap>,
-    connection_cache: super::endpoint_rpc::ConnectionCache,
+    connection_cache: ConnectionCache,
     node_identity: Option<Arc<identity::RawIdentity>>,
     spawned_tasks: SpawnedTasks,
     inbound_budget: Arc<InboundBudget>,
@@ -139,23 +114,268 @@ pub(super) struct ConnectionStreamContext {
     solicited: Arc<Solicited>,
 }
 
-impl ConnectionStreamContext {
+/// Everything a newly created connection needs in order to be adopted:
+/// published to both stores, admitted, announced, and pumped.
+///
+/// Cloneable and free of `EndpointResources`, so the RPC dial path can hold it
+/// on the connection cache without an ownership cycle.
+#[derive(Clone)]
+pub(super) struct ConnectionLifecycle {
+    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    peer_map: Arc<SharedPeerMap>,
+    node_identity: Option<Arc<identity::RawIdentity>>,
+    spawned_tasks: SpawnedTasks,
+    admission: Arc<PeerAdmission>,
+    gossip: GossipHandle,
+    inbound_budget: Arc<InboundBudget>,
+    records: RecordsHandle,
+    solicited: Arc<Solicited>,
+}
+
+impl ConnectionLifecycle {
     pub(super) fn new(
         resources: &EndpointResources,
-        remote_id: EndpointId,
         event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    ) -> Self {
+        Self::from_parts(
+            event_tx,
+            Arc::clone(&resources.peer_map),
+            resources.node_identity.clone(),
+            Arc::clone(&resources.spawned_tasks),
+            Arc::clone(&resources.admission),
+            resources.gossip.clone(),
+            Arc::clone(&resources.inbound_budget),
+            resources.records.clone(),
+            Arc::clone(&resources.solicited),
+        )
+    }
+
+    /// The same handles, taken individually, so the event loop can build the
+    /// lifecycle before the resources that hold the cache it goes on.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn from_parts(
+        event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+        peer_map: Arc<SharedPeerMap>,
+        node_identity: Option<Arc<identity::RawIdentity>>,
+        spawned_tasks: SpawnedTasks,
+        admission: Arc<PeerAdmission>,
+        gossip: GossipHandle,
+        inbound_budget: Arc<InboundBudget>,
+        records: RecordsHandle,
+        solicited: Arc<Solicited>,
     ) -> Self {
         Self {
             event_tx,
-            peer_map: Arc::clone(&resources.peer_map),
-            connection_cache: Arc::clone(&resources.connection_cache),
-            node_identity: resources.node_identity.clone(),
-            spawned_tasks: Arc::clone(&resources.spawned_tasks),
-            inbound_budget: Arc::clone(&resources.inbound_budget),
-            share: resources.inbound_budget.peer_share(remote_id),
-            records: resources.records.clone(),
-            solicited: Arc::clone(&resources.solicited),
+            peer_map,
+            node_identity,
+            spawned_tasks,
+            admission,
+            gossip,
+            inbound_budget,
+            records,
+            solicited,
         }
+    }
+
+    fn stream_context(
+        &self,
+        remote_id: EndpointId,
+        cache: &ConnectionCache,
+    ) -> ConnectionStreamContext {
+        ConnectionStreamContext {
+            event_tx: self.event_tx.clone(),
+            peer_map: Arc::clone(&self.peer_map),
+            connection_cache: cache.clone(),
+            node_identity: self.node_identity.clone(),
+            spawned_tasks: Arc::clone(&self.spawned_tasks),
+            inbound_budget: Arc::clone(&self.inbound_budget),
+            share: self.inbound_budget.peer_share(remote_id),
+            records: self.records.clone(),
+            solicited: Arc::clone(&self.solicited),
+        }
+    }
+}
+
+/// Which side of the endpoint created a connection. It decides the admission
+/// check and the close code a refused connection carries.
+#[derive(Clone, Copy)]
+pub(super) enum ConnectionDirection {
+    Inbound,
+    Outbound,
+}
+
+impl ConnectionDirection {
+    fn admits(self, admission: &PeerAdmission, id: &EndpointId) -> bool {
+        match self {
+            Self::Inbound => admission.admits_inbound(id),
+            Self::Outbound => admission.admits_outbound(id),
+        }
+    }
+
+    fn refusal_code(self) -> u32 {
+        match self {
+            Self::Inbound => REFUSED_CONNECTION_CODE,
+            Self::Outbound => DISCONNECT_ERROR_CODE,
+        }
+    }
+
+    fn refusal_reason(self) -> &'static [u8] {
+        match self {
+            Self::Inbound => b"peer not authorized",
+            Self::Outbound => b"peer revoked",
+        }
+    }
+}
+
+/// What became of a connection offered to [`adopt_new_connection`].
+///
+/// The two refusals are different events and callers report them differently:
+/// a peer that is not admitted is a revoke or an allowlist miss, while a closed
+/// task registry is this endpoint shutting down.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum AdoptionOutcome {
+    /// Published, admitted, announced and pumped.
+    Admitted,
+    /// The peer is not admitted: revoked, or an inbound allowlist miss.
+    Refused,
+    /// The task registry is closed, so nothing could pump the connection.
+    ShuttingDown,
+}
+
+/// Adopt a connection this process just created: the one place a new mux is
+/// published, admitted, announced and pumped.
+///
+/// Call it only for a connection this process created or accepted. A cache hit
+/// is already adopted, and adopting it again would double the peer-map count
+/// and split `accept_bi` between two pumps.
+///
+/// A refused connection is closed and still pumped, so the count this call
+/// added is always decremented.
+pub(super) async fn adopt_new_connection(
+    lifecycle: &ConnectionLifecycle,
+    cache: &ConnectionCache,
+    connection: Connection,
+    remote_id: EndpointId,
+    remote_addr: Option<SocketAddr>,
+    direction: ConnectionDirection,
+) -> AdoptionOutcome {
+    let peer_id = endpoint_id_to_peer_id(&remote_id);
+
+    // Publish to both stores before re-checking admission. A revoke either
+    // closes the published handles or is observed here after a late
+    // publication, so one of the two always sees the other.
+    //
+    let is_new =
+        lifecycle
+            .peer_map
+            .increment_connections(remote_id, remote_addr, connection.clone());
+    // The publish reports the entry it actually displaced, so a refusal that is
+    // not a revoke can put a live sibling back. Taking it from the insert rather
+    // than a read before it means a concurrent dial that got there first is what
+    // gets restored, not a stale snapshot of the slot.
+    let displaced = super::endpoint_rpc::remember_connection(cache, &connection);
+
+    let admitted = direction.admits(&lifecycle.admission, &remote_id);
+    if !admitted {
+        // A revoke bars the peer outright, so every connection it holds goes.
+        // An inbound allowlist miss is narrower: the allowlist only governs who
+        // may open a connection TO us, so a sibling outbound session this node
+        // dialled stays legal and must survive. Closing this handle is enough
+        // for clones of this QUIC connection; the pump evicts the cache entry
+        // published above.
+        let revoked = lifecycle.admission.is_revoked(&remote_id);
+        warn!(
+            peer_id = %peer_id,
+            revoked,
+            "Closing Iroh connection: peer was not admitted while it was being established"
+        );
+        if revoked {
+            super::endpoint_rpc::close_peer_connections(&lifecycle.peer_map, cache, &remote_id);
+        } else {
+            super::endpoint_rpc::restore_displaced_connection(cache, &connection, displaced);
+        }
+        connection.close(direction.refusal_code().into(), direction.refusal_reason());
+    }
+
+    // Always pump, including a refused connection: `increment_connections`
+    // above has already counted it, and the pump's cleanup is what decrements
+    // it. Returning early would leave the count stuck above zero, so the
+    // revoked peer would sit in `connected_peers` forever.
+    //
+    // Registered before any await below, deliberately. `PeerConnected` is a
+    // completion-class event, so its `send` can park on a full lane; a
+    // cancelled adopt parked there would leave a counted, cached connection
+    // with no pump and nothing to undo the publish. Registering first means the
+    // pump owns the cleanup from the moment the connection is published.
+    let context = lifecycle.stream_context(remote_id, cache);
+    let pump_connection = connection.clone();
+    let pump_context = context.clone();
+    let pump = spawn_task(&lifecycle.spawned_tasks, async move {
+        handle_connection_streams(pump_connection, remote_id, pump_context).await;
+    });
+    if pump.is_none() {
+        // The registry is closed, so the future was never polled and no pump
+        // owns this connection. Close our own handle — only this one, never
+        // every connection the peer holds, which may be healthy — and then run
+        // the pump's exit path once so the count this call added is balanced.
+        // The connection is not usable, so this is not an admission.
+        connection.close(direction.refusal_code().into(), b"endpoint shutting down");
+        finish_connection(&connection, remote_id, &context).await;
+        return AdoptionOutcome::ShuttingDown;
+    }
+
+    if admitted {
+        lifecycle.gossip.connected(remote_id, &connection);
+    }
+
+    if admitted
+        && is_new
+        && lifecycle
+            .event_tx
+            .send(TransportEvent::PeerConnected(peer_id.clone()))
+            .await
+            .is_err()
+    {
+        warn!("Event channel closed, cannot emit PeerConnected");
+    }
+
+    if admitted {
+        AdoptionOutcome::Admitted
+    } else {
+        AdoptionOutcome::Refused
+    }
+}
+
+/// The one exit path for a connection: drop this handle from the cache,
+/// decrement the peer-map count, and announce the peer gone when this was its
+/// last connection.
+///
+/// Called by the pump when `accept_bi` ends, and directly by
+/// [`adopt_new_connection`] when the task registry refused the pump. Exactly
+/// one of the two runs per adopted connection.
+async fn finish_connection(
+    connection: &Connection,
+    remote_id: EndpointId,
+    context: &ConnectionStreamContext,
+) {
+    super::endpoint_rpc::evict_connection(&context.connection_cache, remote_id, connection);
+    let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
+    debug!(
+        peer_id = %endpoint_id_to_peer_id(&remote_id),
+        fully_disconnected,
+        "Connection closed"
+    );
+
+    if fully_disconnected
+        && context
+            .event_tx
+            .send(TransportEvent::PeerDisconnected(endpoint_id_to_peer_id(
+                &remote_id,
+            )))
+            .await
+            .is_err()
+    {
+        debug!("Event channel closed, cannot emit PeerDisconnected");
     }
 }
 
@@ -226,19 +446,7 @@ pub(super) async fn handle_connection_streams(
         });
     }
 
-    super::endpoint_rpc::evict_connection(&context.connection_cache, remote_id, &connection);
-    let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
-    debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
-
-    if fully_disconnected
-        && context
-            .event_tx
-            .send(TransportEvent::PeerDisconnected(peer_id))
-            .await
-            .is_err()
-    {
-        debug!("Event channel closed, cannot emit PeerDisconnected");
-    }
+    finish_connection(&connection, remote_id, &context).await;
 }
 
 /// Read a stream's tag and length, then wait for room for its body. Resets

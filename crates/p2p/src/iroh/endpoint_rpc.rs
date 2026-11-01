@@ -3,6 +3,11 @@
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc as CacheOwner;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc as CacheOwner;
+
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
 use tokio::sync::oneshot;
@@ -14,6 +19,7 @@ use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
+use super::endpoint_streams::ConnectionLifecycle;
 use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
 use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
@@ -27,17 +33,52 @@ pub(super) struct ConnectionCacheState {
     legacy_connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
+    /// Only the test-only unmanaged path reads it: an adopting cache reaches
+    /// gossip through its lifecycle, which is the one place a new connection
+    /// is announced.
+    #[cfg(test)]
     gossip: GossipHandle,
+    /// What a connection this cache creates needs in order to be adopted.
+    /// `None` only for the test-only unmanaged cache; every production cache
+    /// holds one, so a connection it dials is always adopted.
+    lifecycle: Option<ConnectionLifecycle>,
 }
 
-pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
+/// The cache's shared-ownership pointer. Native builds need `Send + Sync` for
+/// the endpoint's spawned tasks; wasm32 is single-threaded, so `Rc` keeps the
+/// cache usable there without requiring its contents to be `Send`.
+pub(super) type ConnectionCache = CacheOwner<ConnectionCacheState>;
 
-pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
-    Arc::new(ConnectionCacheState {
+/// A cache that does not adopt: a test fixture that drives the dial path
+/// directly, with no peer map or task registry to adopt into.
+///
+/// Production always builds [`new_adopting_connection_cache`]; the unmanaged
+/// fallback in `connect_with_cache` is compiled only for tests, so a
+/// production cache cannot skip adoption.
+#[cfg(test)]
+pub(super) fn new_unmanaged_connection_cache(gossip: GossipHandle) -> ConnectionCache {
+    CacheOwner::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
         gossip,
+        lifecycle: None,
+    })
+}
+
+/// The endpoint's cache: a connection it dials here is adopted, so the peer
+/// that dialled us can open streams back over it.
+pub(super) fn new_adopting_connection_cache(
+    _gossip: GossipHandle,
+    lifecycle: ConnectionLifecycle,
+) -> ConnectionCache {
+    CacheOwner::new(ConnectionCacheState {
+        connections: HopscotchMap::with_hasher(RandomState::default()),
+        legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
+        dial_guards: HopscotchMap::with_hasher(RandomState::default()),
+        #[cfg(test)]
+        gossip: _gossip,
+        lifecycle: Some(lifecycle),
     })
 }
 
@@ -241,16 +282,44 @@ fn cached_connection(
 
 /// Keep protocol-specific paths separate so a concurrent legacy publication
 /// cannot overwrite a modern handle. The key comes from QUIC, not the caller.
+/// Publish this connection as the peer's shared handle, returning the entry it
+/// displaced.
+///
+/// The returned handle is the one this publish actually replaced, taken from
+/// the same atomic insert rather than a read before it, so a concurrent dial
+/// that got there first is reported instead of a stale snapshot. `None` when
+/// the slot was empty or the ALPN has no shared slot.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
     connection: &iroh::endpoint::Connection,
-) {
+) -> Option<iroh::endpoint::Connection> {
     let connections = match connection.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return None,
+    };
+    connections.insert(connection.remote_id(), connection.clone())
+}
+
+/// Put back the live sibling a refused publish displaced.
+///
+/// Evicts only this connection's own entry, so a concurrent dial that already
+/// replaced it wins, and inserts only into an empty slot for the same reason.
+pub(super) fn restore_displaced_connection(
+    cache: &ConnectionCache,
+    connection: &iroh::endpoint::Connection,
+    displaced: Option<iroh::endpoint::Connection>,
+) {
+    let Some(displaced) = displaced else {
+        return;
+    };
+    evict_connection(cache, connection.remote_id(), connection);
+    let connections = match displaced.alpn() {
         protocols::ALPN_MUX => &cache.connections,
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
         _ => return,
     };
-    connections.insert(connection.remote_id(), connection.clone());
+    let _ = connections.insert_if_absent(displaced.remote_id(), displaced);
 }
 
 /// Remove only this handle, leaving replacements visible to concurrent disconnects.
@@ -322,7 +391,7 @@ fn dial_guard(
 
 /// QUIC application error code used when locally closing a connection in
 /// response to a `disconnect` request.
-const DISCONNECT_ERROR_CODE: u32 = 0;
+pub(super) const DISCONNECT_ERROR_CODE: u32 = 0;
 
 /// Close and remove the cached connection to `endpoint_id`.
 ///
@@ -394,25 +463,51 @@ async fn connect_with_cache(
             return Err(error);
         }
     };
-    remember_connection(cache, &connection);
 
-    // Re-check AFTER caching, not only before the dial. The dial above can run
-    // for many seconds, and a revoke landing inside that window looked at the
-    // connection cache while this connection was still absent from it, so it
-    // closed nothing and the caller would go on to send RPC requests over it.
-    // Caching first and re-checking second means one of the two always sees
-    // the other: either the revoke finds this connection, or this finds the
-    // revoke. Same ordering as the accept and explicit-dial paths.
-    if !admission.admits_outbound(&endpoint_id) {
-        close_cached_connections(cache, &endpoint_id);
-        connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
-        return Err(crate::error::Error::Dial(format!(
-            "dial to {peer_id} raced a revoke: connection closed"
-        )));
+    // This connection is new, so it is adopted here: published to the peer map
+    // and the cache, re-checked for a revoke that landed during the dial,
+    // announced, and pumped. Without the pump the peer that dialled us can
+    // never open a stream back over this connection, because only the pump
+    // `accept_bi`s it.
+    // Test-only: an unmanaged cache has no peer map or task registry to adopt
+    // into, so it keeps the old publish-and-return path. Production caches
+    // always hold a lifecycle, so this branch cannot be reached there.
+    #[cfg(test)]
+    if cache.lifecycle.is_none() {
+        let _ = remember_connection(cache, &connection);
+        if !admission.admits_outbound(&endpoint_id) {
+            close_cached_connections(cache, &endpoint_id);
+            connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+            return Err(crate::error::Error::Dial(format!(
+                "dial to {peer_id} raced a revoke: connection closed"
+            )));
+        }
+        cache.gossip.connected(endpoint_id, &connection);
+        return Ok(connection);
     }
+    let lifecycle = cache
+        .lifecycle
+        .as_ref()
+        .expect("a production connection cache always adopts its new connections");
 
-    cache.gossip.connected(endpoint_id, &connection);
-    Ok(connection)
+    let outcome = super::endpoint_streams::adopt_new_connection(
+        lifecycle,
+        cache,
+        connection.clone(),
+        endpoint_id,
+        direct_addr,
+        super::endpoint_streams::ConnectionDirection::Outbound,
+    )
+    .await;
+    match outcome {
+        super::endpoint_streams::AdoptionOutcome::Admitted => Ok(connection),
+        super::endpoint_streams::AdoptionOutcome::Refused => Err(crate::error::Error::Dial(
+            format!("dial to {peer_id} raced a revoke: connection closed"),
+        )),
+        super::endpoint_streams::AdoptionOutcome::ShuttingDown => Err(crate::error::Error::Dial(
+            format!("dial to {peer_id} raced endpoint shutdown: connection closed"),
+        )),
+    }
 }
 
 /// Dial the mux, preferring a known direct address before falling back to
@@ -1156,7 +1251,7 @@ pub(super) async fn handle_block_sync(
     for provider in &providers {
         let endpoint = endpoint.clone();
         let peer_map = Arc::clone(&peer_map);
-        let connection_cache = Arc::clone(&connection_cache);
+        let connection_cache = connection_cache.clone();
         let event_tx = event_tx.clone();
         let admission = Arc::clone(&admission);
         let provider = provider.clone();
@@ -1397,8 +1492,8 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &connection);
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
+        let _ = remember_connection(&cache, &connection);
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         admission.revoke(accept_ep.id());
@@ -1444,7 +1539,7 @@ mod tests {
         let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
 
         let peer_map = Arc::new(SharedPeerMap::new());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         let id = accept_ep.id();
         peer_map.increment_connections(id, None, conn_a.clone());
         peer_map.increment_connections(id, None, conn_b.clone());
@@ -1484,8 +1579,8 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &connection);
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
+        let _ = remember_connection(&cache, &connection);
         assert!(cached_connection(&cache, &peer).unwrap().is_some());
 
         retire_timed_out_connection(&cache, &peer, &connection);
@@ -1529,10 +1624,10 @@ mod tests {
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         assert_ne!(old.stable_id(), newer.stable_id());
-        remember_connection(&cache, &old);
-        remember_connection(&cache, &newer);
+        let _ = remember_connection(&cache, &old);
+        let _ = remember_connection(&cache, &newer);
 
         retire_timed_out_connection(&cache, &peer, &old);
 
@@ -1542,6 +1637,51 @@ mod tests {
         assert_eq!(cached.stable_id(), newer.stable_id());
         assert!(newer.close_reason().is_none());
         assert!(old.close_reason().is_some());
+
+        accept_task.abort();
+    }
+
+    /// The publish reports the entry it actually replaced, not a snapshot taken
+    /// before it. A refusal that restores the displaced handle must therefore
+    /// put back the connection the insert displaced, even when another dial
+    /// replaced the slot in between.
+    #[tokio::test]
+    async fn remember_connection_reports_the_entry_it_displaced() {
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+        let accept_task = n0_future::task::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(connection) = incoming.await {
+                        held.push(connection);
+                    }
+                }
+            }
+        });
+
+        let first = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect first");
+        let second = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect second");
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
+
+        assert!(
+            remember_connection(&cache, &first).is_none(),
+            "an empty slot displaces nothing"
+        );
+        let displaced = remember_connection(&cache, &second)
+            .expect("the second publish must report the entry it replaced");
+        assert_eq!(
+            displaced.stable_id(),
+            first.stable_id(),
+            "the reported entry must be the one this insert replaced"
+        );
 
         accept_task.abort();
     }
@@ -1559,7 +1699,7 @@ mod tests {
             .copied()
             .expect("listener direct address");
         let peer_id = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache(GossipHandle::new());
+        let cache = new_unmanaged_connection_cache(GossipHandle::new());
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
         let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1581,7 +1721,7 @@ mod tests {
         for _ in 0..CALLERS {
             let endpoint = dial_ep.clone();
             let peer_id = peer_id.clone();
-            let cache = Arc::clone(&cache);
+            let cache = cache.clone();
             let admission = Arc::clone(&admission);
             let barrier = Arc::clone(&barrier);
             callers.spawn(async move {
