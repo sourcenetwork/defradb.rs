@@ -544,6 +544,19 @@ fn lifecycle_with(
     (lifecycle, received)
 }
 
+/// Poll a predicate until it holds, bounded by the suite's 2s budget. Used
+/// where cleanup runs on a spawned pump rather than inline in the call.
+async fn wait_until<F: FnMut() -> bool>(mut predicate: F, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !predicate() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
 /// A closed task registry refuses the pump, so adoption must close only the
 /// handle it just took, retire its cache entry, and leave the peer-map count
 /// balanced — without touching a healthy connection to another peer.
@@ -576,12 +589,20 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
             );
             let cache = new_adopting_connection_cache(gossip.clone(), healthy_lifecycle.clone());
 
-            let (healthy_outbound, healthy_incoming) = tokio::join!(
+            let (healthy_outbound, healthy_connection) = tokio::join!(
                 healthy_peer.connect(local.addr(), protocols::ALPN_MUX),
-                async { local.accept().await.unwrap() },
+                async {
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },
             );
             let healthy_outbound = healthy_outbound.unwrap();
-            let healthy_connection = healthy_incoming.accept().unwrap().await.unwrap();
             assert!(
                 adopt_new_connection(
                     &healthy_lifecycle,
@@ -617,12 +638,19 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
                 let _ = task.await;
             }
 
-            let (refused_outbound, refused_incoming) = tokio::join!(
+            let (_refused_outbound, refused_connection) = tokio::join!(
                 refused_peer.connect(local.addr(), protocols::ALPN_MUX),
-                async { local.accept().await.unwrap() },
+                async {
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },
             );
-            let refused_outbound = refused_outbound.unwrap();
-            let refused_connection = refused_incoming.accept().unwrap().await.unwrap();
             let admitted = adopt_new_connection(
                 &closed_lifecycle,
                 &cache,
@@ -719,12 +747,18 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
             // that must refuse it.
             assert!(admission.revoke(peer.id()));
 
-            let (outbound, incoming) =
+            let (outbound, connection) =
                 tokio::join!(peer.connect(local.addr(), protocols::ALPN_MUX), async {
-                    local.accept().await.unwrap()
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
                 },);
             let outbound = outbound.unwrap();
-            let connection = incoming.accept().unwrap().await.unwrap();
             let admitted = adopt_new_connection(
                 &lifecycle,
                 &cache,
@@ -744,19 +778,33 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
                 cache.connections.get(&peer.id()).is_none(),
                 "a revoked adoption must leave no cache entry"
             );
+            // The refused connection is still pumped, and the pump's exit path
+            // is what decrements the count, so the peer map settles a moment
+            // after adoption returns.
+            wait_until(
+                || peer_map.connection(&peer.id()).is_none(),
+                "the revoked peer's peer-map count to reach zero",
+            )
+            .await;
+            wait_until(
+                || peer_map.connected_peers().is_empty(),
+                "the revoked peer to leave connected_peers",
+            )
+            .await;
+
+            // The pump's cleanup may announce PeerDisconnected; what must never
+            // appear is a PeerConnected for the revoked peer.
+            let mut announced = Vec::new();
+            while let Ok(Some(event)) =
+                n0_future::time::timeout(std::time::Duration::from_secs(2), events.recv()).await
+            {
+                announced.push(event);
+            }
             assert!(
-                peer_map.connection(&peer.id()).is_none(),
-                "a revoked adoption must leave no peer-map count"
-            );
-            assert!(
-                peer_map.connected_peers().is_empty(),
-                "a revoked peer must not appear connected"
-            );
-            assert!(
-                n0_future::time::timeout(std::time::Duration::from_secs(2), events.recv())
-                    .await
-                    .is_err(),
-                "a revoked peer must not be announced as connected"
+                !announced
+                    .iter()
+                    .any(|event| matches!(event, TransportEvent::PeerConnected(_))),
+                "a revoked peer must not be announced as connected: {announced:?}"
             );
 
             for task in spawned_tasks.close() {
