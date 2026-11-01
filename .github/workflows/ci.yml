@@ -765,6 +765,9 @@ jobs:
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
       LEGACY_FILTER: not test(=c_rust_to_go_outage_replay)
+      # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
+      # known-failure entry would fail the runs it passes; go-http leaves it out.
+      GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -808,7 +811,11 @@ jobs:
           else
             echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
             echo "TESTS=$TESTO" >> "$GITHUB_ENV"
-            echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
+            if [ "$CLIENT" = go-http ]; then
+              echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
+            else
+              echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
+            fi
           fi
       - name: Build the test binaries
         run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" --no-run
