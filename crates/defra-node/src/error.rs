@@ -53,9 +53,9 @@ pub enum Error {
     /// The node network runtime did not start.
     #[error(transparent)]
     EdgeRuntime(#[from] edge::EdgeError),
-    /// The policy YAML was rejected.
-    #[error("{0}")]
-    PolicyYaml(String),
+    /// A DAC policy operation was refused.
+    #[error(transparent)]
+    DacPolicy(#[from] db::DacPolicyError),
     /// A signed block could not be read or verified.
     #[error("{0}")]
     BlockAccess(String),
@@ -101,16 +101,6 @@ pub enum Error {
     #[error("bootstrap downsample collections error: {0}")]
     DownsampleBootstrap(#[source] db::Error),
 
-    /// Looking a policy up failed.
-    #[error("failed to get policy: {0}")]
-    PolicyLookup(#[source] zanzibar::error::Error),
-    /// Looking a policy up on the on-chain provider failed.
-    #[cfg(feature = "vera")]
-    #[error("failed to get policy: {0}")]
-    VeraPolicyLookup(#[source] vera::ProviderError),
-    /// The operation needs ACP and none is configured.
-    #[error("operation requires ACP, but ACP not available")]
-    AcpUnavailable,
     /// An identity string is not a DID.
     #[error("invalid identity DID: {0}")]
     InvalidIdentityDid(#[source] identity::Error),
@@ -145,31 +135,6 @@ pub enum Error {
         /// The resource that was searched.
         resource: String,
     },
-    /// A policy was submitted without a creator.
-    #[error("policy creator can not be empty")]
-    PolicyCreatorEmpty,
-    /// A policy was submitted without data.
-    #[error("policy data can not be empty")]
-    PolicyDataEmpty,
-    /// A policy has no name.
-    #[error("name required")]
-    PolicyNameRequired,
-    /// An explicit policy counter was given to a remote ACP.
-    #[error("explicit policy counters apply to local ACP only")]
-    ExplicitCounterRemote,
-    /// The on-chain provider rejected the policy.
-    #[cfg(feature = "vera")]
-    #[error("Vera create policy failed: {0}")]
-    VeraCreatePolicy(#[source] vera::ProviderError),
-    /// Allocating a policy ID failed.
-    #[error("failed to allocate policy ID: {0}")]
-    PolicyIdAllocation(#[source] zanzibar::error::Error),
-    /// The policy is invalid.
-    #[error("invalid policy: {0}")]
-    InvalidPolicy(#[source] acp::Error),
-    /// Storing the policy failed.
-    #[error("failed to store policy: {0}")]
-    PolicyStore(#[source] zanzibar::error::Error),
     /// Owner relations are managed by the system only.
     #[error("OPERATION_FORBIDDEN: cannot add owner relation")]
     OwnerRelationAdd,

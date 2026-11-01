@@ -19,7 +19,6 @@ use crate::p2p::{
     p2p_sync_status,
 };
 use crate::query::exec_request;
-use crate::schema::validate_collection_policy;
 use crate::state::NODES;
 use crate::types::{c_str_to_string, defra_free_string, FfiResult, NewNodeResult, NodeInitOptions};
 use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
@@ -375,10 +374,9 @@ pub extern "C" fn defra_mobile_ensure_schema(
             NodePermission::CollectionPatch
         ));
 
-        let (database, policy_store, document_acp, node_identity_did) = match NODES.get(node_ptr, |state| {
+        let (database, document_acp, node_identity_did) = match NODES.get(node_ptr, |state| {
             (
                 state.database.clone(),
-                state.policy_store.clone(),
                 state.document_acp.clone(),
                 state.identity_did(),
             )
@@ -423,7 +421,10 @@ pub extern "C" fn defra_mobile_ensure_schema(
 
             for collection in &to_create {
                 if let Some(ref policy) = collection.policy {
-                    validate_collection_policy(policy, &policy_store)?;
+                    database
+                        .validate_resource_interface(&policy.id, &policy.resource_name)
+                        .await
+                        .map_err(|error| error.to_string())?;
                 }
             }
             let created = to_create

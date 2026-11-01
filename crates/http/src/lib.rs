@@ -128,9 +128,8 @@ pub use router::{
     create_router, create_router_with_rest, create_router_with_state, AppState, AppStateBuilder,
 };
 pub use router::{
-    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
-    IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations,
-    NodePermission, PolicyInfo, ViewOperations,
+    BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
+    IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
@@ -139,10 +138,9 @@ pub use tls::TlsConfig;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use mock::{
-    FailingMockAcpOperations, FailingMockBackupOperations, FailingMockExecutor,
-    FailingMockIndexOperations, FailingMockNodeAcpOperations, FailingMockP2POperations,
-    FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
-    MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
-    MockIndexOperations, MockNodeAcpOperations, MockP2POperations, MockQueryExecutor,
-    MockRestOperations,
+    FailingMockBackupOperations, FailingMockExecutor, FailingMockIndexOperations,
+    FailingMockNodeAcpOperations, FailingMockP2POperations, FailingMockRestOperations,
+    MockBackupOperations, MockBlockOperations, MockCollectionManagementOperations,
+    MockDocumentAcpOperations, MockEncryptedIndexOperations, MockIndexOperations,
+    MockNodeAcpOperations, MockP2POperations, MockQueryExecutor, MockRestOperations,
 };

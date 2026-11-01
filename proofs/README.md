@@ -82,6 +82,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
+| Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 
 ### Backlog — current retry-era gaps

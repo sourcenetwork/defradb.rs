@@ -606,6 +606,52 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::add_dac_policy_as`](crate::txn::TransactionRegistry::add_dac_policy_as).
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, policy);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::list_dac_policies_as`](crate::txn::TransactionRegistry::list_dac_policies_as).
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::get_dac_policy_as`](crate::txn::TransactionRegistry::get_dac_policy_as).
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        let _ = (context, policy_id);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::acp_light_client_status_as`](crate::txn::TransactionRegistry::acp_light_client_status_as).
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
     async fn set_migration_as(
         &self,

@@ -21,7 +21,13 @@ const DID_B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 
 async fn node_with_protected_users() -> (Node, String) {
     let node = Node::builder().build().await.unwrap();
-    let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+    let policy_id = node
+        .add_dac_policy_as(
+            &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
+            POLICY_YAML,
+        )
+        .await
+        .unwrap();
     node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
@@ -83,9 +89,21 @@ async fn visible_users(node: &Node, identity: Option<identity::Did>) -> usize {
 fn add_dac_policy_rejects_empty_identity_and_policy() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        let err = node.add_dac_policy("", POLICY_YAML).await.unwrap_err();
+        let err = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(""))),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err.to_string(), "policy creator can not be empty");
-        let err = node.add_dac_policy(DID_A, "").await.unwrap_err();
+        let err = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
+                "",
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err.to_string(), "policy data can not be empty");
         node.shutdown().await.unwrap();
     })
@@ -96,10 +114,10 @@ fn add_dac_policy_rejects_empty_identity_and_policy() {
 fn add_dac_policy_returns_id_and_validates_policy() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
-    let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+    let policy_id = node.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML).await.unwrap();
     assert!(!policy_id.is_empty());
     let bad = "name: Bad\nresources:\n  - name: users\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: undeclared\n";
-    assert!(node.add_dac_policy(DID_A, bad).await.is_err());
+    assert!(node.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), bad).await.is_err());
     node.shutdown().await.unwrap();
 })
     .unwrap()
@@ -284,7 +302,13 @@ fn dac_relationship_requires_a_collection_policy() {
 fn document_acp_handle_registers_and_checks_a_document() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
-        let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+        let policy_id = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap();
         let did_a = identity::Did::new(DID_A).unwrap();
 
         let document_acp = node.document_acp();
@@ -332,7 +356,7 @@ fn node_identity_does_not_bypass_protected_history_reads() {
         .build()
         .await
         .unwrap();
-    let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+    let policy_id = node.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML).await.unwrap();
     node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
@@ -404,14 +428,23 @@ fn add_dac_policy_is_gated_by_node_access_control() {
             .await
             .unwrap();
 
-        let err = node.add_dac_policy(DID_B, POLICY_YAML).await.unwrap_err();
+        let err = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_B))),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap_err();
         assert_eq!(
             err.to_string(),
             "not authorized to perform operation. Permission: add-dac-policy"
         );
-        node.add_dac_policy(&node_did, POLICY_YAML)
-            .await
-            .expect("node identity must bypass NAC");
+        node.add_dac_policy_as(
+            &defra_core::RequestContext::ambient().with_identity(Some(String::from(&node_did))),
+            POLICY_YAML,
+        )
+        .await
+        .expect("node identity must bypass NAC");
 
         node.shutdown().await.unwrap();
         defra_core::signing::clear_identity_store();
@@ -429,23 +462,23 @@ fn policy_id_reproducible_with_explicit_counter() {
     workers::block_on(async {
     let creator = Node::builder().build().await.unwrap();
     let follower = Node::builder().build().await.unwrap();
-    let id = creator.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+    let id = creator.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML).await.unwrap();
 
     let unrelated = "name: unrelated\nresources:\n  - name: users\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n";
-    follower.add_dac_policy(DID_A, unrelated).await.unwrap();
-    let diverged = follower.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
+    follower.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), unrelated).await.unwrap();
+    let diverged = follower.add_dac_policy_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML).await.unwrap();
     assert_ne!(
         diverged, id,
         "plain re-registration diverges after unrelated history"
     );
 
     let reproduced = follower
-        .add_dac_policy_with_counter(DID_A, POLICY_YAML, 1)
+        .add_dac_policy_with_counter_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML, 1)
         .await
         .unwrap();
     assert_eq!(reproduced, id);
     let again = follower
-        .add_dac_policy_with_counter(DID_A, POLICY_YAML, 1)
+        .add_dac_policy_with_counter_as(&defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))), POLICY_YAML, 1)
         .await
         .unwrap();
     assert_eq!(again, id);
@@ -477,7 +510,12 @@ fn concurrent_identical_policy_adds_get_distinct_ids_across_a_restart() {
                 .map(|_| {
                     let node = std::sync::Arc::clone(&node);
                     workers::spawn(None, "test", move || async move {
-                        node.add_dac_policy(DID_A, POLICY_YAML).await
+                        node.add_dac_policy_as(
+                            &defra_core::RequestContext::ambient()
+                                .with_identity(Some(String::from(DID_A))),
+                            POLICY_YAML,
+                        )
+                        .await
                     })
                     .unwrap()
                 })
@@ -488,7 +526,14 @@ fn concurrent_identical_policy_adds_get_distinct_ids_across_a_restart() {
             node.shutdown().await.unwrap();
         }
         let node = Node::builder().data_path(dir.path()).build().await.unwrap();
-        ids.push(node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap());
+        ids.push(
+            node.add_dac_policy_as(
+                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap(),
+        );
         node.shutdown().await.unwrap();
 
         let mut distinct = ids.clone();

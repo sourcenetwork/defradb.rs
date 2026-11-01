@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use testo::prelude::*;
 
 use crate::client_type::network_edge;
+use crate::scenario::identity::private_key_hex;
 use crate::scenario::Failure;
 use crate::test_case::State;
 
@@ -40,7 +41,30 @@ impl State {
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let client = HttpClient::new(&self.url_on(name)?).expect("http client");
+        self.http_as(name, None, call)
+    }
+
+    /// [`State::http_on`] as client identity `identity` when the action
+    /// names one: its requests carry a bearer token for the node.
+    pub fn http_as<F, Fut, T>(
+        &self,
+        name: &str,
+        identity: Option<u64>,
+        call: F,
+    ) -> Result<T, Failure>
+    where
+        F: FnOnce(HttpClient) -> Fut,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let url = self.url_on(name)?;
+        let token = identity.map(|seed| {
+            cli::commands::client::generate_auth_token(&private_key_hex(seed), &url)
+                .expect("a token for a test identity")
+        });
+        let client = HttpClient::new(&url)
+            .expect("http client")
+            .with_auth_token(token);
         Ok(self
             .block_on(network_edge().spawn(call(client)))
             .expect("run on the network edge"))

@@ -68,6 +68,16 @@ impl Common {
             false => Ok(()),
         }
     }
+
+    /// The seed of the client identity the action runs as, `None` for the
+    /// ambient identity. Fails with `unsupported` for a node's identity,
+    /// which the clients do not offer yet.
+    pub fn client_identity(&self, op: &str) -> Result<Option<u64>, Failure> {
+        match self.identity_node.is_some() {
+            true => Err(Failure::unsupported(format!("{op} argument identityNode"))),
+            false => Ok(self.identity_seed),
+        }
+    }
 }
 
 /// How an action is polled until its expectation holds.

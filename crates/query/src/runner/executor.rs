@@ -323,6 +323,36 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_dac_policy_as(context, policy).await
+    }
+
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        self.registry.list_dac_policies_as(context).await
+    }
+
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        self.registry.get_dac_policy_as(context, policy_id).await
+    }
+
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        self.registry.acp_light_client_status_as(context).await
+    }
+
     async fn set_migration_as(
         &self,
         context: &RequestContext,

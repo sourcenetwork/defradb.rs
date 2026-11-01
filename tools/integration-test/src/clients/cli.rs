@@ -37,11 +37,30 @@ impl State {
         txn: Option<usize>,
         args: &[&str],
     ) -> Result<Value, String> {
+        self.defra_client_as(name, txn, None, args)
+    }
+
+    /// [`State::defra_client_on`] as client identity `identity` when the
+    /// action names one.
+    pub fn defra_client_as(
+        &self,
+        name: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        args: &[&str],
+    ) -> Result<Value, String> {
         let url = self.url_on(name).map_err(|failure| failure.message)?;
-        match self.txn_id(txn) {
-            Some(id) => self.defra_client(&url, &[&["--tx", id.as_str()], args].concat()),
-            None => self.defra_client(&url, args),
+        let txn = self.txn_id(txn);
+        let key = identity.map(crate::scenario::identity::private_key_hex);
+        let mut all = Vec::with_capacity(args.len() + 4);
+        if let Some(id) = &txn {
+            all.extend(["--tx", id.as_str()]);
         }
+        if let Some(key) = &key {
+            all.extend(["--identity", key.as_str()]);
+        }
+        all.extend_from_slice(args);
+        self.defra_client(&url, &all)
     }
 
     /// Runs `defra client <args>` against the node at `url`: what it printed as JSON

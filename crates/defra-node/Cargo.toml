@@ -78,7 +78,6 @@ storage = { path = "../storage" }
 query = { path = "../query" }
 events = { path = "../events" }
 acp = { path = "../acp" }
-zanzibar = { path = "../zanzibar" }
 vera = { path = "../vera", optional = true }
 identity = { path = "../identity" }
 defra-core = { path = "../defra-core" }
@@ -122,6 +121,7 @@ telemetry = { path = "../telemetry", default-features = false }
 mimalloc.workspace = true
 
 [dev-dependencies]
+zanzibar = { path = "../zanzibar" }
 document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
