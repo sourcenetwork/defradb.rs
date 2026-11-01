@@ -3,6 +3,11 @@
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc as CacheOwner;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc as CacheOwner;
+
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
 use tokio::sync::oneshot;
@@ -39,7 +44,10 @@ pub(super) struct ConnectionCacheState {
     lifecycle: Option<ConnectionLifecycle>,
 }
 
-pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
+/// The cache's shared-ownership pointer. Native builds need `Send + Sync` for
+/// the endpoint's spawned tasks; wasm32 is single-threaded, so `Rc` keeps the
+/// cache usable there without requiring its contents to be `Send`.
+pub(super) type ConnectionCache = CacheOwner<ConnectionCacheState>;
 
 /// A cache that does not adopt: a test fixture that drives the dial path
 /// directly, with no peer map or task registry to adopt into.
@@ -49,7 +57,7 @@ pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 /// production cache cannot skip adoption.
 #[cfg(test)]
 pub(super) fn new_unmanaged_connection_cache(gossip: GossipHandle) -> ConnectionCache {
-    Arc::new(ConnectionCacheState {
+    CacheOwner::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
@@ -64,7 +72,7 @@ pub(super) fn new_adopting_connection_cache(
     _gossip: GossipHandle,
     lifecycle: ConnectionLifecycle,
 ) -> ConnectionCache {
-    Arc::new(ConnectionCacheState {
+    CacheOwner::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
@@ -1255,7 +1263,7 @@ pub(super) async fn handle_block_sync(
     for provider in &providers {
         let endpoint = endpoint.clone();
         let peer_map = Arc::clone(&peer_map);
-        let connection_cache = Arc::clone(&connection_cache);
+        let connection_cache = connection_cache.clone();
         let event_tx = event_tx.clone();
         let admission = Arc::clone(&admission);
         let provider = provider.clone();
@@ -1680,7 +1688,7 @@ mod tests {
         for _ in 0..CALLERS {
             let endpoint = dial_ep.clone();
             let peer_id = peer_id.clone();
-            let cache = Arc::clone(&cache);
+            let cache = cache.clone();
             let admission = Arc::clone(&admission);
             let barrier = Arc::clone(&barrier);
             callers.spawn(async move {

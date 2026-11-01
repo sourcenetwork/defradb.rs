@@ -185,7 +185,7 @@ impl ConnectionLifecycle {
         ConnectionStreamContext {
             event_tx: self.event_tx.clone(),
             peer_map: Arc::clone(&self.peer_map),
-            connection_cache: Arc::clone(cache),
+            connection_cache: cache.clone(),
             node_identity: self.node_identity.clone(),
             spawned_tasks: Arc::clone(&self.spawned_tasks),
             inbound_budget: Arc::clone(&self.inbound_budget),

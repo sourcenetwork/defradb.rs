@@ -136,7 +136,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_request_response(
@@ -244,7 +244,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_two_stream_request(
@@ -266,7 +266,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
@@ -304,7 +304,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
@@ -342,7 +342,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let fetch_stats = Arc::clone(&resources.fetch_stats);
             let event_tx = event_tx.clone();
@@ -368,7 +368,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
@@ -393,7 +393,7 @@ pub(super) async fn handle_command(
             expect_reply(resources, &peer_id, protocols::STREAM_SE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
@@ -420,7 +420,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
@@ -445,7 +445,7 @@ pub(super) async fn handle_command(
             expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
@@ -472,7 +472,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
@@ -497,7 +497,7 @@ pub(super) async fn handle_command(
             expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
@@ -524,7 +524,7 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
+            let connection_cache = connection_cache.clone();
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
@@ -552,7 +552,7 @@ pub(super) async fn handle_command(
             let resources = BlockSyncResources::new(
                 endpoint.clone(),
                 Arc::clone(peer_map),
-                Arc::clone(connection_cache),
+                connection_cache.clone(),
                 event_tx.clone(),
                 Arc::clone(&resources.admission),
                 Arc::clone(&resources.fetch_stats),

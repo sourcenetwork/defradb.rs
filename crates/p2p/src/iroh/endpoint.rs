@@ -205,7 +205,7 @@ async fn run_event_loop(
         endpoint: endpoint.clone(),
         gossip: gossip.clone(),
         peer_map: Arc::clone(&peer_map),
-        connection_cache: Arc::clone(&connection_cache),
+        connection_cache: connection_cache.clone(),
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
         admission,
