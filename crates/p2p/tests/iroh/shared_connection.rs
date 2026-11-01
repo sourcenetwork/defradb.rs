@@ -530,8 +530,7 @@ fn lifecycle_with(
     ConnectionLifecycle,
     crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
-    let (lifecycle, _event_tx, received) = lifecycle_with_capacity(
-        8,
+    let (lifecycle, _event_tx, received) = lifecycle_with_capacity::<8>(
         peer_map,
         spawned_tasks,
         admission,
@@ -546,8 +545,11 @@ fn lifecycle_with(
 /// [`lifecycle_with`] with an explicit per-lane event capacity, so a test can
 /// saturate one event lane on purpose. Returns the sender too, because the
 /// lifecycle's own sender is private to its module.
-fn lifecycle_with_capacity(
-    capacity: usize,
+///
+/// The capacity is a const parameter rather than an argument: it is fixed per
+/// test, and keeping it out of the signature leaves the helper at seven
+/// arguments.
+fn lifecycle_with_capacity<const CAPACITY: usize>(
     peer_map: &Arc<SharedPeerMap>,
     spawned_tasks: &SpawnedTasks,
     admission: &Arc<PeerAdmission>,
@@ -560,7 +562,7 @@ fn lifecycle_with_capacity(
     crate::sync::DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
-    let (events, received) = crate::sync::dispatch_queue(capacity);
+    let (events, received) = crate::sync::dispatch_queue(CAPACITY);
     let lifecycle = ConnectionLifecycle::from_parts(
         events.clone(),
         Arc::clone(peer_map),
@@ -880,8 +882,7 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
             let solicited = Arc::new(Solicited::new());
             let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
             // One slot per lane, so a single event fills the completion lane.
-            let (lifecycle, event_tx, mut events) = lifecycle_with_capacity(
-                1,
+            let (lifecycle, event_tx, mut events) = lifecycle_with_capacity::<1>(
                 &peer_map,
                 &spawned_tasks,
                 &admission,

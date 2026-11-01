@@ -301,11 +301,11 @@ pub(super) async fn adopt_new_connection(
     // it. Returning early would leave the count stuck above zero, so the
     // revoked peer would sit in `connected_peers` forever.
     //
-    // Registered before any await below, deliberately. `PeerConnected` is an
-    // inline-class event, so its `send` can park on a full lane; a cancelled
-    // adopt parked there would leave a counted, cached connection with no pump
-    // and nothing to undo the publish. Registering first means the pump owns
-    // the cleanup from the moment the connection is published.
+    // Registered before any await below, deliberately. `PeerConnected` is a
+    // completion-class event, so its `send` can park on a full lane; a
+    // cancelled adopt parked there would leave a counted, cached connection
+    // with no pump and nothing to undo the publish. Registering first means the
+    // pump owns the cleanup from the moment the connection is published.
     let context = lifecycle.stream_context(remote_id, cache);
     let pump_connection = connection.clone();
     let pump_context = context.clone();
