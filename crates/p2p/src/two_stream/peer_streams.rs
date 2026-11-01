@@ -8,16 +8,21 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use kovan_map::HopscotchMap;
 use libp2p::PeerId;
-use rapidhash::fast::RandomState;
+use rapidhash::{HashMapExt, RapidHashMap};
 
-/// Inbound streams running per peer, against an optional cap.
+/// The fewest counters kept before idle ones are dropped.
+const MIN_PRUNE_AT: usize = 64;
+
+/// Inbound streams running per peer, against an optional cap. Only the
+/// runner admits, so only it can raise a counter: a counter it finds at zero
+/// has no stream left to give a slot back, and is dropped with its peer.
 pub(crate) struct PeerStreams {
     cap: Option<usize>,
-    // One counter per peer seen. A counter is not evicted at zero: an admit
-    // racing the eviction would count against a counter no longer in the map.
-    running: HopscotchMap<PeerId, Arc<AtomicUsize>, RandomState>,
+    running: RapidHashMap<PeerId, Arc<AtomicUsize>>,
+    // Idle counters are dropped once this many peers are counted, so the map
+    // holds at most twice the peers with a stream running.
+    prune_at: usize,
 }
 
 /// One admitted stream's slot, given back when dropped.
@@ -36,25 +41,34 @@ impl PeerStreams {
     pub(crate) fn new(cap: Option<usize>) -> Self {
         Self {
             cap: cap.filter(|&cap| cap > 0),
-            running: HopscotchMap::with_hasher(RandomState::default()),
+            running: RapidHashMap::new(),
+            prune_at: MIN_PRUNE_AT,
         }
     }
 
     /// A slot for a stream from `peer`, or `None` when the peer already runs
     /// `cap` streams. With no cap every stream is admitted.
-    pub(crate) fn admit(&self, peer: PeerId) -> Option<StreamAdmission> {
+    pub(crate) fn admit(&mut self, peer: PeerId) -> Option<StreamAdmission> {
         let Some(cap) = self.cap else {
             return Some(StreamAdmission(None));
         };
-        let count = self
-            .running
-            .get_or_insert(peer, Arc::new(AtomicUsize::new(0)));
-        count
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |running| {
-                (running < cap).then_some(running + 1)
-            })
-            .ok()
-            .map(|_| StreamAdmission(Some(count)))
+        if self.running.len() >= self.prune_at {
+            self.running
+                .retain(|_, count| count.load(Ordering::Acquire) > 0);
+            self.prune_at = MIN_PRUNE_AT.max(self.running.len() * 2);
+        }
+        let count = self.running.entry(peer).or_default();
+        if count.load(Ordering::Acquire) >= cap {
+            return None;
+        }
+        count.fetch_add(1, Ordering::AcqRel);
+        Some(StreamAdmission(Some(Arc::clone(count))))
+    }
+
+    /// How many peers have a counter.
+    #[cfg(test)]
+    fn counted(&self) -> usize {
+        self.running.len()
     }
 }
 
@@ -64,7 +78,7 @@ mod tests {
 
     #[test]
     fn a_peer_runs_at_most_cap_streams_and_gets_slots_back() {
-        let streams = PeerStreams::new(Some(2));
+        let mut streams = PeerStreams::new(Some(2));
         let (peer, other) = (PeerId::random(), PeerId::random());
         let first = streams.admit(peer).unwrap();
         let second = streams.admit(peer).unwrap();
@@ -81,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_cap_of_zero_is_unset_and_admits_every_stream() {
-        let streams = PeerStreams::new(Some(0));
+        let mut streams = PeerStreams::new(Some(0));
         let peer = PeerId::random();
         let held: Vec<_> = (0..100).map(|_| streams.admit(peer).unwrap()).collect();
         assert_eq!(held.len(), 100);
@@ -89,9 +103,23 @@ mod tests {
 
     #[test]
     fn without_a_cap_every_stream_is_admitted() {
-        let streams = PeerStreams::new(None);
+        let mut streams = PeerStreams::new(None);
         let peer = PeerId::random();
         let held: Vec<_> = (0..100).map(|_| streams.admit(peer).unwrap()).collect();
         assert_eq!(held.len(), 100);
+    }
+
+    #[test]
+    fn idle_peers_are_dropped_and_busy_ones_kept() {
+        let mut streams = PeerStreams::new(Some(1));
+        let busy = PeerId::random();
+        let held = streams.admit(busy).unwrap();
+        for _ in 0..10 * MIN_PRUNE_AT {
+            drop(streams.admit(PeerId::random()).unwrap());
+        }
+        assert!(streams.counted() <= MIN_PRUNE_AT, "idle peers are dropped");
+        assert!(streams.admit(busy).is_none(), "a busy peer keeps its count");
+        drop(held);
+        assert!(streams.admit(busy).is_some());
     }
 }
