@@ -66,14 +66,18 @@ impl HttpRun for SetActiveCollectionVersion {
                 state.txn_id(action.txn),
                 action.version_id.as_str().to_owned(),
             );
+            let in_txn = txn.is_some();
             state
                 .http_on(action.common.node(), |client| async move {
                     client
                         .set_active_collection_version(txn.as_deref(), &version_id)
                         .await
                 })?
-                .map(|()| json!({}))
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            if !in_txn {
+                state.wait_for_indexes_built(action.common.node())?;
+            }
+            Ok(json!({}))
         });
     }
 }

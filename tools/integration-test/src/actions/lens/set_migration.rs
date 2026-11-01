@@ -74,12 +74,16 @@ impl HttpRun for ConfigureMigration {
         crate::scenario::execute_with(self, state, |action, state| {
             action.common.plain(Self::name())?;
             let (txn, config) = (state.txn_id(action.txn), action.config());
-            state
+            let in_txn = txn.is_some();
+            let id = state
                 .http_on(action.common.node(), |client| async move {
                     client.set_migration(txn.as_deref(), &config).await
                 })?
-                .map(|id| json!({ "lensID": id }))
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            if !in_txn {
+                state.wait_for_indexes_built(action.common.node())?;
+            }
+            Ok(json!({ "lensID": id }))
         });
     }
 }

@@ -21,6 +21,9 @@ pub struct GraphQLResponse {
     pub data: Option<JsonValue>,
     #[serde(default)]
     pub errors: Vec<GraphQLError>,
+    /// Extra information about a request that worked, such as warnings.
+    #[serde(default)]
+    pub extensions: Option<JsonValue>,
 }
 
 /// GraphQL error

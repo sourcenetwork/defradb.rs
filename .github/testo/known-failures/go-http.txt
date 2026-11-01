@@ -1,0 +1,15 @@
+# Tests that fail under DEFRA_CLIENT=go-http. Enforced by .github/scripts/testo-report.ts on every CI run:
+# - each line is `<binary> <test> #<issue>`, and the issue must be open;
+# - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
+# - an entry a pull request adds is printed as a warning naming that pull request.
+# go-http is the reference client: list a test here only when its issue explains why Go itself differs.
+encryption_scenarios encryption::commit::doc_encryption_upon_encryption_several_docs_should_store_all_commits_delta_encrypted #2519
+encryption_scenarios encryption::commit::doc_encryption_upon_update_on_counter_crdt_should_encrypted_commit_delta #2519
+encryption_scenarios encryption::commit::doc_encryption_upon_update_on_lwwcrdt_should_encrypt_commit_delta #2519
+encryption_scenarios encryption::commit::doc_encryption_with_encryption_on_counter_crdt_should_store_commits_delta_encrypted #2519
+encryption_scenarios encryption::commit::doc_encryption_with_encryption_on_lwwcrdt_should_store_commits_delta_encrypted #2519
+encryption_scenarios encryption::commit::doc_encryption_with_multiple_docs_upon_update_should_encrypt_only_relevant_docs #2519
+encryption_scenarios encryption::commit_relation::doc_encryption_with_encryption_secondary_relations_should_store_encrypted_commit #2519
+encryption_scenarios encryption::field_commit::doc_encryption_field_upon_update_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields #2519
+encryption_scenarios encryption::field_commit::doc_encryption_field_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields #2519
+encryption_scenarios encryption::field_commit::doc_encryption_field_with_encryption_on_field_should_store_only_fields_delta_encrypted #2519
