@@ -1,5 +1,5 @@
 # Tests that fail under DEFRA_CLIENT=go-http. Enforced by .github/scripts/testo-report.ts on every CI run:
-# - each line is `<binary> <test> #<issue>`, and the issue must be open; `flaky` after the issue lets it pass or fail, when the issue says why it flips;
+# - each line is `<binary> <test> #<issue>`, and the issue must be open;
 # - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
 # - an entry a pull request adds is printed as a warning naming that pull request.
 # go-http is the reference client: list a test here only when its issue explains why Go itself differs.
@@ -13,8 +13,3 @@ encryption_scenarios encryption::commit_relation::doc_encryption_with_encryption
 encryption_scenarios encryption::field_commit::doc_encryption_field_upon_update_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields #2519
 encryption_scenarios encryption::field_commit::doc_encryption_field_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields #2519
 encryption_scenarios encryption::field_commit::doc_encryption_field_with_encryption_on_field_should_store_only_fields_delta_encrypted #2519
-collection_version collection_version::migrations::query::with_index::collection_migration_query_applying_migration_between_old_versions_should_reindex #2392 flaky
-collection_version collection_version::migrations::query::with_index::collection_migration_query_with_three_branched_versions_should_apply_correct_migration_per_branch #2392 flaky
-collection_version collection_version::migrations::query::with_index::collection_migration_query_applying_migration_to_unknown_versions_then_patch_should_reindex #2392 flaky
-collection_version collection_version::migrations::query::with_index::collection_migration_query_with_index_on_migrated_field_and_setting_old_version_as_active_should_use_index_with_old_values #2392 flaky
-collection_version collection_version::migrations::query::with_index::collection_migration_query_with_index_on_not_migrated_docs_should_not_hinder #2392 flaky

@@ -94,14 +94,18 @@ impl HttpRun for PatchCollection {
             let txn = state.txn_id(action.txn);
             let patch = action.patch.as_str().to_owned();
             let migration = action.lens.as_ref().map(Lens::to_wire);
+            let in_txn = txn.is_some();
             state
                 .http_on(action.common.node(), |client| async move {
                     client
                         .patch_collection(txn.as_deref(), &patch, migration.as_ref())
                         .await
                 })?
-                .map(|()| json!({}))
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            if !in_txn {
+                state.wait_for_indexes_built(action.common.node())?;
+            }
+            Ok(json!({}))
         });
     }
 }

@@ -1,14 +1,23 @@
 use std::fmt::Debug;
 use std::future::Future;
+use std::time::Duration;
 
 use cli::commands::client::http_client::HttpClient;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use testo::prelude::*;
 
 use crate::client_type::network_edge;
 use crate::scenario::identity::private_key_hex;
 use crate::scenario::Failure;
 use crate::test_case::State;
+
+const INDEX_BUILD_TIMEOUT: Duration = Duration::from_secs(20);
+const INDEX_BUILD_POLL: Duration = Duration::from_millis(10);
+
+/// Go's `BackfillIndexAction` with `InProgressActionStatus`: an index build.
+const BACKFILL_INDEX_ACTION: u64 = 3;
+const IN_PROGRESS_STATUS: u64 = 1;
 
 /// An action's body for the HTTP clients.
 pub trait HttpRun {
@@ -69,4 +78,53 @@ impl State {
             .block_on(network_edge().spawn(call(client)))
             .expect("run on the network edge"))
     }
+
+    /// Waits until node `name` is building no index, as Go's suite does after
+    /// a patch, a version switch or a migration outside a transaction
+    /// (`WaitForNodeIndexesBuilt`). Go rebuilds indexes in the background, and
+    /// a query that races the build fails with a transaction conflict. A node
+    /// whose listing reports no build status has nothing to wait for.
+    pub fn wait_for_indexes_built(&self, name: &str) -> Result<(), Failure> {
+        let url = format!("{}/api/v0/collections/indexes", self.url_on(name)?);
+        let building = self
+            .block_on(network_edge().spawn(async move {
+                let http = reqwest::Client::new();
+                let deadline = tokio::time::Instant::now() + INDEX_BUILD_TIMEOUT;
+                loop {
+                    let listing = match http.get(&url).send().await {
+                        Ok(response) => response.json::<Value>().await.ok(),
+                        Err(_) => None,
+                    };
+                    let building = listing.as_ref().is_some_and(any_index_building);
+                    if !building || tokio::time::Instant::now() > deadline {
+                        return building;
+                    }
+                    tokio::time::sleep(INDEX_BUILD_POLL).await;
+                }
+            }))
+            .expect("run on the network edge");
+        match building {
+            true => Err(Failure::operation(format!(
+                "node {name} still building an index after {INDEX_BUILD_TIMEOUT:?}"
+            ))),
+            false => Ok(()),
+        }
+    }
+}
+
+/// Whether a `GET /collections/indexes` listing (collection name to its
+/// indexes, each with its `Execution`) holds an index still being built.
+fn any_index_building(listing: &Value) -> bool {
+    let Some(collections) = listing.as_object() else {
+        return false;
+    };
+    collections
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .any(|index| {
+            let execution = &index["Execution"];
+            execution["Action"].as_u64() == Some(BACKFILL_INDEX_ACTION)
+                && execution["Status"].as_u64() == Some(IN_PROGRESS_STATUS)
+        })
 }

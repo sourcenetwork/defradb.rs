@@ -12,8 +12,7 @@
 // Each known-failures line is `<binary> <test> #<issue>`; a line starting with
 // `#` is a comment. A shard fails when a test fails that is not listed, or when
 // a listed test passes ("fixed: remove from the list"), so a list only shrinks.
-// A line ending in `flaky` (`<binary> <test> #<issue> flaky`) may pass or fail;
-// its issue must say why the result flips. `summary` fails on a line without an issue or whose issue is closed, compares
+// `summary` fails on a line without an issue or whose issue is closed, compares
 // each list's size with the base branch's copy, and warns on every entry the
 // pull request adds.
 
@@ -21,7 +20,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeF
 import { join } from "node:path";
 
 const UNSUPPORTED = /unsupported op: ([^\n\r]*)/;
-const ENTRY = /^(\S+)\s+(\S+)\s+#(\d+)(\s+flaky)?\s*$/;
+const ENTRY = /^(\S+)\s+(\S+)\s+#(\d+)\s*$/;
 const CLIENTS = ["in-process", "rust-http", "go-http", "cli", "legacy"];
 const COLUMNS = ["pass", "fail", "known", "unsupported"];
 
@@ -44,22 +43,17 @@ const flushSummary = () => {
 
 const key = (binary: string, test: string) => `${binary} ${test}`;
 
-function parseKnown(text: string, source: string): { known: Known; flaky: Set<string>; bad: string[] } {
+function parseKnown(text: string, source: string): { known: Known; bad: string[] } {
   const known: Known = new Map();
-  const flaky = new Set<string>();
   const bad: string[] = [];
   text.split("\n").forEach((raw, index) => {
     const line = raw.trim();
     if (!line || line.startsWith("#")) return;
     const match = ENTRY.exec(line);
-    if (!match) {
-      bad.push(`${source}:${index + 1}: expected \`<binary> <test> #<issue> [flaky]\`, got \`${line}\``);
-      return;
-    }
-    known.set(key(match[1], match[2]), Number(match[3]));
-    if (match[4]) flaky.add(key(match[1], match[2]));
+    if (match) known.set(key(match[1], match[2]), Number(match[3]));
+    else bad.push(`${source}:${index + 1}: expected \`<binary> <test> #<issue>\`, got \`${line}\``);
   });
-  return { known, flaky, bad };
+  return { known, bad };
 }
 
 function readKnown(path: string) {
@@ -119,7 +113,7 @@ function writeTable(binaries: Record<string, Counts>) {
 }
 
 function shard(junit: string, client: string, knownPath: string, out: string): number {
-  const { known, flaky, bad } = readKnown(knownPath);
+  const { known, bad } = readKnown(knownPath);
   for (const line of bad) console.log(`::error::${line}`);
   const binaries: Record<string, Counts> = {};
   const ops: Counts = {};
@@ -137,7 +131,7 @@ function shard(junit: string, client: string, knownPath: string, out: string): n
       knownSeen++;
     } else if (result === "fail") {
       unexpected.push(id);
-    } else if (listed && result === "pass" && !flaky.has(id)) {
+    } else if (listed && result === "pass") {
       fixed.push(`${id} #${known.get(id)}`);
     }
     binaries[binary] ??= {};
