@@ -71,12 +71,17 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<bool> {
         self.check_permission(identity, permission).await
     }
+    async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool>;
     async fn is_admin(&self, identity: &Did) -> Result<bool>;
     async fn is_admin_persisted(&self, identity: &Did) -> Result<bool>;
     async fn is_owner(&self, identity: &Did) -> bool;
     async fn enable(&self, owner: &Did) -> Result<()>;
-    async fn disable(&self, requestor: &Did) -> Result<()>;
-    async fn re_enable(&self, requestor: &Did) -> Result<()>;
+    async fn disable(&self) -> Result<()>;
+    async fn re_enable(&self) -> Result<()>;
     async fn purge(&self, requestor: &Did) -> Result<()>;
     async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
     async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
@@ -179,11 +184,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                             "NAC enabled for the first time"
                         );
                     } else {
-                        return Err(Error::Other(
-                            "NAC is configured but no owner identity provided. \
-                             Ensure keyring is configured with a node identity."
-                                .into(),
-                        ));
+                        return Err(Error::Other("can not start nac without identity".into()));
                     }
                 }
                 NacStatus::Enabled => {
@@ -192,14 +193,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                         "NAC already enabled from previous session"
                     );
                 }
+                // Go starts a disabled NAC disabled: only re-enable turns it
+                // back on.
                 NacStatus::DisabledTemporarily => {
-                    self.nac
-                        .re_enable()
-                        .await
-                        .map_err(|e| Error::Other(format!("failed to re-enable NAC: {}", e)))?;
                     tracing::info!(
                         target: "nac::startup",
-                        "NAC re-enabled from temporarily disabled state"
+                        "NAC starts temporarily disabled; re-enable it to turn it back on"
                     );
                 }
                 _ => return Err(Error::Other("unexpected NacStatus variant".to_string())),
@@ -221,7 +220,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
 
     /// Check if NAC is effectively enabled.
     pub async fn is_enabled(&self) -> bool {
-        self.config.enabled && self.nac.status().await == NacStatus::Enabled
+        self.nac.status().await == NacStatus::Enabled
     }
 
     /// Check if an identity has a specific node permission.
@@ -286,6 +285,43 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             .is_admin(identity)
             .await
             .map_err(|e| Error::Acp(format!("admin check failed: {}", e)))
+    }
+
+    /// Whether `identity` holds `permission` in the stored relationships,
+    /// whatever the current status.
+    pub async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
+        if let Some(scope) = self
+            .nac
+            .begin_scope(true)
+            .await
+            .map_err(|error| Error::Acp(error.to_string()))?
+        {
+            let scoped = self.scoped(scope.store());
+            scoped
+                .nac
+                .load()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
+            let result = scoped
+                .check_permission_persisted(identity, permission)
+                .await?;
+            drop(scoped);
+            scope
+                .commit()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            return Ok(result);
+        }
+
+        self.nac
+            .check_permission_persisted(identity, permission)
+            .await
+            .map_err(|e| Error::Acp(format!("permission check failed: {}", e)))
     }
 
     /// Check if an identity is an admin based on stored relationships.
@@ -358,7 +394,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
     }
 
     /// Temporarily disable NAC.
-    pub async fn disable(&self, requestor: &Did) -> Result<()> {
+    pub async fn disable(&self) -> Result<()> {
         if let Some(scope) = self
             .nac
             .begin_scope(false)
@@ -372,7 +408,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            scoped.disable(requestor).await?;
+            scoped.disable().await?;
             drop(scoped);
             scope
                 .commit()
@@ -383,10 +419,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
             return Ok(());
-        }
-
-        if !self.is_admin(requestor).await? {
-            return Err(Error::Acp("only admins can disable NAC".into()));
         }
 
         self.nac
@@ -396,7 +428,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
     }
 
     /// Re-enable NAC after temporary disable.
-    pub async fn re_enable(&self, requestor: &Did) -> Result<()> {
+    pub async fn re_enable(&self) -> Result<()> {
         if let Some(scope) = self
             .nac
             .begin_scope(false)
@@ -410,7 +442,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            scoped.re_enable(requestor).await?;
+            scoped.re_enable().await?;
             drop(scoped);
             scope
                 .commit()
@@ -421,10 +453,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
             return Ok(());
-        }
-
-        if !self.is_admin_persisted(requestor).await? {
-            return Err(Error::Acp("only admins can re-enable NAC".into()));
         }
 
         self.nac
