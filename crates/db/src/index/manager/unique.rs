@@ -294,8 +294,53 @@ fn go_value(value: &document::NormalValue) -> String {
         value if value.is_nil() => "<nil>".to_string(),
         String(text) | NillableString(Some(text)) => text.clone(),
         Int(n) | NillableInt(Some(n)) => n.to_string(),
-        Float64(n) | NillableFloat64(Some(n)) => n.to_string(),
+        Float64(n) | NillableFloat64(Some(n)) => go_float(*n),
         Bool(b) | NillableBool(Some(b)) => b.to_string(),
         other => format!("{other:?}"),
+    }
+}
+
+/// `n` as Go's `%v` prints a float64: the shortest digits that read back,
+/// with an exponent when it is below -4 or at least 6 (`1e+21`, `1e-07`).
+fn go_float(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "+Inf" } else { "-Inf" }.to_string();
+    }
+    let scientific = format!("{n:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("an exponent is always printed");
+    let exponent: i32 = exponent.parse().expect("the exponent is an integer");
+    if n != 0.0 && !(-4..6).contains(&exponent) {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{mantissa}e{sign}{:02}", exponent.abs())
+    } else {
+        n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::go_float;
+
+    #[test]
+    fn floats_print_as_go_prints_them() {
+        for (n, go) in [
+            (0.0, "0"),
+            (1.5, "1.5"),
+            (100.0, "100"),
+            (123456.0, "123456"),
+            (1234567.0, "1.234567e+06"),
+            (1e21, "1e+21"),
+            (0.0001, "0.0001"),
+            (0.00001, "1e-05"),
+            (-2.5e-7, "-2.5e-07"),
+            (f64::INFINITY, "+Inf"),
+        ] {
+            assert_eq!(go_float(n), go, "{n}");
+        }
     }
 }

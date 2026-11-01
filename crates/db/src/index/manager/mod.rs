@@ -123,25 +123,27 @@ pub struct IndexManager {
 }
 
 impl IndexManager {
-    fn validate_unique_value_sets(
+    /// The first of a unique index's `value_sets` that repeats an earlier
+    /// one, which the document cannot index twice. Nil values never repeat.
+    fn duplicate_value_set<'v>(
         index: &IndexType,
-        value_sets: &[Vec<document::NormalValue>],
-    ) -> Result<()> {
+        value_sets: &'v [Vec<document::NormalValue>],
+    ) -> Option<&'v [document::NormalValue]> {
         if !matches!(index, IndexType::Unique(_)) {
-            return Ok(());
+            return None;
         }
+        value_sets
+            .iter()
+            .enumerate()
+            .find(|(position, values)| {
+                !values.iter().any(document::NormalValue::is_nil)
+                    && value_sets[..*position].contains(values)
+            })
+            .map(|(_, values)| values.as_slice())
+    }
 
-        for (position, values) in value_sets.iter().enumerate() {
-            if values.iter().any(document::NormalValue::is_nil) {
-                continue;
-            }
-            if value_sets[..position].contains(values) {
-                return Err(Error::Storage(
-                    storage::corekv::Error::UniqueConstraintViolation,
-                ));
-            }
-        }
-        Ok(())
+    fn unique_violation() -> Error {
+        Error::Storage(storage::corekv::Error::UniqueConstraintViolation)
     }
 
     /// Create a new empty IndexManager.
@@ -650,14 +652,14 @@ impl IndexManager {
 
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
-            Self::validate_unique_value_sets(index, &value_sets).map_err(|e| {
-                Self::naming_the_writer(
-                    e,
+            if let Some(values) = Self::duplicate_value_set(index, &value_sets) {
+                return Err(Self::naming_the_writer(
+                    Self::unique_violation(),
                     doc,
                     index,
-                    value_sets.first().map_or(&[], Vec::as_slice),
-                )
-            })?;
+                    values,
+                ));
+            }
             for values in &value_sets {
                 // Local creates stay strict but self-heal stale unique entries
                 // pointing at a deleted or missing document (#1111/#700).
@@ -692,14 +694,14 @@ impl IndexManager {
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
 
             if old_value_sets != new_value_sets {
-                Self::validate_unique_value_sets(index, &new_value_sets).map_err(|e| {
-                    Self::naming_the_updater(
-                        e,
+                if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {
+                    return Err(Self::naming_the_updater(
+                        Self::unique_violation(),
                         new_doc,
                         index,
-                        new_value_sets.first().map_or(&[], Vec::as_slice),
-                    )
-                })?;
+                        values,
+                    ));
+                }
                 for old_values in &old_value_sets {
                     index
                         .delete(&mut mutable_datastore, doc_short_id, old_values)
@@ -752,14 +754,14 @@ impl IndexManager {
             if old_value_sets == new_value_sets {
                 continue;
             }
-            Self::validate_unique_value_sets(index, &new_value_sets).map_err(|e| {
-                Self::naming_the_updater(
-                    e,
+            if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {
+                return Err(Self::naming_the_updater(
+                    Self::unique_violation(),
                     new_doc,
                     index,
-                    new_value_sets.first().map_or(&[], Vec::as_slice),
-                )
-            })?;
+                    values,
+                ));
+            }
             for old_values in &old_value_sets {
                 index
                     .delete(&mut mutable_datastore, doc_short_id, old_values)
