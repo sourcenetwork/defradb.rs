@@ -63,9 +63,13 @@ impl Op for Request {
                 QueryRequest::new(self.request.as_str()),
             ))
             .map(|response| {
+                let extensions = response
+                    .extensions
+                    .map(|extensions| serde_json::to_value(extensions).unwrap_or_default());
                 envelope(
                     response.data,
                     response.errors.iter().map(|e| e.message.as_str()),
+                    self.checked_extensions(extensions),
                 )
             })
             .map_err(|e| Failure::operation(e.to_string()))
@@ -90,11 +94,20 @@ impl Request {
             None => Ok(()),
         }
     }
+
+    /// The response's `extensions`, kept only when the action checks them, as
+    /// Go's suite compares warnings only when a test names some.
+    fn checked_extensions(&self, extensions: Option<Value>) -> Option<Value> {
+        match self.expected_extensions.is_null() {
+            true => None,
+            false => Some(extensions.unwrap_or_default()),
+        }
+    }
 }
 
-/// A GraphQL response as the scenario compares it: its data, and the message
-/// of each error.
-fn envelope<'a, I>(data: Option<Value>, errors: I) -> Value
+/// A GraphQL response as the scenario compares it: its data, the message of
+/// each error, and its extensions when the action checks them.
+fn envelope<'a, I>(data: Option<Value>, errors: I, extensions: Option<Value>) -> Value
 where
     I: Iterator<Item = &'a str>,
 {
@@ -102,6 +115,9 @@ where
     let errors: Vec<Value> = errors.map(|m| json!({"message": m})).collect();
     if !errors.is_empty() {
         envelope["errors"] = Value::Array(errors);
+    }
+    if let Some(extensions) = extensions {
+        envelope["extensions"] = extensions;
     }
     envelope
 }
@@ -128,6 +144,7 @@ impl HttpRun for Request {
                     envelope(
                         response.data,
                         response.errors.iter().map(|e| e.message.as_str()),
+                        action.checked_extensions(response.extensions),
                     )
                 })
                 .map_err(|e| Failure::operation(e.to_string()))

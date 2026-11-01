@@ -755,9 +755,10 @@ jobs:
         --test subscription --test txn --test view --test basic
       TESTO_FILTER: not binary(=basic) | test(/^txn_context::/)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
-      # benchmark that prints latencies.
+      # benchmark that prints latencies, and verars, whose cluster needs the
+      # verad validator binary from vera.rs, which CI does not build.
       LEGACY: >-
-        --test cursor --test http_contract --test issue1194_repro --test verars
+        --test cursor --test http_contract --test issue1194_repro
         --test acp_replay_outage_cross_runtime
     steps:
       - uses: runs-on/action@v2
@@ -840,10 +841,16 @@ jobs:
     needs: testo
     if: always() && needs.testo.result != 'skipped'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: testo-report-*
           path: testo-report
-      - run: python3 .github/scripts/testo-report.py summary testo-report
+      - name: Check the known-failure lists and merge the reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/testo-report.py summary testo-report .github/testo/known-failures

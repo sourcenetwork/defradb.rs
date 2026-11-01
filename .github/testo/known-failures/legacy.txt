@@ -1,3 +1,8 @@
-# Legacy integration tests (no DEFRA_CLIENT) that fail, one "<binary> <test>  # #issue" per line.
-issue1194_repro issue1194_selected_output_field_still_conflicts  # #2512
-cursor reindex_datetime_visibility::datetime_index_survives_reindex_and_stays_cursor_visible  # #2513
+# Legacy integration tests (binaries with no DEFRA_CLIENT) that fail. Enforced by
+# .github/scripts/testo-report.py on every CI run:
+# - each line is `<binary> <test> #<issue>`, and the issue must be open;
+# - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
+# - an entry a pull request adds is printed as a warning naming that pull request.
+issue1194_repro issue1194_selected_output_field_still_conflicts #2512
+cursor reindex_datetime_visibility::datetime_index_survives_reindex_and_stays_cursor_visible #2420
+acp_replay_outage_cross_runtime c_rust_to_go_outage_replay #2089
