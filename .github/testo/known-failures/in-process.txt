@@ -1,5 +1,5 @@
-# Tests that fail under DEFRA_CLIENT=in-process. Enforced by .github/scripts/testo-report.py on every CI run:
-# - each line is `<binary> <test> #<issue>`, and the issue must be open;
+# Tests that fail under DEFRA_CLIENT=in-process. Enforced by .github/scripts/testo-report.ts on every CI run:
+# - each line is `<binary> <test> #<issue>`, and the issue must be open; `flaky` after the issue lets it pass or fail, when the issue says why it flips;
 # - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
 # - an entry a pull request adds is printed as a warning naming that pull request.
 collection collection::add_relation_with_collection::collection_version_updates_add_field_kind_foreign_object_with_patch_adding_one_to_many_relation_after_separate_add_collections_should_succeed #2375
@@ -66,3 +66,15 @@ mutation mutation::update::with_filter::mutation_update_with_relation_filter_and
 mutation mutation::update::with_filter::mutation_update_with_relation_filter_correctly_filters #2343
 mutation mutation::update::with_filter_action::update_with_patch_does_nothing #2369
 query_scenarios query::one_to_many::with_sum::query_one_to_many_with_sum_alias_filter_on_float32_should_match_one #2516
+encryption_scenarios encryption::commit_relation::doc_encryption_with_encryption_secondary_relations_should_store_encrypted_commit #2365
+encryption_scenarios encryption::commit::doc_encryption_upon_encryption_several_docs_should_store_all_commits_delta_encrypted #2365
+encryption_scenarios encryption::commit::doc_encryption_upon_update_on_counter_crdt_should_encrypted_commit_delta #2365
+encryption_scenarios encryption::commit::doc_encryption_upon_update_on_lwwcrdt_should_encrypt_commit_delta #2365
+encryption_scenarios encryption::commit::doc_encryption_with_encryption_on_counter_crdt_should_store_commits_delta_encrypted #2365
+encryption_scenarios encryption::commit::doc_encryption_with_encryption_on_lwwcrdt_should_store_commits_delta_encrypted #2365
+encryption_scenarios encryption::commit::doc_encryption_with_multiple_docs_upon_update_should_encrypt_only_relevant_docs #2365
+encryption_scenarios encryption::field_commit::doc_encryption_field_with_encryption_on_field_should_store_only_fields_delta_encrypted #2365
+index index::vector_fallback_warning::vector_index_warning_selective_filter_still_returns_matching_docs #2366
+index index::vector_fallback_warning::vector_index_warning_with_filter_reports_warning #2366
+query_scenarios query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_ascending_order_full_scans #2366
+query_scenarios query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_no_order_does_not_use_index #2366

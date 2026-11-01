@@ -723,7 +723,7 @@ jobs:
 
   # Every testo scenario binary under every client, plus the legacy binaries no
   # other job runs. A test that stops at an action its client does not
-  # implement counts as unsupported, not failed; testo-report.py turns the JUnit
+  # implement counts as unsupported, not failed; testo-report.ts turns the JUnit
   # report into per-binary counts and fails on a failure missing from
   # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
   testo:
@@ -807,6 +807,9 @@ jobs:
           fi
       - name: Build the test binaries
         run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" --no-run
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.6
       - name: Run the tests
         id: run
         run: |
@@ -822,7 +825,7 @@ jobs:
         run: |
           mkdir -p testo-report
           cp target/nextest/ci/junit.xml "testo-report/$CLIENT-${{ matrix.shard }}.xml"
-          python3 .github/scripts/testo-report.py shard target/nextest/ci/junit.xml "$CLIENT" \
+          bun .github/scripts/testo-report.ts shard target/nextest/ci/junit.xml "$CLIENT" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
           if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then
             echo "::error::nextest exited $STATUS without a failing test"
@@ -850,7 +853,10 @@ jobs:
         with:
           pattern: testo-report-*
           path: testo-report
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.6
       - name: Check the known-failure lists and merge the reports
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/testo-report.py summary testo-report .github/testo/known-failures
+        run: bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures
