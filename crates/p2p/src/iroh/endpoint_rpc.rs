@@ -350,7 +350,7 @@ fn dial_guard(
 
 /// QUIC application error code used when locally closing a connection in
 /// response to a `disconnect` request.
-const DISCONNECT_ERROR_CODE: u32 = 0;
+pub(super) const DISCONNECT_ERROR_CODE: u32 = 0;
 
 /// Close and remove the cached connection to `endpoint_id`.
 ///
