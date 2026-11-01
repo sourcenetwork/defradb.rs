@@ -258,9 +258,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         error if error.is_storage_full() => HttpError::StorageFull(message),
         DbError::CollectionAlreadyExists(_) => HttpError::Conflict(message),
         DbError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
-        DbError::Storage(source) if source.is_unique_constraint_violation() => {
-            HttpError::Conflict(message)
-        }
+        error if error.is_unique_constraint_violation() => HttpError::Conflict(message),
         DbError::InvalidPatch(_)
         | DbError::InvalidDocument(_)
         | DbError::InvalidCollectionName(_)
@@ -536,5 +534,13 @@ mod storage_failure_tests {
             ))),
             HttpError::Internal(_)
         ));
+    }
+
+    #[test]
+    fn a_unique_violation_naming_its_writer_is_a_conflict() {
+        let error = DbError::UniqueViolation(
+            "can not index a doc's field(s) that violates unique index".into(),
+        );
+        assert!(matches!(HttpError::from(error), HttpError::Conflict(_)));
     }
 }
