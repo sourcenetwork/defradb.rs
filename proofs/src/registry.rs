@@ -1348,6 +1348,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Node access control operations",
+        name: "INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
+        axis: Tla,
+        anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted",
+        model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,

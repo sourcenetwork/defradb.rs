@@ -209,7 +209,7 @@ pub enum Error {
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
     /// Node ACP needs a node identity.
-    #[error("node ACP requires a node identity; set one with with_node_identity_did()")]
+    #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,
     /// The node identity given for node ACP is invalid.
     #[error("invalid node identity DID for node ACP: {0}")]

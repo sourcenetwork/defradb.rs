@@ -180,7 +180,7 @@ fn node_acp_requires_node_identity() {
         assert!(
             error
                 .to_string()
-                .contains("node ACP requires a node identity"),
+                .contains("can not start nac without identity"),
             "{error:#}"
         );
     })

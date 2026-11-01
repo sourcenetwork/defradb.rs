@@ -49,6 +49,13 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
+        NacManager::check_permission_persisted(self, identity, permission).await
+    }
     async fn is_admin(&self, identity: &Did) -> Result<bool> {
         NacManager::is_admin(self, identity).await
     }
@@ -61,11 +68,11 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     async fn enable(&self, owner: &Did) -> Result<()> {
         NacManager::enable(self, owner).await
     }
-    async fn disable(&self, requestor: &Did) -> Result<()> {
-        NacManager::disable(self, requestor).await
+    async fn disable(&self) -> Result<()> {
+        NacManager::disable(self).await
     }
-    async fn re_enable(&self, requestor: &Did) -> Result<()> {
-        NacManager::re_enable(self, requestor).await
+    async fn re_enable(&self) -> Result<()> {
+        NacManager::re_enable(self).await
     }
     async fn purge(&self, requestor: &Did) -> Result<()> {
         NacManager::purge(self, requestor).await

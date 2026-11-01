@@ -686,6 +686,65 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::nac_status_as`](crate::txn::TransactionRegistry::nac_status_as).
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::re_enable_nac_as`](crate::txn::TransactionRegistry::re_enable_nac_as).
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_nac_actor_relationship_as`](crate::txn::TransactionRegistry::add_nac_actor_relationship_as).
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::delete_nac_actor_relationship_as`](crate::txn::TransactionRegistry::delete_nac_actor_relationship_as).
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
     async fn set_migration_as(
         &self,

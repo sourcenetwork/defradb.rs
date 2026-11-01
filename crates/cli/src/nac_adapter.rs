@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use acp::nac::{NacStatus, NodePermission};
 use db::NacManagerApi;
-use defra_http::router::{NacStatusInfo, NodeAcpOperations};
+use defra_http::router::NodeAcpOperations;
 use identity::Did;
 
 /// Adapter that implements NodeAcpOperations and NacChecker using NacManagerApi.
@@ -61,36 +61,6 @@ impl NacAdapter {
         .map_err(|error| error.report("node access call").to_string())?
         .map_err(|e| e.to_string())
     }
-
-    /// Grants or revokes `relation` of `target`, `requestor` asking.
-    async fn relationship(
-        &self,
-        requestor: &Did,
-        target: &Did,
-        relation: &str,
-        grant: bool,
-    ) -> Result<bool, String> {
-        let (requestor, target) = (requestor.clone(), target.clone());
-        if relation == "admin" {
-            self.on_pool(move |nac| async move {
-                match grant {
-                    true => nac.add_admin(&requestor, &target).await,
-                    false => nac.remove_admin(&requestor, &target).await,
-                }
-            })
-            .await
-        } else if let Some(perm) = NodePermission::parse(relation) {
-            self.on_pool(move |nac| async move {
-                match grant {
-                    true => nac.add_permission_grant(&requestor, &target, perm).await,
-                    false => nac.remove_permission_grant(&requestor, &target, perm).await,
-                }
-            })
-            .await
-        } else {
-            Err("relation not in resource".to_string())
-        }
-    }
 }
 
 #[async_trait]
@@ -117,68 +87,10 @@ impl NodeAcpOperations for NacAdapter {
         self.nac.status().await
     }
 
-    async fn owner(&self) -> Option<Did> {
-        self.nac.owner().await
-    }
-
-    async fn is_admin(&self, identity: &Did) -> Result<bool, String> {
-        let identity = identity.clone();
-        self.on_pool(move |nac| async move { nac.is_admin(&identity).await })
-            .await
-    }
-
-    async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool, String> {
-        self.relationship(requestor, target, "admin", true).await
-    }
-
-    async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool, String> {
-        self.relationship(requestor, target, "admin", false).await
-    }
-
-    async fn disable(&self, requestor: &Did) -> Result<(), String> {
-        let requestor = requestor.clone();
-        self.on_pool(move |nac| async move { nac.disable(&requestor).await })
-            .await
-    }
-
-    async fn re_enable(&self, requestor: &Did) -> Result<(), String> {
-        let requestor = requestor.clone();
-        self.on_pool(move |nac| async move { nac.re_enable(&requestor).await })
-            .await
-    }
-
     async fn enable(&self, owner: &Did) -> Result<(), String> {
         let owner = owner.clone();
         self.on_pool(move |nac| async move { nac.enable(&owner).await })
             .await
-    }
-
-    async fn add_relationship(
-        &self,
-        requestor: &Did,
-        target: &Did,
-        relation: &str,
-    ) -> Result<bool, String> {
-        self.relationship(requestor, target, relation, true).await
-    }
-
-    async fn remove_relationship(
-        &self,
-        requestor: &Did,
-        target: &Did,
-        relation: &str,
-    ) -> Result<bool, String> {
-        self.relationship(requestor, target, relation, false).await
-    }
-
-    async fn info(&self) -> NacStatusInfo {
-        let info = self.nac.info().await;
-        NacStatusInfo {
-            status: info.status,
-            configured_enabled: info.configured_enabled,
-            dev_mode: info.dev_mode,
-            owner: info.owner,
-        }
     }
 }
 
