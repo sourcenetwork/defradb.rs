@@ -192,6 +192,74 @@ jobs:
     with:
       os: linux
 
+  # The go-compat suite and the go-http testo client both run this binary, so a
+  # run builds it at most once.
+  go-defradb:
+    name: Go DefraDB binary
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - name: Restore Go DefraDB
+        id: go-defradb
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/defra-harness
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+      - name: Install Go toolchain
+        if: steps.go-defradb.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
+          # toolchain cannot build it.
+          go-version: '1.26'
+      - name: Prepare Go DefraDB binary
+        id: prepare
+        run: |
+          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+
+          if [ -n "$GO_TAG" ]; then
+            VER_NUM="${GO_TAG#v}"
+            ASSET="defradb_${VER_NUM}_linux_x86_64"
+            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
+            mkdir -p "$CACHE_DIR"
+            if [ ! -x "$CACHE_DIR/defradb" ]; then
+              curl -fSL -o "$CACHE_DIR/defradb" \
+                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
+              chmod +x "$CACHE_DIR/defradb"
+            fi
+          else
+            test -n "$GO_REF"
+            test -n "$GO_BRANCH"
+            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
+            mkdir -p "$CACHE_DIR"
+            if [ ! -x "$CACHE_DIR/defradb" ]; then
+              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
+              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
+              git -C "$WORK_DIR" checkout "$GO_REF"
+              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
+              chmod +x "$CACHE_DIR/defradb"
+            fi
+          fi
+
+          "$CACHE_DIR/defradb" version --format json
+          echo "dir=$CACHE_DIR" >> "$GITHUB_OUTPUT"
+      - name: Save Go DefraDB
+        if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-harness
+          key: ${{ steps.go-defradb.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-defradb
+          path: ${{ steps.prepare.outputs.dir }}/defradb
+          retention-days: 1
+
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
@@ -400,7 +468,7 @@ jobs:
 
   integration:
     name: Integration (${{ matrix.suite }})
-    needs: [ci-scope, build-binaries]
+    needs: [ci-scope, build-binaries, go-defradb]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 90
@@ -444,52 +512,18 @@ jobs:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
-      - name: Restore Go DefraDB
-        id: go-defradb
-        if: matrix.suite == 'go-compat'
-        uses: actions/cache/restore@v4
+      - name: Download Go DefraDB
+        if: matrix.needs_go
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
-      - name: Prepare Go DefraDB binary
+          name: go-defradb
+          path: target/go
+      - name: Put Go DefraDB on the PATH
         if: matrix.needs_go
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-
-          if [ -n "$GO_TAG" ]; then
-            VER_NUM="${GO_TAG#v}"
-            ASSET="defradb_${VER_NUM}_linux_x86_64"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              curl -fSL -o "$CACHE_DIR/defradb" \
-                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          else
-            test -n "$GO_REF"
-            test -n "$GO_BRANCH"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
-              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-              git -C "$WORK_DIR" checkout "$GO_REF"
-              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          fi
-
-          echo "$CACHE_DIR" >> "$GITHUB_PATH"
-          "$CACHE_DIR/defradb" version --format json
-      - name: Save Go DefraDB
-        if: matrix.suite == 'go-compat' && env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/defra-harness
-          key: ${{ steps.go-defradb.outputs.cache-primary-key }}
+          chmod +x target/go/defradb
+          echo "$PWD/target/go" >> "$GITHUB_PATH"
+          target/go/defradb version --format json
       - name: Verify Go fixtures still match Rust constants
         if: matrix.suite == 'go-compat'
         run: |
@@ -521,6 +555,8 @@ jobs:
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
+          --test cursor --test http_contract --test matchers --test export
+          --test issue1194_repro --test issue1211_repro --test issue1294_bytes_json
           -- --skip ::go_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
@@ -547,6 +583,13 @@ jobs:
           --skip go_acp_link_collection_missing_read_perm_reject
           --skip go_acp_link_collection_missing_update_perm_reject
           --skip go_acp_link_collection_missing_delete_perm_reject
+      - name: Run cross-runtime ACP replay outage tests
+        if: matrix.suite == 'go-compat'
+        run: cargo nextest run --cargo-profile super-dev -p integration-test --test acp_replay_outage_cross_runtime
+      # vera.rs runs in-process; this job already builds the vera-featured defra.
+      - name: Run vera.rs integration tests
+        if: matrix.suite == 'go-compat'
+        run: cargo nextest run --cargo-profile super-dev -p integration-test --test verars
       - name: Run go-compat conformance parity
         if: matrix.suite == 'go-compat'
         env:
@@ -622,6 +665,11 @@ jobs:
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_fairness
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_backlog
           cargo nextest run --cargo-profile super-dev -p integration-test --test issue1154_repro
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_deep_catchup
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_push_storm
+      # Not run: p2p_interop_bench, whose one test is an ignored benchmark that
+      # prints latencies. p2p_push_storm's storm test stays ignored too: a
+      # profiling harness whose gates are opt-in DEFRA_PUSH_STORM_* variables.
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -630,3 +678,99 @@ jobs:
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # Every testo scenario binary under every client. A test that stops at an
+  # action its client does not implement counts as unsupported, not failed;
+  # testo-report.py turns the JUnit report into per-binary counts and fails on
+  # a failure missing from .github/testo/known-failures/<client>.txt, or on a
+  # listed test that now passes.
+  testo:
+    name: Testo (${{ matrix.client }}, ${{ matrix.shard }}/3)
+    needs: [ci-scope, build-binaries, go-defradb]
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [in-process, rust-http, go-http, cli]
+        shard: [1, 2, 3]
+    env:
+      DEFRA_CLIENT: ${{ matrix.client }}
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_GO_BINARY: ${{ github.workspace }}/target/go/defradb
+      DEFRA_E2E_KEEP: '1'
+      # basic holds legacy tests and one testo module, txn_context.
+      TESTO: >-
+        --test acp_scenarios --test backup_scenarios --test collection
+        --test collection_version --test encryption_scenarios --test explain
+        --test index --test issues --test mutation --test net --test node
+        --test query_scenarios --test searchable_encryption --test signature
+        --test subscription --test txn --test view --test basic
+      FILTER: not binary(=basic) | test(/^txn_context::/)
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integration
+          save-if: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: defra-ci-binaries
+          path: target/ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-defradb
+          path: target/go
+      - run: chmod +x target/ci/defra target/ci/defra-iroh target/go/defradb
+      - name: Build the scenario binaries
+        run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTO -E "$FILTER" --no-run
+      - name: Run testo scenarios
+        id: run
+        run: |
+          set +e
+          cargo nextest run --cargo-profile super-dev -p integration-test $TESTO -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/3 --no-fail-fast
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: always() && steps.run.outcome == 'success'
+        env:
+          CLIENT: ${{ matrix.client }}
+          STATUS: ${{ steps.run.outputs.status }}
+        run: |
+          mkdir -p testo-report
+          python3 .github/scripts/testo-report.py shard target/nextest/ci/junit.xml "$CLIENT" \
+            ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
+          if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then
+            echo "::error::nextest exited $STATUS without a failing test"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testo-report-${{ matrix.client }}-${{ matrix.shard }}
+          path: testo-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+  testo-summary:
+    name: Testo summary
+    needs: testo
+    if: always() && needs.testo.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: testo-report-*
+          path: testo-report
+      - run: python3 .github/scripts/testo-report.py summary testo-report
