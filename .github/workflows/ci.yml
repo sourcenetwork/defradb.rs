@@ -198,6 +198,8 @@ jobs:
     name: Go DefraDB binary
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
+    outputs:
+      pin: ${{ steps.prepare.outputs.pin }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
@@ -248,6 +250,8 @@ jobs:
 
           "$CACHE_DIR/defradb" version --format json
           echo "dir=$CACHE_DIR" >> "$GITHUB_OUTPUT"
+          echo "pin=${GO_TAG:-$GO_REF}" >> "$GITHUB_OUTPUT"
+          echo "branch=$GO_BRANCH" >> "$GITHUB_OUTPUT"
       - name: Save Go DefraDB
         if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -258,6 +262,47 @@ jobs:
         with:
           name: go-defradb
           path: ${{ steps.prepare.outputs.dir }}/defradb
+          retention-days: 1
+      # Lens scenarios load the WASM modules Go's tests/lenses builds, from
+      # DEFRADB_GO_REPO, at the same pin as the Go binary.
+      - name: Restore Go lens modules
+        id: go-lenses
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/defra-lenses
+          key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.go-lenses.outputs.cache-hit != 'true'
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build Go lens modules
+        if: steps.go-lenses.outputs.cache-hit != 'true'
+        env:
+          PIN: ${{ steps.prepare.outputs.pin }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: |
+          WORK_DIR="$RUNNER_TEMP/defradb-lenses"
+          git clone --filter=blob:none --no-checkout --branch "$BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
+          git -C "$WORK_DIR" sparse-checkout set tests/lenses
+          git -C "$WORK_DIR" checkout "$PIN"
+          make -C "$WORK_DIR/tests/lenses" build
+          OUT="$HOME/.cache/defra-lenses"
+          cd "$WORK_DIR"
+          for wasm in tests/lenses/*/target/wasm32-unknown-unknown/debug/*.wasm; do
+            mkdir -p "$OUT/$(dirname "$wasm")"
+            cp "$wasm" "$OUT/$wasm"
+          done
+          find "$OUT" -name '*.wasm' | sort
+      - name: Save Go lens modules
+        if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-lenses
+          key: ${{ steps.go-lenses.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-lenses
+          path: ~/.cache/defra-lenses
           retention-days: 1
 
   build-binaries:
@@ -518,12 +563,17 @@ jobs:
         with:
           name: go-defradb
           path: target/go
+      # The cross-runtime harness looks for the binary under its pin in the cache.
       - name: Put Go DefraDB on the PATH
         if: matrix.needs_go
+        env:
+          PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
-          chmod +x target/go/defradb
-          echo "$PWD/target/go" >> "$GITHUB_PATH"
-          target/go/defradb version --format json
+          DIR="$HOME/.cache/defra-harness/$PIN"
+          mkdir -p "$DIR"
+          install -m 755 target/go/defradb "$DIR/defradb"
+          echo "$DIR" >> "$GITHUB_PATH"
+          "$DIR/defradb" version --format json
       - name: Verify Go fixtures still match Rust constants
         if: matrix.suite == 'go-compat'
         run: |
@@ -555,8 +605,7 @@ jobs:
           cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
-          --test cursor --test http_contract --test matchers --test export
-          --test issue1194_repro --test issue1211_repro --test issue1294_bytes_json
+          --test matchers --test export --test issue1211_repro --test issue1294_bytes_json
           -- --skip ::go_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
@@ -583,13 +632,6 @@ jobs:
           --skip go_acp_link_collection_missing_read_perm_reject
           --skip go_acp_link_collection_missing_update_perm_reject
           --skip go_acp_link_collection_missing_delete_perm_reject
-      - name: Run cross-runtime ACP replay outage tests
-        if: matrix.suite == 'go-compat'
-        run: cargo nextest run --cargo-profile super-dev -p integration-test --test acp_replay_outage_cross_runtime
-      # vera.rs runs in-process; this job already builds the vera-featured defra.
-      - name: Run vera.rs integration tests
-        if: matrix.suite == 'go-compat'
-        run: cargo nextest run --cargo-profile super-dev -p integration-test --test verars
       - name: Run go-compat conformance parity
         if: matrix.suite == 'go-compat'
         env:
@@ -679,13 +721,13 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Every testo scenario binary under every client. A test that stops at an
-  # action its client does not implement counts as unsupported, not failed;
-  # testo-report.py turns the JUnit report into per-binary counts and fails on
-  # a failure missing from .github/testo/known-failures/<client>.txt, or on a
-  # listed test that now passes.
+  # Every testo scenario binary under every client, plus the legacy binaries no
+  # other job runs. A test that stops at an action its client does not
+  # implement counts as unsupported, not failed; testo-report.py turns the JUnit
+  # report into per-binary counts and fails on a failure missing from
+  # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
   testo:
-    name: Testo (${{ matrix.client }}, ${{ matrix.shard }}/3)
+    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
     needs: [ci-scope, build-binaries, go-defradb]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
@@ -695,11 +737,14 @@ jobs:
       matrix:
         client: [in-process, rust-http, go-http, cli]
         shard: [1, 2, 3]
+        include:
+          - client: legacy
+            shard: 1
+            shards: 1
     env:
-      DEFRA_CLIENT: ${{ matrix.client }}
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
-      DEFRA_GO_BINARY: ${{ github.workspace }}/target/go/defradb
+      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
       # basic holds legacy tests and one testo module, txn_context.
       TESTO: >-
@@ -708,7 +753,12 @@ jobs:
         --test index --test issues --test mutation --test net --test node
         --test query_scenarios --test searchable_encryption --test signature
         --test subscription --test txn --test view --test basic
-      FILTER: not binary(=basic) | test(/^txn_context::/)
+      TESTO_FILTER: not binary(=basic) | test(/^txn_context::/)
+      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
+      # benchmark that prints latencies.
+      LEGACY: >-
+        --test cursor --test http_contract --test issue1194_repro --test verars
+        --test acp_replay_outage_cross_runtime
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -731,15 +781,37 @@ jobs:
         with:
           name: go-defradb
           path: target/go
-      - run: chmod +x target/ci/defra target/ci/defra-iroh target/go/defradb
-      - name: Build the scenario binaries
-        run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTO -E "$FILTER" --no-run
-      - name: Run testo scenarios
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-lenses
+          path: target/go-repo
+      - name: Pick the tests
+        env:
+          CLIENT: ${{ matrix.client }}
+          PIN: ${{ needs.go-defradb.outputs.pin }}
+        run: |
+          chmod +x target/ci/defra target/ci/defra-iroh
+          DIR="$HOME/.cache/defra-harness/$PIN"
+          mkdir -p "$DIR"
+          install -m 755 target/go/defradb "$DIR/defradb"
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "DEFRA_GO_BINARY=$DIR/defradb" >> "$GITHUB_ENV"
+          if [ "$CLIENT" = legacy ]; then
+            echo "TESTS=$LEGACY" >> "$GITHUB_ENV"
+            echo "FILTER=all()" >> "$GITHUB_ENV"
+          else
+            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            echo "TESTS=$TESTO" >> "$GITHUB_ENV"
+            echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
+          fi
+      - name: Build the test binaries
+        run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" --no-run
+      - name: Run the tests
         id: run
         run: |
           set +e
-          cargo nextest run --cargo-profile super-dev -p integration-test $TESTO -E "$FILTER" \
-            --partition hash:${{ matrix.shard }}/3 --no-fail-fast
+          cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} --no-fail-fast
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - name: Report
         if: always() && steps.run.outcome == 'success'
@@ -748,6 +820,7 @@ jobs:
           STATUS: ${{ steps.run.outputs.status }}
         run: |
           mkdir -p testo-report
+          cp target/nextest/ci/junit.xml "testo-report/$CLIENT-${{ matrix.shard }}.xml"
           python3 .github/scripts/testo-report.py shard target/nextest/ci/junit.xml "$CLIENT" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
           if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then

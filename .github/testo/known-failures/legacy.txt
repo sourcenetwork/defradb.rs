@@ -1,0 +1,3 @@
+# Legacy integration tests (no DEFRA_CLIENT) that fail, one "<binary> <test>  # #issue" per line.
+issue1194_repro issue1194_selected_output_field_still_conflicts  # #2512
+cursor reindex_datetime_visibility::datetime_index_survives_reindex_and_stays_cursor_visible  # #2513

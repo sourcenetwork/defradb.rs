@@ -127,7 +127,7 @@ def merge(directory):
         summary.write("`fail` is unexpected, `known` is listed in "
                       "`.github/testo/known-failures/<client>.txt`, `unsupported` stopped at an "
                       "action the client does not implement.\n\n")
-        for client in ("in-process", "rust-http", "go-http", "cli"):
+        for client in ("in-process", "rust-http", "go-http", "cli", "legacy"):
             if client not in clients:
                 summary.write(f"### {client}\n\nno report\n\n")
                 continue
