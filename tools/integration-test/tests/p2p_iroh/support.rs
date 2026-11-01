@@ -9,7 +9,7 @@ static VERA_IROH_BINARY: OnceCell<PathBuf> = OnceCell::new();
 fn prepare_iroh_binary() {
     // Listing tests runs this constructor too, before nextest's setup script
     // has exported the binaries, so a list must not build one.
-    if std::env::args().any(|arg| arg == "--list") {
+    if integration_test::listing_tests() {
         return;
     }
     if std::env::var_os("DEFRA_IROH_BINARY")

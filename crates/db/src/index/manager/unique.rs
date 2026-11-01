@@ -241,3 +241,106 @@ async fn holder_public_doc_id(
         None => Ok(None),
     }
 }
+impl IndexManager {
+    /// `error`, unless it is a unique violation of `index` by a local write:
+    /// then the error naming `doc`, the writer, and the `values` it wrote,
+    /// never the document holding them, which the writer may not be allowed
+    /// to read (`defra.index.unique_writer`).
+    pub(super) fn naming_the_writer(
+        error: Error,
+        doc: &document::Document,
+        index: &IndexType,
+        values: &[document::NormalValue],
+    ) -> Error {
+        let Some(doc_id) = doc.id().filter(|_| error.is_unique_constraint_violation()) else {
+            return error;
+        };
+        let fields = index
+            .description()
+            .fields
+            .iter()
+            .zip(values)
+            .map(|(field, value)| format!(", {}: {}", field.name, go_value(value)))
+            .collect();
+        Error::UniqueViolation {
+            doc_id: doc_id.to_string(),
+            fields,
+        }
+    }
+
+    /// [`IndexManager::naming_the_writer`] for an update, which Go also wraps
+    /// with the index's name.
+    pub(super) fn naming_the_updater(
+        error: Error,
+        doc: &document::Document,
+        index: &IndexType,
+        values: &[document::NormalValue],
+    ) -> Error {
+        match Self::naming_the_writer(error, doc, index, values) {
+            named @ Error::UniqueViolation { .. } => Error::UpdateIndex {
+                index: index.description().name.clone(),
+                source: Box::new(named),
+            },
+            other => other,
+        }
+    }
+}
+
+/// `value` as Go's `%v` prints it in an error. Scalars match Go's text, the
+/// part clients match on; other kinds print their Debug form.
+fn go_value(value: &document::NormalValue) -> String {
+    use document::NormalValue::*;
+    match value {
+        value if value.is_nil() => "<nil>".to_string(),
+        String(text) | NillableString(Some(text)) => text.clone(),
+        Int(n) | NillableInt(Some(n)) => n.to_string(),
+        Float64(n) | NillableFloat64(Some(n)) => go_float(*n),
+        Bool(b) | NillableBool(Some(b)) => b.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// `n` as Go's `%v` prints a float64: the shortest digits that read back,
+/// with an exponent when it is below -4 or at least 6 (`1e+21`, `1e-07`).
+fn go_float(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "+Inf" } else { "-Inf" }.to_string();
+    }
+    let scientific = format!("{n:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("an exponent is always printed");
+    let exponent: i32 = exponent.parse().expect("the exponent is an integer");
+    if n != 0.0 && !(-4..6).contains(&exponent) {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{mantissa}e{sign}{:02}", exponent.abs())
+    } else {
+        n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::go_float;
+
+    #[test]
+    fn floats_print_as_go_prints_them() {
+        for (n, go) in [
+            (0.0, "0"),
+            (1.5, "1.5"),
+            (100.0, "100"),
+            (123456.0, "123456"),
+            (1234567.0, "1.234567e+06"),
+            (1e21, "1e+21"),
+            (0.0001, "0.0001"),
+            (0.00001, "1e-05"),
+            (-2.5e-7, "-2.5e-07"),
+            (f64::INFINITY, "+Inf"),
+        ] {
+            assert_eq!(go_float(n), go, "{n}");
+        }
+    }
+}

@@ -523,6 +523,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
+        // The receive gate judges the document on the fetched CAR before any
+        // of it is imported; a refusal discharges the root as a terminal skip.
+        if !self.gate_fetched(&root_cid, &blocks).await {
+            return Ok(CarIngestDisposition::Completed);
+        }
+
         // Share the same CID ownership boundary as PushLog processing and
         // merge. Go holds its root sync owner across CAR ingest and merge;
         // Rust additionally owns every contained CID because overlapping DAGs

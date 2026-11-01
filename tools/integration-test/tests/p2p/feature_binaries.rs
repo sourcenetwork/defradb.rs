@@ -1,6 +1,6 @@
 //! Prepares immutable default and Iroh CLI snapshots before P2P tests run in parallel.
 //!
-//! The harness builds both feature sets to `target/debug/defra`, so retaining that
+//! The harness builds both feature sets to the same `defra` output, so retaining that
 //! path would make whichever build finishes last determine every test's features.
 
 use std::path::PathBuf;
@@ -9,6 +9,9 @@ use integration_test::{build_cli_variant, workspace_root};
 
 #[ctor::ctor]
 fn prepare_feature_binaries() {
+    if integration_test::listing_tests() {
+        return;
+    }
     let default = existing_binary("DEFRA_RUST_BINARY");
     let iroh = existing_binary("DEFRA_IROH_BINARY");
     if default.is_some() && iroh.is_some() {

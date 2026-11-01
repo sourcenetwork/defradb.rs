@@ -346,6 +346,18 @@ pub struct NetConfig {
     /// Max established connections per peer. Default: 4.
     #[serde(default = "default_max_connections_per_peer")]
     pub max_connections_per_peer: u32,
+    /// libp2p's whole memory budget in MiB, in place of half of system
+    /// memory, which inside a container is the host's. Default: unset.
+    #[serde(default)]
+    pub resource_memory_mib: Option<u64>,
+    /// libp2p's file descriptor budget, used with a memory budget; 512 when
+    /// unset.
+    #[serde(default)]
+    pub resource_file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset.
+    /// Default: unset, no cap.
+    #[serde(default)]
+    pub max_streams_per_peer: Option<usize>,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -507,6 +519,9 @@ impl Default for NetConfig {
             connection_manager_high_water: default_connection_manager_high_water(),
             connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
             max_connections_per_peer: default_max_connections_per_peer(),
+            resource_memory_mib: None,
+            resource_file_descriptors: None,
+            max_streams_per_peer: None,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,

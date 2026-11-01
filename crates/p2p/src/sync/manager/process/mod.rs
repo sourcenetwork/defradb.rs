@@ -100,6 +100,10 @@ pub struct SyncManager<B: Blockstore> {
     /// Observability counters (see `SyncDiagnostics`).
     pub(crate) diagnostics: Arc<SyncDiagnostics>,
 
+    /// The node's check on pushed documents before their blocks are
+    /// fetched or stored, if it has one.
+    pub(crate) receive_gate: regolith::sync::OnceCell<crate::sync::receive_gate::SharedReceiveGate>,
+
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
 
@@ -218,6 +222,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             ),
             rooted_car_completions: RootedCarCompletionTracker::default(),
             diagnostics: Arc::new(SyncDiagnostics::default()),
+            receive_gate: regolith::sync::OnceCell::new(),
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
