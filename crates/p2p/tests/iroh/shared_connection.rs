@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::super::endpoint::{EndpointResources, SpawnedTasks};
 use super::super::endpoint_config::AllowlistState;
 use super::super::endpoint_streams::{
-    adopt_new_connection, handle_incoming, ConnectionDirection, ConnectionLifecycle,
+    adopt_new_connection, handle_incoming, AdoptionOutcome, ConnectionDirection,
+    ConnectionLifecycle,
 };
 use super::super::inbound_budget::InboundBudget;
 use super::super::records::RecordsHandle;
@@ -633,7 +634,7 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
                 },
             );
             let healthy_outbound = healthy_outbound.unwrap();
-            assert!(
+            assert_eq!(
                 adopt_new_connection(
                     &healthy_lifecycle,
                     &cache,
@@ -643,6 +644,7 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
                     ConnectionDirection::Inbound,
                 )
                 .await,
+                AdoptionOutcome::Admitted,
                 "an open registry must adopt the healthy peer"
             );
             assert_eq!(
@@ -681,7 +683,7 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
                         .unwrap()
                 },
             );
-            let admitted = adopt_new_connection(
+            let outcome = adopt_new_connection(
                 &closed_lifecycle,
                 &cache,
                 refused_connection.clone(),
@@ -691,9 +693,10 @@ fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
             )
             .await;
 
-            assert!(
-                !admitted,
-                "a closed registry must refuse the connection it cannot pump"
+            assert_eq!(
+                outcome,
+                AdoptionOutcome::ShuttingDown,
+                "a closed registry is a shutdown, not a revoke"
             );
             assert!(
                 refused_connection.close_reason().is_some(),
@@ -789,7 +792,7 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
                         .unwrap()
                 },);
             let outbound = outbound.unwrap();
-            let admitted = adopt_new_connection(
+            let outcome = adopt_new_connection(
                 &lifecycle,
                 &cache,
                 connection.clone(),
@@ -799,7 +802,11 @@ fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
             )
             .await;
 
-            assert!(!admitted, "a revoked peer must not be adopted");
+            assert_eq!(
+                outcome,
+                AdoptionOutcome::Refused,
+                "a revoked peer must not be adopted"
+            );
             assert!(
                 connection.close_reason().is_some(),
                 "the revoked connection must be closed"
@@ -1095,6 +1102,189 @@ fn repeated_cache_hits_reuse_one_adopted_connection() {
             local.close().await;
             peer.close().await;
             drop(accepted);
+        })
+        .unwrap();
+}
+
+/// A post-publication allowlist miss must cost only the connection it refused.
+///
+/// The allowlist governs who may open a connection TO us, so a peer that is
+/// dropped from it keeps the outbound session this node dialled. The refused
+/// inbound adopt publishes into the cache and displaces that sibling, so the
+/// refusal has to put it back: the sibling must stay open, stay cached, keep
+/// its peer-map count, and still serve RPC.
+#[test]
+fn allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer_id = PeerId::new(peer.id().to_string());
+            let direct = peer.addr().ip_addrs().next().copied();
+
+            // An explicit allowlist that does not contain the peer: inbound is
+            // refused, outbound is not, and nothing is revoked.
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::Explicit(
+                HopscotchMap::with_hasher(RandomState::default()),
+            )));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+            let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (lifecycle, _events) = lifecycle_with(
+                &peer_map,
+                &spawned_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), lifecycle.clone());
+
+            // The healthy sibling: an outbound session this node dialled, which
+            // the allowlist does not govern.
+            let (sibling, sibling_accepted) =
+                tokio::join!(local.connect(peer.addr(), protocols::ALPN_MUX), async {
+                    peer.accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },);
+            let sibling = sibling.unwrap();
+            assert_eq!(
+                adopt_new_connection(
+                    &lifecycle,
+                    &cache,
+                    sibling.clone(),
+                    peer.id(),
+                    direct,
+                    ConnectionDirection::Outbound,
+                )
+                .await,
+                AdoptionOutcome::Admitted,
+                "the allowlist must not bar an outbound dial"
+            );
+            assert_eq!(
+                peer_map
+                    .connection(&peer.id())
+                    .expect("the dialled peer must be counted")
+                    .open_connections,
+                1
+            );
+
+            // Now the peer dials in, and the allowlist refuses it after the
+            // publish.
+            let (refused_outbound, refused) =
+                tokio::join!(peer.connect(local.addr(), protocols::ALPN_MUX), async {
+                    local
+                        .accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },);
+            let refused_outbound = refused_outbound.unwrap();
+            assert_eq!(
+                adopt_new_connection(
+                    &lifecycle,
+                    &cache,
+                    refused.clone(),
+                    peer.id(),
+                    None,
+                    ConnectionDirection::Inbound,
+                )
+                .await,
+                AdoptionOutcome::Refused,
+                "an allowlist miss must refuse the inbound connection"
+            );
+            assert!(
+                refused.close_reason().is_some(),
+                "the refused connection's own handle must be closed"
+            );
+
+            // The refused connection is still pumped, so its cleanup settles a
+            // moment after adoption returns.
+            wait_until(
+                || {
+                    peer_map
+                        .connection(&peer.id())
+                        .is_some_and(|info| info.open_connections == 1)
+                },
+                "the refused connection's count to be released",
+            )
+            .await;
+
+            // The sibling is untouched: open, cached, counted, and still the
+            // connection RPC reaches the peer over.
+            assert!(
+                sibling.close_reason().is_none(),
+                "an allowlist miss must not close the outbound sibling"
+            );
+            assert!(
+                sibling_accepted.close_reason().is_none(),
+                "the peer's own handle on the sibling must stay open"
+            );
+            assert_eq!(
+                cache
+                    .connections
+                    .get(&peer.id())
+                    .expect("the sibling must stay cached")
+                    .stable_id(),
+                sibling.stable_id(),
+                "the refusal must put the displaced sibling back"
+            );
+            assert_eq!(
+                peer_map
+                    .connection(&peer.id())
+                    .expect("the sibling must stay counted")
+                    .open_connections,
+                1,
+                "the refusal must leave exactly the sibling's count"
+            );
+
+            let shared = n0_future::time::timeout(
+                std::time::Duration::from_secs(2),
+                connect_with_cache(&local, &peer_id, direct, &cache, &admission),
+            )
+            .await
+            .expect("the sibling must still be reachable")
+            .unwrap();
+            assert_eq!(
+                shared.stable_id(),
+                sibling.stable_id(),
+                "RPC must still use the sibling connection"
+            );
+            let reply = tokio::spawn(async move {
+                let (mut send, mut recv) = sibling_accepted.accept_bi().await.unwrap();
+                let request = recv.read_to_end(32).await.unwrap();
+                send.write_all(&request).await.unwrap();
+                send.finish().unwrap();
+            });
+            let response = n0_future::time::timeout(std::time::Duration::from_secs(2), async {
+                let (mut send, mut recv) = shared.open_bi().await.unwrap();
+                send.write_all(b"sibling-rpc").await.unwrap();
+                send.finish().unwrap();
+                recv.read_to_end(32).await.unwrap()
+            })
+            .await
+            .expect("the sibling must still serve RPC after the refusal");
+            assert_eq!(response, b"sibling-rpc");
+            reply.await.unwrap();
+
+            for task in spawned_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            peer.close().await;
+            drop(refused_outbound);
         })
         .unwrap();
 }
