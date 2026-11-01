@@ -28,6 +28,10 @@ pub(super) struct ConnectionCacheState {
     legacy_connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
+    /// Only the test-only unmanaged path reads it: an adopting cache reaches
+    /// gossip through its lifecycle, which is the one place a new connection
+    /// is announced.
+    #[cfg(test)]
     gossip: GossipHandle,
     /// What a connection this cache creates needs in order to be adopted.
     /// `None` only for the test-only unmanaged cache; every production cache
@@ -57,14 +61,15 @@ pub(super) fn new_unmanaged_connection_cache(gossip: GossipHandle) -> Connection
 /// The endpoint's cache: a connection it dials here is adopted, so the peer
 /// that dialled us can open streams back over it.
 pub(super) fn new_adopting_connection_cache(
-    gossip: GossipHandle,
+    _gossip: GossipHandle,
     lifecycle: ConnectionLifecycle,
 ) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
-        gossip,
+        #[cfg(test)]
+        gossip: _gossip,
         lifecycle: Some(lifecycle),
     })
 }
