@@ -5,4 +5,3 @@
 # - an entry a pull request adds is printed as a warning naming that pull request.
 issue1194_repro issue1194_selected_output_field_still_conflicts #2512
 cursor reindex_datetime_visibility::datetime_index_survives_reindex_and_stays_cursor_visible #2420
-acp_replay_outage_cross_runtime c_rust_to_go_outage_replay #2089
