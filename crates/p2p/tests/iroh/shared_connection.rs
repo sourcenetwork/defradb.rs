@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::super::endpoint::{EndpointResources, SpawnedTasks};
 use super::super::endpoint_config::AllowlistState;
-use super::super::endpoint_streams::{handle_incoming, ConnectionLifecycle};
+use super::super::endpoint_streams::{
+    adopt_new_connection, handle_incoming, ConnectionDirection, ConnectionLifecycle,
+};
 use super::super::inbound_budget::InboundBudget;
 use super::super::records::RecordsHandle;
 use super::super::solicited::Solicited;
@@ -509,6 +511,356 @@ fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
             assert!(cache.legacy_connections.get(&peer.id()).is_none());
             endpoint.close().await;
             peer.close().await;
+        })
+        .unwrap();
+}
+
+/// One lifecycle over shared stores, so a test can adopt through two different
+/// task registries (one open, one closed) against the same peer map and cache.
+fn lifecycle_with(
+    peer_map: &Arc<SharedPeerMap>,
+    spawned_tasks: &SpawnedTasks,
+    admission: &Arc<PeerAdmission>,
+    gossip: &GossipHandle,
+    inbound_budget: &Arc<InboundBudget>,
+    records: &RecordsHandle,
+    solicited: &Arc<Solicited>,
+) -> (
+    ConnectionLifecycle,
+    crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
+) {
+    let (events, received) = crate::sync::dispatch_queue(8);
+    let lifecycle = ConnectionLifecycle::from_parts(
+        events,
+        Arc::clone(peer_map),
+        None,
+        Arc::clone(spawned_tasks),
+        Arc::clone(admission),
+        gossip.clone(),
+        Arc::clone(inbound_budget),
+        records.clone(),
+        Arc::clone(solicited),
+    );
+    (lifecycle, received)
+}
+
+/// A closed task registry refuses the pump, so adoption must close only the
+/// handle it just took, retire its cache entry, and leave the peer-map count
+/// balanced — without touching a healthy connection to another peer.
+#[test]
+fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let healthy_peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let refused_peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+
+            // A healthy peer adopted through an open registry first, so the
+            // refusal below has something it must not disturb.
+            let healthy_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (healthy_lifecycle, _healthy_events) = lifecycle_with(
+                &peer_map,
+                &healthy_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), healthy_lifecycle.clone());
+
+            let (healthy_outbound, healthy_incoming) = tokio::join!(
+                healthy_peer.connect(local.addr(), protocols::ALPN_MUX),
+                async { local.accept().await.unwrap() },
+            );
+            let healthy_outbound = healthy_outbound.unwrap();
+            let healthy_connection = healthy_incoming.accept().unwrap().await.unwrap();
+            assert!(
+                adopt_new_connection(
+                    &healthy_lifecycle,
+                    &cache,
+                    healthy_connection.clone(),
+                    healthy_peer.id(),
+                    None,
+                    ConnectionDirection::Inbound,
+                )
+                .await,
+                "an open registry must adopt the healthy peer"
+            );
+            assert_eq!(
+                peer_map
+                    .connection(&healthy_peer.id())
+                    .expect("the healthy peer must be counted")
+                    .open_connections,
+                1
+            );
+
+            // Now a registry that has already shut down.
+            let closed_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (closed_lifecycle, _closed_events) = lifecycle_with(
+                &peer_map,
+                &closed_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            for task in closed_tasks.close() {
+                let _ = task.await;
+            }
+
+            let (refused_outbound, refused_incoming) = tokio::join!(
+                refused_peer.connect(local.addr(), protocols::ALPN_MUX),
+                async { local.accept().await.unwrap() },
+            );
+            let refused_outbound = refused_outbound.unwrap();
+            let refused_connection = refused_incoming.accept().unwrap().await.unwrap();
+            let admitted = adopt_new_connection(
+                &closed_lifecycle,
+                &cache,
+                refused_connection.clone(),
+                refused_peer.id(),
+                None,
+                ConnectionDirection::Inbound,
+            )
+            .await;
+
+            assert!(
+                !admitted,
+                "a closed registry must refuse the connection it cannot pump"
+            );
+            assert!(
+                refused_connection.close_reason().is_some(),
+                "the refused connection's own handle must be closed"
+            );
+            assert!(
+                cache.connections.get(&refused_peer.id()).is_none(),
+                "a refused adoption must leave no cache entry"
+            );
+            assert!(
+                peer_map.connection(&refused_peer.id()).is_none(),
+                "a refused adoption must leave no peer-map count"
+            );
+            assert!(
+                !peer_map
+                    .connected_peers()
+                    .contains(&PeerId::new(refused_peer.id().to_string())),
+                "a refused peer must not look connected"
+            );
+
+            // The healthy connection is untouched: not closed, still counted,
+            // still cached.
+            assert!(
+                healthy_connection.close_reason().is_none(),
+                "refusing one peer must not close another peer's connection"
+            );
+            assert!(
+                healthy_outbound.close_reason().is_none(),
+                "the healthy peer's own handle must stay open"
+            );
+            assert_eq!(
+                peer_map
+                    .connection(&healthy_peer.id())
+                    .expect("the healthy peer must still be counted")
+                    .open_connections,
+                1
+            );
+            assert!(
+                cache.connections.get(&healthy_peer.id()).is_some(),
+                "the healthy peer's cache entry must survive"
+            );
+
+            for task in healthy_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            healthy_peer.close().await;
+            refused_peer.close().await;
+        })
+        .unwrap();
+}
+
+/// A peer revoked before its connection is adopted must end with no usable
+/// handle, no cache entry and no peer-map count, and must not be announced.
+#[test]
+fn revoked_adoption_leaves_no_handle_and_no_cache_entry() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+            let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (lifecycle, mut events) = lifecycle_with(
+                &peer_map,
+                &spawned_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), lifecycle.clone());
+
+            // Revoked before the connection exists, so adoption is the step
+            // that must refuse it.
+            assert!(admission.revoke(peer.id()));
+
+            let (outbound, incoming) =
+                tokio::join!(peer.connect(local.addr(), protocols::ALPN_MUX), async {
+                    local.accept().await.unwrap()
+                },);
+            let outbound = outbound.unwrap();
+            let connection = incoming.accept().unwrap().await.unwrap();
+            let admitted = adopt_new_connection(
+                &lifecycle,
+                &cache,
+                connection.clone(),
+                peer.id(),
+                None,
+                ConnectionDirection::Inbound,
+            )
+            .await;
+
+            assert!(!admitted, "a revoked peer must not be adopted");
+            assert!(
+                connection.close_reason().is_some(),
+                "the revoked connection must be closed"
+            );
+            assert!(
+                cache.connections.get(&peer.id()).is_none(),
+                "a revoked adoption must leave no cache entry"
+            );
+            assert!(
+                peer_map.connection(&peer.id()).is_none(),
+                "a revoked adoption must leave no peer-map count"
+            );
+            assert!(
+                peer_map.connected_peers().is_empty(),
+                "a revoked peer must not appear connected"
+            );
+            assert!(
+                n0_future::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                    .await
+                    .is_err(),
+                "a revoked peer must not be announced as connected"
+            );
+
+            for task in spawned_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            peer.close().await;
+            drop(outbound);
+        })
+        .unwrap();
+}
+
+/// Repeated cache hits reuse the one adopted connection: no second dial, no
+/// second pump, and no extra peer-map count.
+#[test]
+fn repeated_cache_hits_reuse_one_adopted_connection() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let peer_id = PeerId::new(peer.id().to_string());
+            let direct = peer.addr().ip_addrs().next().copied();
+
+            let peer_map = Arc::new(SharedPeerMap::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+            let gossip = GossipHandle::new();
+            let inbound_budget: Arc<InboundBudget> = Arc::default();
+            let records = RecordsHandle::new();
+            let solicited = Arc::new(Solicited::new());
+            let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+            let (lifecycle, _events) = lifecycle_with(
+                &peer_map,
+                &spawned_tasks,
+                &admission,
+                &gossip,
+                &inbound_budget,
+                &records,
+                &solicited,
+            );
+            let cache = new_adopting_connection_cache(gossip.clone(), lifecycle);
+
+            // The first connection is an RPC cache miss, adopted by the cache.
+            let (first, accepted) = tokio::join!(
+                connect_with_cache(&local, &peer_id, direct, &cache, &admission),
+                async {
+                    peer.accept()
+                        .await
+                        .unwrap()
+                        .accept()
+                        .unwrap()
+                        .await
+                        .unwrap()
+                },
+            );
+            let first = first.unwrap();
+            assert_eq!(
+                peer_map
+                    .connection(&peer.id())
+                    .expect("the dialled peer must be counted")
+                    .open_connections,
+                1
+            );
+
+            for _ in 0..3 {
+                let again = n0_future::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    connect_with_cache(&local, &peer_id, direct, &cache, &admission),
+                )
+                .await
+                .expect("a cache hit must not dial")
+                .unwrap();
+                assert_eq!(
+                    again.stable_id(),
+                    first.stable_id(),
+                    "a cache hit must return the adopted connection"
+                );
+            }
+
+            assert_eq!(
+                peer_map
+                    .connection(&peer.id())
+                    .expect("the peer must still be counted")
+                    .open_connections,
+                1,
+                "repeated cache hits must not increment the peer-map count"
+            );
+            assert_eq!(
+                peer_map.connected_peers().len(),
+                1,
+                "repeated cache hits must not add a second peer entry"
+            );
+            assert!(
+                n0_future::time::timeout(std::time::Duration::from_secs(2), peer.accept())
+                    .await
+                    .is_err(),
+                "repeated cache hits must not open a second connection"
+            );
+
+            for task in spawned_tasks.close() {
+                let _ = task.await;
+            }
+            local.close().await;
+            peer.close().await;
+            drop(accepted);
         })
         .unwrap();
 }
