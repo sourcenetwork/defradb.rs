@@ -82,33 +82,39 @@ impl State {
     /// Waits until node `name` is building no index, as Go's suite does after
     /// a patch, a version switch or a migration outside a transaction
     /// (`WaitForNodeIndexesBuilt`). Go rebuilds indexes in the background, and
-    /// a query that races the build fails with a transaction conflict. A node
-    /// whose listing reports no build status has nothing to wait for.
+    /// a query that races the build fails with a transaction conflict. Only a
+    /// valid listing with no build in progress counts as built; a failed or
+    /// unreadable listing is retried until the deadline. A node whose listing
+    /// reports no build status has nothing to wait for.
     pub fn wait_for_indexes_built(&self, name: &str) -> Result<(), Failure> {
         let url = format!("{}/api/v0/collections/indexes", self.url_on(name)?);
-        let building = self
+        let outcome = self
             .block_on(network_edge().spawn(async move {
                 let http = reqwest::Client::new();
                 let deadline = tokio::time::Instant::now() + INDEX_BUILD_TIMEOUT;
                 loop {
-                    let listing = match http.get(&url).send().await {
-                        Ok(response) => response.json::<Value>().await.ok(),
-                        Err(_) => None,
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let listing = match http.get(&url).timeout(remaining).send().await {
+                        Ok(response) => response.json::<Value>().await.map_err(|e| e.to_string()),
+                        Err(error) => Err(error.to_string()),
                     };
-                    let building = listing.as_ref().is_some_and(any_index_building);
-                    if !building || tokio::time::Instant::now() > deadline {
-                        return building;
+                    let outcome = match &listing {
+                        Ok(listing) if !any_index_building(listing) => return Ok(()),
+                        Ok(_) => "an index is still building".to_owned(),
+                        Err(error) => format!("the index listing failed: {error}"),
+                    };
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(outcome);
                     }
                     tokio::time::sleep(INDEX_BUILD_POLL).await;
                 }
             }))
             .expect("run on the network edge");
-        match building {
-            true => Err(Failure::operation(format!(
-                "node {name} still building an index after {INDEX_BUILD_TIMEOUT:?}"
-            ))),
-            false => Ok(()),
-        }
+        outcome.map_err(|reason| {
+            Failure::operation(format!(
+                "node {name} after {INDEX_BUILD_TIMEOUT:?}: {reason}"
+            ))
+        })
     }
 }
 
