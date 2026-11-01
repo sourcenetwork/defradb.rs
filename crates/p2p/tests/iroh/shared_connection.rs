@@ -1268,6 +1268,10 @@ fn allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling() {
                 let request = recv.read_to_end(32).await.unwrap();
                 send.write_all(&request).await.unwrap();
                 send.finish().unwrap();
+                // The peer's last connection handle must outlive acknowledgement
+                // of its reply: dropping it here closes the connection before the
+                // caller reads the response, which surfaces as ConnectionLost.
+                assert!(send.stopped().await.unwrap().is_none());
             });
             let response = n0_future::time::timeout(std::time::Duration::from_secs(2), async {
                 let (mut send, mut recv) = shared.open_bi().await.unwrap();
