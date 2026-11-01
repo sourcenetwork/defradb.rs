@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::message::{IdentityRequest, IdentityResponse, IDENTITY_UNCONFIGURED_ERROR};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::super::endpoint::{EndpointResources, SpawnedTasks};
 use super::super::endpoint_config::AllowlistState;
 use super::super::endpoint_streams::{handle_incoming, ConnectionLifecycle};
@@ -261,6 +264,209 @@ fn authenticated_reconnection_replaces_an_open_old_rpc_path() {
     edge::testing::edge()
         .block_on(async {
             reverse_rpc_uses_inbound(true).await;
+        })
+        .unwrap();
+}
+
+/// The managed state a real endpoint runs with, for a test that drives the
+/// accept and RPC paths directly instead of through `spawn_endpoint`.
+fn managed_resources(endpoint: Endpoint, gossip: GossipHandle) -> EndpointResources {
+    let peer_map = Arc::new(SharedPeerMap::new());
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
+    let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+    let inbound_budget: Arc<InboundBudget> = Arc::default();
+    let records = RecordsHandle::new();
+    let solicited = Arc::new(Solicited::new());
+    let (events, _events_rx) = crate::sync::dispatch_queue(8);
+    let lifecycle = ConnectionLifecycle::from_parts(
+        events,
+        Arc::clone(&peer_map),
+        None,
+        Arc::clone(&spawned_tasks),
+        Arc::clone(&admission),
+        gossip.clone(),
+        Arc::clone(&inbound_budget),
+        records.clone(),
+        Arc::clone(&solicited),
+    );
+    EndpointResources {
+        endpoint,
+        gossip: gossip.clone(),
+        peer_map,
+        connection_cache: new_adopting_connection_cache(gossip, lifecycle),
+        spawned_tasks,
+        node_identity: None,
+        admission,
+        inbound_budget,
+        fetch_stats: Arc::default(),
+        records,
+        solicited,
+    }
+}
+
+/// Regression: a mux created only by `connect_with_cache` must serve reverse
+/// RPC on that same connection.
+///
+/// The dialer never runs `handle_dial` and never accepts an inbound
+/// connection, so its only path to the peer is the RPC cache-miss dial. The
+/// receiver adopts the accepted connection through `handle_incoming` — the
+/// managed accept path — and then sends a real service request back over it.
+/// On the defect the dialer never `accept_bi`s the connection it dialled, so
+/// that reverse request is never served. The forward request in the same test
+/// proves both endpoints and the connection were ready before the reverse
+/// await, so a failure here is the reverse await and nothing else.
+#[test]
+fn rpc_dialed_connection_serves_reverse_service_request() {
+    edge::testing::edge()
+        .block_on(async {
+            let dialer = tests::localhost_endpoint(vec![]).await;
+            let acceptor = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let dialer_peer = PeerId::new(dialer.id().to_string());
+            let acceptor_peer = PeerId::new(acceptor.id().to_string());
+
+            let dialer_resources = managed_resources(dialer.clone(), GossipHandle::new());
+            let acceptor_resources = managed_resources(acceptor.clone(), GossipHandle::new());
+
+            // Both sides run their managed accept loop. The dialer must never
+            // see a connection: the reverse path has to reuse the dialled one.
+            let dialer_accepts = Arc::new(AtomicUsize::new(0));
+            let (dialer_events, _dialer_events_rx) = crate::sync::dispatch_queue(8);
+            let dialer_accept_task = n0_future::task::spawn({
+                let endpoint = dialer.clone();
+                let resources = dialer_resources.clone();
+                let accepts = Arc::clone(&dialer_accepts);
+                async move {
+                    while let Some(incoming) = endpoint.accept().await {
+                        accepts.fetch_add(1, Ordering::SeqCst);
+                        handle_incoming(incoming, &resources, &dialer_events).await;
+                    }
+                }
+            });
+            let acceptor_accepts = Arc::new(AtomicUsize::new(0));
+            let (acceptor_events, _acceptor_events_rx) = crate::sync::dispatch_queue(8);
+            let acceptor_accept_task = n0_future::task::spawn({
+                let endpoint = acceptor.clone();
+                let resources = acceptor_resources.clone();
+                let accepts = Arc::clone(&acceptor_accepts);
+                async move {
+                    while let Some(incoming) = endpoint.accept().await {
+                        accepts.fetch_add(1, Ordering::SeqCst);
+                        handle_incoming(incoming, &resources, &acceptor_events).await;
+                    }
+                }
+            });
+
+            assert!(
+                cached_connection(&dialer_resources.connection_cache, &acceptor_peer)
+                    .unwrap()
+                    .is_none(),
+                "the first connection must come from an RPC cache miss"
+            );
+
+            // Forward: the dialer's only route to the peer is the RPC cache
+            // miss. A real service request (identity) is served on it.
+            let direct = acceptor.addr().ip_addrs().next().copied();
+            let forward = n0_future::time::timeout(
+                std::time::Duration::from_secs(2),
+                handle_request_response::<_, IdentityResponse>(
+                    &dialer,
+                    &acceptor_peer,
+                    protocols::STREAM_IDENTITY,
+                    &IdentityRequest::new(dialer_peer.to_string()),
+                    direct,
+                    &dialer_resources.connection_cache,
+                    &dialer_resources.admission,
+                ),
+            )
+            .await
+            .expect("forward RPC over the RPC-dialled connection")
+            .unwrap();
+            assert_eq!(
+                forward.err_message.as_deref(),
+                Some(IDENTITY_UNCONFIGURED_ERROR),
+                "the acceptor must answer the forward request"
+            );
+
+            let dialled = cached_connection(&dialer_resources.connection_cache, &acceptor_peer)
+                .unwrap()
+                .expect("the RPC dial must cache the connection it created");
+            let adopted = cached_connection(&acceptor_resources.connection_cache, &dialer_peer)
+                .unwrap()
+                .expect("the accept path must cache the connection it adopted");
+            // `stable_id` is a local handle identity, so it is compared per
+            // endpoint (before/after), never across the two endpoints.
+            assert_eq!(
+                dialled.remote_id(),
+                acceptor.id(),
+                "the dialer's cached handle must point at the acceptor"
+            );
+            assert_eq!(
+                adopted.remote_id(),
+                dialer.id(),
+                "the acceptor's cached handle must point at the dialer"
+            );
+
+            // Reverse: the acceptor reuses the adopted connection to send a
+            // real service request back. No manual `accept_bi` echo stands in
+            // for the dialer's pump.
+            let reverse = n0_future::time::timeout(
+                std::time::Duration::from_secs(2),
+                handle_request_response::<_, IdentityResponse>(
+                    &acceptor,
+                    &dialer_peer,
+                    protocols::STREAM_IDENTITY,
+                    &IdentityRequest::new(acceptor_peer.to_string()),
+                    None,
+                    &acceptor_resources.connection_cache,
+                    &acceptor_resources.admission,
+                ),
+            )
+            .await
+            .expect("reverse RPC must be served on the RPC-dialled connection")
+            .unwrap();
+            assert_eq!(
+                reverse.err_message.as_deref(),
+                Some(IDENTITY_UNCONFIGURED_ERROR),
+                "the dialer must answer the reverse request"
+            );
+
+            assert_eq!(
+                dialer_accepts.load(Ordering::SeqCst),
+                0,
+                "the reverse path must not open a second connection"
+            );
+            assert_eq!(
+                acceptor_accepts.load(Ordering::SeqCst),
+                1,
+                "the acceptor must accept exactly one connection"
+            );
+            assert_eq!(
+                cached_connection(&dialer_resources.connection_cache, &acceptor_peer)
+                    .unwrap()
+                    .unwrap()
+                    .stable_id(),
+                dialled.stable_id(),
+                "the reverse request must not replace the dialled connection"
+            );
+            assert_eq!(
+                cached_connection(&acceptor_resources.connection_cache, &dialer_peer)
+                    .unwrap()
+                    .unwrap()
+                    .stable_id(),
+                adopted.stable_id(),
+                "the reverse request must not replace the adopted connection"
+            );
+
+            dialer_accept_task.abort();
+            acceptor_accept_task.abort();
+            for task in dialer_resources.spawned_tasks.close() {
+                let _ = task.await;
+            }
+            for task in acceptor_resources.spawned_tasks.close() {
+                let _ = task.await;
+            }
+            dialer.close().await;
+            acceptor.close().await;
         })
         .unwrap();
 }
