@@ -126,7 +126,7 @@ regolith = "0.2.3"
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
 uuid = { version = "1.23.0", features = ["v4"] }
-k256 = { version = "0.13", features = ["ecdsa", "serde"] }
+k256 = { version = "0.14", features = ["ecdsa", "serde"] }
 # External SHA-2 assembly does not support MSVC.
 sha2 = "0.10"
 # Pinned to 0.8: rand 0.9 bumped rand_core to 0.9, but the stable

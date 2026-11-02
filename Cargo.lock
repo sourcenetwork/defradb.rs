@@ -3481,10 +3481,10 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac 0.12.1",
- "k256 0.13.4",
+ "k256 0.14.0",
  "multibase",
  "multihash-codetable",
- "p256 0.13.2",
+ "p256 0.14.0",
  "rand 0.8.8",
  "rapidhash",
  "serde",
@@ -4167,7 +4167,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
- "pem-rfc7468 0.7.0",
  "zeroize",
 ]
 
@@ -4178,7 +4177,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
 dependencies = [
  "const-oid 0.10.2",
- "pem-rfc7468 1.0.0",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -4456,6 +4455,7 @@ dependencies = [
  "digest 0.11.3",
  "elliptic-curve 0.14.1",
  "rfc6979 0.6.0",
+ "serdect 0.4.3",
  "signature 3.0.0",
  "spki 0.8.0",
  "zeroize",
@@ -4572,7 +4572,6 @@ dependencies = [
  "ff 0.13.1",
  "generic-array",
  "group 0.13.0",
- "pem-rfc7468 0.7.0",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
  "sec1 0.7.3",
@@ -4594,9 +4593,11 @@ dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
  "hybrid-array",
+ "pem-rfc7468",
  "pkcs8 0.11.0",
  "rand_core 0.10.1",
  "sec1 0.8.1",
+ "serdect 0.4.3",
  "subtle",
  "zeroize",
 ]
@@ -5966,8 +5967,8 @@ dependencies = [
  "crypto",
  "defra-core",
  "hex",
- "k256 0.13.4",
- "p256 0.13.2",
+ "k256 0.14.0",
+ "p256 0.14.0",
  "proptest",
  "serde",
  "serde_json",
@@ -6816,6 +6817,7 @@ dependencies = [
  "ecdsa 0.17.0",
  "elliptic-curve 0.14.1",
  "primeorder 0.14.0",
+ "serdect 0.4.3",
  "sha2 0.11.0",
  "signature 3.0.0",
  "wnaf",
@@ -9043,15 +9045,6 @@ checksum = "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
 dependencies = [
  "base64 0.23.1",
  "serde_core",
-]
-
-[[package]]
-name = "pem-rfc7468"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
-dependencies = [
- "base64ct",
 ]
 
 [[package]]
@@ -11304,6 +11297,7 @@ dependencies = [
  "ctutils",
  "der 0.8.0",
  "hybrid-array",
+ "serdect 0.4.3",
  "subtle",
  "zeroize",
 ]
@@ -13442,7 +13436,7 @@ dependencies = [
  "hex",
  "identity",
  "inputs",
- "k256 0.13.4",
+ "k256 0.14.0",
  "keyring 0.5.0",
  "kovan",
  "kovan-map",

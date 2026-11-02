@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(&did_bytes[2..], issuer_pubkey.as_bytes());
 
         let sig_bytes = decoder.decode(parts[2]).expect("signature b64");
-        let signature = Signature::from_bytes((&sig_bytes[..]).into()).expect("signature bytes");
+        let signature = Signature::from_slice(&sig_bytes).expect("signature bytes");
         let digest = Sha256::digest(format!("{}.{}", parts[0], parts[1]).as_bytes());
         VerifyingKey::from_sec1_bytes(issuer_pubkey.as_bytes())
             .expect("issuer public key")
