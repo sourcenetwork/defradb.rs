@@ -514,9 +514,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             TransportEvent::BitswapComplete {
                 query_id,
                 success,
+                cause,
                 error,
             } => {
-                self.handle_bitswap_complete(query_id, success, error)
+                let outcome = if success {
+                    Ok(())
+                } else {
+                    Err(cause.unwrap_or(crate::transport::FetchFailureCause::Error))
+                };
+                self.handle_bitswap_complete(query_id, outcome, error)
                     .await?;
             }
             TransportEvent::DocSyncRequest {
@@ -633,7 +639,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     if has_blocks || has_notices {
                         match disposition {
                             Some(car::CarIngestDisposition::Completed) => {
-                                self.handle_bitswap_complete(query_id, has_blocks, None)
+                                let outcome = if has_blocks {
+                                    Ok(())
+                                } else {
+                                    Err(crate::transport::FetchFailureCause::NoBlocks)
+                                };
+                                self.handle_bitswap_complete(query_id, outcome, None)
                                     .await?;
                             }
                             Some(car::CarIngestDisposition::Busy) => {
@@ -645,7 +656,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             None => {
                                 self.handle_bitswap_complete(
                                     query_id,
-                                    false,
+                                    Err(crate::transport::FetchFailureCause::Error),
                                     result.as_ref().err().map(ToString::to_string),
                                 )
                                 .await?;

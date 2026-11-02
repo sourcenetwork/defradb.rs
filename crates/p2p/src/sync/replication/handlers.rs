@@ -205,12 +205,12 @@ where
                 let result = match completion {
                     crate::sync::manager::FetchCompletion::Success => {
                         coordinator
-                            .handle_bitswap_complete(query_id, true, None)
+                            .handle_bitswap_complete(query_id, Ok(()), None)
                             .await
                     }
-                    crate::sync::manager::FetchCompletion::Failure => {
+                    crate::sync::manager::FetchCompletion::Failure(cause) => {
                         coordinator
-                            .handle_bitswap_complete(query_id, false, None)
+                            .handle_bitswap_complete(query_id, Err(cause), None)
                             .await
                     }
                     crate::sync::manager::FetchCompletion::Deferred => {

@@ -12,6 +12,7 @@ use rapidhash::HashMapExt;
 use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
+use crate::transport::FetchFailureCause;
 use crate::QueryId;
 
 use super::SyncManager;
@@ -35,7 +36,7 @@ fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> Com
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FetchCompletion {
     Success,
-    Failure,
+    Failure(FetchFailureCause),
     Deferred,
     SizeLimit(Cid),
 }
@@ -45,7 +46,7 @@ impl FetchCompletion {
         if success {
             Self::Success
         } else {
-            Self::Failure
+            Self::Failure(FetchFailureCause::Error)
         }
     }
 }
@@ -261,6 +262,7 @@ impl BlockSyncCompletionTracker {
         rx
     }
 
+    #[cfg(test)]
     pub(crate) fn complete(&self, query_id: QueryId, success: bool) -> bool {
         self.complete_with(query_id, FetchCompletion::from_success(success))
     }
@@ -273,7 +275,7 @@ impl BlockSyncCompletionTracker {
         self.complete_with(query_id, FetchCompletion::SizeLimit(cid))
     }
 
-    fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
+    pub(crate) fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
         // Iroh allocates and dispatches the transport query before
         // sync_blocks returns its ID. A fast failure can therefore arrive
         // before the poll owner installs its waiter. Latch the terminal
@@ -427,7 +429,7 @@ mod completion_tracker_tests {
         assert!(tracker.complete(query_id, false));
         assert_eq!(
             receiver.await.expect("completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(!tracker.complete(query_id, true));
     }
@@ -442,7 +444,7 @@ mod completion_tracker_tests {
 
         assert_eq!(
             receiver.await.expect("latched completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(tracker.take_early(query_id).is_none());
     }

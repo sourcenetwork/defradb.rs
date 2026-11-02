@@ -130,14 +130,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub(crate) async fn handle_bitswap_complete(
         &self,
         query_id: crate::QueryId,
-        success: bool,
+        outcome: std::result::Result<(), crate::transport::FetchFailureCause>,
         error: Option<String>,
     ) -> Result<()> {
-        if self
-            .manager
-            .block_sync_completion_tracker()
-            .complete(query_id, success)
-        {
+        let success = outcome.is_ok();
+        if self.manager.block_sync_completion_tracker().complete_with(
+            query_id,
+            outcome.map_or_else(crate::sync::manager::FetchCompletion::Failure, |()| {
+                crate::sync::manager::FetchCompletion::Success
+            }),
+        ) {
             return Ok(());
         }
         let Some(root_cid) = self.manager.take_query_root(query_id) else {
@@ -739,7 +741,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 query_id,
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
@@ -836,7 +838,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 query_id,
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
@@ -865,7 +867,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 QueryId(999),
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("remaining child fetch failed".to_string()),
             )
             .await
@@ -898,7 +900,11 @@ mod tests {
         }
 
         coordinator
-            .handle_bitswap_complete(QueryId(9999), false, Some("ignored".to_string()))
+            .handle_bitswap_complete(
+                QueryId(9999),
+                Err(crate::transport::FetchFailureCause::Error),
+                Some("ignored".to_string()),
+            )
             .await
             .expect("unknown query is ignored");
         assert!(
