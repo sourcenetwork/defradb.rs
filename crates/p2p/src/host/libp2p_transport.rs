@@ -434,11 +434,14 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         HostEvent::BitswapComplete {
             query_id,
             success,
+            cause,
             error,
         } => TransportEvent::BitswapComplete {
             query_id,
             success,
+            cause,
             error,
+            provider_busy: false,
         },
         HostEvent::BitswapBlockReceived {
             query_id,

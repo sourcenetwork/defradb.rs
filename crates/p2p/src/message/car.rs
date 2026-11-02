@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 /// If `recursive` is true, the responder walks the DAG from `wanted_cids`
 /// (falling back to `root_cid` for legacy requests with no want list).
 /// If `recursive` is false, the responder returns only the explicitly wanted blocks.
+/// `max_depth` bounds a recursive walk to that many links below each wanted
+/// CID. It is omitted when `None` so unbounded requests keep their legacy
+/// bytes; a responder that predates it serves the whole closure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CarFetchRequest {
     pub root_cid: Cid,
@@ -19,6 +22,8 @@ pub struct CarFetchRequest {
     pub wanted_cids: Vec<Cid>,
     #[serde(default = "default_recursive")]
     pub recursive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
 }
 
 fn default_recursive() -> bool {
@@ -31,6 +36,7 @@ impl CarFetchRequest {
             root_cid,
             wanted_cids: vec![root_cid],
             recursive: true,
+            max_depth: None,
         }
     }
 
@@ -39,6 +45,7 @@ impl CarFetchRequest {
             root_cid,
             wanted_cids: dedupe_cids(wanted_cids),
             recursive: false,
+            max_depth: None,
         }
     }
 
@@ -50,6 +57,7 @@ impl CarFetchRequest {
             root_cid,
             wanted_cids: dedupe_cids(wanted_cids),
             recursive: true,
+            max_depth: None,
         }
     }
 
@@ -66,3 +74,7 @@ fn dedupe_cids(cids: Vec<Cid>) -> Vec<Cid> {
     let mut seen = RapidHashSet::with_capacity(cids.len());
     cids.into_iter().filter(|cid| seen.insert(*cid)).collect()
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/car_request_depth.rs"]
+mod depth_tests;

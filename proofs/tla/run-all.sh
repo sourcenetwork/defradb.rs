@@ -87,6 +87,9 @@ RUNS=(
   "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
   "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED" # the merge stops checking (INV_RefusedNeverMerged)
   "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED" # a check refuses what it cannot see (INV_KeptIsKept)
+  "MC_DepthCutFetch_Green.cfg DepthCutFetch.tla GREEN" # a depth-cut DAG fetch re-sends little held history, in logarithmic rounds, and completes
+  "MC_DepthCutFetch_Red_Unbounded.cfg DepthCutFetch.tla RED" # the provider ignores the cut (INV_HistoryNotResent)
+  "MC_DepthCutFetch_Red_NoWiden.cfg DepthCutFetch.tla RED" # the receiver never widens the cut (INV_RoundsLogarithmic)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
@@ -164,6 +167,10 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
+  "MC_DagFetchBudget_Green.cfg DagFetchBudget.tla GREEN" # one attempt waits at most a rotation of stalls plus the free refusals, however many batches
+  "MC_DagFetchBudget_Red_SlowIsRefusal.cfg DagFetchBudget.tla RED" # a failure at the response timeout counts as a free refusal (INV_WaitBounded)
+  "MC_DagFetchBudget_Red_Uncapped.cfg DagFetchBudget.tla RED" # every fast refusal is free (INV_WaitBounded)
+  "MC_DagFetchBudget_Red_NoCheck.cfg DagFetchBudget.tla RED" # providers are asked after the budget is spent (INV_WaitBounded)
   "MC_Purge_Green_Prune.cfg Purge.tla GREEN" # a purge deletes the history only the purged documents own, keeps shared blocks, counts once on commit, and commits despite a sync re-storing a block
   "MC_Purge_Green_Branchable.cfg Purge.tla GREEN" # a purge in a branchable collection keeps the whole history and drops the purged owner edges
   "MC_Purge_Red_Blind.cfg Purge.tla RED" # the prune deletes a block another document owns (INV_OthersIntact)
@@ -422,6 +429,7 @@ RUNS=(
   "MC_SyncOwnership_Red_EagerIdentityLookup.cfg SyncOwnership.tla RED" # durable replicator authority is delayed behind an unnecessary reverse identity challenge
   "MC_SyncOwnership_Red_BlockingHostEvent.cfg SyncOwnership.tla RED" # full event delivery blocks the host command needed to reply and release admitted work
   "MC_SyncOwnership_Red_BusyExhaustion.cfg SyncOwnership.tla RED" # local shared-CID ingest contention is deferred, never counted as terminal provider exhaustion
+  "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_Jwt_Green.cfg                MC_Jwt_Green.tla                GREEN" # token->DID binds genuine signer DID
   "MC_Jwt_Red_NoAlgBinding.cfg     MC_Jwt_Red_NoAlgBinding.tla     RED"   # alg-confusion: header alg not bound to key type
   "MC_Jwt_Red_NoIssBinding.cfg     MC_Jwt_Red_NoIssBinding.tla     RED"   # iss not bound to did(pubkey)

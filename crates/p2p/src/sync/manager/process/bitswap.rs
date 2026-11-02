@@ -12,6 +12,7 @@ use rapidhash::HashMapExt;
 use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
+use crate::transport::FetchFailureCause;
 use crate::QueryId;
 
 use super::SyncManager;
@@ -32,11 +33,15 @@ fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> Com
 /// CAR, but another storage owner currently owns one of its CIDs. It releases
 /// the fetch lease without consuming provider-failure attempts; the durable
 /// per-root clock remains the only redrive owner.
+///
+/// `ProviderBusy`: every provider asked shed the request. Neither a failure
+/// nor a stalled window, so the owner rotates without spending stall budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FetchCompletion {
     Success,
-    Failure,
+    Failure(FetchFailureCause),
     Deferred,
+    ProviderBusy,
     SizeLimit(Cid),
 }
 
@@ -45,7 +50,7 @@ impl FetchCompletion {
         if success {
             Self::Success
         } else {
-            Self::Failure
+            Self::Failure(FetchFailureCause::Error)
         }
     }
 }
@@ -261,6 +266,7 @@ impl BlockSyncCompletionTracker {
         rx
     }
 
+    #[cfg(test)]
     pub(crate) fn complete(&self, query_id: QueryId, success: bool) -> bool {
         self.complete_with(query_id, FetchCompletion::from_success(success))
     }
@@ -269,11 +275,15 @@ impl BlockSyncCompletionTracker {
         self.complete_with(query_id, FetchCompletion::Deferred)
     }
 
+    pub(crate) fn provider_busy(&self, query_id: QueryId) -> bool {
+        self.complete_with(query_id, FetchCompletion::ProviderBusy)
+    }
+
     pub(crate) fn size_limit(&self, query_id: QueryId, cid: Cid) -> bool {
         self.complete_with(query_id, FetchCompletion::SizeLimit(cid))
     }
 
-    fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
+    pub(crate) fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
         // Iroh allocates and dispatches the transport query before
         // sync_blocks returns its ID. A fast failure can therefore arrive
         // before the poll owner installs its waiter. Latch the terminal
@@ -427,7 +437,7 @@ mod completion_tracker_tests {
         assert!(tracker.complete(query_id, false));
         assert_eq!(
             receiver.await.expect("completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(!tracker.complete(query_id, true));
     }
@@ -442,7 +452,7 @@ mod completion_tracker_tests {
 
         assert_eq!(
             receiver.await.expect("latched completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(tracker.take_early(query_id).is_none());
     }
