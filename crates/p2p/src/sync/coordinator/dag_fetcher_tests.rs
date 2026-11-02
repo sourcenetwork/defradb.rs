@@ -4,6 +4,8 @@ use super::*;
 mod car_size_retry;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
+#[path = "../../../tests/unit/provider_ranking.rs"]
+mod provider_ranking;
 use crate::error::Result as P2PResult;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
@@ -96,6 +98,15 @@ struct TestTransport {
     disconnected_peers: Arc<Atom<Vec<String>>>,
     empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
     force_rooted_sync: Arc<AtomicBool>,
+    fetch_stats: Arc<Atom<Vec<crate::transport::PeerFetchStats>>>,
+    /// Providers that fail every selective query after a delay.
+    refusing_providers: Arc<
+        HopscotchMap<
+            String,
+            (crate::sync::manager::BlockSyncCompletionTracker, Duration),
+            rapidhash::fast::RandomState,
+        >,
+    >,
 }
 
 impl TestTransport {
@@ -143,6 +154,8 @@ impl TestTransport {
             disconnected_peers: Arc::new(Atom::new(Vec::new())),
             empty_car_answer: Arc::new(AtomOption::none()),
             force_rooted_sync: Arc::new(AtomicBool::new(false)),
+            fetch_stats: Arc::new(Atom::new(Vec::new())),
+            refusing_providers: Arc::new(rapid_map()),
         }
     }
 
@@ -295,6 +308,10 @@ impl P2PTransport for TestTransport {
 
     async fn collection_providers(&self, _collection_id: &str) -> P2PResult<Vec<PeerId>> {
         Ok(self.record_providers.load_clone())
+    }
+
+    async fn fetch_stats(&self) -> P2PResult<Vec<crate::transport::PeerFetchStats>> {
+        Ok(self.fetch_stats.load_clone())
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -474,6 +491,20 @@ impl P2PTransport for TestTransport {
                 n0_future::task::spawn(async move {
                     n0_future::time::sleep(after).await;
                     completion.complete_with(query_id, failure);
+                });
+            }
+            return Ok(query_id);
+        }
+        if let Some((completion, delay)) = providers
+            .first()
+            .and_then(|peer| self.refusing_providers.get(peer.as_str()))
+        {
+            if delay.is_zero() {
+                completion.complete(query_id, false);
+            } else {
+                n0_future::task::spawn(async move {
+                    n0_future::time::sleep(delay).await;
+                    completion.complete(query_id, false);
                 });
             }
             return Ok(query_id);
@@ -856,7 +887,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
 
     assert_eq!(
         outcome,
-        ProviderWindowOutcome::Failed(FetchFailureCause::Error),
+        ProviderWindowOutcome::FailedFast(FetchFailureCause::Error),
         "an early failure answer is not a watchdog stall"
     );
     assert_eq!(

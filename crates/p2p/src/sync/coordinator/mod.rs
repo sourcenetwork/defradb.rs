@@ -55,6 +55,7 @@ mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
 mod peer_details;
+pub(crate) mod provider_health;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_client;
 #[cfg(feature = "libp2p-transport")]
@@ -180,6 +181,12 @@ pub struct SyncStatus {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    /// Providers ranked behind a healthy peer for poor measured fetch health,
+    /// summed over roots.
+    pub provider_demotions_total: u64,
+    /// Providers ranked behind a healthy peer for a recent fast failure,
+    /// summed over roots.
+    pub provider_cooldown_skips_total: u64,
     pub pending_dag_resolved: u64,
     /// Push-originated missing DAGs durably registered before a success ack.
     pub pending_dag_registered: u64,
@@ -314,6 +321,7 @@ pub(crate) struct DagFetchLimiter {
     peer_limit: usize,
     /// Roots a reply-driven fetch is running for, with the trust it merges under.
     roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    provider_health: Arc<provider_health::ProviderHealth>,
 }
 
 /// A root and the collections its fetch merges as an explicit replicator.
@@ -351,7 +359,12 @@ impl DagFetchLimiter {
             roots: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
+            provider_health: Arc::default(),
         }
+    }
+
+    pub(crate) fn provider_health(&self) -> &provider_health::ProviderHealth {
+        &self.provider_health
     }
 
     /// Claims `root` for one fetch trusted as an explicit replicator of
@@ -1025,6 +1038,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             car_served_cids: diagnostics.car_served_cids,
             car_filtered_cids: diagnostics.car_filtered_cids,
             provider_rotations: diagnostics.provider_rotations,
+            provider_demotions_total: diagnostics.provider_demotions,
+            provider_cooldown_skips_total: diagnostics.provider_cooldown_skips,
             pending_dag_resolved: diagnostics.pending_dag_resolved,
             pending_dag_registered: diagnostics.pending_dag_registered,
             pending_dag_expired: diagnostics.pending_dag_expired,
