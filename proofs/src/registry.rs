@@ -937,7 +937,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
         axis: Tla,
-        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/defra-node/src/assemble.rs assemble",
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
         model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
         tiers: &[Boundary],
     },

@@ -26,6 +26,7 @@ pub(crate) struct Extras {
     pub embedding_url: Option<String>,
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
+    pub txn_ownership: db::TxnOwnership,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -307,14 +308,6 @@ where
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
     let txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>> = None;
 
-    // A node without HTTP serves only the process embedding it, so its
-    // transactions serve whichever identity a request acts as, as in Go. Over
-    // HTTP each transaction stays with the identity that began it.
-    let ownership = if serves_http {
-        db::TxnOwnership::ByIdentity
-    } else {
-        db::TxnOwnership::Embedder
-    };
     let registry = Arc::new(
         match txn_broadcaster {
             Some(broadcaster) => {
@@ -322,7 +315,7 @@ where
             }
             None => db::DbTransactionRegistry::new(database.clone()),
         }
-        .with_ownership(ownership),
+        .with_ownership(extras.txn_ownership),
     );
 
     #[cfg(feature = "http")]
