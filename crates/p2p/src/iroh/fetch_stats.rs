@@ -1,5 +1,5 @@
 //! How each peer answers our CAR fetches: how fast, how reliably, and how much
-//! is in flight. Measured only; nothing here changes how we fetch.
+//! is in flight. DAG fetches rank providers by these.
 //!
 //! The rolling averages and totals are proved to stay in range in
 //! `proofs/lean/FetchStats/Rolling.lean`.

@@ -70,6 +70,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |
+| DAG fetch provider ranking | TLA+, Lean | p2p |
 | Gossip connection ownership | TLA+, Lean | p2p |
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |

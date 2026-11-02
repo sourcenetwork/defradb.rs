@@ -131,6 +131,8 @@ pub struct SyncDiagnostics {
     car_served_cids: AtomicU64,
     car_filtered_cids: AtomicU64,
     provider_rotations: AtomicU64,
+    provider_demotions: AtomicU64,
+    provider_cooldown_skips: AtomicU64,
     missing_link_retries: AtomicU64,
     pending_dag_resolved: AtomicU64,
     pending_dag_registered: AtomicU64,
@@ -159,6 +161,8 @@ pub struct SyncDiagnosticsSnapshot {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    pub provider_demotions: u64,
+    pub provider_cooldown_skips: u64,
     pub missing_link_retries: u64,
     pub pending_dag_resolved: u64,
     pub pending_dag_registered: u64,
@@ -194,6 +198,8 @@ impl SyncDiagnostics {
             car_served_cids: self.car_served_cids.load(Ordering::Relaxed),
             car_filtered_cids: self.car_filtered_cids.load(Ordering::Relaxed),
             provider_rotations: self.provider_rotations.load(Ordering::Relaxed),
+            provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
+            provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
             missing_link_retries: self.missing_link_retries.load(Ordering::Relaxed),
             pending_dag_resolved: self.pending_dag_resolved.load(Ordering::Relaxed),
             pending_dag_registered: self.pending_dag_registered.load(Ordering::Relaxed),
@@ -251,6 +257,13 @@ impl SyncDiagnostics {
 
     pub fn record_provider_rotation(&self) {
         self.provider_rotations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_provider_ranking(&self, demoted: usize, cooling: usize) {
+        self.provider_demotions
+            .fetch_add(demoted as u64, Ordering::Relaxed);
+        self.provider_cooldown_skips
+            .fetch_add(cooling as u64, Ordering::Relaxed);
     }
 
     pub fn record_missing_link_retry(&self) {
@@ -346,6 +359,8 @@ mod tests {
         assert_eq!(snap.car_empty_responses, 0);
         assert_eq!(snap.car_no_blocks_served, 0);
         assert_eq!(snap.provider_rotations, 0);
+        assert_eq!(snap.provider_demotions, 0);
+        assert_eq!(snap.provider_cooldown_skips, 0);
         assert_eq!(snap.missing_link_retries, 0);
         assert_eq!(snap.pending_dag_resolved, 0);
         assert_eq!(snap.pending_dag_registered, 0);
@@ -371,6 +386,7 @@ mod tests {
         diag.record_car_empty_response();
         diag.record_car_no_blocks_served();
         diag.record_provider_rotation();
+        diag.record_provider_ranking(2, 1);
         diag.record_missing_link_retry();
         diag.record_pending_dag_resolved();
         diag.record_pending_dag_registered();
@@ -393,6 +409,8 @@ mod tests {
         assert_eq!(snap.car_empty_responses, 2);
         assert_eq!(snap.car_no_blocks_served, 1);
         assert_eq!(snap.provider_rotations, 1);
+        assert_eq!(snap.provider_demotions, 2);
+        assert_eq!(snap.provider_cooldown_skips, 1);
         assert_eq!(snap.missing_link_retries, 1);
         assert_eq!(snap.pending_dag_resolved, 1);
         assert_eq!(snap.pending_dag_registered, 1);

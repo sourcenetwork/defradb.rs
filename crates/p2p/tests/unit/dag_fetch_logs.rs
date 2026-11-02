@@ -188,25 +188,22 @@ async fn each_window_ending_is_classified_by_what_ended_it() {
     }
 }
 
-/// Refusing providers rotate and spend stall budget exactly as stalled ones.
+/// Fast refusals rotate at once and spend the attempt's free refusals, not its
+/// stall budget, and are still reported as refused.
 #[tokio::test(start_paused = true)]
 async fn refusing_providers_rotate_and_are_reported_as_refused() {
     let fetch = refused();
     let mut providers = ProviderRotation::new(peers(&["hub", "spoke"]));
-    let mut stall_budget = providers.len();
     let diagnostics = diagnostics();
     let started = n0_future::time::Instant::now();
+    let mut state = ProviderFetchState::new(&mut providers, None, diagnostics.as_ref());
 
     let outcome = poll_fetch_blocks_rotating(
         &fetch.root_cid,
         &[fetch.child_cid],
         &fetch.transport,
         &fetch.blockstore,
-        &mut ProviderFetchState {
-            providers: &mut providers,
-            stall_budget: &mut stall_budget,
-            diagnostics: diagnostics.as_ref(),
-        },
+        &mut state,
         &fetch.context,
     )
     .await;
@@ -216,8 +213,12 @@ async fn refusing_providers_rotate_and_are_reported_as_refused() {
     };
     assert_eq!(failures.provider_outcomes(), "hub:refused,spoke:refused");
     assert_eq!(
-        (stall_budget, diagnostics.snapshot().provider_rotations),
-        (0, 2)
+        (
+            state.stall_budget,
+            state.free_refusals,
+            diagnostics.snapshot().provider_rotations
+        ),
+        (2, MAX_FREE_REFUSALS - 2, 2)
     );
     assert_eq!(n0_future::time::Instant::now(), started);
 }

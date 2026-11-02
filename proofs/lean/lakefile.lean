@@ -76,6 +76,9 @@ lean_lib ByteBudget where
 lean_lib FetchStats where
 
 @[default_target]
+lean_lib ProviderHealth where
+
+@[default_target]
 lean_lib GossipFrame where
 
 @[default_target]
