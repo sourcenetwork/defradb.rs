@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "../../../tests/unit/car_size_retry.rs"]
 mod car_size_retry;
+#[path = "../../../tests/unit/dag_fetch_logs.rs"]
+mod dag_fetch_logs;
 use crate::error::Result as P2PResult;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
@@ -28,6 +30,13 @@ use tokio::sync::mpsc;
 
 type StreamedBlocks = Arc<AtomOption<Vec<(Cid, Vec<u8>)>>>;
 type CompletionSlot = Arc<AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>;
+type FailureAnswer = Arc<
+    AtomOption<(
+        crate::sync::manager::BlockSyncCompletionTracker,
+        FetchFailureCause,
+        Duration,
+    )>,
+>;
 
 fn rapid_map<K, V>() -> HopscotchMap<K, V, rapidhash::fast::RandomState>
 where
@@ -71,7 +80,7 @@ struct TestTransport {
     hang_car_requests: Arc<AtomicBool>,
     streamed_rooted_blocks: StreamedBlocks,
     stream_completion: CompletionSlot,
-    early_failure_completion: CompletionSlot,
+    failure_answer: FailureAnswer,
     early_deferred_completion: CompletionSlot,
     early_success_completion: CompletionSlot,
     stream_block_delay_nanos: Arc<AtomicU64>,
@@ -122,7 +131,7 @@ impl TestTransport {
             hang_car_requests: Arc::new(AtomicBool::new(false)),
             streamed_rooted_blocks: Arc::new(AtomOption::none()),
             stream_completion: Arc::new(AtomOption::none()),
-            early_failure_completion: Arc::new(AtomOption::none()),
+            failure_answer: Arc::new(AtomOption::none()),
             early_deferred_completion: Arc::new(AtomOption::none()),
             early_success_completion: Arc::new(AtomOption::none()),
             stream_block_delay_nanos: Arc::new(AtomicU64::new(
@@ -201,11 +210,13 @@ impl TestTransport {
         self.stream_completion.store_some(completion);
     }
 
-    fn set_early_failure_completion(
+    fn set_failure_answer(
         &self,
         completion: crate::sync::manager::BlockSyncCompletionTracker,
+        cause: FetchFailureCause,
+        after: Duration,
     ) {
-        self.early_failure_completion.store_some(completion);
+        self.failure_answer.store_some((completion, cause, after));
     }
 
     fn set_early_deferred_completion(
@@ -455,8 +466,16 @@ impl P2PTransport for TestTransport {
             completion.size_limit(query_id, cid);
             return Ok(query_id);
         }
-        if let Some(completion) = self.early_failure_completion.load().as_deref().cloned() {
-            completion.complete(query_id, false);
+        if let Some((completion, cause, after)) = self.failure_answer.load().as_deref().cloned() {
+            let failure = FetchCompletion::Failure(cause);
+            if after.is_zero() {
+                completion.complete_with(query_id, failure);
+            } else {
+                n0_future::task::spawn(async move {
+                    n0_future::time::sleep(after).await;
+                    completion.complete_with(query_id, failure);
+                });
+            }
             return Ok(query_id);
         }
         if let Some(completion) = self.early_deferred_completion.load().as_deref().cloned() {
@@ -815,7 +834,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         RapidHashMap::new(),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
-    transport.set_early_failure_completion(completion.clone());
+    transport.set_failure_answer(completion.clone(), FetchFailureCause::Error, Duration::ZERO);
     let context = DagFetchContext::new(
         "doc-id".to_string(),
         "collection-id".to_string(),
@@ -835,7 +854,11 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
     )
     .await;
 
-    assert_eq!(outcome, ProviderWindowOutcome::Stalled);
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::Failed(FetchFailureCause::Error),
+        "an early failure answer is not a watchdog stall"
+    );
     assert_eq!(
         n0_future::time::Instant::now(),
         started,

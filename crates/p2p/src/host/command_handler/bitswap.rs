@@ -68,6 +68,7 @@ impl<S: Store> P2PHost<S> {
             crate::testutil::block_started_fetch();
 
             let mut fetched = 0;
+            let mut timed_out = false;
 
             // Timeout per block: 10 seconds. If no block arrives within this
             // window, we give up and report partial success so the retry
@@ -104,6 +105,7 @@ impl<S: Store> P2PHost<S> {
                         break;
                     }
                     Err(_) => {
+                        timed_out = true;
                         tracing::warn!(
                             fetched = fetched,
                             total = missing_cids.len(),
@@ -130,6 +132,11 @@ impl<S: Store> P2PHost<S> {
                 .send(HostEvent::BitswapComplete {
                     query_id,
                     success,
+                    cause: (!success).then_some(if timed_out {
+                        crate::transport::FetchFailureCause::TimedOut
+                    } else {
+                        crate::transport::FetchFailureCause::Error
+                    }),
                     error: if success {
                         None
                     } else {

@@ -17,6 +17,8 @@ use std::{
 use kovan::Atom;
 use regolith::sync::Lazy;
 
+use super::log_throttle::DagFetchLogThrottles;
+
 /// Process-global counter of gossip payload decode failures.
 ///
 /// Both the libp2p and iroh gossip paths increment this via
@@ -145,6 +147,7 @@ pub struct SyncDiagnostics {
     pending_dag_fetch_exhausted: AtomicU64,
     pending_dag_terminal_merged: AtomicU64,
     pending_dag_terminal_quarantined: AtomicU64,
+    dag_fetch_logs: DagFetchLogThrottles,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -309,6 +312,11 @@ impl SyncDiagnostics {
     pub fn record_pending_dag_fetch_deferred_contention(&self) {
         self.pending_dag_fetch_deferred_contention
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Log-level gates for the DAG fetcher's repeated failure lines.
+    pub(crate) fn dag_fetch_logs(&self) -> &DagFetchLogThrottles {
+        &self.dag_fetch_logs
     }
 
     pub fn record_pending_dag_fetch_exhausted(&self) {
