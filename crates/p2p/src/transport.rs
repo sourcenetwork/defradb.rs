@@ -119,6 +119,23 @@ impl From<libp2p::gossipsub::MessageId> for MessageId {
     }
 }
 
+/// Why a block fetch query ended without usable blocks. Diagnostics only.
+///
+/// Ordered so that, across providers, the cause an operator acts on first is
+/// the greatest: a query is `Refused` only when every provider refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FetchFailureCause {
+    /// An empty response: the provider's capacity, rate-limit or access refusal.
+    Refused,
+    /// The provider answered, but with none of the requested blocks.
+    NoBlocks,
+    /// A connect, stream or read error, or a failure the transport did not
+    /// classify.
+    Error,
+    /// No answer within the transport's response deadline.
+    TimedOut,
+}
+
 /// Events from the transport layer, consumed by the sync coordinator.
 ///
 /// This mirrors `HostEvent` but uses transport-agnostic types.
@@ -163,6 +180,8 @@ pub enum TransportEvent<ResponseToken> {
     BitswapComplete {
         query_id: QueryId,
         success: bool,
+        /// Why a failed query failed; `None` on success.
+        cause: Option<FetchFailureCause>,
         error: Option<String>,
     },
     BitswapBlockReceived {

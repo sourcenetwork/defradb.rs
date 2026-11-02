@@ -10,7 +10,7 @@ use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
 use crate::sync::DispatchSender;
-use crate::transport::{PeerId, TransportEvent};
+use crate::transport::{FetchFailureCause, PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
@@ -86,6 +86,23 @@ impl CarFetchOutcome {
         }
     }
 
+    /// `reject_car_fetch` answers a capacity or rate-limit refusal empty.
+    fn failure_cause(&self) -> FetchFailureCause {
+        match self {
+            Self::ResponseTimedOut => FetchFailureCause::TimedOut,
+            Self::EmptyResponse => FetchFailureCause::Refused,
+            Self::HeaderOnlyCar => FetchFailureCause::NoBlocks,
+            Self::Success
+            | Self::SizeLimited
+            | Self::InvalidPeerId(_)
+            | Self::ConnectFailed(_)
+            | Self::OpenBiFailed(_)
+            | Self::WriteFailed(_)
+            | Self::ReadFailed(_)
+            | Self::EventChannelClosed => FetchFailureCause::Error,
+        }
+    }
+
     fn label(&self) -> &'static str {
         match self {
             Self::Success => "success",
@@ -117,6 +134,14 @@ impl CarFetchOutcome {
             | Self::EventChannelClosed => None,
         }
     }
+}
+
+fn aggregate_failure_cause(attempts: &[CarFetchAttempt]) -> FetchFailureCause {
+    attempts
+        .iter()
+        .map(|attempt| attempt.outcome.failure_cause())
+        .max()
+        .unwrap_or(FetchFailureCause::Error)
 }
 
 fn summarize_car_fetch_attempts(attempts: &[CarFetchAttempt]) -> String {
@@ -1243,6 +1268,7 @@ pub(super) async fn handle_block_sync(
             .send(TransportEvent::BitswapComplete {
                 query_id,
                 success: false,
+                cause: Some(aggregate_failure_cause(&failures)),
                 error,
             })
             .await
@@ -1305,6 +1331,44 @@ mod tests {
         assert!(summary.contains("connect_failed(timeout)"));
         assert!(summary.contains(&attempts[0].provider.to_string()));
         assert!(summary.contains(&attempts[1].provider.to_string()));
+    }
+
+    #[test]
+    fn a_timed_out_provider_is_reported_as_a_timeout_not_a_refusal() {
+        let attempt = |outcome| CarFetchAttempt {
+            provider: peer_id(b"provider"),
+            outcome,
+        };
+        let cases = [
+            (
+                vec![CarFetchOutcome::ResponseTimedOut],
+                FetchFailureCause::TimedOut,
+            ),
+            (
+                vec![CarFetchOutcome::EmptyResponse],
+                FetchFailureCause::Refused,
+            ),
+            (
+                vec![CarFetchOutcome::HeaderOnlyCar],
+                FetchFailureCause::NoBlocks,
+            ),
+            (
+                vec![CarFetchOutcome::ReadFailed("reset".into())],
+                FetchFailureCause::Error,
+            ),
+            (
+                vec![
+                    CarFetchOutcome::EmptyResponse,
+                    CarFetchOutcome::ResponseTimedOut,
+                ],
+                FetchFailureCause::TimedOut,
+            ),
+            (vec![], FetchFailureCause::Error),
+        ];
+        for (outcomes, expected) in cases {
+            let attempts: Vec<_> = outcomes.into_iter().map(attempt).collect();
+            assert_eq!(aggregate_failure_cause(&attempts), expected, "{attempts:?}");
+        }
     }
 
     #[test]

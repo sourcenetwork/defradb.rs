@@ -1619,7 +1619,7 @@ async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
             .await
             .expect("the CAR completion should be published")
             .expect("completion sender remains alive"),
-        crate::sync::manager::FetchCompletion::Failure,
+        crate::sync::manager::FetchCompletion::Failure(crate::transport::FetchFailureCause::Error),
     );
     assert!(ingest.await.unwrap().is_err());
     assert_eq!(blockstore.put_many_attempts(), 1);

@@ -18,11 +18,13 @@ use tracing::{debug, error, info, warn};
 
 use super::dag_context::DagFetchContext;
 use super::dag_retry::{retry_backoff, ProviderRotation, MAX_FETCH_ATTEMPTS};
+use super::fetch_failures::{FetchFailures, WindowFailure};
+use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::DagFetchLimiter;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
-use crate::transport::{P2PTransport, PeerId};
+use crate::transport::{FetchFailureCause, P2PTransport, PeerId};
 
 const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// Outer owner watchdog for a transport block-sync response.
@@ -30,7 +32,7 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// Iroh bounds its request/response read at 30 seconds. The receiver owner must
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
-const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+pub(super) const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
 
 /// How long a successful transport completion may wait for its blocks to
 /// become durable locally. The libp2p host reports success once it has
@@ -51,33 +53,37 @@ const SUCCESS_LANDING_GRACE: Duration = Duration::from_secs(1);
 /// progress every iteration.
 const MAX_DAG_WALK_ITERATIONS: usize = 100_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FetchBatchOutcome {
     Complete,
     Partial,
-    NoProgress,
+    NoProgress(FetchFailures),
     Deferred,
     Unservable,
 }
 
 /// Outcome of one provider's poll window, as seen by the rotation loop.
 ///
-/// `Stalled` (a full window with zero blocks) consumes attempt stall budget;
+/// `Stalled` (the watchdog elapsed with zero blocks), `Failed` (the transport
+/// failed first) and `Superseded` consume attempt stall budget alike;
 /// `SendFailed` (the query never left) costs a rotation slot but no time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderWindowOutcome {
     Complete,
     Partial,
     Stalled,
+    Failed(FetchFailureCause),
+    Superseded,
     SendFailed,
     Deferred,
     SizeLimit(Cid),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FetchAttemptOutcome {
     Complete,
-    Incomplete { remaining: usize },
+    /// The missing block count, and why this attempt's windows failed.
+    Incomplete(usize, FetchFailures),
     Deferred,
     Unservable,
 }
@@ -143,6 +149,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     }
 
     let mut remaining_count = 0usize;
+    let mut last_failures = FetchFailures::default();
     for attempt in 1..=MAX_FETCH_ATTEMPTS {
         if !context.is_current() {
             debug!(
@@ -155,13 +162,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         }
         if attempt > 1 {
             let backoff = retry_backoff(attempt);
-            warn!(
-                root_cid = %root_cid,
-                doc_id = %context.doc_id,
-                attempt = attempt,
-                remaining_count = remaining_count,
-                backoff_ms = backoff.as_millis() as u64,
-                "DAG fetch incomplete, retrying after backoff"
+            log_retry(
+                &root_cid,
+                &context,
+                attempt,
+                remaining_count,
+                backoff,
+                &last_failures,
+                diagnostics.dag_fetch_logs(),
             );
             n0_future::time::sleep(backoff).await;
         }
@@ -196,7 +204,10 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
                 return;
             }
-            FetchAttemptOutcome::Incomplete { remaining } => remaining_count = remaining,
+            FetchAttemptOutcome::Incomplete(remaining, failures) => {
+                remaining_count = remaining;
+                last_failures = failures;
+            }
             FetchAttemptOutcome::Deferred => {
                 diagnostics.record_pending_dag_fetch_deferred_contention();
                 debug!(
@@ -223,14 +234,13 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     }
 
     diagnostics.record_pending_dag_fetch_exhausted();
-    error!(
-        root_cid = %root_cid,
-        doc_id = %context.doc_id,
-        collection_id = %context.collection_id,
-        remaining_count = remaining_count,
-        attempts = MAX_FETCH_ATTEMPTS,
-        providers = ?providers.peers(),
-        "DAG fetch failed after exhausting retries and providers; the per-root retry clock owns convergence from here, and any provider reconnect expedites it"
+    log_exhausted(
+        &root_cid,
+        &context,
+        remaining_count,
+        &providers,
+        &last_failures,
+        diagnostics.dag_fetch_logs(),
     );
     drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
 }
@@ -393,11 +403,11 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     providers: &mut ProviderRotation,
     diagnostics: &SyncDiagnostics,
 ) -> FetchAttemptOutcome {
-    // One full rotation's worth of stalled 30s windows per attempt. Productive
+    // One full rotation's worth of empty windows per attempt. Productive
     // windows (any block arrived) never consume it, so a large DAG that is
     // actually transferring is unbounded, while a dead provider set costs at
-    // most providers × 30s of stalled waiting per attempt regardless of how
-    // many batches the missing frontier spans.
+    // most providers × BLOCK_SYNC_COMPLETION_WATCHDOG of stalled waiting per
+    // attempt regardless of how many batches the missing frontier spans.
     let mut stall_budget = providers.len();
 
     let car_missing_watch = match blockstore.get(&root_cid).await {
@@ -510,9 +520,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         FetchBatchOutcome::Complete => {}
         FetchBatchOutcome::Deferred => return FetchAttemptOutcome::Deferred,
         FetchBatchOutcome::Unservable => return FetchAttemptOutcome::Unservable,
-        FetchBatchOutcome::Partial | FetchBatchOutcome::NoProgress => {
+        FetchBatchOutcome::Partial => {
             warn!(root_cid = %root_cid, "Failed to fetch root block");
-            return FetchAttemptOutcome::Incomplete { remaining: 1 };
+            return FetchAttemptOutcome::Incomplete(1, FetchFailures::default());
+        }
+        FetchBatchOutcome::NoProgress(failures) => {
+            log_no_progress_batch(&root_cid, 1, &failures, diagnostics.dag_fetch_logs());
+            return FetchAttemptOutcome::Incomplete(1, failures);
         }
     }
 
@@ -520,12 +534,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     // as an iteration makes no progress (`!made_progress` below); the iteration
     // ceiling is only a defensive backstop, not a functional depth limit.
     let mut unservable = false;
+    let mut attempt_failures = FetchFailures::default();
     for iteration in 0..MAX_DAG_WALK_ITERATIONS {
         let root_data = match blockstore.get(&root_cid).await {
             Ok(Some(data)) => data,
             _ => {
                 warn!(root_cid = %root_cid, "Root block disappeared from blockstore");
-                return FetchAttemptOutcome::Incomplete { remaining: 1 };
+                return FetchAttemptOutcome::Incomplete(1, attempt_failures);
             }
         };
 
@@ -533,7 +548,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             Ok(m) => m,
             Err(e) => {
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
-                return FetchAttemptOutcome::Incomplete { remaining: 0 };
+                return FetchAttemptOutcome::Incomplete(0, attempt_failures);
             }
         };
 
@@ -575,13 +590,14 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                         "Selective block batch made partial progress; continuing DAG walk"
                     );
                 }
-                FetchBatchOutcome::NoProgress => {
-                    warn!(
-                        root_cid = %root_cid,
-                        requested_count = batch.len(),
-                        providers_tried = providers.len(),
-                        "Timeout fetching selective block batch (30s per provider)"
+                FetchBatchOutcome::NoProgress(failures) => {
+                    log_no_progress_batch(
+                        &root_cid,
+                        batch.len(),
+                        &failures,
+                        diagnostics.dag_fetch_logs(),
                     );
+                    attempt_failures.merge(&failures);
                 }
                 FetchBatchOutcome::Deferred => return FetchAttemptOutcome::Deferred,
                 FetchBatchOutcome::Unservable => unservable = true,
@@ -595,7 +611,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     // Verify DAG is complete
     let root_data = match blockstore.get(&root_cid).await {
         Ok(Some(data)) => data,
-        _ => return FetchAttemptOutcome::Incomplete { remaining: 1 },
+        _ => return FetchAttemptOutcome::Incomplete(1, attempt_failures),
     };
     let remaining = find_all_missing_links(blockstore.as_ref(), &root_data)
         .await
@@ -608,9 +624,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     } else if unservable {
         FetchAttemptOutcome::Unservable
     } else {
-        FetchAttemptOutcome::Incomplete {
-            remaining: remaining.len(),
-        }
+        FetchAttemptOutcome::Incomplete(remaining.len(), attempt_failures)
     }
 }
 
@@ -701,7 +715,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
         loop {
             if !context.is_current() {
                 context.cancel_rooted_car_tracking(*root_cid);
-                return ProviderWindowOutcome::Stalled;
+                return ProviderWindowOutcome::Superseded;
             }
             tokio::select! {
                 result = &mut *receiver => {
@@ -821,12 +835,13 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
         if let Some(receiver) = completion.as_mut() {
             tokio::select! {
                 result = receiver => {
-                    let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
+                    let fetch_completion =
+                        result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;
                     transport_complete = true;
                     match fetch_completion {
                         FetchCompletion::Success => {}
-                        FetchCompletion::Failure => break,
+                        FetchCompletion::Failure(_) => break,
                         FetchCompletion::Deferred => {
                             deferred = true;
                             break;
@@ -886,9 +901,11 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
         return FetchBatchOutcome::Complete;
     }
     let mut unservable = 0;
+    let mut failures = FetchFailures::default();
     for _ in 0..state.providers.len() {
         if state.providers.cannot_serve(&missing) {
             unservable += 1;
+            failures.record(state.providers.current(), WindowFailure::Unservable);
             state.providers.advance();
             continue;
         }
@@ -898,7 +915,8 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
                 requested_count = cids.len(),
                 "Attempt stall budget exhausted, failing batch without fetching"
             );
-            return FetchBatchOutcome::NoProgress;
+            failures.budget_exhausted += 1;
+            return FetchBatchOutcome::NoProgress(failures);
         }
         let provider = state.providers.current().clone();
         match poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await {
@@ -910,22 +928,30 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
                 state.providers.record_progress();
                 return FetchBatchOutcome::Partial;
             }
-            ProviderWindowOutcome::Stalled => {
+            window @ (ProviderWindowOutcome::Stalled
+            | ProviderWindowOutcome::Failed(_)
+            | ProviderWindowOutcome::Superseded) => {
                 *state.stall_budget -= 1;
                 state.providers.advance();
                 state.diagnostics.record_provider_rotation();
-                if state.providers.len() > 1 {
-                    warn!(
-                        root_cid = %root_cid,
-                        provider = %provider,
-                        requested_count = cids.len(),
-                        "No blocks from provider within fetch window, rotating to next provider"
-                    );
-                }
+                let failure = match window {
+                    ProviderWindowOutcome::Failed(cause) => WindowFailure::from(cause),
+                    ProviderWindowOutcome::Superseded => WindowFailure::Superseded,
+                    _ => WindowFailure::TimedOut,
+                };
+                failures.record(&provider, failure);
+                debug!(
+                    root_cid = %root_cid,
+                    provider = %provider,
+                    outcome = ?failure,
+                    requested_count = cids.len(),
+                    "No blocks from provider within its fetch window, rotating to next provider"
+                );
             }
             ProviderWindowOutcome::SendFailed => {
                 state.providers.advance();
                 state.diagnostics.record_provider_rotation();
+                failures.record(&provider, WindowFailure::SendFailed);
             }
             ProviderWindowOutcome::Deferred => return FetchBatchOutcome::Deferred,
             ProviderWindowOutcome::SizeLimit(cid) => {
@@ -933,6 +959,7 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
                 state.providers.advance();
                 state.diagnostics.record_provider_rotation();
                 unservable += 1;
+                failures.record(&provider, WindowFailure::Unservable);
             }
         }
     }
@@ -944,7 +971,7 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
     } else if unservable == state.providers.len() {
         FetchBatchOutcome::Unservable
     } else {
-        FetchBatchOutcome::NoProgress
+        FetchBatchOutcome::NoProgress(failures)
     }
 }
 
@@ -999,11 +1026,13 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
     let timeout = BLOCK_SYNC_COMPLETION_WATCHDOG;
     let start = Instant::now();
     let mut outcome = ProviderWindowOutcome::Stalled;
+    let mut ended_early = None;
     // Once Success has been seen the landing deadline, not the watchdog,
     // bounds the loop: a completion that arrives in the watchdog's last
     // moments must still get the whole grace for its blocks to land.
     while landing_deadline.is_some() || start.elapsed() < timeout {
         if !context.is_current() {
+            ended_early = Some(ProviderWindowOutcome::Superseded);
             break;
         }
         let mut remaining = 0usize;
@@ -1033,14 +1062,18 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         if let Some(receiver) = completion.as_mut() {
             tokio::select! {
                 result = receiver => {
-                    let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
+                    let fetch_completion =
+                        result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;
                     match fetch_completion {
                         FetchCompletion::Success => {
                             landing_deadline =
                                 Some(Instant::now() + SUCCESS_LANDING_GRACE);
                         }
-                        FetchCompletion::Failure => break,
+                        FetchCompletion::Failure(cause) => {
+                            ended_early = Some(ProviderWindowOutcome::Failed(cause));
+                            break;
+                        }
                         FetchCompletion::Deferred => {
                             deferred = true;
                             break;
@@ -1071,6 +1104,8 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         ProviderWindowOutcome::SizeLimit(cid)
     } else if deferred {
         ProviderWindowOutcome::Deferred
+    } else if outcome == ProviderWindowOutcome::Stalled {
+        ended_early.unwrap_or(outcome)
     } else {
         outcome
     }
