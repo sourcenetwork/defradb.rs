@@ -17,9 +17,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use super::dag_context::DagFetchContext;
-use super::dag_retry::{retry_backoff, ProviderRotation, MAX_FETCH_ATTEMPTS};
+use super::dag_retry::{
+    retry_backoff, ProviderRotation, FAST_REFUSAL, MAX_FETCH_ATTEMPTS, MAX_FREE_REFUSALS,
+};
 use super::fetch_failures::{FetchFailures, WindowFailure};
 use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
+use super::provider_health::ProviderHealth;
 use super::DagFetchLimiter;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
@@ -33,6 +36,11 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
 pub(super) const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+
+// The free refusals of one attempt together cost at most one fetch window.
+const _: () = assert!(
+    MAX_FREE_REFUSALS as u64 * FAST_REFUSAL.as_secs() <= BLOCK_SYNC_COMPLETION_WATCHDOG.as_secs()
+);
 
 /// How long a successful transport completion may wait for its blocks to
 /// become durable locally. The libp2p host reports success once it has
@@ -65,8 +73,10 @@ enum FetchBatchOutcome {
 /// Outcome of one provider's poll window, as seen by the rotation loop.
 ///
 /// `Stalled` (the watchdog elapsed with zero blocks), `Failed` (the transport
-/// failed first) and `Superseded` consume attempt stall budget alike;
-/// `SendFailed` (the query never left) costs a rotation slot but no time.
+/// failed, but only after `FAST_REFUSAL`) and `Superseded` consume attempt
+/// stall budget alike; `FailedFast` (the transport failed within
+/// `FAST_REFUSAL`) spends a free refusal first; `SendFailed` (the query never
+/// left) costs a rotation slot but no time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderWindowOutcome {
     Complete,
@@ -75,6 +85,7 @@ enum ProviderWindowOutcome {
     Failed(FetchFailureCause),
     Superseded,
     SendFailed,
+    FailedFast(FetchFailureCause),
     Deferred,
     SizeLimit(Cid),
 }
@@ -109,7 +120,20 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
 ) {
-    let mut providers = ProviderRotation::new(context.providers());
+    // libp2p keeps the context's order: its rooted CAR goes to the announcing
+    // publisher, whose reply is what lets the dead-Bitswap repair fire.
+    let health = transport
+        .supports_cancellable_rooted_sync()
+        .then(|| limiter.provider_health());
+    let mut providers = match health {
+        Some(health) => {
+            let stats = transport.fetch_stats().await.unwrap_or_default();
+            let ranking = health.rank(context.providers(), &stats, Instant::now());
+            diagnostics.record_provider_ranking(ranking.demoted, ranking.cooling);
+            ProviderRotation::new(ranking.peers)
+        }
+        None => ProviderRotation::new(context.providers()),
+    };
     debug!(
         root_cid = %root_cid,
         doc_id = %context.doc_id,
@@ -187,14 +211,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             return;
         }
 
+        let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref());
         match fetch_dag_attempt(
             &transport,
             &blockstore,
             &event_tx,
             root_cid,
             &context,
-            &mut providers,
-            diagnostics.as_ref(),
+            &mut state,
         )
         .await
         {
@@ -400,16 +424,8 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     event_tx: &mpsc::Sender<SyncEvent>,
     root_cid: Cid,
     context: &DagFetchContext,
-    providers: &mut ProviderRotation,
-    diagnostics: &SyncDiagnostics,
+    state: &mut ProviderFetchState<'_>,
 ) -> FetchAttemptOutcome {
-    // One full rotation's worth of empty windows per attempt. Productive
-    // windows (any block arrived) never consume it, so a large DAG that is
-    // actually transferring is unbounded, while a dead provider set costs at
-    // most providers × BLOCK_SYNC_COMPLETION_WATCHDOG of stalled waiting per
-    // attempt regardless of how many batches the missing frontier spans.
-    let mut stall_budget = providers.len();
-
     let car_missing_watch = match blockstore.get(&root_cid).await {
         Ok(Some(root_data)) => find_all_missing_links(blockstore.as_ref(), &root_data)
             .await
@@ -427,54 +443,47 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
     let mut car_answered = false;
-    let rooted_outcome = if providers.cannot_serve(rooted_wants) {
+    let rooted_asked = !state.providers.cannot_serve(rooted_wants)
+        && (car_missing_watch.is_none() || context.needs_rooted_provider_discovery());
+    let rooted_outcome = if !rooted_asked {
         ProviderWindowOutcome::SendFailed
-    } else if let Some(rooted_watch) = car_missing_watch.as_deref() {
-        if context.needs_rooted_provider_discovery() {
-            if transport.supports_cancellable_rooted_sync() {
-                poll_fetch_rooted_provider(
-                    &root_cid,
-                    rooted_watch,
-                    transport,
-                    blockstore,
-                    providers.current(),
-                    context,
-                )
-                .await
-            } else {
-                poll_fetch_rooted_car(
-                    &root_cid,
-                    rooted_watch,
-                    transport,
-                    blockstore,
-                    providers.current(),
-                    context,
-                    &mut car_answered,
-                )
-                .await
-            }
-        } else {
-            ProviderWindowOutcome::SendFailed
-        }
+    } else if car_missing_watch.is_some() && transport.supports_cancellable_rooted_sync() {
+        poll_fetch_rooted_provider(
+            &root_cid,
+            rooted_wants,
+            transport,
+            blockstore,
+            state.providers.current(),
+            context,
+        )
+        .await
     } else {
         poll_fetch_rooted_car(
             &root_cid,
-            std::slice::from_ref(&root_cid),
+            rooted_wants,
             transport,
             blockstore,
-            providers.current(),
+            state.providers.current(),
             context,
             &mut car_answered,
         )
         .await
     };
     if car_answered {
-        providers.record_responsive();
+        state.providers.record_responsive();
+    }
+    if rooted_asked {
+        record_health(
+            state.health,
+            context,
+            state.providers.current(),
+            rooted_outcome,
+        );
     }
     if let ProviderWindowOutcome::SizeLimit(cid) = rooted_outcome {
         // libp2p can fall back to Bitswap, whose limits are independent of CAR.
         if transport.supports_cancellable_rooted_sync() {
-            providers.record_size_limit(cid);
+            state.providers.record_size_limit(cid);
         }
     }
     if rooted_outcome == ProviderWindowOutcome::Deferred {
@@ -484,7 +493,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         rooted_outcome,
         ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial
     ) {
-        providers.record_progress();
+        state.providers.record_progress();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
                 .await
@@ -508,11 +517,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         std::slice::from_ref(&root_cid),
         transport,
         blockstore,
-        &mut ProviderFetchState {
-            providers,
-            stall_budget: &mut stall_budget,
-            diagnostics,
-        },
+        state,
         context,
     )
     .await
@@ -525,7 +530,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             return FetchAttemptOutcome::Incomplete(1, FetchFailures::default());
         }
         FetchBatchOutcome::NoProgress(failures) => {
-            log_no_progress_batch(&root_cid, 1, &failures, diagnostics.dag_fetch_logs());
+            log_no_progress_batch(&root_cid, 1, &failures, state.diagnostics.dag_fetch_logs());
             return FetchAttemptOutcome::Incomplete(1, failures);
         }
     }
@@ -566,16 +571,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         let mut made_progress = false;
         for batch in missing.chunks(SELECTIVE_FETCH_BATCH_SIZE) {
             match poll_fetch_blocks_rotating(
-                &root_cid,
-                batch,
-                transport,
-                blockstore,
-                &mut ProviderFetchState {
-                    providers,
-                    stall_budget: &mut stall_budget,
-                    diagnostics,
-                },
-                context,
+                &root_cid, batch, transport, blockstore, state, context,
             )
             .await
             {
@@ -595,7 +591,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                         &root_cid,
                         batch.len(),
                         &failures,
-                        diagnostics.dag_fetch_logs(),
+                        state.diagnostics.dag_fetch_logs(),
                     );
                     attempt_failures.merge(&failures);
                 }
@@ -799,6 +795,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     let timeout = BLOCK_SYNC_COMPLETION_WATCHDOG;
     let mut outcome = ProviderWindowOutcome::Stalled;
     let mut transport_complete = false;
+    let mut ended_early = None;
     let mut deferred = false;
     let mut size_limit = None;
     while start.elapsed() < timeout && context.is_current() {
@@ -841,7 +838,10 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
                     transport_complete = true;
                     match fetch_completion {
                         FetchCompletion::Success => {}
-                        FetchCompletion::Failure(_) => break,
+                        FetchCompletion::Failure(cause) => {
+                            ended_early = Some(failure_outcome(cause, start.elapsed()));
+                            break;
+                        }
                         FetchCompletion::Deferred => {
                             deferred = true;
                             break;
@@ -862,13 +862,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     if let Err(error) = transport.cancel_sync(query_id).await {
         debug!(root_cid = %root_cid, query_id = query_id.0, error = %error, "Failed to cancel rooted CAR query");
     }
-    if let Some(cid) = size_limit {
-        ProviderWindowOutcome::SizeLimit(cid)
-    } else if deferred {
-        ProviderWindowOutcome::Deferred
-    } else {
-        outcome
-    }
+    window_outcome(outcome, ended_early, deferred, size_limit)
 }
 
 /// Fetch one batch of exact blocks, rotating to the next provider whenever
@@ -879,8 +873,53 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
 /// fail fast without issuing further transport queries.
 struct ProviderFetchState<'a> {
     providers: &'a mut ProviderRotation,
-    stall_budget: &'a mut usize,
+    stall_budget: usize,
+    free_refusals: usize,
+    health: Option<&'a ProviderHealth>,
     diagnostics: &'a SyncDiagnostics,
+}
+
+impl<'a> ProviderFetchState<'a> {
+    /// One full rotation's worth of empty windows per attempt. Productive
+    /// windows (any block arrived) never consume it, so a large DAG that is
+    /// actually transferring is unbounded, while a dead provider set costs at
+    /// most providers × BLOCK_SYNC_COMPLETION_WATCHDOG of stalled waiting per
+    /// attempt regardless of how many batches the missing frontier spans.
+    fn new(
+        providers: &'a mut ProviderRotation,
+        health: Option<&'a ProviderHealth>,
+        diagnostics: &'a SyncDiagnostics,
+    ) -> Self {
+        Self {
+            stall_budget: providers.len(),
+            free_refusals: MAX_FREE_REFUSALS,
+            providers,
+            health,
+            diagnostics,
+        }
+    }
+}
+
+/// Only the announcing peer claimed to hold the root, so only its fast failure
+/// reads as load; an alternate may not hold a just-published root yet.
+fn record_health(
+    health: Option<&ProviderHealth>,
+    context: &DagFetchContext,
+    provider: &PeerId,
+    outcome: ProviderWindowOutcome,
+) {
+    let Some(health) = health else { return };
+    match outcome {
+        ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial => {
+            health.record_productive(provider);
+        }
+        ProviderWindowOutcome::FailedFast(_) | ProviderWindowOutcome::SendFailed
+            if *provider == context.source_peer =>
+        {
+            health.record_fast_failure(provider, Instant::now());
+        }
+        _ => {}
+    }
 }
 
 async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
@@ -909,7 +948,7 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
             state.providers.advance();
             continue;
         }
-        if *state.stall_budget == 0 {
+        if state.stall_budget == 0 {
             debug!(
                 root_cid = %root_cid,
                 requested_count = cids.len(),
@@ -919,7 +958,10 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
             return FetchBatchOutcome::NoProgress(failures);
         }
         let provider = state.providers.current().clone();
-        match poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await {
+        let outcome =
+            poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await;
+        record_health(state.health, context, &provider, outcome);
+        match outcome {
             ProviderWindowOutcome::Complete => {
                 state.providers.record_progress();
                 return FetchBatchOutcome::Complete;
@@ -930,12 +972,19 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
             }
             window @ (ProviderWindowOutcome::Stalled
             | ProviderWindowOutcome::Failed(_)
+            | ProviderWindowOutcome::FailedFast(_)
             | ProviderWindowOutcome::Superseded) => {
-                *state.stall_budget -= 1;
+                if matches!(window, ProviderWindowOutcome::FailedFast(_)) && state.free_refusals > 0
+                {
+                    state.free_refusals -= 1;
+                } else {
+                    state.stall_budget -= 1;
+                }
                 state.providers.advance();
                 state.diagnostics.record_provider_rotation();
                 let failure = match window {
-                    ProviderWindowOutcome::Failed(cause) => WindowFailure::from(cause),
+                    ProviderWindowOutcome::Failed(cause)
+                    | ProviderWindowOutcome::FailedFast(cause) => WindowFailure::from(cause),
                     ProviderWindowOutcome::Superseded => WindowFailure::Superseded,
                     _ => WindowFailure::TimedOut,
                 };
@@ -1071,7 +1120,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                                 Some(Instant::now() + SUCCESS_LANDING_GRACE);
                         }
                         FetchCompletion::Failure(cause) => {
-                            ended_early = Some(ProviderWindowOutcome::Failed(cause));
+                            ended_early = Some(failure_outcome(cause, start.elapsed()));
                             break;
                         }
                         FetchCompletion::Deferred => {
@@ -1100,14 +1149,37 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
             "Failed to cancel block-sync query after poll window"
         );
     }
+    window_outcome(outcome, ended_early, deferred, size_limit)
+}
+
+/// A failure after `FAST_REFUSAL` (a response or connect timeout) stays
+/// `Failed` and spends stall budget: free refusals are capped on the assumption
+/// that each costs at most `FAST_REFUSAL`, so a slower one must spend budget to
+/// keep the attempt bounded.
+fn failure_outcome(cause: FetchFailureCause, elapsed: Duration) -> ProviderWindowOutcome {
+    if elapsed < FAST_REFUSAL {
+        ProviderWindowOutcome::FailedFast(cause)
+    } else {
+        ProviderWindowOutcome::Failed(cause)
+    }
+}
+
+/// A window that ended before its watchdog (`ended_early`) reports why, unless
+/// a size limit or deferral already explains it or a block arrived.
+fn window_outcome(
+    observed: ProviderWindowOutcome,
+    ended_early: Option<ProviderWindowOutcome>,
+    deferred: bool,
+    size_limit: Option<Cid>,
+) -> ProviderWindowOutcome {
     if let Some(cid) = size_limit {
         ProviderWindowOutcome::SizeLimit(cid)
     } else if deferred {
         ProviderWindowOutcome::Deferred
-    } else if outcome == ProviderWindowOutcome::Stalled {
-        ended_early.unwrap_or(outcome)
+    } else if observed == ProviderWindowOutcome::Stalled {
+        ended_early.unwrap_or(observed)
     } else {
-        outcome
+        observed
     }
 }
 

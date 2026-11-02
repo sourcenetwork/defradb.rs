@@ -316,7 +316,7 @@ pub struct InboundClassSnapshot {
 }
 
 /// Point-in-time measurements of the CAR fetches we made to one peer.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct PeerFetchStats {
     pub peer: String,
     pub fetches: u64,
