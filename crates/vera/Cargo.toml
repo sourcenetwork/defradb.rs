@@ -48,10 +48,10 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-commonware-codec = "2026.9.0"
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f4308541ee0c38b8b42a3fca1a86b1b17f6aa745" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f4308541ee0c38b8b42a3fca1a86b1b17f6aa745" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f4308541ee0c38b8b42a3fca1a86b1b17f6aa745" }
+commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
 kovan.workspace = true
@@ -79,7 +79,7 @@ alloy-primitives.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "59d221d539fb70d814196ce9b6efc859da9816be" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The Cosmos event stream runs on the network runtime it is given.
