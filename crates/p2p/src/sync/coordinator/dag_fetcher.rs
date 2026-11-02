@@ -16,6 +16,7 @@ use n0_future::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use super::closure_depth::ClosureDepth;
 use super::dag_context::DagFetchContext;
 use super::dag_retry::{
     retry_backoff, ProviderRotation, BUSY_RETRIES_PER_DISPATCH, FAST_REFUSAL, MAX_FETCH_ATTEMPTS,
@@ -472,8 +473,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
     let mut car_answered = false;
+    // A missing root is usually a new head over held history, which a
+    // whole-DAG CAR would re-send; on iroh the rotating fetch below depth-cuts it.
     let rooted_asked = !state.providers.cannot_serve(rooted_wants)
-        && (car_missing_watch.is_none() || context.needs_rooted_provider_discovery());
+        && match car_missing_watch {
+            Some(_) => context.needs_rooted_provider_discovery(),
+            None => !transport.supports_cancellable_rooted_sync(),
+        };
     let rooted_outcome = if !rooted_asked {
         ProviderWindowOutcome::SendFailed
     } else if car_missing_watch.is_some() && transport.supports_cancellable_rooted_sync() {
@@ -484,6 +490,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             blockstore,
             state.providers.current(),
             context,
+            state.depth,
         )
         .await
     } else {
@@ -526,6 +533,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial
     ) {
         state.providers.record_progress();
+        state.depth.widen();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
                 .await
@@ -544,6 +552,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     }
 
     // Fallback fetch: fetch the root block first so we can enumerate missing links.
+    let root_was_missing = !matches!(blockstore.has(&root_cid).await, Ok(true));
     match poll_fetch_blocks_rotating(
         &root_cid,
         std::slice::from_ref(&root_cid),
@@ -554,7 +563,11 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     )
     .await
     {
-        FetchBatchOutcome::Complete => {}
+        FetchBatchOutcome::Complete => {
+            if root_was_missing {
+                state.depth.widen();
+            }
+        }
         FetchBatchOutcome::Deferred => return FetchAttemptOutcome::Deferred,
         FetchBatchOutcome::ProviderBusy => return FetchAttemptOutcome::ProviderBusy,
         FetchBatchOutcome::Unservable => return FetchAttemptOutcome::Unservable,
@@ -636,6 +649,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         if !made_progress {
             break;
         }
+        state.depth.widen();
     }
 
     // Verify DAG is complete
@@ -817,9 +831,9 @@ async fn count_missing<B: Blockstore>(blockstore: &Arc<B>, cids: &[Cid]) -> usiz
 /// Exercise one authenticated provider's rooted CAR authority with the
 /// missing frontier already known from the local root. Iroh returns a capped
 /// descendant closure from that frontier; other transports retain their
-/// native session/exact-want behavior. The query is
-/// cancellable and bounded, so an unavailable provider cannot retain a
-/// transport task or monopolize the receiver fetch owner.
+/// native session/exact-want behavior. The query is cancellable and bounded,
+/// so an unavailable provider cannot retain a transport task or monopolize the
+/// receiver fetch owner.
 async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     root_cid: &Cid,
     watch_cids: &[Cid],
@@ -827,6 +841,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     blockstore: &Arc<B>,
     source_peer: &PeerId,
     context: &DagFetchContext,
+    depth: ClosureDepth,
 ) -> ProviderWindowOutcome {
     let mut initially_missing = 0usize;
     for cid in watch_cids {
@@ -838,7 +853,12 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
         return ProviderWindowOutcome::Complete;
     }
     let query_id = match transport
-        .sync_blocks(*root_cid, vec![source_peer.clone()], watch_cids.to_vec())
+        .sync_blocks_within(
+            *root_cid,
+            vec![source_peer.clone()],
+            watch_cids.to_vec(),
+            depth.get(),
+        )
         .await
     {
         Ok(query_id) => query_id,
@@ -939,6 +959,7 @@ struct ProviderFetchState<'a> {
     free_refusals: usize,
     health: Option<&'a ProviderHealth>,
     diagnostics: &'a SyncDiagnostics,
+    depth: ClosureDepth,
 }
 
 impl<'a> ProviderFetchState<'a> {
@@ -955,6 +976,7 @@ impl<'a> ProviderFetchState<'a> {
         Self {
             stall_budget: providers.len(),
             free_refusals: MAX_FREE_REFUSALS,
+            depth: ClosureDepth::initial(),
             providers,
             health,
             diagnostics,
@@ -1029,8 +1051,16 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
             return FetchBatchOutcome::NoProgress(failures);
         }
         let provider = state.providers.current().clone();
-        let outcome =
-            poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await;
+        let outcome = poll_fetch_blocks(
+            root_cid,
+            cids,
+            transport,
+            blockstore,
+            &provider,
+            context,
+            state.depth,
+        )
+        .await;
         record_health(state.health, context, &provider, outcome);
         match outcome {
             ProviderWindowOutcome::Complete => {
@@ -1122,6 +1152,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
     blockstore: &Arc<B>,
     source_peer: &PeerId,
     context: &DagFetchContext,
+    depth: ClosureDepth,
 ) -> ProviderWindowOutcome {
     let mut missing = Vec::new();
     for cid in cids {
@@ -1136,7 +1167,12 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
     }
 
     let query_id = match transport
-        .sync_blocks(*root_cid, vec![source_peer.clone()], missing.clone())
+        .sync_blocks_within(
+            *root_cid,
+            vec![source_peer.clone()],
+            missing.clone(),
+            depth.get(),
+        )
         .await
     {
         Ok(query_id) => query_id,

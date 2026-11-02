@@ -4,6 +4,8 @@ use super::*;
 mod busy_provider_rotation;
 #[path = "../../../tests/unit/car_size_retry.rs"]
 mod car_size_retry;
+#[path = "../../../tests/unit/dag_fetch_depth.rs"]
+mod dag_fetch_depth;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
 #[path = "../../../tests/unit/provider_ranking.rs"]
@@ -117,6 +119,8 @@ struct TestTransport {
             rapidhash::fast::RandomState,
         >,
     >,
+    closure_provider: Arc<AtomOption<Arc<DefraBlockstore<RegolithStore>>>>,
+    closure_rounds: Arc<Atom<Vec<(u32, usize)>>>,
 }
 
 impl TestTransport {
@@ -168,7 +172,19 @@ impl TestTransport {
             force_rooted_sync: Arc::new(AtomicBool::new(false)),
             fetch_stats: Arc::new(Atom::new(Vec::new())),
             refusing_providers: Arc::new(rapid_map()),
+            closure_provider: Arc::new(AtomOption::none()),
+            closure_rounds: Arc::new(Atom::new(Vec::new())),
         }
+    }
+
+    /// Serve depth-cut syncs from `provider` the way the iroh responder does.
+    fn set_closure_provider(&self, provider: Arc<DefraBlockstore<RegolithStore>>) {
+        self.closure_provider.store_some(provider);
+    }
+
+    /// Each depth-cut sync's depth and the number of blocks it served.
+    fn closure_rounds(&self) -> Vec<(u32, usize)> {
+        self.closure_rounds.load_clone()
     }
 
     fn disconnected_peers(&self) -> Vec<String> {
@@ -609,6 +625,34 @@ impl P2PTransport for TestTransport {
         Ok(query_id)
     }
 
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        max_depth: u32,
+    ) -> P2PResult<QueryId> {
+        let provider = self.closure_provider.load().as_deref().cloned();
+        if let Some(provider) = provider {
+            let collected = crate::sync::car::collect_dag_blocks_within(
+                provider.as_ref(),
+                &missing,
+                Some(max_depth),
+            )
+            .await?;
+            let served = collected.blocks.len();
+            self.closure_rounds.rcu(|rounds| {
+                let mut next = rounds.clone();
+                next.push((max_depth, served));
+                next
+            });
+            for (cid, data) in collected.blocks {
+                self.blockstore.put(&cid, &data).await.unwrap();
+            }
+        }
+        self.sync_blocks(root, providers, missing).await
+    }
+
     async fn cancel_sync(&self, query_id: QueryId) -> P2PResult<bool> {
         if self.stream_completion.is_some() && !self.stream_completed.load(Ordering::SeqCst) {
             self.cancelled_before_stream_complete
@@ -871,6 +915,7 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
@@ -913,6 +958,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
@@ -1830,6 +1876,7 @@ async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
@@ -1940,6 +1987,7 @@ async fn late_success_completion_keeps_the_full_landing_grace() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
