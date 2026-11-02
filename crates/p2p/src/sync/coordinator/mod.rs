@@ -44,6 +44,7 @@ mod access;
 mod accessors;
 mod authorizer;
 mod broadcast;
+mod closure_depth;
 mod constructor;
 pub(crate) mod dag_context;
 pub(crate) mod dag_fetcher;

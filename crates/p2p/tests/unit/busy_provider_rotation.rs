@@ -95,6 +95,7 @@ async fn a_busy_reply_ends_the_window_at_once_as_busy_not_stalled() {
         &f.blockstore,
         &PeerId::new("remote-peer".to_string()),
         &f.alt_context(),
+        ClosureDepth::initial(),
     )
     .await;
 

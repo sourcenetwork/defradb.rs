@@ -611,6 +611,19 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         missing: Vec<Cid>,
     ) -> Result<QueryId>;
 
+    /// [`sync_blocks`](Self::sync_blocks) with descendant closures cut
+    /// `max_depth` links below each missing CID. Exact-CID transports keep
+    /// the default.
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        _max_depth: u32,
+    ) -> Result<QueryId> {
+        self.sync_blocks(root, providers, missing).await
+    }
+
     /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
     /// CAR request.  The iroh transport provides that contract; libp2p's
     /// implementation is exact-CID Bitswap, where an empty set is a no-op.

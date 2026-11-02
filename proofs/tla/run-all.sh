@@ -87,6 +87,9 @@ RUNS=(
   "MC_ReceiveGate_Red_NoAfter.cfg ReceiveGate.tla RED" # a fetched CAR is imported unchecked (INV_FetchRefusalImportsNothing)
   "MC_ReceiveGate_Red_NoBackstop.cfg ReceiveGate.tla RED" # the merge stops checking (INV_RefusedNeverMerged)
   "MC_ReceiveGate_Red_Eager.cfg ReceiveGate.tla RED" # a check refuses what it cannot see (INV_KeptIsKept)
+  "MC_DepthCutFetch_Green.cfg DepthCutFetch.tla GREEN" # a depth-cut DAG fetch re-sends little held history, in logarithmic rounds, and completes
+  "MC_DepthCutFetch_Red_Unbounded.cfg DepthCutFetch.tla RED" # the provider ignores the cut (INV_HistoryNotResent)
+  "MC_DepthCutFetch_Red_NoWiden.cfg DepthCutFetch.tla RED" # the receiver never widens the cut (INV_RoundsLogarithmic)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"

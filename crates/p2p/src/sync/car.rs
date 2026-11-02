@@ -20,6 +20,10 @@ mod collection_tests;
 #[path = "../../tests/unit/car_size_notices.rs"]
 mod size_notice_tests;
 
+#[cfg(test)]
+#[path = "../../tests/unit/car_depth.rs"]
+mod depth_tests;
+
 /// Maximum number of blocks allowed in a single CAR response.
 ///
 /// Prevents a malicious or faulty peer from causing the server to collect and
@@ -188,6 +192,14 @@ pub fn decode_car(data: &[u8]) -> Result<CarContents> {
     Ok((roots, blocks))
 }
 
+#[cfg(test)]
+pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
+    blockstore: &B,
+    roots: &[Cid],
+) -> Result<CarCollectOutcome> {
+    collect_dag_blocks_within(blockstore, roots, None).await
+}
+
 /// Traverse DAGs from a missing frontier, collecting reachable blocks.
 ///
 /// Collection examines at most [`CAR_MAX_BLOCKS`] distinct CIDs and retains at
@@ -197,16 +209,20 @@ pub fn decode_car(data: &[u8]) -> Result<CarContents> {
 /// All roots share the same visited set and response limits, so overlapping
 /// branches are sent once and a large frontier cannot multiply the bounded
 /// CAR response size.
-pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
+///
+/// `max_depth` cuts the walk that many links below the roots; breadth-first
+/// order means a block is first reached at its shortest distance from a root.
+pub async fn collect_dag_blocks_within<B: Blockstore>(
     blockstore: &B,
     roots: &[Cid],
+    max_depth: Option<u32>,
 ) -> Result<CarCollectOutcome> {
     let mut outcome = CarCollectOutcome::default();
     let mut visited = RapidHashSet::new();
     let mut total_bytes: usize = 0;
-    let mut queue: VecDeque<Cid> = roots.iter().copied().collect();
+    let mut queue: VecDeque<(Cid, u32)> = roots.iter().map(|cid| (*cid, 0)).collect();
 
-    while let Some(cid) = queue.pop_front() {
+    while let Some((cid, depth)) = queue.pop_front() {
         if !visited.insert(cid) {
             continue;
         }
@@ -224,12 +240,16 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
         };
         total_bytes += data.len();
 
-        let refs = extract_links(&data);
+        let refs = if max_depth.is_none_or(|max| depth < max) {
+            extract_links(&data)
+        } else {
+            Vec::new()
+        };
         outcome.blocks.push((cid, data));
 
         for child_cid in refs {
             if !visited.contains(&child_cid) {
-                queue.push_back(child_cid);
+                queue.push_back((child_cid, depth + 1));
             }
         }
     }

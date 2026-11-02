@@ -176,6 +176,7 @@ async fn each_window_ending_is_classified_by_what_ended_it() {
             &fetch.blockstore,
             &PeerId::new("hub".to_string()),
             &fetch.context,
+            ClosureDepth::initial(),
         )
         .await;
 
