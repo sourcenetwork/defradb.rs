@@ -6,10 +6,8 @@ use kovan::Atom;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use serde_json::{json, Value as JsonValue};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::mock::update_vec;
 use query::rest::{RestError, RestOperations, RestResult};
 
 /// Internal document storage for mock REST operations.
@@ -17,20 +15,6 @@ use query::rest::{RestError, RestOperations, RestResult};
 struct MockDocument {
     doc_id: String,
     data: JsonValue,
-}
-
-/// Whether `filter` selects `data`, using the production filter engine.
-///
-/// Not a hand-rolled matcher: one that understood a different filter language
-/// than the server would make every test here green on requests the real path
-/// rejects, which is the whole hazard on a route that deletes documents.
-fn matches_filter(data: &JsonValue, filter: &JsonValue) -> RestResult<bool> {
-    let conditions = filter
-        .as_object()
-        .ok_or_else(|| RestError::invalid_input("filter must be an object"))?;
-    query::Filter::from_conditions(conditions.clone())
-        .matches_json_object(data)
-        .map_err(|e| RestError::invalid_input(e.to_string()))
 }
 
 /// A collection's documents, lock-free in their own right so a per-key update
@@ -41,15 +25,12 @@ type Documents = Arc<Atom<Vec<MockDocument>>>;
 pub struct MockRestOperations {
     /// Collections with their documents.
     collections: Arc<HopscotchMap<String, Documents, RandomState>>,
-    /// Counter for generating unique document IDs.
-    next_id: Arc<AtomicU64>,
 }
 
 impl Clone for MockRestOperations {
     fn clone(&self) -> Self {
         Self {
             collections: Arc::clone(&self.collections),
-            next_id: Arc::clone(&self.next_id),
         }
     }
 }
@@ -85,7 +66,6 @@ impl MockRestOperations {
 
         Self {
             collections: Arc::new(collections),
-            next_id: Arc::new(AtomicU64::new(1000)),
         }
     }
 
@@ -93,7 +73,6 @@ impl MockRestOperations {
     pub fn empty() -> Self {
         Self {
             collections: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-            next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -102,12 +81,6 @@ impl MockRestOperations {
         self.collections
             .insert(name.to_string(), Arc::new(Atom::new(vec![])));
         self
-    }
-
-    /// Generate a new unique document ID.
-    fn generate_doc_id(&self) -> String {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        format!("bae-{:08x}", id)
     }
 
     fn documents(&self, collection: &str) -> RestResult<Documents> {
@@ -150,129 +123,6 @@ impl RestOperations for MockRestOperations {
                 result
             })
         }))
-    }
-
-    async fn add_document(
-        &self,
-        collection: &str,
-        data: JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        let documents = self.documents(collection)?;
-        let doc_id = self.generate_doc_id();
-        update_vec(&documents, |docs| {
-            docs.push(MockDocument {
-                doc_id: doc_id.clone(),
-                data: data.clone(),
-            })
-        });
-
-        let mut result = data;
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("_docID".to_string(), json!(doc_id));
-        }
-        Ok(result)
-    }
-
-    async fn add_many_documents(
-        &self,
-        collection: &str,
-        data: Vec<JsonValue>,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<JsonValue>> {
-        let mut results = Vec::with_capacity(data.len());
-        for item in data {
-            let result = self.add_document(collection, item, identity).await?;
-            results.push(result);
-        }
-        Ok(results)
-    }
-
-    async fn update_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        patch: JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        let documents = self.documents(collection)?;
-        update_vec(&documents, |docs| {
-            let Some(d) = docs.iter_mut().find(|d| d.doc_id == doc_id) else {
-                return Err(RestError::document_not_found(doc_id));
-            };
-            // Merge patch into existing data
-            if let (Some(existing), Some(updates)) = (d.data.as_object_mut(), patch.as_object()) {
-                for (key, value) in updates {
-                    existing.insert(key.clone(), value.clone());
-                }
-            }
-
-            let mut result = d.data.clone();
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert("_docID".to_string(), json!(d.doc_id));
-            }
-            Ok(result)
-        })
-    }
-
-    async fn delete_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        _identity: Option<&Did>,
-    ) -> RestResult<bool> {
-        let documents = self.documents(collection)?;
-        Ok(update_vec(&documents, |docs| {
-            let initial_len = docs.len();
-            docs.retain(|d| d.doc_id != doc_id);
-            docs.len() < initial_len
-        }))
-    }
-
-    /// Matches on equality of each filter key against the stored document,
-    /// which is enough to tell "the filter was applied" from "it was ignored".
-    async fn delete_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
-        let documents = self.documents(collection)?;
-        update_vec(&documents, |docs| {
-            let mut matched = Vec::new();
-            for doc in docs.iter() {
-                if matches_filter(&doc.data, filter)? {
-                    matched.push(doc.doc_id.clone());
-                }
-            }
-            docs.retain(|doc| !matched.contains(&doc.doc_id));
-            Ok(matched)
-        })
-    }
-
-    async fn update_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        updater: &JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
-        let documents = self.documents(collection)?;
-        update_vec(&documents, |docs| {
-            let mut updated = Vec::new();
-            for doc in docs.iter_mut() {
-                if !matches_filter(&doc.data, filter)? {
-                    continue;
-                }
-                if let (Some(data), Some(patch)) = (doc.data.as_object_mut(), updater.as_object()) {
-                    for (key, value) in patch {
-                        data.insert(key.clone(), value.clone());
-                    }
-                }
-                updated.push(doc.doc_id.clone());
-            }
-            Ok(updated)
-        })
     }
 }
 
@@ -339,62 +189,6 @@ impl RestOperations for FailingMockRestOperations {
         _doc_id: &str,
         _identity: Option<&Did>,
     ) -> RestResult<Option<JsonValue>> {
-        Err(self.error.clone())
-    }
-
-    async fn add_document(
-        &self,
-        _collection: &str,
-        _data: JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        Err(self.error.clone())
-    }
-
-    async fn add_many_documents(
-        &self,
-        _collection: &str,
-        _data: Vec<JsonValue>,
-        _identity: Option<&Did>,
-    ) -> RestResult<Vec<JsonValue>> {
-        Err(self.error.clone())
-    }
-
-    async fn update_document(
-        &self,
-        _collection: &str,
-        _doc_id: &str,
-        _patch: JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        Err(self.error.clone())
-    }
-
-    async fn delete_document(
-        &self,
-        _collection: &str,
-        _doc_id: &str,
-        _identity: Option<&Did>,
-    ) -> RestResult<bool> {
-        Err(self.error.clone())
-    }
-
-    async fn delete_documents_with_filter(
-        &self,
-        _collection: &str,
-        _filter: &JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
-        Err(self.error.clone())
-    }
-
-    async fn update_documents_with_filter(
-        &self,
-        _collection: &str,
-        _filter: &JsonValue,
-        _updater: &JsonValue,
-        _identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
         Err(self.error.clone())
     }
 }

@@ -2,13 +2,12 @@ use serde::Serialize;
 
 /// Go upstream commit we last synced with.
 ///
-/// Past `f73a903f`, so this is the first baseline whose Go binary understands a
-/// vector index at all: every vector parity claim before it was read from
-/// source rather than executed. It also carries the metric set
-/// (sourcenetwork/defradb#5169), the `@index(vector:)` fold (#5188) and the
-/// response `extensions` channel (#5189), which are what the rest of this
-/// alignment work was written against.
-pub const GO_COMPAT_COMMIT: &str = "53f0e76a3";
+/// Past `c34052cb` (sourcenetwork/defradb#5253), which rewrote the SIMILARITY
+/// argument shape and descriptions that the introspection tests expect, and
+/// past `f73a903f`, the first baseline whose Go binary understands a vector
+/// index at all. Go development ends this cycle, so this is the newest develop
+/// commit.
+pub const GO_COMPAT_COMMIT: &str = "307364d9d";
 /// Go upstream branch.
 pub const GO_COMPAT_BRANCH: &str = "develop";
 /// Go release tag; empty when CI should build the pinned commit from source.

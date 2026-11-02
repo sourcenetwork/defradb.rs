@@ -197,7 +197,7 @@ pub async fn events_sse(
         state: state.clone(),
         identity: identity.clone(),
         did: identity.did().cloned(),
-        acp_enabled: state.doc_acp.is_some() || state.acp.is_some(),
+        acp_enabled: state.doc_acp.is_some(),
         bearer: defra_core::RequestContext::default().with_bearer(
             identity.did().map(ToString::to_string),
             identity

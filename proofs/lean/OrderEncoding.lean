@@ -3,6 +3,7 @@ import OrderEncoding.Markers
 import OrderEncoding.PerType
 import OrderEncoding.BytesEnc
 import OrderEncoding.CrossType
+import OrderEncoding.InLookup
 
 /-!
 # OrderEncoding_DESIGN — order-preserving key-encoding monotonicity (Lean slice)
@@ -234,3 +235,9 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.neg_swapped_bool_markers_not_order_preserving
 #print axioms OrderEncoding.neg_no_escape_bytes_collision
 #print axioms OrderEncoding.neg_shared_marker_breaks_cross_type
+#print axioms OrderEncoding.lookups_strictly_increasing
+#print axioms OrderEncoding.reversed_lookups_strictly_decreasing
+#print axioms OrderEncoding.mem_lookups
+#print axioms OrderEncoding.lookups_nodup
+#print axioms OrderEncoding.neg_written_order_not_increasing
+#print axioms OrderEncoding.neg_keep_dup_not_increasing

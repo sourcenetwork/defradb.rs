@@ -33,7 +33,7 @@ fn go_binary() -> PathBuf {
         return PathBuf::from(p);
     }
     PathBuf::from(std::env::var("HOME").expect("HOME"))
-        .join(".cache/defra-harness/53f0e76a3/defradb")
+        .join(".cache/defra-harness/307364d9d/defradb")
 }
 
 fn p2p_addr(cluster: &TestCluster, idx: usize) -> String {

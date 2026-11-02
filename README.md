@@ -94,6 +94,7 @@ The CLI exposes GraphQL query guardrails on `defradb start`:
 | `--query-max-depth` | `20` | Max GraphQL selection nesting depth (`0` = unlimited). |
 | `--query-max-width` | `100` | Max fields at any GraphQL selection level (`0` = unlimited). |
 | `--query-max-filter-depth` | `50` | Max recursive filter nesting depth (`0` = unlimited). |
+| `--query-max-fragment-nesting` | `32` | Max fragments one spread chain nests, from 1 to what a query thread's stack holds (checked at startup; 85 on a debug build, 341 on release, with the default 2 MiB stack). Env `DEFRA_QUERY_MAX_FRAGMENT_NESTING`. |
 
 ## Telemetry (OpenTelemetry)
 
@@ -130,7 +131,7 @@ telemetry  = { version = "0.5", features = ["otlp"] }
 ```
 
 ```rust
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use telemetry::TelemetryConfig;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -146,7 +147,7 @@ tracing_subscriber::registry()
     .with(telemetry::otel_layer(tracer))
     .try_init()?;
 
-let node = EmbeddedNode::builder()
+let node = Node::builder()
     .with_telemetry(handle)
     .build()
     .await?;

@@ -50,7 +50,7 @@ const SENDER_NEEDLES: [&str; 7] = [
 fn go_binary() -> BinarySource {
     let path = std::env::var("DEFRA_GO_BINARY").unwrap_or_else(|_| {
         format!(
-            "{}/.cache/defra-harness/53f0e76a3/defradb",
+            "{}/.cache/defra-harness/307364d9d/defradb",
             std::env::var("HOME").expect("HOME")
         )
     });

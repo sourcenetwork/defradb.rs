@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use defra_http::MANAGE_UNAUTHORIZED;
+use crate::MANAGE_UNAUTHORIZED;
 use p2p::message::{
     ManageMutateOp, ManageQueryOp, ManageQueryReply, ManageQueryRequest, ManageReply, ManageRequest,
 };

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use document::{Document, WritePreparation};
-use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use storage::corekv::Store;
 
 use crate::{block::builder::DocRef, database::DB};
@@ -163,15 +163,26 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
             scopes.push((field, None));
         }
     }
+    // One key per scope: every field under document encryption shares the
+    // document's key, as Go's one doc key per document.
+    let mut generated = RapidHashMap::new();
     for (field, key_field) in scopes {
-        let scope = kms::KeyScope::Document {
-            doc_id: hex::encode(identity.encode()),
-            field: key_field.clone(),
+        let (cid, key) = match generated.get(&key_field) {
+            Some(generated) => *generated,
+            None => {
+                let scope = kms::KeyScope::Document {
+                    doc_id: hex::encode(identity.encode()),
+                    field: key_field.clone(),
+                };
+                let fresh = kms
+                    .generate_key(&kms::RequestContext::anonymous(), scope)
+                    .await
+                    .map_err(|e| {
+                        query::error::QueryError::execution(format!("kms generate_key: {e}"))
+                    })?;
+                *generated.entry(key_field.clone()).or_insert(fresh)
+            }
         };
-        let (cid, key) = kms
-            .generate_key(&kms::RequestContext::anonymous(), scope)
-            .await
-            .map_err(|e| query::error::QueryError::execution(format!("kms generate_key: {e}")))?;
         prepared.insert_scoped_key(field, cid, key, key_field);
     }
     doc.set_write_preparation(Arc::new(prepared));

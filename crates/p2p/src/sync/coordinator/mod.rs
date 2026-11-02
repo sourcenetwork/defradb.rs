@@ -58,6 +58,7 @@ mod pubsub_client;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_services;
 mod push_worker;
+mod receive_gate;
 mod replicators;
 mod result_types;
 mod selective_car_access;

@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use super::node::{Node, ServerSetup};
 use super::server_http::HttpServerArgs;
-use crate::config::Config;
+use crate::config::{AcpDocumentType, Config};
 use crate::error::{Error, Result};
 use identity::Identity;
 
@@ -149,10 +149,13 @@ impl Node {
             store.clone(),
             zanzibar_store.clone(),
             event_bus.clone(),
-            db::node_access_checker(database.clone()),
             edge,
         )
         .await?;
+
+        if config.acp.document_type != AcpDocumentType::None {
+            database.set_dac_policies(acp_setup.dac_policies.clone());
+        }
 
         let mut p2p_setup = Self::setup_p2p(
             store.clone(),
@@ -194,7 +197,7 @@ impl Node {
         // than serving them. The NAC handle gates authorization: when NAC is
         // enabled we use the real adapter's manager, otherwise we supply a
         // disabled NacManager whose check_permission returns Ok(true) (parity
-        // with the embedded node, which always populates these hooks).
+        // with the defra-node assembly, which always populates these hooks).
         if let (Some(hooks), Some(controller), Some(correlator), Some(query_correlator)) = (
             p2p_setup.manage_hooks.as_ref(),
             p2p_setup.manage_controller.as_ref(),
@@ -213,7 +216,7 @@ impl Node {
             });
         }
 
-        // Build + wire the KMS (mirrors crates/embedded/src/node.rs). The P2P
+        // Build + wire the KMS (mirrors crates/defra-node/src/assemble.rs). The P2P
         // transport was created earlier; the NacDacPolicy needs document_acp +
         // NAC which exist here (PR #4778 ordering).
         {
@@ -327,8 +330,6 @@ impl Node {
             None
         };
 
-        #[cfg(feature = "postgres")]
-        let zanzibar_store_for_pg = zanzibar_store.clone();
         let http_server = Self::build_http_server(HttpServerArgs {
             database: database.clone(),
             config,
@@ -344,13 +345,7 @@ impl Node {
             edge: edge.clone(),
         })?;
         #[cfg(feature = "postgres")]
-        let pg_server = Self::build_pg_server(
-            database.clone(),
-            config,
-            &query_setup,
-            &acp_setup,
-            zanzibar_store_for_pg,
-        )?;
+        let pg_server = Self::build_pg_server(database.clone(), config, &query_setup)?;
 
         Ok(ServerSetup {
             database,

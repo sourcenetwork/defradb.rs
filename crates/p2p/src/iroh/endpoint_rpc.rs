@@ -20,10 +20,11 @@ use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::services;
 
-/// One shared connection per peer, keyed by endpoint alone: every protocol is
-/// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
+/// Shared authenticated paths per peer. Modern RPC prefers the current mux;
+/// a separate legacy slot preserves 0.1 reuse without racing that selection.
 pub(super) struct ConnectionCacheState {
     connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
+    legacy_connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
     gossip: GossipHandle,
@@ -34,6 +35,7 @@ pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
+        legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
         gossip,
     })
@@ -227,46 +229,50 @@ fn cached_connection(
     peer_id: &PeerId,
 ) -> crate::error::Result<Option<iroh::endpoint::Connection>> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
-    match cache.connections.get(&endpoint_id) {
-        Some(connection) if connection.close_reason().is_none() => Ok(Some(connection)),
-        Some(closed) => {
-            evict_connection(cache, endpoint_id, &closed);
-            Ok(None)
+    for connections in [&cache.connections, &cache.legacy_connections] {
+        match connections.get(&endpoint_id) {
+            Some(connection) if connection.close_reason().is_none() => return Ok(Some(connection)),
+            Some(closed) => evict_connection(cache, endpoint_id, &closed),
+            None => {}
         }
-        None => Ok(None),
     }
+    Ok(None)
 }
 
-/// Adopt `connection` as the peer's shared connection, so an explicit dial does
-/// not leave the first send to open a second one.
+/// Keep protocol-specific paths separate so a concurrent legacy publication
+/// cannot overwrite a modern handle. The key comes from QUIC, not the caller.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
-    peer_id: &PeerId,
     connection: &iroh::endpoint::Connection,
-) -> crate::error::Result<()> {
-    let endpoint_id = parse_endpoint_id(peer_id)?;
-    cache.connections.insert(endpoint_id, connection.clone());
-    Ok(())
+) {
+    let connections = match connection.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return,
+    };
+    connections.insert(connection.remote_id(), connection.clone());
 }
 
-/// Drop the cached entry for `endpoint_id` only while it is still `connection`;
-/// an entry a concurrent dial replaced it with is put back.
-fn evict_connection(
+/// Remove only this handle, leaving replacements visible to concurrent disconnects.
+pub(super) fn evict_connection(
     cache: &ConnectionCache,
     endpoint_id: iroh::EndpointId,
     connection: &iroh::endpoint::Connection,
 ) {
-    if let Some(cached) = cache.connections.remove(&endpoint_id) {
-        if cached.stable_id() != connection.stable_id() {
-            cache.connections.insert_if_absent(endpoint_id, cached);
-        }
-    }
+    let connections = if connection.alpn() == protocols::ALPN_MUX_V1 {
+        &cache.legacy_connections
+    } else {
+        &cache.connections
+    };
+    connections.remove_if(&endpoint_id, |cached| {
+        cached.stable_id() == connection.stable_id()
+    });
 }
 
 /// Drop a peer's shared connection, but only once QUIC has actually closed it:
 /// a stream-level failure must not evict the transport every other protocol is
 /// still using. The `stable_id` check avoids racing a concurrent dial.
-fn evict_if_closed(
+pub(super) fn evict_if_closed(
     cache: &ConnectionCache,
     peer_id: &PeerId,
     connection: &iroh::endpoint::Connection,
@@ -323,8 +329,10 @@ const DISCONNECT_ERROR_CODE: u32 = 0;
 /// Used by `disconnect` to tear down the outbound-send connection cache for a
 /// peer. Closing is idempotent — a peer with no cached connection is a no-op.
 pub(super) fn close_cached_connections(cache: &ConnectionCache, endpoint_id: &iroh::EndpointId) {
-    while let Some(connection) = cache.connections.remove(endpoint_id) {
-        connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
+    for connections in [&cache.connections, &cache.legacy_connections] {
+        while let Some(connection) = connections.remove(endpoint_id) {
+            connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
+        }
     }
     cache.dial_guards.remove(endpoint_id);
 }
@@ -386,7 +394,7 @@ async fn connect_with_cache(
             return Err(error);
         }
     };
-    remember_connection(cache, peer_id, &connection)?;
+    remember_connection(cache, &connection);
 
     // Re-check AFTER caching, not only before the dial. The dial above can run
     // for many seconds, and a revoke landing inside that window looked at the
@@ -1390,7 +1398,7 @@ mod tests {
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
+        remember_connection(&cache, &connection);
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         admission.revoke(accept_ep.id());
@@ -1457,7 +1465,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_timeout_closes_and_evicts_the_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/timeout".to_vec()]).await;
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
         let dial_ep = localhost_endpoint(vec![]).await;
         let accept_task = n0_future::task::spawn({
             let ep = accept_ep.clone();
@@ -1472,12 +1480,13 @@ mod tests {
         });
 
         let connection = dial_ep
-            .connect(accept_ep.addr(), b"test/timeout")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &connection).expect("cache connection");
+        remember_connection(&cache, &connection);
+        assert!(cached_connection(&cache, &peer).unwrap().is_some());
 
         retire_timed_out_connection(&cache, &peer, &connection);
 
@@ -1497,7 +1506,7 @@ mod tests {
 
     #[tokio::test]
     async fn late_timeout_does_not_evict_a_newer_cached_connection() {
-        let accept_ep = localhost_endpoint(vec![b"test/old".to_vec(), b"test/new".to_vec()]).await;
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
         let dial_ep = localhost_endpoint(vec![]).await;
         let accept_task = n0_future::task::spawn({
             let ep = accept_ep.clone();
@@ -1512,17 +1521,18 @@ mod tests {
         });
 
         let old = dial_ep
-            .connect(accept_ep.addr(), b"test/old")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect old");
         let newer = dial_ep
-            .connect(accept_ep.addr(), b"test/new")
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache(GossipHandle::new());
-        remember_connection(&cache, &peer, &old).expect("cache old");
-        remember_connection(&cache, &peer, &newer).expect("cache new");
+        assert_ne!(old.stable_id(), newer.stable_id());
+        remember_connection(&cache, &old);
+        remember_connection(&cache, &newer);
 
         retire_timed_out_connection(&cache, &peer, &old);
 
@@ -1600,3 +1610,7 @@ mod tests {
         accept_task.abort();
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/iroh/shared_connection.rs"]
+mod shared_connection_tests;

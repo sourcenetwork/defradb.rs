@@ -34,6 +34,9 @@ pub enum Error {
     #[error("collection not found. collection version: {0}")]
     CollectionVersionNotFound(String),
 
+    #[error("index '{index}' not found on collection '{collection}'")]
+    IndexNotFound { collection: String, index: String },
+
     #[error("collection version ID can't be empty")]
     CollectionVersionIDEmpty,
 
@@ -59,11 +62,13 @@ pub enum Error {
     #[error("invalid document: {0}")]
     InvalidDocument(String),
 
+    /// A local write of a value a unique index already holds, naming the
+    /// writer ([`crate::index::Error::UniqueViolation`]).
+    #[error("{0}")]
+    UniqueViolation(String),
+
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
-
-    #[error("filtered truncate is not supported for branchable collections")]
-    FilteredTruncateBranchableCollection,
 
     #[error("database is closed")]
     DatabaseClosed,
@@ -158,6 +163,8 @@ impl From<crate::index::Error> for Error {
                 Error::InvalidDocument(other.to_string())
             }
             crate::index::Error::Other(msg) => Error::Other(msg),
+            other @ (crate::index::Error::UniqueViolation { .. }
+            | crate::index::Error::UpdateIndex { .. }) => Error::UniqueViolation(other.to_string()),
         }
     }
 }
@@ -190,6 +197,7 @@ impl Error {
 
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
+            || matches!(self, Error::UniqueViolation(_))
     }
 
     pub fn is_storage_full(&self) -> bool {
@@ -231,7 +239,9 @@ impl Error {
 }
 
 pub fn index_write_query_error(operation: &str, error: Error) -> query::error::QueryError {
-    if error.is_unique_constraint_violation() {
+    if let Error::UniqueViolation(message) = error {
+        query::error::QueryError::execution(message)
+    } else if error.is_unique_constraint_violation() {
         query::error::QueryError::execution(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE)
     } else {
         storage_query_error(error, &format!("{operation} error"))

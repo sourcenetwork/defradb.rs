@@ -55,56 +55,6 @@ impl<S: Store + 'static> CollectionManagementOperations for CollectionManagement
             .map_err(|error| error.to_string())
     }
 
-    async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<serde_json::Value, String> {
-        let version = self
-            .database
-            .patch_collection_with_migration_as(&self.context(), collection_name, patch, migration)
-            .await
-            .map_err(|e| format!("{}", e))?;
-
-        serde_json::to_value(&version)
-            .map_err(|e| format!("failed to serialize collection version: {}", e))
-    }
-
-    async fn set_active_version(&self, version_id: &str) -> Result<(), String> {
-        self.database
-            .set_active_collection_version_as(&self.context(), version_id)
-            .await
-            .map_err(|e| format!("{}", e))
-    }
-
-    async fn truncate_collection(
-        &self,
-        name: &str,
-        filter: Option<serde_json::Value>,
-    ) -> Result<(), String> {
-        match filter {
-            Some(serde_json::Value::Object(conditions)) => {
-                self.database
-                    .truncate_collection_with_filter_as(
-                        &self.context(),
-                        name,
-                        query::Filter::from_conditions(conditions),
-                    )
-                    .await
-            }
-            Some(_) => Err(db::Error::Query(query::QueryError::invalid_filter(
-                "filter must be an object",
-            ))),
-            None => {
-                self.database
-                    .truncate_collection_as(&self.context(), name)
-                    .await
-            }
-        }
-        .map_err(|error| error.to_string())
-    }
-
     async fn purge(&self) -> Result<(), String> {
         let collections = self
             .database
@@ -168,21 +118,6 @@ impl<S: Store + 'static> CollectionManagementOperations for CollectionManagement
         self.database
             .delete_collection_versions_batch_as(&self.context(), version_ids)
             .await
-            .map_err(|e| format!("{}", e))
-    }
-
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.database
-            .get_all_collection_versions()
-            .await
-            .map_err(|e| format!("{}", e))
-    }
-
-    /// Answered from the collection cache, without scanning every stored
-    /// version, which is the whole point of the selector's active-only path.
-    async fn get_active_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.database
-            .get_active_collection_versions()
             .map_err(|e| format!("{}", e))
     }
 

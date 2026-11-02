@@ -5,7 +5,7 @@
 \* it by its ID. Callers are identities ("alice", "bob") or nobody ("anon").
 \* Requests come in through one of two surfaces, each with its own registry:
 \*   http  a server's HTTP API, where many remote callers share one node;
-\*   ffi   the C API of an embedded node (crates/embedded, used by
+\*   ffi   the C API of an embedded node (crates/defra-node, used by
 \*         crates/ffi), where the one process embedding the node is the only
 \*         caller, and the identity a request carries is the user that process
 \*         acts for in that request.
@@ -30,8 +30,9 @@
 \*      control judges the wrong user - INV_ActsAsCaller.
 \*
 \* The Rust code each guard models:
-\*   EmbedderMode   crates/embedded/src/node.rs build_node: the embedded node
-\*                  builds its registry with TxnOwnership::Embedder;
+\*   EmbedderMode   crates/defra-node/src/assemble.rs assemble: a node that
+\*                  serves no HTTP builds its registry with
+\*                  TxnOwnership::Embedder;
 \*   IdentityKey    crates/db/src/txn/registry/mod.rs: TxnOwnership defaults
 \*                  to ByIdentity, which every other registry keeps;
 \*   ActsAsRequest  crates/db/src/txn/registry/mod.rs in_txn and

@@ -156,7 +156,7 @@ pub(crate) async fn register_created_doc(
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?
     {
         return Err(query::error::QueryError::execution(format!(
-            "Document with ID {existing_id} already exists"
+            "a document with the given ID already exists. DocID: {existing_id}"
         )));
     }
 
@@ -174,8 +174,7 @@ pub(crate) async fn register_created_doc(
             )));
         }
         return Err(query::error::QueryError::execution(format!(
-            "Document with ID {} already exists",
-            doc_id_str
+            "a document with the given ID already exists. DocID: {doc_id_str}"
         )));
     }
 

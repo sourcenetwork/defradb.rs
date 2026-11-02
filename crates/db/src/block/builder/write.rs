@@ -169,14 +169,14 @@ pub(crate) async fn inherited_encryption_policy(
     Ok((encrypt_doc, encrypted_fields))
 }
 
-/// Mint a fresh key for a field, seal its delta with it, and persist the
-/// `Encryption` block the new block will link to.
+/// Mint a fresh key for a field, seal its delta with it, and queue the
+/// `Encryption` block the new block will link to in `blockstore_entries`.
 ///
 /// Shared by the explicit-config path and the document-policy path so both
 /// route through the KMS whenever one is configured.
 #[allow(clippy::too_many_arguments)]
 async fn encrypt_with_new_key(
-    blockstore: &NamespaceView,
+    blockstore_entries: &mut Vec<(Vec<u8>, Bytes)>,
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
     doc_ref_bytes: &[u8],
     field_name: &str,
@@ -209,7 +209,7 @@ async fn encrypt_with_new_key(
             let request = crate::write::prepare::kms_input_request(
                 crate::write::prepare::PreparedKmsOperation::Generate { doc_id, field },
             );
-            let Some(response) = inputs.get(&request) else {
+            let Some(response) = inputs.get_or_want(&request) else {
                 return Err(BuildError::NeedsInput(request));
             };
             let response: crate::write::prepare::PreparedKmsResponse =
@@ -259,10 +259,7 @@ async fn encrypt_with_new_key(
         .map_err(|e| format!("Failed to encode encryption block: {}", e))?;
     let enc_cid = generate_cid_from_bytes(&enc_bytes)
         .map_err(|e| format!("Failed to generate encryption CID: {}", e))?;
-    blockstore
-        .set(&cid_bytes(&enc_cid), &enc_bytes)
-        .await
-        .map_err(|e| format!("Failed to store encryption block: {}", e))?;
+    blockstore_entries.push((cid_bytes(&enc_cid), enc_bytes.into()));
 
     Ok((encrypted, enc_cid))
 }
@@ -319,11 +316,12 @@ pub async fn write_document_blocks(
     .map_err(|error| error.to_string())
 }
 
-/// [`write_document_blocks`] with prepared remote inputs. An update that has
-/// already read the document's heads passes them in `heads`, so they are not
-/// read a second time; without them an update reads them here.
+/// [`write_document_blocks`] with prepared remote inputs: every block is
+/// built first, then all of them are stored. An update that has already read
+/// the document's heads passes them in `heads`, so they are not read a second
+/// time; without them an update reads them here.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn write_document_blocks_with_inputs(
+async fn write_document_blocks_with_inputs(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     doc: &Document,
@@ -337,6 +335,44 @@ pub(crate) async fn write_document_blocks_with_inputs(
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
     heads: Option<DocHeadsSnapshot>,
 ) -> Result<BlockResult, BuildError> {
+    let built = build_document_blocks(
+        blockstore,
+        headstore,
+        doc,
+        schema,
+        identity,
+        modified_fields,
+        encryption_config,
+        signing_config,
+        kms,
+        prepared_inputs,
+        heads,
+    )
+    .await?;
+    insert_computed_blocks(blockstore, headstore, &built, batch_session).await?;
+    Ok(built.block_result)
+}
+
+/// Every block a write of `doc` adds, built without storing anything. It
+/// reads what the blocks depend on (the document's heads, the encryption its
+/// previous blocks carry) and none of the blocks it builds, so storing them
+/// afterwards, all at once, writes what storing each as it was built did.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_document_blocks(
+    blockstore: &NamespaceView,
+    headstore: &NamespaceView,
+    doc: &Document,
+    schema: &CollectionVersion,
+    identity: DocRef,
+    modified_fields: Option<&rapidhash::RapidHashSet<String>>,
+    encryption_config: Option<&EncryptionConfig>,
+    signing_config: Option<&SigningConfig>,
+    kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
+    prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
+    heads: Option<DocHeadsSnapshot>,
+) -> Result<ComputedBlocks, BuildError> {
+    let mut blockstore_entries: Vec<(Vec<u8>, Bytes)> = Vec::new();
+    let mut headstore_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let collection_version_id = schema.version_id.as_str();
     let immutable_fields = immutable_field_names(schema);
     let doc_ref_bytes = identity.encode();
@@ -454,8 +490,8 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     None
                 };
 
-                let (encrypted, enc_cid) = encrypt_with_new_key(
-                    blockstore,
+                let (encrypted, enc_cid) = match encrypt_with_new_key(
+                    &mut blockstore_entries,
                     kms,
                     &doc_ref_bytes,
                     field_name,
@@ -464,7 +500,15 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     doc.write_preparation().map(AsRef::as_ref),
                     prepared_inputs,
                 )
-                .await?;
+                .await
+                {
+                    Ok(sealed) => sealed,
+                    Err(BuildError::NeedsInput(request)) => {
+                        first_miss.get_or_insert(request);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else if let Some((key, enc_cid)) =
@@ -483,8 +527,8 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 // The document is encrypted as a whole but this field has no
                 // history of its own to inherit from, so mint it a key under
                 // the document-level policy rather than dropping to plaintext.
-                let (encrypted, enc_cid) = encrypt_with_new_key(
-                    blockstore,
+                let (encrypted, enc_cid) = match encrypt_with_new_key(
+                    &mut blockstore_entries,
                     kms,
                     &doc_ref_bytes,
                     field_name,
@@ -493,7 +537,15 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     doc.write_preparation().map(AsRef::as_ref),
                     prepared_inputs,
                 )
-                .await?;
+                .await
+                {
+                    Ok(sealed) => sealed,
+                    Err(BuildError::NeedsInput(request)) => {
+                        first_miss.get_or_insert(request);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else {
@@ -529,8 +581,9 @@ pub(crate) async fn write_document_blocks_with_inputs(
 
             if let Some(signer) = signing_config {
                 tracing::debug!(field = %field_name, priority = field_priority, "Signing field block");
-                match sign_block(&field_block, signer, blockstore, prepared_inputs).await {
-                    Ok(Some(sig_cid)) => {
+                match compute_signature_prepared(&field_block, signer, prepared_inputs) {
+                    Ok(Some((sig_cid, sig_cbor))) => {
+                        blockstore_entries.push((cid_bytes(&sig_cid), sig_cbor));
                         tracing::debug!(field = %field_name, sig_cid = %sig_cid, "Field block signed");
                         field_block.signature = Some(sig_cid);
                     }
@@ -563,7 +616,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 cid = %field_cid,
                 bytes_len = field_block_bytes.len(),
                 signature = ?field_block.signature,
-                "Storing field block"
+                "Built field block"
             );
             if tracing::enabled!(tracing::Level::DEBUG) {
                 match Block::from_dag_cbor(&field_block_bytes) {
@@ -572,30 +625,24 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 }
             }
 
-            blockstore
-                .set(&cid_bytes(&field_cid), &field_block_bytes)
-                .await
-                .map_err(|e| format!("Failed to store field block: {}", e))?;
+            blockstore_entries.push((cid_bytes(&field_cid), field_block_bytes.into()));
 
             for old_head in &field_head_entries {
                 head_write.supersede(&doc_heads::name(field_name, old_head));
             }
             head_write.add(&doc_heads::name(field_name, &field_cid), field_priority);
 
-            headstore
-                .set(
-                    &priority_index_key(identity.doc_short_id, field_priority, field_cid),
-                    &[],
-                )
-                .await
-                .map_err(|e| format!("Failed to write field priority index: {}", e))?;
+            headstore_entries.push((
+                priority_index_key(identity.doc_short_id, field_priority, field_cid),
+                vec![],
+            ));
 
             tracing::debug!(
                 field_name = %field_name,
                 cid = %field_cid,
                 crdt = %crdt.ctype(),
                 has_prev_head = !heads.is_empty(),
-                "Stored field block and head"
+                "Built field block and head"
             );
 
             field_links.push(DAGLink::new(field_name.clone(), field_cid));
@@ -611,24 +658,15 @@ pub(crate) async fn write_document_blocks_with_inputs(
     }
 
     if let Some(block) = immutable {
-        if let Some((sig_cid, sig_cbor)) = &block.signature {
-            blockstore
-                .set(&cid_bytes(sig_cid), sig_cbor)
-                .await
-                .map_err(|e| format!("Failed to store signature block: {}", e))?;
+        if let Some((sig_cid, sig_cbor)) = block.signature.clone() {
+            blockstore_entries.push((cid_bytes(&sig_cid), sig_cbor));
         }
-        blockstore
-            .set(&cid_bytes(&block.cid), &block.bytes)
-            .await
-            .map_err(|e| format!("Failed to store immutable block: {}", e))?;
+        blockstore_entries.push((cid_bytes(&block.cid), block.bytes.clone()));
         block.add_heads(&mut head_write);
-        headstore
-            .set(
-                &priority_index_key(identity.doc_short_id, 1, block.cid),
-                &[],
-            )
-            .await
-            .map_err(|e| format!("Failed to write immutable priority index: {}", e))?;
+        headstore_entries.push((
+            priority_index_key(identity.doc_short_id, 1, block.cid),
+            vec![],
+        ));
         field_links.push(block.link());
         field_cids.push(block.cid);
         initial_field_cids.push(block.cid);
@@ -648,10 +686,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
             .map_err(|e| format!("Failed to encode composite encryption block: {}", e))?;
         let enc_cid = generate_cid_from_bytes(&enc_bytes)
             .map_err(|e| format!("Failed to generate composite encryption CID: {}", e))?;
-        blockstore
-            .set(&cid_bytes(&enc_cid), &enc_bytes)
-            .await
-            .map_err(|e| format!("Failed to store composite encryption block: {}", e))?;
+        blockstore_entries.push((cid_bytes(&enc_cid), enc_bytes.into()));
         encryption_cids.push(enc_cid);
         Some(enc_cid)
     } else {
@@ -669,39 +704,32 @@ pub(crate) async fn write_document_blocks_with_inputs(
     );
 
     if let Some(signer) = signing_config {
-        if let Some(sig_cid) =
-            sign_block(&composite_block, signer, blockstore, prepared_inputs).await?
+        if let Some((sig_cid, sig_cbor)) =
+            compute_signature_prepared(&composite_block, signer, prepared_inputs)?
         {
+            blockstore_entries.push((cid_bytes(&sig_cid), sig_cbor));
             composite_block.signature = Some(sig_cid);
         }
     }
 
-    let composite_bytes = composite_block
+    let composite_bytes: Bytes = composite_block
         .to_dag_cbor()
-        .map_err(|e| format!("Failed to encode composite block: {}", e))?;
+        .map_err(|e| format!("Failed to encode composite block: {}", e))?
+        .into();
     let composite_cid = generate_cid_from_bytes(&composite_bytes)
         .map_err(|e| format!("Failed to generate composite CID: {}", e))?;
 
-    blockstore
-        .set(&cid_bytes(&composite_cid), &composite_bytes)
-        .await
-        .map_err(|e| format!("Failed to store composite block: {}", e))?;
+    blockstore_entries.push((cid_bytes(&composite_cid), composite_bytes.clone()));
 
     for old_head in &composite_heads {
         head_write.supersede(&doc_heads::name("C", old_head));
     }
     head_write.add(&doc_heads::name("C", &composite_cid), composite_priority);
 
-    headstore
-        .set(
-            &priority_index_key(identity.doc_short_id, composite_priority, composite_cid),
-            &[],
-        )
-        .await
-        .map_err(|e| format!("Failed to write composite priority index: {}", e))?;
-    doc_heads::commit(headstore, identity.doc_short_id, &head_write)
-        .await
-        .map_err(|e| format!("Failed to write document heads: {}", e))?;
+    headstore_entries.push((
+        priority_index_key(identity.doc_short_id, composite_priority, composite_cid),
+        vec![],
+    ));
 
     let doc_id_str = if is_create {
         derive_doc_id(&composite_cid)
@@ -716,22 +744,24 @@ pub(crate) async fn write_document_blocks_with_inputs(
         cid = %composite_cid,
         field_count = field_cids.len(),
         prev_heads = composite_heads.len(),
-        "Built composite block with field links and wrote heads"
+        "Built composite block with field links"
     );
 
-    collect_on_commit(
-        blockstore,
-        batch_session,
-        initial_field_cids.into_iter().chain([composite_cid]),
-    )
-    .await?;
-
-    Ok(BlockResult {
-        cid: composite_cid,
-        block: composite_bytes.into(),
-        doc_id: doc_id_str,
-        field_cids,
-        encryption_cids,
+    let mut batch_signed = initial_field_cids;
+    batch_signed.push(composite_cid);
+    Ok(ComputedBlocks {
+        blockstore_entries,
+        headstore_entries,
+        head_write,
+        doc_short_id: identity.doc_short_id,
+        block_result: BlockResult {
+            cid: composite_cid,
+            block: composite_bytes,
+            doc_id: doc_id_str,
+            field_cids,
+            encryption_cids,
+        },
+        batch_signed,
     })
 }
 

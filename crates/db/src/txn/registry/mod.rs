@@ -40,6 +40,7 @@ mod docs;
 mod lenses;
 mod lifecycle;
 pub(crate) mod owned;
+mod purge;
 mod schemas;
 
 use owned::OwnedTxn;

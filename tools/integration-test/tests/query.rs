@@ -14,6 +14,8 @@ mod commits_immutable;
 mod continuous_rollup;
 #[path = "query/cross_runtime_indexes.rs"]
 mod cross_runtime_indexes;
+#[path = "query/cyclic_fragments.rs"]
+mod cyclic_fragments;
 #[path = "query/datetime_index_range.rs"]
 mod datetime_index_range;
 #[path = "query/default_values_v1.rs"]
@@ -34,6 +36,8 @@ mod go_vector_parity;
 mod go_view_paths;
 #[path = "query/gql_list_args.rs"]
 mod gql_list_args;
+#[path = "query/index_drop_during_backfill.rs"]
+mod index_drop_during_backfill;
 #[path = "query/index_equal_key_order.rs"]
 mod index_equal_key_order;
 #[path = "query/index_fallback_4633.rs"]
@@ -46,8 +50,6 @@ mod introspection_cache_1855;
 mod join_order_1596;
 #[path = "query/json_missing_key.rs"]
 mod json_missing_key;
-#[path = "query/lens.rs"]
-mod lens;
 #[path = "query/lens_cross_runtime.rs"]
 mod lens_cross_runtime;
 #[path = "query/lens_persistence.rs"]

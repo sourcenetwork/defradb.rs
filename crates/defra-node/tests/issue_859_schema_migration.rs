@@ -1,10 +1,12 @@
 //! Tests for issue #859: collection patching, schema migration, and
-//! introspection exposed through [`EmbeddedNode`].
+//! introspection exposed through [`Node`].
 
-use defra_node::EmbeddedNode;
+use defra_core::RequestContext;
+use defra_node::Node;
 use defra_node::Result;
 #[cfg(feature = "wasmtime-runtime")]
 use defra_node::{LensConfig, LensModule};
+use schema::CollectionVersion;
 
 const USER_SDL: &str = r#"
 type User {
@@ -15,15 +17,24 @@ type User {
 
 // Minimal valid WebAssembly module — just the 4-byte `\0asm` magic plus the
 // 4-byte version (`1`). Wasmtime accepts this as an empty module, which is
-// all we need to prove [`EmbeddedNode::set_migration`] wires through to the
+// all we need to prove [`Node::set_migration`] wires through to the
 // underlying lens store.
 #[cfg(feature = "wasmtime-runtime")]
 const EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
+/// Apply `patch` to `User` through the node and return its active version.
+async fn patch_user(node: &Node, patch: &str) -> Result<CollectionVersion> {
+    node.patch_collection_as(&RequestContext::ambient(), patch, None)
+        .await?;
+    Ok(node
+        .get_collection("User")?
+        .expect("User exists after a patch"))
+}
+
 #[test]
 fn list_collections_reports_added_schema() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
 
         assert!(node.list_collections()?.is_empty());
 
@@ -39,7 +50,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 #[test]
 fn get_collection_returns_active_schema() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let collection = node
@@ -59,7 +70,7 @@ fn get_collection_returns_active_schema() -> Result<()> {
 #[test]
 fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original = node
@@ -69,7 +80,7 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
     ]"#;
-        let patched = node.patch_collection("User", patch).await?;
+        let patched = patch_user(&node, patch).await?;
 
         assert_ne!(patched.version_id, original.version_id);
         assert!(patched.fields.iter().any(|f| f.name == "email"));
@@ -88,7 +99,7 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
 #[test]
 fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let v0 = node
@@ -96,16 +107,14 @@ fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()>
             .expect("User should exist")
             .version_id;
 
-        let v1 = node
-        .patch_collection(
-            "User",
+        let v1 = patch_user(
+            &node,
             r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"email","Kind":"String"}}]"#,
         )
         .await?
         .version_id;
-        let v2 = node
-        .patch_collection(
-            "User",
+        let v2 = patch_user(
+            &node,
             r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"phone","Kind":"String"}}]"#,
         )
         .await?
@@ -123,7 +132,7 @@ fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()>
 #[test]
 fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -134,7 +143,7 @@ fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
     ]"#;
-        let patched = node.patch_collection("User", patch).await?;
+        let patched = patch_user(&node, patch).await?;
 
         let by_new = node
             .get_collection_by_version_id(&patched.version_id)
@@ -156,7 +165,7 @@ fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
 #[test]
 fn get_all_collection_versions_returns_history() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let initial = node.get_all_collection_versions().await?;
@@ -165,7 +174,7 @@ fn get_all_collection_versions_returns_history() -> Result<()> {
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
     ]"#;
-        node.patch_collection("User", patch).await?;
+        patch_user(&node, patch).await?;
 
         let after_patch = node.get_all_collection_versions().await?;
         assert!(
@@ -181,7 +190,7 @@ fn get_all_collection_versions_returns_history() -> Result<()> {
 #[test]
 fn set_active_collection_version_round_trips_to_original() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -192,7 +201,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
     ]"#;
-        let patched = node.patch_collection("User", patch).await?;
+        let patched = patch_user(&node, patch).await?;
         assert_ne!(patched.version_id, original_version);
         assert_eq!(
             node.get_collection("User")?
@@ -201,7 +210,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
             patched.version_id,
         );
 
-        node.set_active_collection_version(&original_version)
+        node.set_active_collection_version_as(&RequestContext::ambient(), &original_version)
             .await?;
         assert_eq!(
             node.get_collection("User")?
@@ -219,7 +228,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
 #[test]
 fn set_migration_registers_lens_between_versions() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let original_version = node
@@ -230,14 +239,17 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
     ]"#;
-        let patched = node.patch_collection("User", patch).await?;
+        let patched = patch_user(&node, patch).await?;
 
         let module = LensModule::from_bytes(EMPTY_WASM.to_vec());
         let config = LensConfig::new(&original_version, &patched.version_id, module);
 
-        let transform_id = node.set_migration(config).await?;
+        let config = serde_json::to_value(config).expect("a lens config serializes");
+        let transform_id = node
+            .set_migration_as(&RequestContext::ambient(), &config)
+            .await?;
         assert!(
-            !transform_id.0.is_empty(),
+            !transform_id.is_empty(),
             "transform id should be a non-empty CID"
         );
         Ok(())
@@ -246,14 +258,14 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
 }
 
 #[test]
-fn materialize_collection_is_exposed_on_embedded_node() -> Result<()> {
+fn materialize_collection_is_exposed_on_node() -> Result<()> {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
         node.add_collection(USER_SDL).await?;
 
         let patch =
             r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"email","Kind":"String"}}]"#;
-        node.patch_collection("User", patch).await?;
+        patch_user(&node, patch).await?;
 
         assert_eq!(node.materialize_collection("User").await?, 0);
         Ok(())
@@ -267,7 +279,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
         // Demonstrates the idempotent bootstrap pattern the issue calls out:
         // the application checks whether a collection exists before falling
         // back to add_collection. Running twice must not error.
-        let node = EmbeddedNode::builder().build().await?;
+        let node = Node::builder().build().await?;
 
         ensure_user_schema(&node).await?;
         ensure_user_schema(&node).await?;
@@ -278,7 +290,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
     .unwrap()
 }
 
-async fn ensure_user_schema(node: &EmbeddedNode) -> Result<()> {
+async fn ensure_user_schema(node: &Node) -> Result<()> {
     if node.get_collection("User")?.is_none() {
         node.add_collection(USER_SDL).await?;
     }

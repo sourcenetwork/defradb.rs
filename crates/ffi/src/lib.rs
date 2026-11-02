@@ -50,7 +50,6 @@ pub mod mobile_config;
 pub mod nac_check;
 pub mod node;
 pub mod p2p;
-mod policy_yaml;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub mod query;
@@ -287,7 +286,7 @@ pub use subscription::{
     close_graphql_subscription, close_subscription, create_merge_complete_subscription,
     create_subscription, poll_graphql_subscription, poll_subscription,
 };
-pub use txn::{begin_txn, commit_txn, exec_request_in_txn, rollback_txn};
+pub use txn::{begin_txn, commit_txn, rollback_txn};
 pub use types::defra_free_string;
 
 /// Initialize the FFI library.
@@ -454,6 +453,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 mutation.as_ptr(),
                 ptr::null(),
@@ -471,6 +471,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 query_str.as_ptr(),
                 ptr::null(),

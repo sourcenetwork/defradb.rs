@@ -22,10 +22,7 @@ use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 use tracing::warn;
 
-use crate::block::builder::{
-    write_collection_block_with_inputs, write_delete_block_with_inputs,
-    write_document_blocks_with_inputs,
-};
+use crate::block::builder::{write_collection_block_with_inputs, write_delete_block_with_inputs};
 use crate::collection::Collection;
 use crate::database::DB;
 use crate::index::IndexManager;
@@ -534,7 +531,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
     }
 
     async fn exists(&self, collection_name: &str, doc_id: &DocID) -> query::error::Result<bool> {
-        self.exists_impl(collection_name, doc_id).await
+        self.exists_impl(collection_name, doc_id, false).await
     }
 
     async fn get_for_update(
@@ -543,5 +540,13 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         doc_id: &DocID,
     ) -> query::error::Result<Option<Document>> {
         self.get_for_update_impl(collection_name, doc_id).await
+    }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        self.exists_impl(collection_name, doc_id, true).await
     }
 }

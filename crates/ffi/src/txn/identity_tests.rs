@@ -3,7 +3,8 @@
 
 use crate::node::{new_node, node_close};
 use crate::schema::{add_schema, get_collections_in_txn};
-use crate::txn::{begin_txn, commit_txn, exec_request_in_txn};
+use crate::query::exec_request;
+use crate::txn::{begin_txn, commit_txn};
 use crate::types::{defra_free_string, NodeInitOptions};
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -45,7 +46,7 @@ fn a_transaction_serves_calls_that_act_as_an_identity() {
 
         let query = CString::new("{ TxnIdentity { value } }").unwrap();
         let read = unsafe {
-            exec_request_in_txn(
+            exec_request(
                 node,
                 txn_id.as_ptr(),
                 did.as_ptr(),
@@ -57,7 +58,7 @@ fn a_transaction_serves_calls_that_act_as_an_identity() {
         };
         assert_eq!(
             read.status, 0,
-            "exec_request_in_txn must reach the transaction"
+            "exec_request must reach the transaction"
         );
         let json = unsafe { CStr::from_ptr(read.value).to_string_lossy().into_owned() };
         unsafe { defra_free_string(read.value) };

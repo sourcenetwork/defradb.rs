@@ -18,7 +18,7 @@ use super::trait_def::{CollectionDocIdsPage, CollectionDocIdsPagination, RestOpe
 
 /// Production implementation of REST operations using QueryRunner.
 ///
-/// This wraps a QueryRunner and translates REST operations into GraphQL queries/mutations.
+/// This wraps a QueryRunner and translates REST reads into GraphQL queries.
 pub struct RestOperationsImpl<F: DocFetcher, R: TransactionRegistry> {
     runner: Arc<QueryRunner<F, R>>,
     transaction: Option<(TransactionHandle, Arc<dyn CollectionProvider>)>,
@@ -50,12 +50,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
         }
     }
 
-    async fn execute(
-        &self,
-        query: &str,
-        identity: Option<&Did>,
-        mutation: bool,
-    ) -> RestResult<JsonValue> {
+    async fn execute(&self, query: &str, identity: Option<&Did>) -> RestResult<JsonValue> {
         if let Some((handle, _)) = &self.transaction {
             let response = self
                 .runner
@@ -80,63 +75,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
                 .data
                 .ok_or_else(|| RestError::internal("transaction returned no data"));
         }
-        if mutation {
-            Ok(self
-                .runner
-                .execute_mutation_with_identity(query, identity.cloned())
-                .await?)
-        } else {
-            Ok(self
-                .runner
-                .execute_query_with_identity(query, identity.cloned())
-                .await?)
-        }
-    }
-
-    /// Pull the `_docID` list out of a `<op>_<Collection>` mutation result.
-    ///
-    /// One extractor rather than one per call site: the single-document and
-    /// filtered paths have to agree on the result shape, and two copies of
-    /// this would drift.
-    fn mutation_doc_ids(
-        &self,
-        result: &JsonValue,
-        collection: &str,
-        op: &str,
-    ) -> RestResult<Vec<String>> {
-        let key = format!("{op}_{collection}");
-        let docs = result
-            .get(&key)
-            .or_else(|| result.get(collection))
-            .ok_or_else(|| {
-                tracing::warn!(
-                    collection = %collection,
-                    op = %op,
-                    result = ?result,
-                    "Mutation returned unexpected result structure"
-                );
-                RestError::internal(format!(
-                    "unexpected {op} mutation result: missing key '{key}'"
-                ))
-            })?;
-
-        let docs = docs.as_array().ok_or_else(|| {
-            tracing::warn!(
-                collection = %collection,
-                op = %op,
-                result = ?result,
-                "Mutation result is not an array"
-            );
-            RestError::internal(format!(
-                "unexpected {op} mutation result format: expected array"
-            ))
-        })?;
-
-        Ok(docs
-            .iter()
-            .filter_map(|doc| doc.get("_docID").and_then(|id| id.as_str()))
-            .map(String::from)
-            .collect())
+        Ok(self
+            .runner
+            .execute_query_with_identity(query, identity.cloned())
+            .await?)
     }
 
     fn extract_doc_ids(&self, result: &JsonValue, collection: &str) -> RestResult<Vec<String>> {
@@ -228,7 +170,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
             selection = selection
         );
 
-        let result = self.execute(&query, identity, false).await?;
+        let result = self.execute(&query, identity).await?;
 
         let doc = result
             .get(collection)
@@ -286,7 +228,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         }
 
         let query = gql::build_list_ids_query(collection, None);
-        let result = self.execute(&query, identity, false).await?;
+        let result = self.execute(&query, identity).await?;
         self.extract_doc_ids(&result, collection)
     }
 
@@ -305,7 +247,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         }
 
         let count_query = gql::build_count_query(collection);
-        let count_result = self.execute(&count_query, identity, false).await?;
+        let count_result = self.execute(&count_query, identity).await?;
         let total = self.extract_doc_id_total(&count_result, collection)?;
 
         if pagination.offset >= total {
@@ -318,7 +260,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         }
 
         let query = gql::build_list_ids_query(collection, Some(pagination));
-        let result = self.execute(&query, identity, false).await?;
+        let result = self.execute(&query, identity).await?;
         let doc_ids = self.extract_doc_ids(&result, collection)?;
 
         Ok(CollectionDocIdsPage {
@@ -344,160 +286,5 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
         }
 
         self.fetch_full_document(collection, doc_id, identity).await
-    }
-
-    async fn add_document(
-        &self,
-        collection: &str,
-        data: JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let mutation = gql::build_create_mutation(collection, &data)?;
-        let result = self.execute(&mutation, identity, true).await?;
-
-        let doc = result
-            .get(format!("add_{}", collection))
-            .or_else(|| result.get(collection))
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .cloned()
-            .unwrap_or_default();
-        Ok(doc)
-    }
-
-    async fn add_many_documents(
-        &self,
-        collection: &str,
-        data: Vec<JsonValue>,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<JsonValue>> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let mutation = gql::build_create_many_mutation(collection, &data)?;
-        let result = self.execute(&mutation, identity, true).await?;
-
-        let docs = result
-            .get(format!("add_{}", collection))
-            .or_else(|| result.get(collection))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        Ok(docs)
-    }
-
-    async fn update_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        patch: JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<JsonValue> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let existing = self
-            .fetch_full_document(collection, doc_id, identity)
-            .await?;
-        if existing.is_none() {
-            return Err(RestError::document_not_found(doc_id));
-        }
-
-        let mutation = gql::build_update_mutation(collection, doc_id, &patch)?;
-        self.execute(&mutation, identity, true).await?;
-
-        self.fetch_full_document(collection, doc_id, identity)
-            .await?
-            .ok_or_else(|| RestError::internal("updated document not found"))
-    }
-
-    async fn delete_document(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        identity: Option<&Did>,
-    ) -> RestResult<bool> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let existing = self
-            .fetch_full_document(collection, doc_id, identity)
-            .await?;
-        if existing.is_none() {
-            return Ok(false);
-        }
-
-        let mutation = gql::build_delete_mutation(collection, doc_id);
-        let result = self.execute(&mutation, identity, true).await?;
-
-        let deleted = !self
-            .mutation_doc_ids(&result, collection, "delete")?
-            .is_empty();
-
-        Ok(deleted)
-    }
-
-    async fn delete_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let mutation = gql::build_filtered_delete_mutation(collection, filter)?;
-        let result = self.execute(&mutation, identity, true).await?;
-
-        self.mutation_doc_ids(&result, collection, "delete")
-    }
-
-    async fn update_documents_with_filter(
-        &self,
-        collection: &str,
-        filter: &JsonValue,
-        updater: &JsonValue,
-        identity: Option<&Did>,
-    ) -> RestResult<Vec<String>> {
-        if !self
-            .has_collection(collection)
-            .await
-            .map_err(|e| RestError::internal(e.to_string()))?
-        {
-            return Err(RestError::collection_not_found(collection));
-        }
-
-        let mutation = gql::build_filtered_update_mutation(collection, filter, updater)?;
-        let result = self.execute(&mutation, identity, true).await?;
-
-        self.mutation_doc_ids(&result, collection, "update")
     }
 }

@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Query-filter-backed replication filter matcher shared between cli and embedded"
+description = "Query-filter-backed replication filter matcher shared between cli and defra-node"
 
 [lib]
 bench = false

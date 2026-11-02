@@ -45,7 +45,7 @@ impl TransformStore for MarkVerified {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 

@@ -9,9 +9,9 @@
 \*     handler, the replication loop), which also reaches storage.
 \* Requests arrive from the network while the node accepts them.
 \*
-\* Shutting the node down runs one sequence (defra-node EmbeddedNode::shutdown
-\* in crates/defra-node/src/lib.rs, embedded EmbeddedNode::shutdown and
-\* ShutdownHandle::shutdown in crates/embedded/src/node.rs):
+\* Shutting the node down runs one sequence (defra-node Node::shutdown
+\* in crates/defra-node/src/lib.rs, and ShutdownHandle::stop in
+\* crates/defra-node/src/managed_p2p.rs):
 \*   1. abort every task in the node's shutdown set (BackgroundTasks,
 \*      stop_services), then await each one until it let go of storage;
 \*   2. stop accepting requests and drain those in flight, up to a deadline
@@ -34,15 +34,14 @@
 \*   4. shutdown never finishes - LIVE_ShutdownTerminates.
 \*
 \* The Rust code each guard models:
-\*   RedriveInSet    crates/defra-node/src/node_acp.rs and
-\*                   crates/embedded/src/node_acp.rs gate_external_acp: the
+\*   RedriveInSet    crates/defra-node/src/node_acp.rs gate_external_acp: the
 \*                   redrive is a workers::spawn_background task the node pushes
 \*                   into BackgroundTasks, instead of drop(network.spawn(..));
 \*   AwaitServices   crates/edge/src/task.rs Service::stopped, called by
-\*                   crates/embedded/src/node.rs stop_services;
+\*                   crates/defra-node/src/managed_p2p.rs stop_services;
 \*   DrainDeadline   crates/edge/src/handle.rs Scope::drain (a drain that
 \*                   waits up to `within`);
-\*   SlotKeepsHandle crates/defra-node/src/lib.rs EmbeddedNode::shutdown, the
+\*   SlotKeepsHandle crates/defra-node/src/lib.rs Node::shutdown, the
 \*                   telemetry slot that keeps the handle when the runtime
 \*                   refuses the flush.
 

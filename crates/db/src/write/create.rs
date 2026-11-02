@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use cid::Cid;
-use datastore::NamespaceView;
 use defra_core::RequestContext;
 use document::{DocID, Document};
 use query::prepared::PreparedInputMemo;
@@ -24,17 +23,10 @@ use crate::write::autocommit::helpers::{
     register_created_doc, write_branchable_collection_block, write_local_create,
 };
 use crate::write::prepare::{prepared_identity, PreparedCreateBlocks};
+use crate::write::WriteStores;
 
 #[cfg(feature = "native")]
 mod runs;
-
-/// The transaction's views a create writes through.
-pub(crate) struct CreateStores<'a> {
-    pub datastore: &'a NamespaceView,
-    pub systemstore: &'a NamespaceView,
-    pub blockstore: &'a NamespaceView,
-    pub headstore: &'a NamespaceView,
-}
 
 /// A stored create: the document under its derived ID, its composite block
 /// and, for a branchable collection, the collection block.
@@ -283,7 +275,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist<S>(
     db: &DB<S>,
-    stores: &CreateStores<'_>,
+    stores: &WriteStores<'_>,
     collection_name: &str,
     collection: &Collection,
     index_manager: &IndexManager,

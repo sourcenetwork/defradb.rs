@@ -139,7 +139,7 @@ impl std::str::FromStr for KeyringBackend {
 
 /// Datastore backend options
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", try_from = "String")]
 #[non_exhaustive]
 pub enum DatastoreType {
     /// A regolith database on disk.
@@ -150,7 +150,6 @@ pub enum DatastoreType {
     /// Accepting it here is cheaper than teaching the harness to pick a name
     /// per runtime, and it is the only foreign name accepted.
     #[default]
-    #[serde(alias = "badger")]
     Regolith,
     /// A regolith database kept in memory, which nothing outlives.
     Memory,
@@ -250,11 +249,18 @@ impl std::str::FromStr for DatastoreType {
     type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            // `badger` is Go's name for the same thing; see the variant.
-            "regolith" | "badger" => Ok(DatastoreType::Regolith),
-            "memory" => Ok(DatastoreType::Memory),
-            _ => Err(Error::InvalidDatastore(s.to_string())),
+        match defra_core::parse_store_backend(s) {
+            Some(defra_core::StoreBackend::Regolith) => Ok(DatastoreType::Regolith),
+            Some(defra_core::StoreBackend::Memory) => Ok(DatastoreType::Memory),
+            None => Err(Error::InvalidDatastore(s.to_string())),
         }
+    }
+}
+
+impl TryFrom<String> for DatastoreType {
+    type Error = Error;
+
+    fn try_from(s: String) -> std::result::Result<Self, Self::Error> {
+        s.parse()
     }
 }
