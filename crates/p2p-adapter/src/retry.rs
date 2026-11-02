@@ -769,6 +769,10 @@ mod pool_tests;
 #[path = "../tests/unit/retry_hints.rs"]
 mod hint_tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/selected_push_cancel.rs"]
+mod selected_push_cancel_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,6 +801,7 @@ mod tests {
         dials: Arc<kovan::Atom<Vec<PeerId>>>,
         observations: Arc<AtomicUsize>,
         reply: Option<PushLogReply>,
+        reply_delay: Option<std::time::Duration>,
         pub(super) sends: Arc<AtomicUsize>,
     }
 
@@ -810,7 +815,16 @@ mod tests {
                 dials: Arc::new(kovan::Atom::new(Vec::new())),
                 observations: Arc::new(AtomicUsize::new(0)),
                 reply: None,
+                reply_delay: None,
                 sends: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        /// Connected to `peer`, acknowledging each PushLog after `delay`.
+        pub(super) fn slow(peer: PeerId, delay: std::time::Duration) -> Self {
+            Self {
+                reply_delay: Some(delay),
+                ..Self::new(Some(vec![peer]))
             }
         }
 
@@ -928,6 +942,9 @@ mod tests {
             _req: PushLogRequest,
         ) -> P2PResult<PushLogReply> {
             self.sends.fetch_add(1, Ordering::SeqCst);
+            if let Some(delay) = self.reply_delay {
+                tokio::time::sleep(delay).await;
+            }
             Ok(self
                 .reply
                 .clone()

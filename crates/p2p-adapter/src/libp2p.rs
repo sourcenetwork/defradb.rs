@@ -1089,7 +1089,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map(|doc| (doc.collection, doc.doc_id))
             .collect();
         pusher
-            .push_existing_docs_by_id(&p2p::transport::PeerId::from(peer_id), &pairs)
+            .push_existing_docs_by_id(
+                &p2p::transport::PeerId::from(peer_id),
+                &pairs,
+                &db::merge::SelectedPushStop::new(),
+            )
             .await
     }
 }

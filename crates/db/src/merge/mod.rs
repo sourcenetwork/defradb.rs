@@ -36,7 +36,7 @@ pub use peer_identity::{
 pub use pooled::PooledMergeHandler;
 pub use push_docs::{
     push_existing_docs, push_existing_docs_by_id, push_existing_docs_with_config,
-    retry_collection_commit, retry_doc, PushExistingDocsSeOptions,
+    retry_collection_commit, retry_doc, PushExistingDocsSeOptions, SelectedPushStop, StopOnDrop,
 };
 pub use push_docs_replay::ReplayPushConfig;
 pub use redriven_sink::SyncRedrivenSink;
