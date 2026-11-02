@@ -24,10 +24,10 @@ use serde_json::Map;
 
 use crate::error::Result;
 use crate::router::{
-    create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
-    BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    create_router_with_state_and_body_limits, AppState, AppStateBuilder, BackupOperations,
+    BlockOperations, BodyLimits, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
+    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -103,7 +103,6 @@ pub struct Server {
     rest: Option<Arc<dyn RestOperations>>,
     p2p: Option<Arc<dyn P2POperations>>,
     manage: Option<Arc<dyn ManageRequester>>,
-    acp: Option<Arc<dyn AcpOperations>>,
     index: Option<Arc<dyn IndexOperations>>,
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
@@ -171,7 +170,6 @@ impl Server {
             rest: None,
             p2p: None,
             manage: None,
-            acp: None,
             index: None,
             encrypted_index: None,
             backup: None,
@@ -257,12 +255,6 @@ impl Server {
     /// peers on behalf of HTTP callers.
     pub fn with_manage_arc(mut self, manage: Arc<dyn ManageRequester>) -> Self {
         self.manage = Some(manage);
-        self
-    }
-
-    /// Set ACP operations from an Arc.
-    pub fn with_acp_arc(mut self, acp: Arc<dyn AcpOperations>) -> Self {
-        self.acp = Some(acp);
         self
     }
 
@@ -407,9 +399,6 @@ impl Server {
         }
         if let Some(ref manage) = self.manage {
             builder = builder.with_manage(Arc::clone(manage));
-        }
-        if let Some(ref acp) = self.acp {
-            builder = builder.with_acp(Arc::clone(acp));
         }
         if let Some(ref index) = self.index {
             builder = builder.with_index(Arc::clone(index));

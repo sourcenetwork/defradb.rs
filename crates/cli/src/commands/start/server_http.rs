@@ -128,18 +128,6 @@ impl Node {
         }
 
         if config.acp.document_type != AcpDocumentType::None {
-            let acp_adapter = acp_setup.http_adapter.clone().unwrap_or_else(|| {
-                crate::acp_adapter::AcpAdapter::new_arc(
-                    zanzibar_store.clone(),
-                    db::node_access_checker(database.clone()),
-                )
-            });
-            server = server.with_acp_arc(acp_adapter.clone());
-            info!(
-                "ACP policy HTTP endpoints enabled (type: {})",
-                config.acp.document_type
-            );
-
             let doc_acp_adapter = crate::doc_acp_adapter::DocumentAcpAdapter::new_arc(
                 database.clone(),
                 acp_setup.document_acp.clone(),

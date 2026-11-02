@@ -172,6 +172,19 @@ impl Collection {
         self.exists_with_datastore(datastore, doc_short_id).await
     }
 
+    /// Whether the public DocID names a document this collection deleted.
+    pub async fn is_deleted_by_doc_id(
+        &self,
+        datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+        doc_id: &DocID,
+    ) -> Result<bool> {
+        let Some(doc_short_id) = self.resolve_doc_short_id(systemstore, doc_id).await? else {
+            return Ok(false);
+        };
+        self.is_deleted(datastore, doc_short_id).await
+    }
+
     /// Get a document by short ID using a NamespaceView directly.
     ///
     /// This method takes `NamespaceView` instead of `&DbTxn` to allow

@@ -168,6 +168,7 @@ pub fn validate_subscription_with_limits(
         .definitions
         .into_iter()
         .partition(|definition| matches!(definition, Definition::Fragment(_)));
+    crate::query_parse::check_fragment_cycles(&fragments)?;
     let fragment_map = fragment_map(&fragments);
 
     let selected = matching_subscription(&operations, operation_name)?;
@@ -528,7 +529,10 @@ mod tests {
         let query = "subscription { ...A } fragment A on Subscription { ...B } \
                      fragment B on Subscription { ...A }";
         let error = validate_subscription(query, None).unwrap_err().to_string();
-        assert!(error.contains("circular fragment reference"), "{error}");
+        assert!(
+            error.contains(r#"Cannot spread fragment "A" within itself via B."#),
+            "{error}"
+        );
     }
 
     #[test]

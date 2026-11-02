@@ -3,6 +3,7 @@
 
 mod common;
 mod error;
+pub mod identity;
 pub mod m;
 pub mod matcher;
 pub mod normalize;

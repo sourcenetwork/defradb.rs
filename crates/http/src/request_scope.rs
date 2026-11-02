@@ -16,9 +16,9 @@ use defra_core::RequestContext;
 use query::rest::RestOperations;
 
 use crate::router::{
-    AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
-    CollectionOperations, DocumentAcpOperations, EncryptedIndexOperations, IndexOperations,
-    P2POperations, ViewOperations,
+    BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, EncryptedIndexOperations, IndexOperations, P2POperations,
+    ViewOperations,
 };
 
 /// The context of the request a handler serves: the one the auth middleware
@@ -63,7 +63,6 @@ macro_rules! for_request {
 }
 
 for_request!(
-    AcpOperations,
     BackupOperations,
     BlockOperations,
     CollectionManagementOperations,

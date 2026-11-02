@@ -1,8 +1,8 @@
 //! `DB::add_collection`: the one place collections are added from SDL.
 
-use acp::{MemoryZanzibarStore, Policy, PolicyLookup};
+use acp::MemoryZanzibarStore;
 use db::AddCollectionError as Error;
-use db::{NacConfig, NacManager, DB};
+use db::{DacPolicies, NacConfig, NacManager, DB};
 use defra_core::RequestContext;
 use identity::Did;
 use std::sync::Arc;
@@ -17,15 +17,6 @@ fn new_db() -> DB<RegolithStore> {
 
 fn acting(did: &str) -> RequestContext {
     RequestContext::default().with_identity(Some(did.to_string()))
-}
-
-struct NoPolicies;
-
-#[async_trait::async_trait]
-impl PolicyLookup for NoPolicies {
-    async fn get_policy(&self, _policy_id: &str) -> Result<Option<Policy>, String> {
-        Ok(None)
-    }
 }
 
 #[test]
@@ -105,7 +96,9 @@ fn missing_policy_is_rejected_when_a_lookup_is_installed() {
             .await
             .expect("without a lookup the policy is not checked");
         let db = new_db();
-        db.set_policy_lookup(Arc::new(NoPolicies));
+        db.set_dac_policies(Arc::new(DacPolicies::local(Arc::new(
+            MemoryZanzibarStore::new(),
+        ))));
         let err = db.add_collection(&ctx, sdl).await.unwrap_err();
         assert!(matches!(err, Error::Policy(_)), "{err:?}");
         assert_eq!(

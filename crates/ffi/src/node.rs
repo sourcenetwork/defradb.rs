@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kovan::AtomOption;
 
 use crate::ffi_entry;
-use crate::state::{NodeState, P2PState, PolicyStore, NODES};
+use crate::state::{NodeState, P2PState, NODES};
 use crate::try_ffi;
 use crate::types::{c_str_to_string, FfiResult, NewNodeResult, NodeInitOptions};
 use crate::ERR_INVALID_NODE_HANDLE;
@@ -70,7 +70,6 @@ pub(crate) async fn build_node_state(
         nac_manager: node.nac_manager().clone(),
         document_acp: node.document_acp(),
         event_bus: node.event_bus().clone(),
-        policy_store: Arc::new(PolicyStore::new()),
         local_zanzibar_store: node.local_zanzibar_store().cloned(),
         p2p: node
             .p2p_system()
@@ -81,8 +80,6 @@ pub(crate) async fn build_node_state(
             .map(str::to_owned)
             .map_or_else(AtomOption::none, AtomOption::some),
         signing_enabled: options.enable_signing != 0,
-        #[cfg(feature = "vera")]
-        vera_acp: node.vera_acp().cloned(),
         query_limits: node.query_limits(),
         se_encryption_key: AtomOption::none(),
         _node: node,

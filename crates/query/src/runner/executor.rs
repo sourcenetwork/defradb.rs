@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -323,6 +323,36 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_dac_policy_as(context, policy).await
+    }
+
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        self.registry.list_dac_policies_as(context).await
+    }
+
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        self.registry.get_dac_policy_as(context, policy_id).await
+    }
+
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        self.registry.acp_light_client_status_as(context).await
+    }
+
     async fn set_migration_as(
         &self,
         context: &RequestContext,
@@ -417,12 +447,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .and_then(|prepared| prepared.parsed.as_deref())
         {
             Some(parsed) => parsed.clone(),
-            None => match parse_request_with_limits(
-                &request.query,
-                variables.as_ref(),
-                request.operation_name.as_deref(),
-                self.query_limits,
-            ) {
+            None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(p) => p,
                 Err(e) => {
                     return QueryResponse {

@@ -4,7 +4,6 @@
 //! Go code receives opaque usize handles that map to actual node state.
 
 mod p2p;
-mod policy_store;
 mod registry;
 
 use std::sync::Arc;
@@ -16,7 +15,6 @@ use zeroize::Zeroizing;
 use blockstore::DefraBlockstore;
 
 pub use p2p::P2PState;
-pub use policy_store::PolicyStore;
 pub use registry::{
     graphql_subscriptions, nodes, subscriptions, GraphQLSubscriptionRegistry,
     GraphQLSubscriptionsAccess, NodeRegistry, NodesAccess, SubscriptionRegistry,
@@ -58,8 +56,6 @@ pub struct NodeState {
     pub document_acp: Arc<dyn acp::DocumentACP>,
     /// The event bus for subscriptions.
     pub event_bus: Arc<dyn events::Bus>,
-    /// The policy store for DAC policies.
-    pub policy_store: Arc<PolicyStore>,
     /// Local Zanzibar policy store when document ACP is configured in local mode.
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     /// P2P state (optional - not all nodes have P2P enabled).
@@ -70,10 +66,6 @@ pub struct NodeState {
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
-    /// Vera ACP (optional - only set when using Vera for document ACP).
-    /// Used by add_dac_policy to route policy creation through Vera transactions.
-    #[cfg(feature = "vera")]
-    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     /// Query parsing and filter evaluation limits configured for this node.
     pub query_limits: query::QueryLimits,
     /// Searchable encryption key (32-byte AES-256 key). Zeroized on drop.

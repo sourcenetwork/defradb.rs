@@ -81,6 +81,7 @@ where
         node_acp_enabled,
         query_timeout,
         introspection_cache,
+        replication_filter,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
@@ -145,6 +146,9 @@ where
     if let Some(size) = chunk_size {
         db_options = db_options.with_chunk_size(size);
     }
+    if let Some(filter) = replication_filter {
+        db_options = db_options.with_replication_filter(filter.0);
+    }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());
     }
@@ -201,6 +205,16 @@ where
         let setup = match (&transport, network.as_ref()) {
             #[cfg(feature = "libp2p")]
             (TransportConfig::Libp2p(libp2p), Some(network)) => {
+                // Nothing outlives a store that does not persist, so its
+                // abandoned fetches need no sweep.
+                let libp2p = &crate::config::Libp2pConfig {
+                    orphan_sweep: db::block::orphan_gc::OrphanSweepConfig {
+                        enabled: libp2p.orphan_sweep.enabled
+                            && persistence == crate::Persistence::Persistent,
+                        ..libp2p.orphan_sweep
+                    },
+                    ..libp2p.clone()
+                };
                 let schedule = libp2p.sync.retry_schedule()?;
                 crate::libp2p_runtime::setup_libp2p(
                     store.clone(),
@@ -444,22 +458,15 @@ where
     let vera_acp = acp_setup.vera_acp.clone();
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
-    #[cfg(feature = "vera")]
-    let policy_lookup =
-        acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
-    #[cfg(not(feature = "vera"))]
-    let policy_lookup = acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store);
-    database.set_policy_lookup(Arc::new(policy_lookup.clone()));
+    database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
         database.clone(),
         query_limits,
         document_acp.clone(),
-        policy_lookup.clone(),
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
         document_acp.clone(),
-        policy_lookup,
         event_bus.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build

@@ -1,4 +1,5 @@
-//! Type-erased document-ACP operations bridging DB to Node's public DAC API.
+//! Type-erased document-ACP relationship operations bridging DB to Node's
+//! public DAC API.
 
 use crate::{Error, Result};
 use std::sync::Arc;
@@ -7,13 +8,6 @@ use identity::Did;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
-    async fn add_dac_policy(&self, identity: &str, policy: &str) -> Result<String>;
-    async fn add_dac_policy_with_counter(
-        &self,
-        identity: &str,
-        policy: &str,
-        counter: u64,
-    ) -> Result<String>;
     async fn add_dac_actor_relationship(
         &self,
         identity: &str,
@@ -32,65 +26,9 @@ pub(crate) trait AcpOps: Send + Sync {
     ) -> Result<bool>;
 }
 
-/// The ACP backends a node was built with, shared by every caller that needs to
-/// resolve a policy id.
-///
-/// `create_document_acp` guarantees exactly one of `local`/`vera` is
-/// `Some`, so every "ACP not available" branch below is defensive only.
-#[derive(Clone)]
-pub(crate) struct PolicyLookup {
-    pub(crate) local: Option<Arc<dyn acp::ZanzibarStore>>,
-    #[cfg(feature = "vera")]
-    pub(crate) vera: Option<Arc<vera::VeraDocumentACP>>,
-}
-
-impl PolicyLookup {
-    pub(crate) fn new(
-        local: Option<Arc<dyn acp::ZanzibarStore>>,
-        #[cfg(feature = "vera")] vera: Option<Arc<vera::VeraDocumentACP>>,
-    ) -> Self {
-        Self {
-            local,
-            #[cfg(feature = "vera")]
-            vera,
-        }
-    }
-
-    /// Load a policy from whichever ACP backend this node was built with.
-    pub(crate) async fn get_policy(&self, policy_id: &str) -> Result<Option<acp::Policy>> {
-        if let Some(store) = &self.local {
-            return store
-                .get_policy(policy_id)
-                .await
-                .map_err(Error::PolicyLookup);
-        }
-        #[cfg(feature = "vera")]
-        if let Some(vera) = &self.vera {
-            return vera
-                .get_policy(policy_id)
-                .await
-                .map_err(Error::VeraPolicyLookup);
-        }
-        Err(Error::AcpUnavailable)
-    }
-}
-
-#[async_trait::async_trait]
-impl acp::PolicyLookup for PolicyLookup {
-    async fn get_policy(
-        &self,
-        policy_id: &str,
-    ) -> std::result::Result<Option<acp::Policy>, String> {
-        PolicyLookup::get_policy(self, policy_id)
-            .await
-            .map_err(|e| e.to_string())
-    }
-}
-
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,
-    policy_lookup: PolicyLookup,
     event_bus: Arc<dyn events::Bus>,
 }
 
@@ -107,13 +45,11 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
     pub(crate) fn new(
         database: Arc<db::DB<S>>,
         document_acp: Arc<dyn acp::DocumentACP>,
-        policy_lookup: PolicyLookup,
         event_bus: Arc<dyn events::Bus>,
     ) -> Self {
         Self {
             database,
             document_acp,
-            policy_lookup,
             event_bus,
         }
     }
@@ -150,8 +86,10 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         let target = acp::parse_target_subject(target).map_err(Error::InvalidTarget)?;
 
         let loaded = self
-            .policy_lookup
-            .get_policy(&policy.id)
+            .database
+            .dac_policies()
+            .ok_or(db::DacPolicyError::AcpNotAvailable)?
+            .get(&policy.id)
             .await?
             .ok_or_else(|| Error::PolicyNotFound(policy.id.clone()))?;
         let resource = loaded
@@ -211,90 +149,8 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
     }
 }
 
-impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
-    async fn add_dac_policy_inner(
-        &self,
-        identity: &str,
-        policy: &str,
-        counter_override: Option<u64>,
-    ) -> Result<String> {
-        // Go gates on node access before rejecting an empty creator
-        // (`internal/db/db_dac.go:64-67`), so a NAC denial wins. An empty
-        // identity is Go's `immutable.None`, not a DID to parse.
-        let requestor = match identity {
-            "" => None,
-            did => Some(Did::new(did).map_err(Error::InvalidIdentityDid)?),
-        };
-        self.database
-            .check_node_access(requestor.as_ref(), acp::nac::NodePermission::DacPolicyAdd)
-            .await?;
-
-        if identity.is_empty() {
-            return Err(Error::PolicyCreatorEmpty);
-        }
-
-        if policy.is_empty() {
-            return Err(Error::PolicyDataEmpty);
-        }
-
-        acp::policy_yaml::check_duplicate_yaml_keys(policy).map_err(Error::PolicyYaml)?;
-        let parsed = acp::policy_yaml::parse_policy_yaml(policy).map_err(Error::PolicyYaml)?;
-        if parsed.name.is_empty() {
-            return Err(Error::PolicyNameRequired);
-        }
-        acp::policy_yaml::validate_policy_expressions(&parsed).map_err(Error::PolicyYaml)?;
-
-        #[cfg(feature = "vera")]
-        if let Some(vera_acp) = &self.policy_lookup.vera {
-            if counter_override.is_some() {
-                return Err(Error::ExplicitCounterRemote);
-            }
-            return vera_acp
-                .add_policy(identity, policy)
-                .await
-                .map_err(Error::VeraCreatePolicy);
-        }
-
-        let Some(store) = &self.policy_lookup.local else {
-            return Err(Error::AcpUnavailable);
-        };
-        let counter = match counter_override {
-            Some(counter) => counter,
-            None => store
-                .next_policy_counter()
-                .await
-                .map_err(Error::PolicyIdAllocation)?,
-        };
-        let built =
-            acp::policy_yaml::build_policy(&parsed, counter).map_err(Error::InvalidPolicy)?;
-        let options = acp::StorePolicyOptions::new()
-            .with_validation()
-            .with_dpi_enforcement();
-        store
-            .store_policy_with_options(&built, &options)
-            .await
-            .map_err(Error::PolicyStore)?;
-
-        Ok(built.id)
-    }
-}
-
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
-    async fn add_dac_policy(&self, identity: &str, policy: &str) -> Result<String> {
-        self.add_dac_policy_inner(identity, policy, None).await
-    }
-
-    async fn add_dac_policy_with_counter(
-        &self,
-        identity: &str,
-        policy: &str,
-        counter: u64,
-    ) -> Result<String> {
-        self.add_dac_policy_inner(identity, policy, Some(counter))
-            .await
-    }
-
     async fn add_dac_actor_relationship(
         &self,
         identity: &str,

@@ -255,6 +255,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Ask `filter` whether to keep each replicated document before its
+    /// commit stores anything.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn db::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.config.replication_filter = Some(crate::ReplicationFilterHandle(filter));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
@@ -447,6 +457,13 @@ impl NodeBuilder {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
             }));
+
+            // A local document ACP is the node's own store: its routes run on
+            // the pool, as the node's own calls do.
+            let server = match node.remote_acp {
+                true => server,
+                false => server.with_local_acp(),
+            };
 
             // The node's own DID, however it was configured: a registered
             // identity, or one signing generated or was given a key for.

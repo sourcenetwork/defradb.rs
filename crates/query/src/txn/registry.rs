@@ -212,6 +212,54 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Add the YAML DAC `policy` with the identity acting in `context` as its
+    /// creator; its ID. Go's `AddDACPolicy`, which is not transactional.
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, policy);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// Every DAC policy the node holds, for the caller `context` names.
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// The DAC policy `policy_id`, for the caller `context` names; `None`
+    /// when no ACP has it.
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        let _ = (context, policy_id);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// The remote ACP's light client status, for the caller `context` names.
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
     /// Register the lens migration `config` (JSON) in the transaction
     /// `context` carries, if any; the transform ID.
     async fn set_migration_as(

@@ -52,6 +52,9 @@ pub struct DbOptions {
     /// closes. `None` (a test, a one-shot tool) runs them on the process's
     /// default pool.
     pub pool: Option<workers::Pool>,
+    /// The embedder's check on replicated documents before their commits
+    /// store anything. `None` keeps every document.
+    pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -74,6 +77,7 @@ impl std::fmt::Debug for DbOptions {
                 &!self.embedding_api_key.is_empty(),
             )
             .field("pool", &self.pool)
+            .field("replication_filter", &self.replication_filter.is_some())
             .finish()
     }
 }
@@ -105,6 +109,15 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Asks `filter` whether to keep each replicated document.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.replication_filter = Some(filter);
+        self
     }
 
     /// The engine retry policy every write of this database runs under.
@@ -216,9 +229,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: regolith::sync::OnceCell<std::sync::Arc<dyn NacManagerApi>>,
-    /// Where `@policy` directives are checked when a collection is added.
-    /// Unset, they are not checked.
-    policy_lookup: regolith::sync::OnceCell<Arc<dyn acp::PolicyLookup>>,
+    /// The node's DAC policies, where `@policy` directives are checked when a
+    /// collection is added. Unset, the node runs without document ACP.
+    pub(crate) dac_policies: regolith::sync::OnceCell<Arc<crate::access::dac::DacPolicies>>,
     /// Collections an app has claimed and the validator governing their
     /// replicated composites. Set once, before replication starts.
     ///
@@ -281,7 +294,7 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
-            policy_lookup: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
@@ -352,7 +365,7 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
-            policy_lookup: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
@@ -554,16 +567,6 @@ impl<S: Store> DB<S> {
     /// `check_node_access` calls are no-ops (NAC not configured).
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
         let _ = self.nac_manager.set(nac);
-    }
-
-    /// Install where policies are read when a collection is added. First
-    /// call wins; install it where the document ACP is installed.
-    pub fn set_policy_lookup(&self, lookup: Arc<dyn acp::PolicyLookup>) {
-        let _ = self.policy_lookup.set(lookup);
-    }
-
-    pub(crate) fn policy_lookup(&self) -> Option<&Arc<dyn acp::PolicyLookup>> {
-        self.policy_lookup.get()
     }
 
     /// Install app merge governance. First call wins; install it before any

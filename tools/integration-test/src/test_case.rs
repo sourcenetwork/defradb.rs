@@ -166,6 +166,16 @@ impl State {
         RequestContext::ambient().with_txn(id)
     }
 
+    /// [`State::context`] with client identity `identity` acting in it when
+    /// the action names one.
+    pub fn context_as(&self, txn: Option<usize>, identity: Option<u64>) -> RequestContext {
+        let context = self.context(txn);
+        match identity {
+            Some(seed) => context.with_identity(Some(crate::scenario::identity::did(seed))),
+            None => context,
+        }
+    }
+
     /// Transaction number `txn`'s ID as the HTTP API and the CLI write it.
     pub fn txn_id(&self, txn: Option<usize>) -> Option<String> {
         self.context(txn).txn().map(|id| id.to_string())

@@ -1,5 +1,6 @@
 //! Configuration types for the embedded DefraDB node.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(feature = "http")]
@@ -190,6 +191,13 @@ pub struct Libp2pConfig {
     pub stream_timeout_secs: Option<u64>,
     /// Sync limits and the replicator retry ladder.
     pub sync: SyncTuning,
+    /// Whether and when the orphan block sweep (`db::block::orphan_gc`)
+    /// runs; off by default. It runs only on a persistent store, which
+    /// outlives an abandoned fetch.
+    pub orphan_sweep: db::block::orphan_gc::OrphanSweepConfig,
+    /// libp2p resource budget overrides: the memory and file descriptor
+    /// budgets and the per-peer inbound stream cap.
+    pub resource_limits: p2p::ResourceLimits,
 }
 
 #[cfg(feature = "libp2p")]
@@ -202,6 +210,8 @@ impl Default for Libp2pConfig {
             enable_relay: true,
             stream_timeout_secs: None,
             sync: SyncTuning::default(),
+            orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
+            resource_limits: p2p::ResourceLimits::default(),
         }
     }
 }
@@ -371,4 +381,25 @@ pub struct NodeConfig {
     pub query_timeout: Option<Duration>,
     /// The introspection cache; `None` keeps it on.
     pub introspection_cache: Option<bool>,
+    /// The embedder's check on replicated documents; `None` keeps them all.
+    pub replication_filter: Option<ReplicationFilterHandle>,
+}
+
+/// An embedder's [`db::replication_filter::ReplicationFilter`], compared by
+/// identity.
+#[derive(Clone)]
+pub struct ReplicationFilterHandle(pub Arc<dyn db::replication_filter::ReplicationFilter>);
+
+impl std::fmt::Debug for ReplicationFilterHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReplicationFilterHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for ReplicationFilterHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }

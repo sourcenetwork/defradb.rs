@@ -69,6 +69,9 @@ pub struct CompositeMergeState {
     pub(crate) owned_field_cids: Vec<Cid>,
     pub(crate) linked_field_cids: Vec<Cid>,
     pub(crate) linked_encryption_cids: Vec<Cid>,
+    /// The signature blocks of the linked field blocks: the document owns
+    /// them too, and the merge marks them merged.
+    pub(crate) linked_signature_cids: Vec<Cid>,
     /// Fields of each linked Immutable block: their heads are the block.
     pub(crate) immutable_block_fields: RapidHashMap<Cid, Vec<String>>,
     pub(crate) is_branchable: bool,
@@ -579,6 +582,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         block,
                         &state.owned_field_cids,
                         &state.linked_encryption_cids,
+                        &state.linked_signature_cids,
                     )
                     .await?;
                 }
@@ -1022,6 +1026,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     block,
                     &state.owned_field_cids,
                     &state.linked_encryption_cids,
+                    &state.linked_signature_cids,
                 )
                 .await?;
 
