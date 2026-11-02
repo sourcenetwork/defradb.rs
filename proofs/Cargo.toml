@@ -25,7 +25,7 @@ serde_json = "1.0"
 thiserror.workspace = true
 
 [dev-dependencies]
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "59d221d539fb70d814196ce9b6efc859da9816be" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "671a7729e01cf26725d1f9b577d9011d0c460d6b" }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 serial_test = "3"
 
