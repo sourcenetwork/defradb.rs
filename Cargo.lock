@@ -8791,7 +8791,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
- "tonic-build",
  "tonic-prost",
  "tonic-prost-build",
  "uuid",
@@ -12958,7 +12957,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-build"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1882ac3bf5ef12877d7ed57aad87e75154c11931c2ba7e6cde5e22d63522c734"
@@ -12993,7 +12991,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "tempfile",
- "tonic-build",
 ]
 
 [[package]]
