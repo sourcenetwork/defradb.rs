@@ -1263,6 +1263,7 @@ pub(super) async fn handle_block_sync(
     root: cid::Cid,
     providers: Vec<PeerId>,
     missing: Vec<cid::Cid>,
+    max_depth: Option<u32>,
 ) {
     use n0_future::task::JoinSet;
 
@@ -1280,7 +1281,10 @@ pub(super) async fn handle_block_sync(
     let request = if missing.is_empty() {
         CarFetchRequest::full_dag(root)
     } else {
-        CarFetchRequest::selective_dag(root, missing.clone())
+        CarFetchRequest {
+            max_depth,
+            ..CarFetchRequest::selective_dag(root, missing.clone())
+        }
     };
 
     let BlockSyncResources {
@@ -1396,6 +1400,10 @@ pub(super) async fn handle_block_sync(
 #[cfg(test)]
 #[path = "../../tests/unit/iroh_car_size.rs"]
 mod car_size_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/iroh_block_sync_depth.rs"]
+mod block_sync_depth_tests;
 
 #[cfg(test)]
 mod tests {

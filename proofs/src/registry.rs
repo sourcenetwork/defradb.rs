@@ -1146,6 +1146,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Depth-cut DAG fetch",
+        name: "INV_HistoryNotResent / INV_RoundsLogarithmic / LIVE_Completes",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::widen; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt",
+        model_ref: "MC_DepthCutFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Depth-cut DAG fetch",
+        name: "within_iff_level / deep_block_not_served / within_le / cut_le_cap / cut_ge_pow / cut_reaches",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial, ClosureDepth::widen",
+        model_ref: "CarClosureDepth (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Reply-driven DAG fetch",
         name: "INV_OneFetchPerRoot / INV_NoReplyLost",
         axis: Tla,

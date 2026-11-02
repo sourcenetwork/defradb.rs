@@ -85,6 +85,9 @@ RUNS=(
   "MC_SelectedPushIsolation_Red_admission.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_partial.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
+  "MC_DepthCutFetch_Green.cfg DepthCutFetch.tla GREEN" # a depth-cut DAG fetch re-sends little held history, in logarithmic rounds, and completes
+  "MC_DepthCutFetch_Red_Unbounded.cfg DepthCutFetch.tla RED" # the provider ignores the cut (INV_HistoryNotResent)
+  "MC_DepthCutFetch_Red_NoWiden.cfg DepthCutFetch.tla RED" # the receiver never widens the cut (INV_RoundsLogarithmic)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
