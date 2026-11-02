@@ -6,7 +6,7 @@ mod replication;
 
 use crdt::field::testing::check_field_crdt;
 use crdt::RegistryError;
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use document::NormalValue;
 use max_register::MaxRegister;
 use schema::{CType, CrdtName, FieldDescription, FieldKind};
@@ -29,7 +29,7 @@ fn the_max_register_keeps_the_field_crdt_contract() {
 #[test]
 fn a_custom_field_keeps_the_greatest_value_written() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .with_crdt(MaxRegister::new())
             .build()
             .await
@@ -57,7 +57,7 @@ fn a_custom_field_keeps_the_greatest_value_written() {
             .execute(r#"mutation { update_Score(input: {best: "high"}) { best } }"#)
             .await;
         assert!(refused.has_errors(), "a string is not a max register value");
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }
@@ -65,12 +65,12 @@ fn a_custom_field_keeps_the_greatest_value_written() {
 #[test]
 fn a_node_without_the_type_keeps_the_definition_and_hides_the_field() {
     workers::block_on(async {
-        let with_type = EmbeddedNode::builder()
+        let with_type = Node::builder()
             .with_crdt(MaxRegister::new())
             .build()
             .await
             .unwrap();
-        let node = EmbeddedNode::builder().build().await.unwrap();
+        let node = Node::builder().build().await.unwrap();
         node.add_collection(SDL).await.unwrap();
         let field = node
             .get_collection("Score")
@@ -99,8 +99,8 @@ fn a_node_without_the_type_keeps_the_definition_and_hides_the_field() {
             .execute(r#"mutation { add_Score(input: {player: "bob"}) { player } }"#)
             .await;
         assert!(!other.has_errors(), "{:?}", other.errors);
-        node.shutdown().await;
-        with_type.shutdown().await;
+        node.shutdown().await.unwrap();
+        with_type.shutdown().await.unwrap();
     })
     .unwrap()
 }
@@ -108,7 +108,7 @@ fn a_node_without_the_type_keeps_the_definition_and_hides_the_field() {
 #[test]
 fn a_name_registered_twice_fails_the_build() {
     workers::block_on(async {
-        let twice = EmbeddedNode::builder()
+        let twice = Node::builder()
             .with_crdt(MaxRegister::new())
             .with_crdt(MaxRegister::new())
             .build()
@@ -120,17 +120,17 @@ fn a_name_registered_twice_fails_the_build() {
             ))
         ));
 
-        let first = EmbeddedNode::builder()
+        let first = Node::builder()
             .with_crdt(MaxRegister::new())
             .build()
             .await
             .unwrap();
-        let other = EmbeddedNode::builder()
+        let other = Node::builder()
             .with_crdt(MaxRegister::<Impostor>::claiming(maxreg()))
             .build()
             .await
             .expect("each node has its own types, so another node may name one alike");
-        let native = EmbeddedNode::builder()
+        let native = Node::builder()
             .with_crdt(MaxRegister::<()>::claiming(CType::LwwRegister))
             .build()
             .await;
@@ -140,8 +140,8 @@ fn a_name_registered_twice_fails_the_build() {
                 RegistryError::NotCustom { .. }
             ))
         ));
-        first.shutdown().await;
-        other.shutdown().await;
+        first.shutdown().await.unwrap();
+        other.shutdown().await.unwrap();
     })
     .unwrap()
 }
@@ -154,7 +154,7 @@ fn a_store_holding_custom_values_opens_only_with_their_type() {
     workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let open = |with_type: bool| {
-            let builder = EmbeddedNode::builder().data_path(dir.path());
+            let builder = Node::builder().data_path(dir.path());
             let builder = if with_type {
                 builder.with_crdt(MaxRegister::new())
             } else {
@@ -168,7 +168,7 @@ fn a_store_holding_custom_values_opens_only_with_their_type() {
             .execute(r#"mutation { add_Score(input: {player: "ann", best: 5}) { _docID } }"#)
             .await;
         assert!(!created.has_errors(), "{:?}", created.errors);
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
         drop(node);
 
         match open(false).await {
@@ -185,7 +185,7 @@ fn a_store_holding_custom_values_opens_only_with_their_type() {
             read.data.unwrap()["Score"],
             serde_json::json!([{"player": "ann", "best": 5}])
         );
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }

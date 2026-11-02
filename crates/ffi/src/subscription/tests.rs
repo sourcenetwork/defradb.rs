@@ -76,6 +76,7 @@ fn test_subscription_receives_mutation_event() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             mutation.as_ptr(),
             ptr::null(),
@@ -246,6 +247,7 @@ fn test_subscription_collection_filter() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             mutation.as_ptr(),
             ptr::null(),
@@ -271,6 +273,7 @@ fn test_subscription_collection_filter() {
     let result = unsafe {
         exec_request(
             node,
+            std::ptr::null(),
             ptr::null(),
             mutation.as_ptr(),
             ptr::null(),

@@ -55,7 +55,7 @@ impl TransformStore for TxnLensStore {
         self.local().add_with_id(id, config).await
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, lens::LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<lens::LensModule>>> {
         let mut result = self.base.list().await?;
         if let Some(local) = self.initialized_local() {
             result.extend(local.list().await?);

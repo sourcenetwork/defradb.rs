@@ -9,7 +9,7 @@ mod tests;
 
 use clap::{Args, Subcommand};
 
-use super::http_client::HttpClient;
+use super::document::write_client;
 use super::ClientContext;
 use crate::error::Result;
 
@@ -78,11 +78,8 @@ impl P2pArgs {
 
 impl P2pActivePeersArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let result = client.p2p_active_peers().await?;
+        let (client, _) = write_client(ctx)?;
+        let result = client.active_peers().await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         Ok(())
     }
@@ -90,17 +87,8 @@ impl P2pActivePeersArgs {
 
 impl P2pConnectArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        if self.addresses.is_empty() {
-            return Err(crate::error::Error::MissingInput(
-                "at least one address is required".to_string(),
-            ));
-        }
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.p2p_connect(&self.addresses).await?;
+        let (client, _) = write_client(ctx)?;
+        client.connect(&self.addresses).await?;
         println!("Connected to peer(s)");
         Ok(())
     }
@@ -109,11 +97,8 @@ impl P2pConnectArgs {
 impl P2pInfoArgs {
     /// Execute the p2p info command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let info = client.p2p_info().await?;
+        let (client, _) = write_client(ctx)?;
+        let info = client.peer_info().await?;
         println!("{}", serde_json::to_string_pretty(&info)?);
         Ok(())
     }

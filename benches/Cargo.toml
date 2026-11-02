@@ -101,6 +101,10 @@ name = "contention"
 harness = false
 
 [[bench]]
+name = "purge_baseline"
+harness = false
+
+[[bench]]
 name = "write_baseline"
 harness = false
 

@@ -13,6 +13,8 @@ mod aggregates;
 mod cursor;
 mod explain;
 mod filters;
+mod fragment_cycles;
+pub(crate) use fragment_cycles::check_fragment_cycles;
 pub mod limits;
 mod mutations;
 mod ordering;
@@ -23,7 +25,8 @@ mod variables;
 
 // Re-export everything from parser for backwards compatibility
 pub use filters::parse_filter_string;
-pub use limits::{MAX_QUERY_DEPTH, MAX_QUERY_WIDTH};
+pub(crate) use limits::fragment_nesting_error;
+pub use limits::{MAX_FRAGMENT_NESTING, MAX_QUERY_DEPTH, MAX_QUERY_WIDTH};
 pub use parser::{
     parse_mutations, parse_mutations_with_limits, parse_mutations_with_variables, parse_query,
     parse_query_with_limits, parse_query_with_variables, parse_request, parse_request_with_limits,

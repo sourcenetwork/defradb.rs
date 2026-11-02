@@ -26,7 +26,7 @@ pub struct ManageChannel {
     pub hooks: ManageHooksCell,
     pub correlator: p2p::ManageCorrelator,
     pub query_correlator: p2p::ManageQueryCorrelator,
-    pub requester: Arc<dyn defra_http::ManageRequester>,
+    pub requester: Arc<dyn crate::ManageRequester>,
 }
 
 /// A running iroh peer. Stop it with [`IrohPeerShutdown::shutdown`].
@@ -260,6 +260,11 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .run_pending_dag_resync(std::time::Duration::from_secs(60))
                 .await;
         });
+        // A replication filter also judges pushes before their blocks are
+        // fetched; the merge keeps its own check.
+        if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+            coordinator.set_receive_gate(Arc::new(gate));
+        }
         let retry_clock_coordinator = Arc::clone(&coordinator);
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             retry_clock_coordinator
@@ -367,6 +372,7 @@ impl<S: Store + 'static> IrohPeer<S> {
                 retry_loop_task,
                 vec![event_handler_task, replication_task],
                 failure_recorder_task,
+                edge.clone(),
             ),
             transport,
             coordinator,

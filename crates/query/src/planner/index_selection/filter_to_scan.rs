@@ -352,7 +352,13 @@ pub fn filter_to_index_scan(
             }
         }
     } else if has_in {
-        let wrapped_values = wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        let mut wrapped_values =
+            wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        // The lookups run in the index's key order, as a range scan would,
+        // and backward when the scan is: the planner relies on the index for
+        // the requested order, so `_in: [55, 25]` must not come back as written.
+        // Sorting after the JSON wrap orders them by the keys the index stores.
+        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
@@ -579,4 +585,28 @@ pub fn or_filter_to_index_scan(
     }
 
     None
+}
+
+/// `values` in the order the index holds their keys (`descending` when its
+/// first field is), backward when the scan runs backward, each once. A value
+/// that does not encode keeps its place after those that do.
+fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
+    let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
+        .drain(..)
+        .map(|value| {
+            let key = storage::field_value::encode_field_value(Vec::new(), &value, descending).ok();
+            (key, value)
+        })
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    keyed.dedup_by(|(a, _), (b, _)| a.is_some() && a == b);
+    if reverse {
+        keyed.reverse();
+    }
+    values.extend(keyed.into_iter().map(|(_, value)| value));
 }

@@ -14,7 +14,7 @@ use crate::benchmark_queries::{
     render_action_ranked_query, render_message_ranked_query, RankedQueryOrder,
 };
 use crate::benchmark_stats::summarize;
-use crate::EmbeddedNode;
+use crate::Node;
 
 // Re-export extracted types so `benchmark_support::Foo` paths still resolve.
 pub use crate::benchmark_queries::{
@@ -718,7 +718,7 @@ struct CodingTaskTemplate {
 }
 
 pub async fn build_context1_style_coding_tasks(
-    node: &EmbeddedNode,
+    node: &Node,
     fixture: &CodingSessionFixture,
 ) -> Result<Vec<CodingRetrievalTask>> {
     let hot_messages = fetch_message_records(node, &fixture.hot_session).await?;
@@ -819,7 +819,7 @@ pub async fn build_context1_style_coding_tasks(
 }
 
 pub async fn retrieve_coding_task_rankings(
-    node: &EmbeddedNode,
+    node: &Node,
     task: &CodingRetrievalTask,
     query_embedding: &[f64],
     limit: usize,
@@ -878,7 +878,7 @@ pub async fn retrieve_coding_task_rankings(
 }
 
 pub async fn evaluate_coding_task(
-    node: &EmbeddedNode,
+    node: &Node,
     task: &CodingRetrievalTask,
     query_embedding: &[f64],
     limit: usize,
@@ -904,7 +904,7 @@ pub fn score_coding_task(
 }
 
 async fn fetch_message_records(
-    node: &EmbeddedNode,
+    node: &Node,
     session: &FixtureSession,
 ) -> Result<Vec<CodingCorpusRecord>> {
     let query = format!(
@@ -957,7 +957,7 @@ async fn fetch_message_records(
 }
 
 async fn fetch_action_records(
-    node: &EmbeddedNode,
+    node: &Node,
     session: &FixtureSession,
 ) -> Result<Vec<CodingCorpusRecord>> {
     let query = format!(
@@ -1015,7 +1015,7 @@ async fn fetch_action_records(
         .collect()
 }
 
-async fn lookup_session_doc_id(node: &EmbeddedNode, session_id: &str) -> Result<String> {
+async fn lookup_session_doc_id(node: &Node, session_id: &str) -> Result<String> {
     let query = format!(
         r#"{{
   CodingSession(filter: {{ session_id: {{ _eq: "{session_id}" }} }}, limit: 1) {{
@@ -1314,14 +1314,14 @@ fn build_task_metrics(
 }
 
 pub async fn seed_coding_session_fixture(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
 ) -> Result<CodingSessionFixture> {
     seed_coding_session_fixture_with_schema(node, config, CODING_SESSION_FIXTURE_SDL).await
 }
 
 pub async fn seed_coding_session_embedding_fixture(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
 ) -> Result<CodingSessionFixture> {
     seed_coding_session_embedding_fixture_with_dimensions(node, config, [14; 3]).await
@@ -1329,7 +1329,7 @@ pub async fn seed_coding_session_embedding_fixture(
 
 /// Vector widths for the message, action and search-chunk models respectively.
 pub async fn seed_coding_session_embedding_fixture_with_dimensions(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
     dimensions: [usize; 3],
 ) -> Result<CodingSessionFixture> {
@@ -1343,7 +1343,7 @@ pub async fn seed_coding_session_embedding_fixture_with_dimensions(
 }
 
 async fn seed_coding_session_fixture_with_schema(
-    node: &EmbeddedNode,
+    node: &Node,
     config: &CodingSessionFixtureConfig,
     sdl: &str,
 ) -> Result<CodingSessionFixture> {
@@ -1377,7 +1377,7 @@ async fn seed_coding_session_fixture_with_schema(
 }
 
 pub async fn benchmark_case(
-    node: &EmbeddedNode,
+    node: &Node,
     case: &SearchQueryCase,
     warmup: usize,
     iterations: usize,

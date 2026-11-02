@@ -5,7 +5,7 @@
 //! op, send via [`ManageClient`], then map the reply (including the `unauthorized`
 //! sentinel) back to an http-native result.
 
-use defra_http::{
+use crate::{
     ManageRequester, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp,
     RemoteManageQueryResult, MANAGE_UNAUTHORIZED,
 };
@@ -123,7 +123,7 @@ fn to_mutate_op(op: RemoteManageOp) -> ManageMutateOp {
     }
 }
 
-fn http_filters_to_p2p(filters: defra_http::router::ReplicationFilters) -> p2p::ReplicationFilters {
+fn http_filters_to_p2p(filters: crate::ReplicationFilters) -> p2p::ReplicationFilters {
     filters
         .into_iter()
         .map(|(key, f)| {

@@ -533,14 +533,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 }
             }
             MutationType::Upsert => {
-                // Go format: separate create, filter, and update fields
-                // create: map of fields for new document creation
+                // Go format: separate add, filter, and update fields
+                // add: map of fields for new document creation (Go's addInputLabel)
                 if !mutation.create_input.is_empty() {
                     let mut create_obj = serde_json::Map::new();
                     for (field_name, value) in &mutation.create_input[0] {
                         create_obj.insert(field_name.clone(), value.clone());
                     }
-                    mutation_attrs.insert("create".to_string(), JsonValue::Object(create_obj));
+                    mutation_attrs.insert("add".to_string(), JsonValue::Object(create_obj));
                 }
 
                 // filter: filter expression used to find existing documents

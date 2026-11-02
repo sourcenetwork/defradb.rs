@@ -59,11 +59,14 @@ impl<S: Store + 'static> crate::database::DB<S> {
         Ok(heights)
     }
 
-    async fn current_head_cids(&self, doc_short_id: u64) -> Result<RapidHashSet<Cid>> {
-        let txn = self.new_txn(true).await?;
-        let headstore = txn.headstore()?;
+    /// The CIDs of the document's live heads, read in `headstore`'s
+    /// transaction.
+    async fn current_head_cids(
+        headstore: &datastore::NamespaceView,
+        doc_short_id: u64,
+    ) -> Result<RapidHashSet<Cid>> {
         let mut iter = crate::block::heads::document::iterator(
-            &headstore,
+            headstore,
             IterOptions::new().with_prefix(HeadstoreDocKey::document_prefix(doc_short_id)),
         )
         .await
@@ -85,9 +88,6 @@ impl<S: Store + 'static> crate::database::DB<S> {
             cids.insert(cid);
         }
         iter.close().await.map_err(Error::Storage)?;
-
-        drop(headstore);
-        let _ = txn.discard();
         Ok(cids)
     }
 
@@ -104,129 +104,106 @@ impl<S: Store + 'static> crate::database::DB<S> {
         Some((priority, cid))
     }
 
+    /// Prune the source document's composites at `pruneable_heights`, in one
+    /// engine-retried write transaction: the document, its heads and the
+    /// owner scans are all read in it, and a conflict runs it again.
     async fn prune_source_doc_history(
-        &self,
+        self: &Arc<Self>,
         doc_id: &str,
         pruneable_heights: &RapidHashSet<u64>,
     ) -> Result<()> {
         if pruneable_heights.is_empty() {
             return Ok(());
         }
+        let doc_id = doc_id.to_owned();
+        let pruneable_heights = pruneable_heights.clone();
+        self.transact_db(move |txn| {
+            let doc_id = doc_id.clone();
+            let pruneable_heights = pruneable_heights.clone();
+            Box::pin(async move { Self::prune_history_in(txn, &doc_id, &pruneable_heights).await })
+        })
+        .await
+    }
 
-        let doc_short_id = {
-            let txn = self.new_txn(true).await?;
-            let systemstore = txn.systemstore()?;
-            let doc_ref = crate::docid::map::get_doc_ref(&systemstore, doc_id).await?;
-            drop(systemstore);
-            let _ = txn.discard();
-            match doc_ref {
-                Some(doc_ref) => doc_ref.doc_short_id,
-                None => return Ok(()),
-            }
-        };
-
-        let current_head_cids = self.current_head_cids(doc_short_id).await?;
-        let txn = self.new_txn(false).await?;
+    async fn prune_history_in(
+        txn: &crate::txn::DbTxn<S>,
+        doc_id: &str,
+        pruneable_heights: &RapidHashSet<u64>,
+    ) -> Result<()> {
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
+        let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, doc_id).await? else {
+            return Ok(());
+        };
+        let doc_short_id = doc_ref.doc_short_id;
+        let current_head_cids = Self::current_head_cids(&headstore, doc_short_id).await?;
 
-        let result: Result<()> = async {
-            let mut iter = headstore
-                .iterator(
-                    IterOptions::new()
-                        .with_prefix(HeadstorePriorityKey::document_prefix(doc_short_id)),
-                )
-                .await
-                .map_err(Error::Storage)?;
-
-            let mut entries = Vec::new();
-            while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
-                if let Some((priority, cid)) = Self::parse_priority_entry(doc_short_id, &pair.key) {
-                    entries.push((pair.key, priority, cid));
-                }
+        let mut iter = headstore
+            .iterator(
+                IterOptions::new().with_prefix(HeadstorePriorityKey::document_prefix(doc_short_id)),
+            )
+            .await
+            .map_err(Error::Storage)?;
+        let mut entries = Vec::new();
+        while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
+            if let Some((priority, cid)) = Self::parse_priority_entry(doc_short_id, &pair.key) {
+                entries.push((pair.key, priority, cid));
             }
-            iter.close().await.map_err(Error::Storage)?;
+        }
+        iter.close().await.map_err(Error::Storage)?;
 
-            // Field blocks are indexed at their own field height, so only
-            // composites are compared against the pruneable composite heights.
-            let mut pruned_commits = Vec::new();
-            let mut kept_commits = current_head_cids.clone();
-            let mut field_entries = Vec::new();
-            for (key, priority, cid) in entries {
-                let block = crate::block::cleanup::load_block(&blockstore, &cid).await?;
-                let Some(block) =
-                    block.filter(|block| matches!(block.delta, CrdtDelta::Composite(_)))
-                else {
-                    field_entries.push((key, cid));
-                    continue;
-                };
-                if pruneable_heights.contains(&priority) && !current_head_cids.contains(&cid) {
-                    pruned_commits.push((key, cid, block));
-                } else {
-                    kept_commits.insert(cid);
-                }
+        // Field blocks are indexed at their own field height, so only
+        // composites are compared against the pruneable composite heights.
+        let mut pruned_commits = Vec::new();
+        let mut kept_commits = current_head_cids.clone();
+        let mut field_entries = Vec::new();
+        for (key, priority, cid) in entries {
+            let block = crate::block::cleanup::load_block(&blockstore, &cid).await?;
+            let Some(block) = block.filter(|block| matches!(block.delta, CrdtDelta::Composite(_)))
+            else {
+                field_entries.push((key, cid));
+                continue;
+            };
+            if pruneable_heights.contains(&priority) && !current_head_cids.contains(&cid) {
+                pruned_commits.push((key, cid, block));
+            } else {
+                kept_commits.insert(cid);
             }
-            let retained =
-                crate::block::cleanup::referenced_blocks(&blockstore, kept_commits).await?;
+        }
+        let retained = crate::block::cleanup::referenced_blocks(&blockstore, kept_commits).await?;
 
-            let mut deleted_commits = RapidHashSet::new();
-            let mut pruned_fields = RapidHashSet::new();
-            for (key, cid, block) in pruned_commits {
+        let mut deleted_commits = RapidHashSet::new();
+        let mut pruned_fields = RapidHashSet::new();
+        for (key, cid, block) in pruned_commits {
+            headstore.delete(&key).await.map_err(Error::Storage)?;
+            if !deleted_commits.insert(cid) {
+                continue;
+            }
+            pruned_fields.extend(
+                block
+                    .links
+                    .iter()
+                    .flatten()
+                    .map(|link| link.link)
+                    .filter(|link| !retained.contains(link)),
+            );
+            crate::block::cleanup::delete_owned_commit(
+                &blockstore,
+                &systemstore,
+                &cid,
+                doc_id,
+                &retained,
+            )
+            .await?;
+        }
+
+        for (key, cid) in field_entries {
+            if pruned_fields.contains(&cid) {
                 headstore.delete(&key).await.map_err(Error::Storage)?;
-
-                if !deleted_commits.insert(cid) {
-                    continue;
-                }
-
-                pruned_fields.extend(
-                    block
-                        .links
-                        .iter()
-                        .flatten()
-                        .map(|link| link.link)
-                        .filter(|link| !retained.contains(link)),
-                );
-                crate::block::cleanup::delete_owned_commit(
-                    &blockstore,
-                    &systemstore,
-                    &cid,
-                    doc_id,
-                    &retained,
-                )
-                .await?;
-            }
-
-            for (key, cid) in field_entries {
-                if pruned_fields.contains(&cid) {
-                    headstore.delete(&key).await.map_err(Error::Storage)?;
-                }
-            }
-
-            Ok(())
-        }
-        .await;
-
-        drop(headstore);
-        drop(blockstore);
-        drop(systemstore);
-
-        match result {
-            Ok(()) => {
-                txn.commit().await?;
-                Ok(())
-            }
-            Err(error) => {
-                if let Err(discard_error) = txn.discard() {
-                    tracing::warn!(
-                        error = %discard_error,
-                        original_error = %error,
-                        "Transaction discard failed during downsample GC"
-                    );
-                }
-                Err(error)
             }
         }
+        Ok(())
     }
 
     async fn gc_source_doc_for_plans(

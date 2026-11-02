@@ -1,8 +1,7 @@
 use crate::ffi_node_db_async_body;
 use crate::helpers::require_c_str;
 use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
-use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, ffi_entry, try_ffi};
 use acp::nac::NodePermission;
 
 /// Delete a collection by name.
@@ -104,17 +103,19 @@ pub unsafe extern "C" fn delete_collections_in_txn(
         ));
         let txn_id = try_ffi!(require_c_str(txn_id, "txn_id"));
         let targets_json = try_ffi!(require_c_str(targets_json, "targets_json"));
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(registry) => registry,
-            None => return crate::types::FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_id
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| crate::types::FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
             let targets: Vec<String> = serde_json::from_str(&targets_json)
                 .map_err(|error| format!("failed to parse collection targets JSON: {}", error))?;
-            registry
-                .delete_collections_in_txn_as(&context, &txn_id, targets, active_only)
+            runner
+                .delete_collections_as(&context, targets, active_only)
                 .await
                 .map_err(|error| format!("failed to delete collections: {}", error))?;
             Ok("{}".to_string())
@@ -146,21 +147,17 @@ pub unsafe extern "C" fn set_active_collection_version(
     identity_did: *const std::ffi::c_char,
     version_id: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionPatch,
-        version_id => version_str: "version_id";
-        {
-        database
-            .set_active_collection_version_as(&context, &version_str)
-            .await
-            .map_err(|e| format!("failed to set active collection version: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let version_id = try_ffi!(require_c_str(version_id, "version_id"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .set_active_collection_version_as(&context, &version_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
@@ -185,15 +182,17 @@ pub unsafe extern "C" fn set_collection_active_in_txn(
         ));
         let txn_id = try_ffi!(require_c_str(txn_id, "txn_id"));
         let version_id = try_ffi!(require_c_str(version_id, "version_id"));
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(registry) => registry,
-            None => return crate::types::FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        let txn = try_ffi!(txn_id
+            .parse::<defra_core::TxnId>()
+            .map_err(|e| crate::types::FfiResult::error(format!("invalid transaction ID: {}", e))));
+        let context = defra_core::RequestContext::default()
+            .with_identity(crate::types::c_str_to_string(identity_did).filter(|value| !value.is_empty()))
+            .with_txn(Some(txn));
 
         ffi_async!(caller, {
-            let version = registry
-                .set_collection_active_in_txn_as(&context, &txn_id, &version_id, is_active)
+            let version = runner
+                .set_collection_active_as(&context, &version_id, is_active)
                 .await
                 .map_err(|error| format!("failed to update collection active state: {}", error))?;
             serde_json::to_string(&version)
@@ -202,58 +201,47 @@ pub unsafe extern "C" fn set_collection_active_in_txn(
     }
 }
 
-/// Patch a collection's schema using JSON patch operations.
+/// Go's `PatchCollection` without a migration: apply the JSON patch
+/// `patch` to the collection its paths name.
 ///
-/// This applies the given JSON patch to the collection's schema,
-/// validates the result, and updates the collection.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `collection_name` - The name of the collection to patch
-/// * `patch` - A JSON patch string (RFC 6902 format)
+/// `collection_name` stays in the signature for the C ABI; the patch's own
+/// paths name the collection.
 ///
 /// # Returns
 ///
-/// - Status 0: Success (value contains the updated CollectionVersion as JSON)
+/// - Status 0: Success (value is "{}")
 /// - Status 1: Error (error field contains message)
 ///
 /// # Safety
 ///
-/// `collection_name` and `patch` must be valid null-terminated UTF-8 strings.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string, and
+/// `patch` a valid one.
 #[no_mangle]
 pub unsafe extern "C" fn patch_collection(
     node_ptr: usize,
     identity_did: *const std::ffi::c_char,
-    collection_name: *const std::ffi::c_char,
+    _collection_name: *const std::ffi::c_char,
     patch: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionPatch,
-        collection_name => name_str: "collection_name",
-        patch => patch_str: "patch";
-        {
-        let updated_schema = database
-            .patch_collection_as(&context, &name_str, &patch_str)
-            .await
-            .map_err(|e| format!("failed to patch collection: {}", e))?;
-
-        let json = serde_json::to_string(&updated_schema)
-            .map_err(|e| format!("failed to serialize updated schema: {}", e))?;
-
-        Ok(json)
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let patch = try_ffi!(require_c_str(patch, "patch"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .patch_collection_as(&context, &patch, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
 /// Truncate a collection: delete all documents while preserving the schema.
 ///
 /// This removes all document data, CRDT heads, blocks, and index entries
-/// for the collection. The collection schema remains intact.
+/// for the collection. The collection schema remains intact. Go's
+/// `Collection.Truncate`; the core checks `CollectionTruncate`.
 ///
 /// # Arguments
 ///
@@ -274,25 +262,23 @@ pub unsafe extern "C" fn truncate_collection(
     identity_did: *const std::ffi::c_char,
     name: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionTruncate,
-        name => name_str: "name";
-        {
-        database
-            .truncate_collection_as(&context, &name_str)
-            .await
-            .map_err(|e| format!("failed to truncate collection: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let name = try_ffi!(require_c_str(name, "name"));
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .truncate_collection_as(&context, &name, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
-/// Truncate documents matching a JSON filter while preserving the collection schema.
+/// Truncate documents matching a JSON filter while preserving the collection
+/// schema. The filter is any JSON value; the core refuses one that is not a
+/// filter with Go's words.
 ///
 /// # Safety
 ///
@@ -304,29 +290,23 @@ pub unsafe extern "C" fn truncate_collection_with_filter(
     name: *const std::ffi::c_char,
     filter_json: *const std::ffi::c_char,
 ) -> crate::types::FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::CollectionTruncate,
-        name => name_str: "name",
-        filter_json => filter_str: "filter_json";
-        {
-        let filter: serde_json::Value = serde_json::from_str(&filter_str)
-            .map_err(|error| format!("invalid filter JSON: {error}"))?;
-        let conditions = filter
-            .as_object()
-            .cloned()
-            .ok_or_else(|| "filter must be a non-null JSON object".to_string())?;
-
-        database
-            .truncate_collection_with_filter_as(&context, &name_str, query::Filter::from_conditions(conditions))
-            .await
-            .map_err(|e| format!("failed to truncate collection: {}", e))?;
-
-        Ok("{}".to_string())
-    }
+    ffi_entry! {
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let name = try_ffi!(require_c_str(name, "name"));
+        let filter = try_ffi!(require_c_str(filter_json, "filter_json"));
+        let filter: query::documents::Filter =
+            try_ffi!(serde_json::from_str::<serde_json::Value>(&filter).map_err(|error| {
+                crate::types::FfiResult::error(format!("invalid filter JSON: {error}"))
+            }))
+            .into();
+        let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+        ffi_async!(caller, {
+            runner
+                .truncate_collection_as(&context, &name, Some(&filter))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok("{}".to_string())
+        })
     }
 }
 
@@ -335,7 +315,7 @@ mod tests {
     use super::*;
     use crate::collection::read::has_collection;
     use crate::node::{new_node, node_close};
-    use crate::schema::add_schema;
+    use crate::schema::{add_schema, get_collections};
     use crate::types::NodeInitOptions;
     use std::ffi::CString;
 
@@ -432,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_collection_with_filter_validates_json_object() {
+    fn test_truncate_collection_with_filter_refuses_what_is_not_a_filter() {
         assert!(crate::runtime::init_runtime());
 
         let result = new_node(NodeInitOptions::default());
@@ -451,7 +431,11 @@ mod tests {
         assert_eq!(result.status, 0);
         unsafe { crate::types::defra_free_string(result.value) };
 
-        for invalid in ["null", "[]"] {
+        for (invalid, expected) in [
+            ("null", "unsupported filter type"),
+            ("[]", "unsupported filter type"),
+            ("{", "invalid filter JSON: "),
+        ] {
             let filter = CString::new(invalid).unwrap();
             let result = unsafe {
                 truncate_collection_with_filter(
@@ -462,6 +446,8 @@ mod tests {
                 )
             };
             assert_eq!(result.status, 1);
+            let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
+            assert!(error.starts_with(expected), "{error}");
             unsafe { crate::types::defra_free_string(result.error) };
         }
 
@@ -535,17 +521,25 @@ mod tests {
         unsafe { crate::types::defra_free_string(result.value) };
 
         // Patch the collection - change is_active to false
-        let patch = CString::new(r#"[{"op":"replace","path":"/IsActive","value":false}]"#).unwrap();
+        let patch =
+            CString::new(r#"[{"op":"replace","path":"/Patchable/IsActive","value":false}]"#)
+                .unwrap();
         let name = CString::new("Patchable").unwrap();
         let result =
             unsafe { patch_collection(node, std::ptr::null(), name.as_ptr(), patch.as_ptr()) };
         assert_eq!(result.status, 0, "patch_collection should succeed");
+        unsafe { crate::types::defra_free_string(result.value) };
 
+        let result = unsafe { get_collections(node, std::ptr::null()) };
+        assert_eq!(result.status, 0);
         let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("Patchable"), "should contain Patchable");
+        assert!(
+            value.contains("Patchable"),
+            "should list Patchable: {value}"
+        );
         assert!(
             value.contains("\"IsActive\":false"),
-            "should have IsActive:false"
+            "should have IsActive:false: {value}"
         );
         unsafe { crate::types::defra_free_string(result.value) };
 
@@ -561,7 +555,9 @@ mod tests {
         assert_eq!(result.status, 0);
         let node = result.node_ptr;
 
-        let patch = CString::new(r#"[{"op":"replace","path":"/IsActive","value":false}]"#).unwrap();
+        let patch =
+            CString::new(r#"[{"op":"replace","path":"/NonExistent/IsActive","value":false}]"#)
+                .unwrap();
         let name = CString::new("NonExistent").unwrap();
         let result =
             unsafe { patch_collection(node, std::ptr::null(), name.as_ptr(), patch.as_ptr()) };

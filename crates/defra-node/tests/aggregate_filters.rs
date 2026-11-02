@@ -1,11 +1,11 @@
 //! Top-level aggregate filters are validated like collection filters, and an
 //! indexed filter counts the same documents as a full scan (#1995).
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use serde_json::json;
 
-async fn node() -> EmbeddedNode {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn node() -> Node {
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Users { name: String @index  age: Int }")
         .await
         .unwrap();

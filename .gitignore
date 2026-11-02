@@ -55,3 +55,7 @@ bench-out/
 /runs-h3/
 /bin-h3/
 /tools/spike-h3/
+
+# mantra (requirements traceability) local output
+mantra.db*
+mantra-report/
