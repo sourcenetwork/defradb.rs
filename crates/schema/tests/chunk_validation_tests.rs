@@ -81,3 +81,28 @@ fn adding_a_field_to_a_chunk_collection_is_refused() {
     let err = check(vec![article(), chunk()], vec![article(), patched]).unwrap_err();
     assert!(err.contains("fields cannot be mutated"), "{err}");
 }
+
+fn placeholder(of: &CollectionVersion) -> CollectionVersion {
+    let mut placeholder =
+        CollectionVersion::new(&of.name, &of.version_id, &of.collection_id, vec![]);
+    placeholder.is_placeholder = true;
+    placeholder
+}
+
+#[test]
+fn filling_a_placeholder_with_chunk_settings_is_refused() {
+    let err = check(vec![placeholder(&article())], vec![article()]).unwrap_err();
+    assert!(
+        err.contains("chunk settings cannot be added by a patch"),
+        "{err}"
+    );
+}
+
+#[test]
+fn filling_a_placeholder_with_a_chunk_collection_is_refused() {
+    let err = check(vec![placeholder(&chunk())], vec![chunk()]).unwrap_err();
+    assert!(
+        err.contains("chunk settings cannot be added by a patch"),
+        "{err}"
+    );
+}
