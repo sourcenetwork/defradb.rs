@@ -146,6 +146,9 @@ pub struct SyncDiagnostics {
     pending_dag_retry_suppressed: AtomicU64,
     pending_dag_fetch_deferred_unavailable: AtomicU64,
     pending_dag_fetch_deferred_contention: AtomicU64,
+    pending_dag_fetch_deferred_busy: AtomicU64,
+    car_busy_responses: AtomicU64,
+    provider_busy_rotations: AtomicU64,
     pending_dag_fetch_exhausted: AtomicU64,
     pending_dag_terminal_merged: AtomicU64,
     pending_dag_terminal_quarantined: AtomicU64,
@@ -176,6 +179,9 @@ pub struct SyncDiagnosticsSnapshot {
     pub pending_dag_retry_suppressed: u64,
     pub pending_dag_fetch_deferred_unavailable: u64,
     pub pending_dag_fetch_deferred_contention: u64,
+    pub pending_dag_fetch_deferred_busy: u64,
+    pub car_busy_responses: u64,
+    pub provider_busy_rotations: u64,
     pub pending_dag_fetch_exhausted: u64,
     pub pending_dag_terminal_merged: u64,
     /// Pending-DAG registrations moved to quarantine after a deterministic
@@ -219,6 +225,11 @@ impl SyncDiagnostics {
             pending_dag_fetch_deferred_contention: self
                 .pending_dag_fetch_deferred_contention
                 .load(Ordering::Relaxed),
+            pending_dag_fetch_deferred_busy: self
+                .pending_dag_fetch_deferred_busy
+                .load(Ordering::Relaxed),
+            car_busy_responses: self.car_busy_responses.load(Ordering::Relaxed),
+            provider_busy_rotations: self.provider_busy_rotations.load(Ordering::Relaxed),
             pending_dag_fetch_exhausted: self.pending_dag_fetch_exhausted.load(Ordering::Relaxed),
             pending_dag_terminal_merged: self.pending_dag_terminal_merged.load(Ordering::Relaxed),
             pending_dag_terminal_quarantined: self
@@ -330,6 +341,19 @@ impl SyncDiagnostics {
     /// Log-level gates for the DAG fetcher's repeated failure lines.
     pub(crate) fn dag_fetch_logs(&self) -> &DagFetchLogThrottles {
         &self.dag_fetch_logs
+    }
+
+    pub fn record_pending_dag_fetch_deferred_busy(&self) {
+        self.pending_dag_fetch_deferred_busy
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_car_busy_response(&self) {
+        self.car_busy_responses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_provider_busy_rotation(&self) {
+        self.provider_busy_rotations.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_pending_dag_fetch_exhausted(&self) {

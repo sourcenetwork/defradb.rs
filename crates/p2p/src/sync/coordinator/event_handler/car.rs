@@ -22,7 +22,7 @@ pub(crate) enum CarIngestDisposition {
     /// A root or shared descendant already has a storage owner. Wake this
     /// fetch with a non-success terminal result so its sole paced retry/provider
     /// rotation can re-offer the response after the owner completes.
-    Busy,
+    StorageContended,
 }
 
 fn sample_cids(cids: &[Cid]) -> Vec<String> {
@@ -553,7 +553,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     same_root,
                     "Coalescing CAR response behind the current storage owner"
                 );
-                return Ok(CarIngestDisposition::Busy);
+                return Ok(CarIngestDisposition::StorageContended);
             }
         };
         let block_refs: Vec<(&Cid, &[u8])> = blocks.iter().map(|(c, d)| (c, d.as_ref())).collect();

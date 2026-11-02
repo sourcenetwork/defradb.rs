@@ -61,7 +61,7 @@ impl LogThrottle {
 }
 
 /// One slot per `WindowFailure`, plus one for a line with no recorded failure.
-pub(crate) const DAG_FETCH_LOG_SLOTS: usize = 8;
+pub(crate) const DAG_FETCH_LOG_SLOTS: usize = 9;
 
 /// Roots exhausted against one provider set and not yet summarized.
 #[derive(Debug, Default)]

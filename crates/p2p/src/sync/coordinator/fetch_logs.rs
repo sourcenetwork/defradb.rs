@@ -61,6 +61,7 @@ macro_rules! failure_line {
             no_blocks = $failures.count(WindowFailure::NoBlocks),
             unservable = $failures.count(WindowFailure::Unservable),
             refused = $failures.count(WindowFailure::Refused),
+            busy = $failures.count(WindowFailure::Busy),
             superseded = $failures.count(WindowFailure::Superseded),
             budget_exhausted = $failures.budget_exhausted,
             suppressed_since_last = $suppressed,

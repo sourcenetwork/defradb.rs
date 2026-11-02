@@ -12,19 +12,21 @@ pub(super) enum WindowFailure {
     NoBlocks,
     Unservable,
     Refused,
+    Busy,
     Superseded,
 }
 
 impl WindowFailure {
     /// In the order an operator acts on them; [`FetchFailures::dominant`]
     /// breaks ties toward the earlier one.
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 8] = [
         Self::TimedOut,
         Self::Error,
         Self::SendFailed,
         Self::NoBlocks,
         Self::Unservable,
         Self::Refused,
+        Self::Busy,
         Self::Superseded,
     ];
 
@@ -36,6 +38,7 @@ impl WindowFailure {
             Self::NoBlocks => "no_blocks",
             Self::Unservable => "unservable",
             Self::Refused => "refused",
+            Self::Busy => "busy",
             Self::Superseded => "superseded",
         }
     }
@@ -48,6 +51,7 @@ impl WindowFailure {
             Self::NoBlocks => "providers answered without the requested blocks",
             Self::Unservable => "providers cannot serve it within their CAR byte limits",
             Self::Refused => "providers refused it (capacity, rate limit or access)",
+            Self::Busy => "providers shed it as busy",
             Self::Superseded => "the pending root was superseded",
         }
     }

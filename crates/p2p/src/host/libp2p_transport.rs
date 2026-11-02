@@ -441,6 +441,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
             success,
             cause,
             error,
+            provider_busy: false,
         },
         HostEvent::BitswapBlockReceived {
             query_id,
