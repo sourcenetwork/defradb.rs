@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "../../../tests/unit/busy_provider_rotation.rs"]
+mod busy_provider_rotation;
 #[path = "../../../tests/unit/car_size_retry.rs"]
 mod car_size_retry;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
@@ -95,8 +97,16 @@ struct TestTransport {
             rapidhash::fast::RandomState,
         >,
     >,
+    busy_providers: Arc<
+        HopscotchMap<
+            String,
+            crate::sync::manager::BlockSyncCompletionTracker,
+            rapidhash::fast::RandomState,
+        >,
+    >,
     disconnected_peers: Arc<Atom<Vec<String>>>,
     empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    busy_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
     force_rooted_sync: Arc<AtomicBool>,
     fetch_stats: Arc<Atom<Vec<crate::transport::PeerFetchStats>>>,
     /// Providers that fail every selective query after a delay.
@@ -151,8 +161,10 @@ impl TestTransport {
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
             size_limited_providers: Arc::new(rapid_map()),
+            busy_providers: Arc::new(rapid_map()),
             disconnected_peers: Arc::new(Atom::new(Vec::new())),
             empty_car_answer: Arc::new(AtomOption::none()),
+            busy_car_answer: Arc::new(AtomOption::none()),
             force_rooted_sync: Arc::new(AtomicBool::new(false)),
             fetch_stats: Arc::new(Atom::new(Vec::new())),
             refusing_providers: Arc::new(rapid_map()),
@@ -168,6 +180,10 @@ impl TestTransport {
     /// with a dead Bitswap queue looks from the fetcher.
     fn set_empty_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
         self.empty_car_answer.store_some(tracker);
+    }
+
+    fn set_busy_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
+        self.busy_car_answer.store_some(tracker);
     }
 
     fn set_force_rooted_sync(&self) {
@@ -405,6 +421,14 @@ impl P2PTransport for TestTransport {
             tracker.complete(root_cid, peer_id, false);
             return Ok(());
         }
+        if let Some(tracker) = self.busy_car_answer.load().map(|t| t.clone()) {
+            tracker.complete_with(
+                root_cid,
+                peer_id,
+                crate::sync::manager::FetchCompletion::ProviderBusy,
+            );
+            return Ok(());
+        }
         if self.hang_car_requests.load(Ordering::SeqCst) {
             n0_future::time::sleep(Duration::from_secs(600)).await;
             return Ok(());
@@ -481,6 +505,13 @@ impl P2PTransport for TestTransport {
                 .filter(|(cid, _)| missing.contains(cid))
         }) {
             completion.size_limit(query_id, cid);
+            return Ok(query_id);
+        }
+        if let Some(completion) = providers
+            .first()
+            .and_then(|peer| self.busy_providers.get(peer.as_str()))
+        {
+            completion.provider_busy(query_id);
             return Ok(query_id);
         }
         if let Some((completion, cause, after)) = self.failure_answer.load().as_deref().cloned() {

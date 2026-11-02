@@ -108,7 +108,7 @@ pub(crate) fn encode_car_response(
     let mut out = Vec::new();
 
     // Header: DAG-CBOR map {version: 1, roots: [CID]}
-    let header = encode_car_header(roots, oversized)?;
+    let header = encode_car_header(roots, oversized, false)?;
     write_varint_prefixed(&mut out, &header);
 
     // Each block: varint(len(cid_bytes + data)) + cid_bytes + data
@@ -302,7 +302,36 @@ fn extract_links(block_data: &[u8]) -> Vec<Cid> {
 // CIDs are stored as plain CBOR byte strings (no tag 42) since this
 // is an internal Rust-to-Rust protocol.
 
-fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8>> {
+/// A shed CAR request is answered with a header-only CAR carrying
+/// `"busy": true`. Older peers ignore the unknown field and decode an empty
+/// CAR, which differs from the zero-byte rejection it replaces: on libp2p an
+/// older requester sees its rooted CAR answered, where zero bytes failed to
+/// decode and timed out, so repeated sheds can lead it to treat the hub as a
+/// responsive-but-silent publisher and drop the connection.
+pub(crate) fn encode_car_busy(root: &Cid) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_varint_prefixed(&mut out, &encode_car_header(&[*root], &[], true)?);
+    Ok(out)
+}
+
+/// A CAR that carries any block is a served response, whatever its header.
+pub(crate) fn is_car_busy(data: &[u8]) -> bool {
+    use ciborium::Value;
+    match read_car_header_fields(data) {
+        Ok((fields, rest)) => {
+            rest.is_empty()
+                && fields.iter().any(|(key, value)| {
+                    matches!(key, Value::Text(name) if name == BUSY_FIELD)
+                        && matches!(value, Value::Bool(true))
+                })
+        }
+        Err(_) => false,
+    }
+}
+
+const BUSY_FIELD: &str = "busy";
+
+fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)], busy: bool) -> Result<Vec<u8>> {
     use ciborium::Value;
     let roots_val: Vec<Value> = roots
         .iter()
@@ -333,6 +362,9 @@ fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8
             ),
         ));
     }
+    if busy {
+        fields.push((Value::Text(BUSY_FIELD.into()), Value::Bool(true)));
+    }
     let header = Value::Map(fields);
 
     let mut out = Vec::new();
@@ -341,8 +373,10 @@ fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8
     Ok(out)
 }
 
-/// Optional notices from a Rust peer, not proof of a block's size or absence.
-pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+type CarHeaderFields = Vec<(ciborium::Value, ciborium::Value)>;
+
+/// The header's CBOR map fields, and the block sections that follow it.
+fn read_car_header_fields(data: &[u8]) -> Result<(CarHeaderFields, &[u8])> {
     use ciborium::Value;
     let mut cursor = data;
     let header_len = read_varint(&mut cursor)?;
@@ -350,11 +384,19 @@ pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
         .ok()
         .filter(|length| *length <= cursor.len())
         .ok_or_else(|| Error::Codec("CAR header length exceeds data".into()))?;
-    let header: Value = defra_core::cbor::from_slice(&cursor[..header_len])
+    let (header, rest) = cursor.split_at(header_len);
+    let header: Value = defra_core::cbor::from_slice(header)
         .map_err(|e| Error::Codec(format!("invalid CAR header: {e}")))?;
     let Value::Map(fields) = header else {
         return Err(Error::Codec("CAR header is not a CBOR map".into()));
     };
+    Ok((fields, rest))
+}
+
+/// Optional notices from a Rust peer, not proof of a block's size or absence.
+pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+    use ciborium::Value;
+    let (fields, _) = read_car_header_fields(data)?;
     let mut notices = fields
         .into_iter()
         .filter_map(|(key, value)| (key == Value::Text("oversized".into())).then_some(value));

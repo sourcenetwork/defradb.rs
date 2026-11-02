@@ -4032,7 +4032,7 @@ async fn branchable_sync_rate_limited_replies_backpressure_nack() {
 }
 
 #[tokio::test]
-async fn car_fetch_rate_limited_replies_empty_response() {
+async fn car_fetch_rate_limited_replies_busy() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
@@ -4053,9 +4053,78 @@ async fn car_fetch_rate_limited_replies_empty_response() {
         result
     );
 
-    // CAR has no error reply type - an explicit empty response beats a hung stream.
-    let responses = transport.car_responses();
-    assert_eq!(responses.last().map(Vec::len), Some(0));
+    assert_busy_reply_for(&transport, cid_for(BLOCK_DATA));
+}
+
+fn assert_busy_reply_for(transport: &NoopTransport, root: Cid) {
+    let reply = transport
+        .car_responses()
+        .pop()
+        .expect("a CAR reply was sent");
+    assert!(crate::sync::car::is_car_busy(&reply));
+    assert_eq!(crate::sync::car::decode_car(&reply).unwrap().0, vec![root]);
+}
+
+#[tokio::test]
+async fn car_fetch_shed_at_capacity_replies_busy() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+
+    let result = coordinator
+        .handle_transport_event_with_admission(
+            car_fetch_event(random_peer_id(), root),
+            crate::sync::DispatchAdmission::Saturated,
+        )
+        .await;
+
+    assert!(result.is_err(), "saturated work must not be admitted");
+    assert_busy_reply_for(&coordinator.runtime.transport, root);
+}
+
+#[tokio::test]
+async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
+    use crate::sync::manager::FetchCompletion;
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+    let hub = random_peer_id();
+    let manager = coordinator.manager();
+    let rooted = manager
+        .rooted_car_completion_tracker()
+        .register(root, hub.clone());
+    let query = QueryId(7);
+    let block_sync = manager.block_sync_completion_tracker().register(query);
+
+    for event in [
+        TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: hub,
+            root_cid: root,
+            car_data: crate::sync::car::encode_car_busy(&root).unwrap(),
+        },
+        TransportEvent::BitswapComplete {
+            query_id: query,
+            success: false,
+            cause: Some(crate::transport::FetchFailureCause::Refused),
+            error: Some("every provider busy".to_string()),
+            provider_busy: true,
+        },
+    ] {
+        coordinator.handle_transport_event(event).await.unwrap();
+    }
+
+    assert_eq!(rooted.await.unwrap(), FetchCompletion::ProviderBusy);
+    assert_eq!(block_sync.await.unwrap(), FetchCompletion::ProviderBusy);
+    let snapshot = manager.diagnostics().snapshot();
+    assert_eq!(snapshot.car_busy_responses, 1);
+    assert_eq!(snapshot.car_empty_responses, 0);
 }
 
 /// #1088 W5 (in-process half): 8 pushers × 6 docs fan into a hub whose pending

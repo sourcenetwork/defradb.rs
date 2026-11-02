@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::sync::manager::SyncDiagnostics;
 use crate::transport::PeerId;
 use rapidhash::{HashMapExt, HashSetExt};
 
@@ -32,6 +33,10 @@ pub(super) const MAX_FREE_REFUSALS: usize = 11;
 /// 30s fetch window is the dominant wait, not the backoff itself.
 const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 
+/// Shed attempts retried within one dispatch before deferring to the per-root
+/// clock: rides out a momentary saturation without hammering a saturated hub.
+pub(super) const BUSY_RETRIES_PER_DISPATCH: u32 = 1;
+
 /// Backoff to sleep before `attempt` (1-based; only called for attempts >= 2).
 pub(super) fn retry_backoff(attempt: u32) -> Duration {
     FETCH_RETRY_BACKOFF_BASE * 2u32.saturating_pow(attempt.saturating_sub(2))
@@ -47,6 +52,9 @@ pub(super) struct ProviderRotation {
     unservable: rapidhash::RapidHashMap<PeerId, cid::Cid>,
     productive: rapidhash::RapidHashSet<PeerId>,
     responsive: rapidhash::RapidHashSet<PeerId>,
+    /// Per attempt: providers that shed a request, and whether any delivered.
+    busy: rapidhash::RapidHashSet<PeerId>,
+    attempt_progress: bool,
 }
 
 impl ProviderRotation {
@@ -58,12 +66,41 @@ impl ProviderRotation {
             unservable: rapidhash::RapidHashMap::new(),
             productive: rapidhash::RapidHashSet::new(),
             responsive: rapidhash::RapidHashSet::new(),
+            busy: rapidhash::RapidHashSet::new(),
+            attempt_progress: false,
         }
+    }
+
+    pub(super) fn begin_attempt(&mut self) {
+        self.busy.clear();
+        self.attempt_progress = false;
     }
 
     /// The current provider delivered at least one block for this root.
     pub(super) fn record_progress(&mut self) {
         self.productive.insert(self.current().clone());
+        self.attempt_progress = true;
+    }
+
+    fn record_busy(&mut self) {
+        self.busy.insert(self.current().clone());
+    }
+
+    /// The current provider shed the request: skip it for the rest of the
+    /// attempt and rotate on without spending stall budget.
+    pub(super) fn rotate_past_busy(&mut self, diagnostics: &SyncDiagnostics) {
+        self.record_busy();
+        self.advance();
+        diagnostics.record_provider_rotation();
+        diagnostics.record_provider_busy_rotation();
+    }
+
+    pub(super) fn current_is_busy(&self) -> bool {
+        self.busy.contains(self.current())
+    }
+
+    pub(super) fn attempt_was_shed(&self) -> bool {
+        !self.busy.is_empty() && !self.attempt_progress
     }
 
     /// The current provider answered a rooted CAR request during this fetch.
@@ -129,6 +166,23 @@ mod tests {
         assert_eq!(rotation.current(), &peer("c"));
         rotation.advance();
         assert_eq!(rotation.current(), &peer("a"));
+    }
+
+    #[test]
+    fn busy_marks_last_one_attempt_and_progress_clears_the_shed_verdict() {
+        let mut rotation = ProviderRotation::new(vec![peer("a"), peer("b")]);
+        rotation.begin_attempt();
+        rotation.record_busy();
+        assert!(rotation.current_is_busy());
+        assert!(rotation.attempt_was_shed());
+        rotation.advance();
+        assert!(!rotation.current_is_busy());
+        rotation.record_progress();
+        assert!(!rotation.attempt_was_shed());
+        rotation.begin_attempt();
+        rotation.advance();
+        assert!(!rotation.current_is_busy(), "a new attempt asks a again");
+        assert!(!rotation.attempt_was_shed());
     }
 
     #[test]

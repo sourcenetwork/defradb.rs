@@ -204,6 +204,12 @@ pub struct SyncStatus {
     /// Useful CAR responses coalesced behind an existing local storage owner.
     /// These release the fetch lease without consuming provider-failure attempts.
     pub pending_dag_fetch_deferred_contention: u64,
+    /// Fetches deferred to the per-root clock because providers answered busy.
+    pub pending_dag_fetch_deferred_busy: u64,
+    /// Rooted CAR replies received from a provider that shed the request.
+    pub car_busy_responses: u64,
+    /// Rotations past a provider that answered busy, without stall budget.
+    pub provider_busy_rotations: u64,
     /// Roots whose bounded fetch exhausted all attempts/providers.
     pub pending_dag_fetch_exhausted: u64,
     /// Durable pending-DAG obligations discharged by terminal merge/mark.
@@ -1052,6 +1058,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .pending_dag_fetch_deferred_unavailable,
             pending_dag_fetch_deferred_contention: diagnostics
                 .pending_dag_fetch_deferred_contention,
+            pending_dag_fetch_deferred_busy: diagnostics.pending_dag_fetch_deferred_busy,
+            car_busy_responses: diagnostics.car_busy_responses,
+            provider_busy_rotations: diagnostics.provider_busy_rotations,
             pending_dag_fetch_exhausted: diagnostics.pending_dag_fetch_exhausted,
             pending_dag_terminal_merged: diagnostics.pending_dag_terminal_merged,
             next_pending_retry_in_ms: self.manager.next_pending_retry_in_ms(),

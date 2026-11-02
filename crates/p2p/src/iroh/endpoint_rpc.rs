@@ -110,6 +110,7 @@ enum CarFetchOutcome {
     ResponseTimedOut,
     EmptyResponse,
     HeaderOnlyCar,
+    Busy,
     EventChannelClosed,
 }
 
@@ -123,15 +124,16 @@ impl CarFetchOutcome {
             Self::Success => FetchOutcome::Success,
             Self::SizeLimited => FetchOutcome::Partial,
             Self::ResponseTimedOut => FetchOutcome::TimedOut,
+            Self::Busy => FetchOutcome::Busy,
             _ => FetchOutcome::Failed,
         }
     }
 
-    /// `reject_car_fetch` answers a capacity or rate-limit refusal empty.
+    /// A shed serve answers busy; an older peer answers the same refusal empty.
     fn failure_cause(&self) -> FetchFailureCause {
         match self {
             Self::ResponseTimedOut => FetchFailureCause::TimedOut,
-            Self::EmptyResponse => FetchFailureCause::Refused,
+            Self::EmptyResponse | Self::Busy => FetchFailureCause::Refused,
             Self::HeaderOnlyCar => FetchFailureCause::NoBlocks,
             Self::Success
             | Self::SizeLimited
@@ -156,6 +158,7 @@ impl CarFetchOutcome {
             Self::ResponseTimedOut => "response_timed_out",
             Self::EmptyResponse => "empty_response",
             Self::HeaderOnlyCar => "header_only_car",
+            Self::Busy => "busy",
             Self::EventChannelClosed => "event_channel_closed",
         }
     }
@@ -172,6 +175,7 @@ impl CarFetchOutcome {
             | Self::ResponseTimedOut
             | Self::EmptyResponse
             | Self::HeaderOnlyCar
+            | Self::Busy
             | Self::EventChannelClosed => None,
         }
     }
@@ -980,9 +984,21 @@ async fn request_car_response(
 
 /// How a CAR reply counts in the peer's fetch stats, the way a provider
 /// fetch counts it: an empty or header-only reply served nothing.
+/// Read only once no provider succeeded, when `failures` holds one entry per
+/// provider: a panicked task or any non-busy failure means the providers are
+/// not all just saturated.
+fn every_provider_shed(failures: &[CarFetchAttempt]) -> bool {
+    !failures.is_empty()
+        && failures
+            .iter()
+            .all(|attempt| matches!(attempt.outcome, CarFetchOutcome::Busy))
+}
+
 fn car_reply_outcome(car_data: &[u8]) -> FetchOutcome {
     if car_data.is_empty() {
         FetchOutcome::Failed
+    } else if crate::sync::car::is_car_busy(car_data) {
+        FetchOutcome::Busy
     } else if crate::sync::car::decode_car_oversized(car_data)
         .is_ok_and(|notices| !notices.is_empty())
     {
@@ -1161,6 +1177,7 @@ async fn try_fetch_from_provider(
     // "none returned usable blocks" WARN is suppressed when every provider
     // replies empty (issue #858 review round 3).
     let has_blocks = crate::sync::car::car_has_any_block(&car_data);
+    let busy = crate::sync::car::is_car_busy(&car_data);
     let has_notices =
         crate::sync::car::decode_car_oversized(&car_data).is_ok_and(|notices| !notices.is_empty());
 
@@ -1192,7 +1209,9 @@ async fn try_fetch_from_provider(
     }
     CarFetchAttempt {
         provider: provider.clone(),
-        outcome: if has_notices {
+        outcome: if busy {
+            CarFetchOutcome::Busy
+        } else if has_notices {
             CarFetchOutcome::SizeLimited
         } else if has_blocks {
             CarFetchOutcome::Success
@@ -1365,6 +1384,7 @@ pub(super) async fn handle_block_sync(
                 success: false,
                 cause: Some(aggregate_failure_cause(&failures)),
                 error,
+                provider_busy: every_provider_shed(&failures),
             })
             .await
             .is_err()
@@ -1405,6 +1425,32 @@ mod tests {
         assert_eq!(car_reply_outcome(&with_block), FetchOutcome::Success);
         let size_limited = encode_car_response(&[root], &[], &[(root, 1 << 30)]).unwrap();
         assert_eq!(car_reply_outcome(&size_limited), FetchOutcome::Partial);
+        let busy = crate::sync::car::encode_car_busy(&root).unwrap();
+        assert_eq!(car_reply_outcome(&busy), FetchOutcome::Busy);
+    }
+
+    #[test]
+    fn provider_busy_only_when_every_provider_shed() {
+        use CarFetchOutcome::{Busy, HeaderOnlyCar};
+        let join_error = || CarFetchOutcome::ReadFailed("join_error: panicked".to_string());
+        let cases = [
+            (vec![Busy, Busy], true),
+            (vec![Busy, HeaderOnlyCar], false),
+            (vec![Busy, join_error()], false),
+            (vec![], false),
+        ];
+        for (outcomes, busy) in cases {
+            let label = format!("{outcomes:?}");
+            let failures: Vec<_> = outcomes
+                .into_iter()
+                .enumerate()
+                .map(|(i, outcome)| CarFetchAttempt {
+                    provider: PeerId::new(format!("p{i}")),
+                    outcome,
+                })
+                .collect();
+            assert_eq!(every_provider_shed(&failures), busy, "{label}");
+        }
     }
 
     #[test]
