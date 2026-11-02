@@ -12,7 +12,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
-use k256::ecdsa::SigningKey;
+use vera_client::Secp256k1SigningKey as SigningKey;
 use vera_domain::ConsensusPublicKey;
 use vera_modules::acp::types::PolicyRecord;
 

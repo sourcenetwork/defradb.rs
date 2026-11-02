@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use k256::ecdsa::SigningKey;
 use sha2::{Digest, Sha256};
+use vera_client::Secp256k1SigningKey as SigningKey;
 
 /// Create an ES256K JWT bearer token for vera.rs ACP operations.
 ///
@@ -43,9 +43,7 @@ pub fn create_bearer_token(
 
     let message = format!("{}.{}", header, payload);
     let digest = Sha256::digest(message.as_bytes());
-    let (signature, _) = signing_key
-        .sign_prehash_recoverable(digest.as_ref())
-        .map_err(|e| BearerError::Sign(e.to_string()))?;
+    let (signature, _) = signing_key.sign_prehash_recoverable(digest.as_ref());
     let sig_b64 = base64url_encode(&signature.to_bytes());
 
     Ok(format!("{}.{}", message, sig_b64))
@@ -53,7 +51,7 @@ pub fn create_bearer_token(
 
 pub(super) fn did_from_signing_key(key: &SigningKey, compressed: bool) -> String {
     let verifying_key = key.verifying_key();
-    let encoded_key = verifying_key.to_encoded_point(compressed);
+    let encoded_key = verifying_key.to_sec1_point(compressed);
     // multicodec prefix for secp256k1-pub: 0xe7 0x01
     let mut multicodec = vec![0xe7, 0x01];
     multicodec.extend_from_slice(encoded_key.as_bytes());
@@ -74,16 +72,13 @@ pub enum BearerError {
 
     #[error("system time error: {0}")]
     Time(String),
-
-    #[error("signing error: {0}")]
-    Sign(String),
 }
 
 #[cfg(test)]
 mod tests {
     use base64::Engine;
     use k256::ecdsa::signature::hazmat::PrehashVerifier;
-    use k256::ecdsa::{Signature, SigningKey};
+    use k256::ecdsa::{Signature, VerifyingKey};
     use serde_json::Value;
 
     use super::*;
@@ -120,15 +115,15 @@ mod tests {
         let did_bytes = bs58::decode(issuer.strip_prefix("did:key:z").expect("did:key"))
             .into_vec()
             .expect("did base58");
-        let issuer_pubkey = signing_key.verifying_key().to_encoded_point(false);
+        let issuer_pubkey = signing_key.verifying_key().to_sec1_point(false);
         assert_eq!(&did_bytes[..2], &[0xe7, 0x01]);
         assert_eq!(&did_bytes[2..], issuer_pubkey.as_bytes());
 
         let sig_bytes = decoder.decode(parts[2]).expect("signature b64");
         let signature = Signature::from_bytes((&sig_bytes[..]).into()).expect("signature bytes");
         let digest = Sha256::digest(format!("{}.{}", parts[0], parts[1]).as_bytes());
-        signing_key
-            .verifying_key()
+        VerifyingKey::from_sec1_bytes(issuer_pubkey.as_bytes())
+            .expect("issuer public key")
             .verify_prehash(digest.as_ref(), &signature)
             .expect("signature verifies");
     }
