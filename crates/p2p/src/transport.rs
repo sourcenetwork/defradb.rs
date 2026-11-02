@@ -183,6 +183,8 @@ pub enum TransportEvent<ResponseToken> {
         /// Why a failed query failed; `None` on success.
         cause: Option<FetchFailureCause>,
         error: Option<String>,
+        /// Every provider shed the request with a busy reply.
+        provider_busy: bool,
     },
     BitswapBlockReceived {
         query_id: QueryId,
@@ -325,11 +327,12 @@ pub struct PeerFetchStats {
     pub delivery_rate_bytes_per_sec: u64,
     /// Lowest round-trip time seen on the connection.
     pub min_rtt_micros: Option<u64>,
-    /// Rolling shares of fetches that succeeded, timed out or came back
-    /// partial, in parts per million.
+    /// Rolling shares of fetches that succeeded, timed out, came back
+    /// partial or were shed busy, in parts per million.
     pub success_ppm: u64,
     pub timeout_ppm: u64,
     pub partial_ppm: u64,
+    pub busy_ppm: u64,
     pub in_flight: u64,
     /// Response bytes received so far by fetches still in flight.
     pub in_flight_bytes: u64,

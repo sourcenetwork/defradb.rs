@@ -210,34 +210,60 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         Ok(())
     }
 
+    /// Release a query every provider shed as busy, without recording a
+    /// provider failure.
+    pub(crate) async fn handle_bitswap_provider_busy(
+        &self,
+        query_id: crate::QueryId,
+    ) -> Result<()> {
+        if !self
+            .manager
+            .block_sync_completion_tracker()
+            .provider_busy(query_id)
+            && self.release_to_pending_clock(query_id, "every provider answered busy")
+        {
+            self.manager
+                .diagnostics
+                .record_pending_dag_fetch_deferred_busy();
+        }
+        Ok(())
+    }
+
     /// Release a query whose useful CAR response coalesced behind an existing
     /// local storage owner. This is neither transport success nor provider
     /// failure: poll-owned queries observe the explicit deferred completion,
     /// while the legacy manager-owned path returns its durable root to the
     /// authoritative pending-DAG clock.
     pub(crate) async fn handle_bitswap_deferred(&self, query_id: crate::QueryId) -> Result<()> {
-        if self.manager.block_sync_completion_tracker().defer(query_id) {
-            return Ok(());
+        if !self.manager.block_sync_completion_tracker().defer(query_id) {
+            self.release_to_pending_clock(query_id, "ingest coalesced behind a storage owner");
         }
+        Ok(())
+    }
+
+    /// Returns whether a manager-owned root went back to the pending-DAG clock.
+    fn release_to_pending_clock(&self, query_id: crate::QueryId, reason: &'static str) -> bool {
         let Some(root_cid) = self.manager.take_query_root(query_id) else {
             tracing::debug!(
                 query_id = query_id.0,
-                "Block-sync ingest deferred before its owner registered; completion latched"
+                reason,
+                "Block-sync query released before its owner registered; completion latched"
             );
-            return Ok(());
+            return false;
         };
         self.manager
             .block_sync_completion_tracker()
             .cancel(query_id);
-        // The dispatch claim already set the retry deadline. A busy local
-        // owner is not new provider availability: keep that backoff rather
-        // than immediately fetching the same DAG again.
+        // The dispatch claim already set the retry deadline. Neither reason is
+        // new provider availability: keep that backoff rather than
+        // immediately fetching the same DAG again.
         tracing::debug!(
             query_id = query_id.0,
             root_cid = %root_cid,
-            "Block-sync ingest coalesced behind a storage owner; deferring to pending-DAG clock"
+            reason,
+            "Deferring block-sync query to pending-DAG clock"
         );
-        Ok(())
+        true
     }
 }
 
@@ -651,44 +677,61 @@ mod tests {
         assert!(blockstore.has(&cid).await.unwrap());
     }
 
+    /// Neither local ingest contention nor a busy provider set may turn the
+    /// eligibility wakeup into a fetch loop or charge a provider failure.
     #[tokio::test(start_paused = true)]
-    async fn deferred_ingest_preserves_the_claimed_retry_deadline() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, _events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
+    async fn deferred_and_busy_releases_preserve_the_claimed_retry_deadline() {
+        for busy in [false, true] {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = Arc::new(DefraBlockstore::new(store, true));
+            let (coordinator, _events) =
+                SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
+                    .await
+                    .unwrap();
+            let (field, _) = create_lww_block("name");
+            let (root, block) = create_composite_block("doc123", "name", field);
+            coordinator
+                .manager()
+                .process_pushlog(
+                    &make_broadcast("doc123", root, block, "collection1"),
+                    Some("peer-1"),
+                    false,
+                    None,
+                )
                 .await
                 .unwrap();
-        let (field, _) = create_lww_block("name");
-        let (root, block) = create_composite_block("doc123", "name", field);
-        coordinator
-            .manager()
-            .process_pushlog(
-                &make_broadcast("doc123", root, block, "collection1"),
-                Some("peer-1"),
-                false,
-                None,
-            )
-            .await
-            .unwrap();
-        let now = n0_future::time::Instant::now();
-        assert!(coordinator
-            .manager()
-            .try_claim_pending_dag_dispatch(&root, now));
-        let query = QueryId(77);
-        let _ = coordinator.manager().register_query(query, root);
-        coordinator.handle_bitswap_deferred(query).await.unwrap();
-        assert!(coordinator.manager().take_query_root(query).is_none());
-        assert!(
-            !coordinator
+            let now = n0_future::time::Instant::now();
+            assert!(coordinator
                 .manager()
-                .try_claim_pending_dag_dispatch(&root, now),
-            "local ingest contention must not turn the eligibility wakeup into a fetch loop"
-        );
-        tokio::time::advance(Duration::from_secs(4)).await;
-        assert!(coordinator
-            .manager()
-            .try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+                .try_claim_pending_dag_dispatch(&root, now));
+            let query = QueryId(77);
+            let _ = coordinator.manager().register_query(query, root);
+            if busy {
+                coordinator
+                    .handle_bitswap_provider_busy(query)
+                    .await
+                    .unwrap();
+            } else {
+                coordinator.handle_bitswap_deferred(query).await.unwrap();
+            }
+            assert!(coordinator.manager().take_query_root(query).is_none());
+            let pending = coordinator.manager().pending_dags_from("peer-1");
+            assert_eq!(pending.len(), 1, "busy={busy}: the durable root is kept");
+            assert_eq!(pending[0].1.fetch_failures, 0, "busy={busy}");
+            assert!(pending[0].1.last_fetch_error.is_none());
+            let snapshot = coordinator.manager().diagnostics().snapshot();
+            assert_eq!(snapshot.pending_dag_fetch_deferred_busy, u64::from(busy));
+            assert!(
+                !coordinator
+                    .manager()
+                    .try_claim_pending_dag_dispatch(&root, now),
+                "busy={busy}: the claimed retry deadline is kept"
+            );
+            tokio::time::advance(Duration::from_secs(4)).await;
+            assert!(coordinator
+                .manager()
+                .try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+        }
     }
 
     /// #1116 stage 2 (#1112): registration and failed completion only update

@@ -33,11 +33,15 @@ fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> Com
 /// CAR, but another storage owner currently owns one of its CIDs. It releases
 /// the fetch lease without consuming provider-failure attempts; the durable
 /// per-root clock remains the only redrive owner.
+///
+/// `ProviderBusy`: every provider asked shed the request. Neither a failure
+/// nor a stalled window, so the owner rotates without spending stall budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FetchCompletion {
     Success,
     Failure(FetchFailureCause),
     Deferred,
+    ProviderBusy,
     SizeLimit(Cid),
 }
 
@@ -269,6 +273,10 @@ impl BlockSyncCompletionTracker {
 
     pub(crate) fn defer(&self, query_id: QueryId) -> bool {
         self.complete_with(query_id, FetchCompletion::Deferred)
+    }
+
+    pub(crate) fn provider_busy(&self, query_id: QueryId) -> bool {
+        self.complete_with(query_id, FetchCompletion::ProviderBusy)
     }
 
     pub(crate) fn size_limit(&self, query_id: QueryId, cid: Cid) -> bool {
