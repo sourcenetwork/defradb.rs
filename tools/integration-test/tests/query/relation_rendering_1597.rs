@@ -81,14 +81,18 @@ async fn duplicate_relation_selection_plans_one_join_test(cluster: TestCluster) 
                                         "root": {"scanNode": {}},
                                         "subType": {
                                             "selectTopNode": {
-                                                "selectNode": {
-                                                    "typeIndexJoin": {
-                                                        "typeJoinOne": {
-                                                            "root": {"scanNode": {}},
-                                                            "subType": {
-                                                                "selectTopNode": {
-                                                                    "selectNode": {
-                                                                        "scanNode": {}
+                                                "groupNode": {
+                                                    "selectNode": {
+                                                        "pipeNode": {
+                                                            "typeIndexJoin": {
+                                                                "typeJoinOne": {
+                                                                    "root": {"scanNode": {}},
+                                                                    "subType": {
+                                                                        "selectTopNode": {
+                                                                            "selectNode": {
+                                                                                "scanNode": {}
+                                                                            }
+                                                                        }
                                                                     }
                                                                 }
                                                             }

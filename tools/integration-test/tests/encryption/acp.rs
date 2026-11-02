@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use integration_test::node::RustNode;
 use integration_test::{
     for_each_runtime, generate_identity, poll_until, users_schema_with_policy, BinarySource,
     TestCluster, USER_ACP_POLICY,
@@ -160,9 +159,6 @@ for_each_runtime!(encrypted_acp, encrypted_acp_test, .with_acp_local().with_encr
 /// the peer pulls through the ACP read gate, exactly as the oracle does.
 #[tokio::test]
 async fn rust_encrypted_branchable_collection_grant_merges_on_peer() {
-    if std::env::var_os("DEFRA_RUST_BINARY").is_none() {
-        RustNode::build().expect("build rust binary");
-    }
     let binary = integration_test::rust_binary();
     let jack = generate_identity(&binary).expect("jack identity");
     let node1_id = generate_identity(&binary).expect("node1 identity");

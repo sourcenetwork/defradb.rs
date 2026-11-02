@@ -3,7 +3,7 @@
 //! them every native CRDT type, relation kind and field flag, keep the IDs
 //! they had before custom CRDT types existed (aee81b327).
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 
 const SCHEMAS: &[(&str, &str)] = &[
     (
@@ -64,7 +64,7 @@ const GOLDEN: &[(&str, &str, &str)] = &[
 #[test]
 fn native_definitions_keep_their_ids() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await.unwrap();
+        let node = Node::builder().build().await.unwrap();
         for (_, sdl) in SCHEMAS {
             node.add_collection(sdl).await.unwrap();
         }
@@ -86,7 +86,7 @@ fn native_definitions_keep_their_ids() {
             .map(|(name, id, version)| ((*name).into(), (*id).into(), (*version).into()))
             .collect();
         assert_eq!(actual, golden);
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }

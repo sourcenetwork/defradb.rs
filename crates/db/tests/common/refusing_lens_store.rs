@@ -36,7 +36,7 @@ impl TransformStore for RefusingStore {
         self.inner.add_with_id(id, config).await
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<LensModule>>> {
         self.inner.list().await
     }
 

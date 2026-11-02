@@ -1,7 +1,7 @@
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use serde_json::Value;
 
-async fn data(node: &EmbeddedNode, query: &str) -> Value {
+async fn data(node: &Node, query: &str) -> Value {
     let response = node.execute(query).await;
     assert!(!response.has_errors(), "{:?}", response.errors);
     response.data.unwrap()
@@ -27,7 +27,7 @@ fn fetches(value: &Value) -> u64 {
 #[test]
 fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Note { title: String owner: String @index }")
         .await
         .unwrap();
@@ -98,7 +98,7 @@ fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
 #[test]
 fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await.unwrap();
+        let node = Node::builder().build().await.unwrap();
         node.add_collection(
             "type RetainedNote { owner: String @index rank: Int @index body: String }",
         )
@@ -177,7 +177,7 @@ fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
         )
         .await;
         assert_eq!(live["RetainedNote"], serde_json::json!([{"rank":2}]));
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }

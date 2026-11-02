@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use super::http_client::HttpClient;
+use super::document::write_client;
 use super::{get_data_from_args, ClientContext};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Interact with Lens schema migrations
 #[derive(Args, Debug)]
@@ -23,8 +23,6 @@ pub enum LensCommand {
     Add(LensAddArgs),
     /// List lens migrations
     List(LensListArgs),
-    /// Reload all lens modules
-    Reload(LensReloadArgs),
     /// Set a migration between schema versions
     Set(LensSetArgs),
 }
@@ -65,17 +63,12 @@ pub struct LensSetArgs {
     pub file: Option<PathBuf>,
 }
 
-/// Arguments for lens reload command
-#[derive(Args, Debug)]
-pub struct LensReloadArgs {}
-
 impl LensArgs {
     /// Execute the lens command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         match &self.command {
             LensCommand::Add(args) => args.execute(ctx).await,
             LensCommand::List(args) => args.execute(ctx).await,
-            LensCommand::Reload(args) => args.execute(ctx).await,
             LensCommand::Set(args) => args.execute(ctx).await,
         }
     }
@@ -83,27 +76,19 @@ impl LensArgs {
 
 impl LensAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let config = get_data_from_args(&self.config, &self.file)?;
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let response = client.lens_add(&config).await?;
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        Ok(())
+        let lens: serde_json::Value =
+            serde_json::from_str(&get_data_from_args(&self.config, &self.file)?)?;
+        let (client, txn) = write_client(ctx)?;
+        let lens_id = client.add_lens(txn.as_deref(), &lens).await?;
+        print_lens_id(&lens_id)
     }
 }
 
 impl LensListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let result = client.lens_list().await?;
-        let lenses = result.get("lenses").unwrap_or(&result);
-        println!("{}", serde_json::to_string_pretty(lenses)?);
+        let (client, txn) = write_client(ctx)?;
+        let lenses = client.list_lenses(txn.as_deref()).await?;
+        println!("{}", serde_json::to_string_pretty(&lenses)?);
         Ok(())
     }
 }
@@ -111,55 +96,30 @@ impl LensListArgs {
 impl LensSetArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let src = self.src.as_ref().ok_or_else(|| {
-            crate::error::Error::MissingInput(
-                "source collection version ID (SRC) is required".into(),
-            )
+            Error::MissingInput("source collection version ID (SRC) is required".into())
         })?;
         let dst = self.dst.as_ref().ok_or_else(|| {
-            crate::error::Error::MissingInput(
-                "destination collection version ID (DST) is required".into(),
-            )
+            Error::MissingInput("destination collection version ID (DST) is required".into())
         })?;
-        let config = get_data_from_args(&self.config, &self.file)?;
-
-        let parsed: serde_json::Value = serde_json::from_str(&config)
-            .map_err(|e| crate::error::Error::Server(format!("invalid JSON config: {}", e)))?;
-
-        let lenses = parsed
-            .get("Lenses")
-            .or_else(|| parsed.get("lenses"))
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([]));
-
-        let body = serde_json::json!({
-            "SourceSchemaVersionID": src,
-            "DestinationSchemaVersionID": dst,
-            "Lenses": lenses,
+        let lens: serde_json::Value =
+            serde_json::from_str(&get_data_from_args(&self.config, &self.file)?)?;
+        let config = serde_json::json!({
+            "SourceCollectionVersionID": src,
+            "DestinationCollectionVersionID": dst,
+            "Lenses": lens.get("Lenses").cloned().unwrap_or_else(|| serde_json::json!([])),
         });
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let response = client
-            .lens_set_migration(&body.to_string(), ctx.tx_id.as_deref())
-            .await?;
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        Ok(())
+        let (client, txn) = write_client(ctx)?;
+        let lens_id = client.set_migration(txn.as_deref(), &config).await?;
+        print_lens_id(&lens_id)
     }
 }
 
-impl LensReloadArgs {
-    /// Execute the lens reload command
-    pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.lens_reload().await?;
-        println!("Lens modules reloaded successfully");
-        Ok(())
-    }
+fn print_lens_id(lens_id: &str) -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({ "lensId": lens_id }))?
+    );
+    Ok(())
 }
 
 #[cfg(test)]

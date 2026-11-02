@@ -1,11 +1,13 @@
 //! P2P replicator command implementations
 
 use clap::{Args, Subcommand};
-use defra_http::router::{ExplicitReplayCapabilityInput, ReplicationFilter, ReplicationFilters};
+use defra_p2p_adapter::{ExplicitReplayCapabilityInput, ReplicationFilter, ReplicationFilters};
 
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::{raw_identity_from_key_bytes, validate_identifier, ClientContext};
 use crate::error::{Error, Result};
+
+use crate::commands::client::document::write_client;
 
 /// Replicator management subcommands
 #[derive(Args, Debug)]
@@ -92,11 +94,8 @@ impl P2pReplicatorArgs {
 impl P2pReplicatorListArgs {
     /// Execute the replicator list command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let replicators = client.p2p_replicator_list().await?;
+        let (client, _) = write_client(ctx)?;
+        let replicators = client.list_replicators().await?;
         println!("{}", serde_json::to_string_pretty(&replicators)?);
         Ok(())
     }
@@ -198,7 +197,7 @@ async fn build_explicit_replay_capabilities(
         return Ok(Vec::new());
     };
 
-    let local_info = client.p2p_info().await?;
+    let local_info = client.peer_info().await?;
     let source_peer_id = local_info
         .first()
         .ok_or_else(|| Error::Server("local node has no P2P listen address".to_string()))
@@ -266,13 +265,9 @@ impl P2pReplicatorDeleteArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client
-            .p2p_replicator_delete(&self.collection, self.peer_id.as_deref())
-            .await?;
+        let (client, _) = write_client(ctx)?;
+        let peer_id = self.peer_id.as_deref().unwrap_or_default();
+        client.delete_replicator(peer_id, &self.collection).await?;
         println!(
             "Removed replicator for collections: {}",
             self.collection.join(", ")
@@ -284,11 +279,8 @@ impl P2pReplicatorDeleteArgs {
 impl P2pReplicatorForgetArgs {
     /// Execute the replicator forget command.
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.p2p_replicator_forget(&self.peer_id).await?;
+        let (client, _) = write_client(ctx)?;
+        client.delete_replicator(&self.peer_id, &[]).await?;
         println!("Forgot replicator peer: {}", self.peer_id);
         Ok(())
     }

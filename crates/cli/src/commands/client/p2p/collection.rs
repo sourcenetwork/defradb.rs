@@ -4,6 +4,8 @@ use clap::{Args, Subcommand};
 
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::{validate_identifier, ClientContext};
+
+use crate::commands::client::document::write_client;
 use crate::error::Result;
 
 /// P2P collection management subcommands
@@ -81,11 +83,8 @@ impl P2pCollectionArgs {
 impl P2pCollectionListArgs {
     /// Execute the collection list command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let collections = client.p2p_collection_list().await?;
+        let (client, _) = write_client(ctx)?;
+        let collections = client.list_p2p_collections().await?;
         println!("{}", serde_json::to_string_pretty(&collections)?);
         Ok(())
     }
@@ -103,11 +102,8 @@ impl P2pCollectionAddArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.p2p_collection_add(&collections).await?;
+        let (client, _) = write_client(ctx)?;
+        client.add_p2p_collections(&collections).await?;
         println!("Added collections to P2P: {}", collections.join(", "));
         Ok(())
     }
@@ -125,11 +121,8 @@ impl P2pCollectionDeleteArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.p2p_collection_remove(&collections).await?;
+        let (client, _) = write_client(ctx)?;
+        client.delete_p2p_collections(&collections).await?;
         println!("Removed collections from P2P: {}", collections.join(", "));
         Ok(())
     }

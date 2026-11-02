@@ -202,8 +202,17 @@ async fn generated_identity_signs_commits_unless_signing_is_disabled() {
 #[tokio::test]
 async fn generated_identity_does_not_authenticate_http_requests() {
     let root = tempfile::tempdir().unwrap();
-    let node =
-        RunningNode::start(root.path(), "secp256k1", &["--development", "--no-keyring"]).await;
+    let node = RunningNode::start(
+        root.path(),
+        "secp256k1",
+        &[
+            "--development",
+            "--no-keyring",
+            "--document-acp-type",
+            "local",
+        ],
+    )
+    .await;
     assert!(node.identity().await["DID"].is_string());
 
     let response = node

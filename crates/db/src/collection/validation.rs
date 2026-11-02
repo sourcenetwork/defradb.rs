@@ -38,7 +38,11 @@ impl Collection {
             }
 
             match doc.get(&field_def.name) {
-                Some(value) if value.is_nil() && !field_def.kind.is_nillable() => {
+                Some(value)
+                    if (value.is_nil() && !field_def.kind.is_nillable())
+                        || (matches!(field_def.kind, FieldKind::ScalarArray(array) if !array.has_nillable_elements())
+                            && has_null_element(value)) =>
+                {
                     return Err(Error::InvalidDocument(format!(
                         "null value provided for non-nillable field. Name: {}",
                         field_def.name
@@ -73,6 +77,24 @@ impl Collection {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Parse every relation ID this write sets, as Go does on write. A value
+    /// equal to the stored one is not re-parsed, so a document holding a relation
+    /// ID an earlier version accepted can still have its other fields updated.
+    pub fn validate_relation_ids(&self, doc: &Document, stored: Option<&Document>) -> Result<()> {
+        for field_def in &self.def.fields {
+            let is_relation_id = field_def.name != "_docID"
+                && matches!(field_def.kind, FieldKind::Scalar(scalar) if scalar.base_kind() == ScalarKind::DocID);
+            let Some(value @ NormalValue::String(id)) = doc.get(&field_def.name) else {
+                continue;
+            };
+            if !is_relation_id || stored.and_then(|old| old.get(&field_def.name)) == Some(value) {
+                continue;
+            }
+            DocID::from_string(id).map_err(|error| Error::InvalidDocument(error.to_string()))?;
         }
         Ok(())
     }
@@ -137,6 +159,20 @@ impl Collection {
 }
 
 /// Check if a NormalValue is compatible with a FieldKind.
+/// Whether an array value holds a null element, which a `[T!]` field refuses
+/// as Go does.
+fn has_null_element(value: &NormalValue) -> bool {
+    match value {
+        NormalValue::JsonArray(values) => values.iter().any(serde_json::Value::is_null),
+        NormalValue::NillableBoolElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableIntElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableFloat64ElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableFloat32ElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableStringElementArray(values) => values.iter().any(Option::is_none),
+        _ => false,
+    }
+}
+
 fn is_value_compatible_with_kind(value: &NormalValue, kind: &FieldKind) -> bool {
     if value.is_nil() {
         return kind.is_nillable();

@@ -4,12 +4,10 @@
 //! Go code receives opaque usize handles that map to actual node state.
 
 mod p2p;
-mod policy_store;
 mod registry;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use kovan::AtomOption;
 use storage::RegolithStore;
 use zeroize::Zeroizing;
@@ -17,81 +15,20 @@ use zeroize::Zeroizing;
 use blockstore::DefraBlockstore;
 
 pub use p2p::P2PState;
-pub use policy_store::PolicyStore;
 pub use registry::{
     graphql_subscriptions, nodes, subscriptions, GraphQLSubscriptionRegistry,
     GraphQLSubscriptionsAccess, NodeRegistry, NodesAccess, SubscriptionRegistry,
     SubscriptionsAccess, GRAPHQL_SUBSCRIPTIONS, NODES, SUBSCRIPTIONS,
 };
 
-/// Storage backend enum for FFI nodes.
-///
-/// The store `DB<FfiStore>` runs on.
-///
-/// One variant, because there is one store. It stays an enum so the FFI
-/// type aliases below keep their shape and a future variant does not
-/// churn every signature.
-#[non_exhaustive]
-pub enum FfiStore {
-    /// A regolith database, in memory or on a path.
-    Regolith(RegolithStore),
-}
-
-impl storage::corekv::private::Sealed for FfiStore {}
-
-#[async_trait]
-impl storage::Store for FfiStore {
-    fn crdts(&self) -> &storage::Crdts {
-        match self {
-            FfiStore::Regolith(store) => storage::Store::crdts(store),
-        }
-    }
-
-    async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
-        match self {
-            FfiStore::Regolith(store) => store.allocate(key, count).await,
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn transaction_stats_handle(&self) -> Option<storage::backends::TransactionStatsHandle> {
-        match self {
-            FfiStore::Regolith(store) => store.transaction_stats_handle(),
-        }
-    }
-
-    async fn new_txn(&self, readonly: bool) -> storage::Result<Box<dyn storage::Txn>> {
-        match self {
-            FfiStore::Regolith(s) => s.new_txn(readonly).await,
-        }
-    }
-
-    async fn transact_retry(
-        &self,
-        options: storage::corekv::RetryOptions,
-        attempt: storage::corekv::RetryAttempt,
-    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
-    {
-        match self {
-            FfiStore::Regolith(store) => store.transact_retry(options, attempt).await,
-        }
-    }
-
-    async fn close(&self) -> storage::Result<()> {
-        match self {
-            FfiStore::Regolith(s) => s.close().await,
-        }
-    }
-}
-
 /// Type alias for the database type used in FFI.
-pub type FfiDatabase = db::DB<FfiStore>;
+pub type FfiDatabase = db::DB<RegolithStore>;
 
 /// Type alias for the blockstore type used in FFI.
-pub type FfiBlockstore = DefraBlockstore<FfiStore>;
+pub type FfiBlockstore = DefraBlockstore<RegolithStore>;
 
 /// Type alias for the merge handler used in FFI.
-pub type FfiMergeHandler = db::merge::DbMergeHandler<FfiStore, FfiBlockstore>;
+pub type FfiMergeHandler = db::merge::DbMergeHandler<RegolithStore, FfiBlockstore>;
 
 /// Type alias for node handles (opaque to FFI callers).
 pub type NodeHandle = usize;
@@ -102,17 +39,15 @@ pub type FfiNacManager = dyn db::NacManagerApi;
 /// Type alias for subscription handles (opaque to FFI callers).
 pub type SubscriptionHandle = usize;
 
-/// Type alias for the transaction registry type used in FFI.
-pub type FfiTransactionRegistry = db::DbTransactionRegistry<FfiStore>;
-
 /// State held for each FFI node.
 pub struct NodeState {
+    /// The node itself, held so its network scope and tasks outlive the
+    /// handles copied out of it below.
+    pub _node: defra_node::Node,
     /// The database instance.
     pub database: Arc<FfiDatabase>,
-    /// Background tasks owned by the embedded node (e.g. the downsample worker).
-    pub background_tasks: Arc<embedded::BackgroundTasks>,
-    /// The transaction registry for managing explicit transactions.
-    pub txn_registry: Arc<FfiTransactionRegistry>,
+    /// Background tasks owned by the node (e.g. the downsample worker).
+    pub background_tasks: Arc<defra_node::BackgroundTasks>,
     /// The query runner for executing GraphQL queries.
     pub query_runner: Arc<dyn query::QueryExecutor>,
     /// The NAC manager for node-level access control.
@@ -121,8 +56,6 @@ pub struct NodeState {
     pub document_acp: Arc<dyn acp::DocumentACP>,
     /// The event bus for subscriptions.
     pub event_bus: Arc<dyn events::Bus>,
-    /// The policy store for DAC policies.
-    pub policy_store: Arc<PolicyStore>,
     /// Local Zanzibar policy store when document ACP is configured in local mode.
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     /// P2P state (optional - not all nodes have P2P enabled).
@@ -133,10 +66,6 @@ pub struct NodeState {
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
-    /// Vera ACP (optional - only set when using Vera for document ACP).
-    /// Used by add_dac_policy to route policy creation through Vera transactions.
-    #[cfg(feature = "vera")]
-    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     /// Query parsing and filter evaluation limits configured for this node.
     pub query_limits: query::QueryLimits,
     /// Searchable encryption key (32-byte AES-256 key). Zeroized on drop.
@@ -150,8 +79,8 @@ impl NodeState {
         self.node_identity_did.load().map(|did| did.to_string())
     }
 
-    pub fn replicator_push_options(&self) -> embedded::ReplicatorPushOptions {
-        embedded::ReplicatorPushOptions {
+    pub fn replicator_push_options(&self) -> defra_node::ReplicatorPushOptions {
+        defra_node::ReplicatorPushOptions {
             se_encryption_key: self
                 .se_encryption_key
                 .load()

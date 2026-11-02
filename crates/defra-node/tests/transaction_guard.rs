@@ -1,19 +1,19 @@
 use std::sync::Arc;
 
-use defra_node::{EmbeddedNode, QueryRequest, TransactionHandle};
+use defra_node::{Node, QueryRequest, TransactionHandle};
 
 const CREATE: &str = r#"mutation { add_Users(input: {name: "Alice"}) { _docID } }"#;
 const READ: &str = "{ Users { name } }";
 
-async fn node() -> EmbeddedNode {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+async fn node() -> Node {
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Users { name: String }")
         .await
         .unwrap();
     node
 }
 
-async fn assert_discarded(node: &EmbeddedNode, handle: &TransactionHandle) {
+async fn assert_discarded(node: &Node, handle: &TransactionHandle) {
     assert!(node
         .execute_request_in_txn(QueryRequest::new(READ), handle)
         .await
@@ -106,7 +106,7 @@ fn owned_transaction_keeps_node_signing_context() {
                 signing_authorization: None,
             },
         );
-        let node = EmbeddedNode::builder()
+        let node = Node::builder()
             .with_node_identity_did(&did)
             .build()
             .await

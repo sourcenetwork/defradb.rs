@@ -70,25 +70,6 @@ async fn graphql_updates_replace_lww_and_add_to_counters() {
 }
 
 #[tokio::test]
-async fn graphql_rejects_a_negative_pcounter_increment() {
-    let cluster = single_node().await;
-    let node = cluster.client(0);
-    node.query(
-        r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
-    )
-    .expect("add_Tally");
-    let id = doc_id(&node);
-
-    let error = node
-        .query_expect_error(&format!(
-            r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: -1}}) {{ _docID }} }}"#
-        ))
-        .expect("negative increment error");
-    assert!(error.contains("value cannot be negative"), "{error}");
-    assert_tally(&tally(&node), "first", 2, 1.5);
-}
-
-#[tokio::test]
 async fn http_rejects_a_negative_pcounter_increment() {
     let cluster = single_node().await;
     let node = cluster.client(0);

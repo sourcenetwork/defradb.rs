@@ -247,15 +247,15 @@ impl FieldCrdt for CounterField {
         Self::stored(field.name.clone(), kind_of(field)?, priority, value)
     }
 
-    /// A `Float32` counter reads as a `Float64` of its `f32` sum, as every
-    /// stored float does.
+    /// A `Float32` counter reads as the `Float32` of its sum, so it renders as
+    /// Go renders a `float32`.
     fn materialize(&self, state: Part<'_>) -> Option<NormalValue> {
         let value = state.value;
         match state.kind {
             ValueKind::Int64 => Some(NormalValue::Int(i64::from_be_bytes(value.try_into().ok()?))),
-            ValueKind::Float32 => Some(NormalValue::Float64(f64::from(f32::from_be_bytes(
+            ValueKind::Float32 => Some(NormalValue::Float32(f32::from_be_bytes(
                 value.try_into().ok()?,
-            )))),
+            ))),
             ValueKind::Float64 => Some(NormalValue::Float64(f64::from_be_bytes(
                 value.try_into().ok()?,
             ))),

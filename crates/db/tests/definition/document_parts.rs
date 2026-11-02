@@ -4,7 +4,7 @@
 //! A legacy store is made from a current one by doing what an earlier release
 //! did: no part IDs for the collection version and each document one whole
 //! CBOR value. (The fixtures main wrote are opened end to end in
-//! `crates/embedded/tests/legacy_store_rewrite.rs`.)
+//! `crates/defra-node/tests/legacy_store_rewrite.rs`.)
 
 use std::collections::BTreeMap;
 use std::path::Path;

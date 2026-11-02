@@ -50,6 +50,5 @@ pub use peers::{
     P2pInfoResponse, ShareableAddressResponse,
 };
 pub use replicators::{
-    add_replicator, list_replicators, remove_replicator, ReplicatorDeleteRequest,
-    ReplicatorInfoResponse, ReplicatorRequest,
+    add_replicator, list_replicators, remove_replicator, ReplicatorDeleteRequest, ReplicatorRequest,
 };

@@ -3,6 +3,8 @@ use async_graphql::Value as GqlValue;
 use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
 
+const SIMILARITY_DESCRIPTION: &str = "\nReturns how similar the given vector is to the specified field's value. The metric is\n whichever one the field's vector index was created with, defaulting to cosine similarity\n when the field has no vector index. Higher values are more similar for every metric.\n";
+
 /// Build the object type for a collection.
 ///
 /// Fields are added in alphabetical order to match Go's introspection output.
@@ -188,7 +190,11 @@ pub(super) fn build_collection_type(
                                 "{}__{}__SimilaritySelector",
                                 coll_name, field.name
                             )),
-                        ),
+                        )
+                        .description(format!(
+                            "Compares the given vector against the {} field.",
+                            field.name
+                        )),
                     ));
                 }
             }
@@ -196,7 +202,8 @@ pub(super) fn build_collection_type(
         sim_args.sort_by(|a, b| a.0.cmp(&b.0));
         let mut similarity_field = Field::new("SIMILARITY", TypeRef::named("Float"), |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        });
+        })
+        .description(SIMILARITY_DESCRIPTION);
         for (_, arg) in sim_args {
             similarity_field = similarity_field.argument(arg);
         }

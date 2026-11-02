@@ -18,12 +18,16 @@ impl HttpClient {
             query: query.to_string(),
             variables,
             operation_name: None,
-            txn_id,
+            txn_id: None,
         };
 
         let url = format!("{}/api/v0/graphql", self.base_url);
         let body = serde_json::to_string(&request)?;
-        let response = self.send_with_retry("POST", &url, Some(&body)).await?;
+        // Go reads the transaction from this header alone.
+        let response = match txn_id {
+            Some(id) => self.post_json_text(&url, &body, Some(&id)).await?,
+            None => self.send_with_retry("POST", &url, Some(&body)).await?,
+        };
 
         if !response.status().is_success() {
             return Err(Self::extract_error(response).await);
