@@ -252,6 +252,7 @@ class Tests(unittest.TestCase):
         self.assertLess(runner.calls.index(('stage', 'defra')), first_test)
         self.assertLess(runner.calls.index(('stage', 'verad')), first_test)
         self.assertEqual(runs['compile-native'][3]['DEFRA_RUST_BINARY'], '/staged/defra')
+        self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defra')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 8)

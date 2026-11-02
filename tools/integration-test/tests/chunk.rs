@@ -1,7 +1,5 @@
 #[path = "chunk/access_local.rs"]
 mod access_local;
-#[path = "chunk/access_vera.rs"]
-mod access_vera;
 #[path = "chunk/backup.rs"]
 mod backup;
 #[path = "chunk/concurrency.rs"]

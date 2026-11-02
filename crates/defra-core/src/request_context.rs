@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::encryption::EncryptionConfig;
 use crate::signing::SigningConfig;
+use crate::txn_id::TxnId;
 
 /// What one request carries: who acts, with which privileges and bearer
 /// token, and how its writes are encrypted and signed.
@@ -37,6 +38,7 @@ struct Fields {
     /// The DID that presented a bearer token and the token, when the request
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
+    txn: Option<TxnId>,
 }
 
 impl RequestContext {
@@ -209,6 +211,19 @@ impl RequestContext {
         }
     }
 
+    /// The explicit transaction this request runs in; `None` for a request
+    /// that commits on its own.
+    pub fn txn(&self) -> Option<TxnId> {
+        self.0.txn
+    }
+
+    /// This context running in the explicit transaction `txn`.
+    #[must_use]
+    pub fn with_txn(mut self, txn: Option<TxnId>) -> Self {
+        Arc::make_mut(&mut self.0).txn = txn;
+        self
+    }
+
     /// The DID that presented this request's bearer token and the token,
     /// when it carries a bearer.
     #[cfg(any(test, feature = "ambient"))]
@@ -237,6 +252,7 @@ impl fmt::Debug for RequestContext {
             )
             .field("batch_session", &self.0.batch_session)
             .field("creator", &self.0.creator)
+            .field("txn", &self.0.txn)
             .field(
                 "bearer_presenter",
                 &self.0.bearer.as_ref().map(|(presenter, _)| presenter),

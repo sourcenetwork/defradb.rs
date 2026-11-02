@@ -16,7 +16,7 @@ mod tests {
     use crate::node::{new_node, node_close};
     use crate::query::exec_request_with_signing;
     use crate::schema::add_schema;
-    use crate::txn::{begin_txn, commit_txn, exec_request_in_txn_with_signing};
+    use crate::txn::{begin_txn, commit_txn};
     use crate::types::{defra_free_string, NodeInitOptions};
 
     /// A signing-enabled in-memory node with a `Widget` collection.
@@ -48,6 +48,7 @@ mod tests {
         let result = unsafe {
             exec_request_with_signing(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 query.as_ptr(),
                 ptr::null(),
@@ -156,7 +157,7 @@ mod tests {
             CString::new(r#"mutation { add_Widget(input: {name: "unsigned-txn"}) { _docID } }"#)
                 .unwrap();
         let result = unsafe {
-            exec_request_in_txn_with_signing(
+            exec_request_with_signing(
                 node,
                 txn_id.as_ptr(),
                 ptr::null(),
@@ -169,7 +170,7 @@ mod tests {
         };
         assert_eq!(
             result.status, 0,
-            "exec_request_in_txn_with_signing must succeed"
+            "exec_request_with_signing in a transaction must succeed"
         );
         let json = unsafe { CStr::from_ptr(result.value).to_string_lossy().into_owned() };
         unsafe { defra_free_string(result.value) };

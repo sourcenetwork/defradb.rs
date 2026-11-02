@@ -32,6 +32,10 @@ fn test_api_config_defaults() {
         config.query_max_filter_depth,
         query::DEFAULT_MAX_FILTER_DEPTH
     );
+    assert_eq!(
+        config.query_max_fragment_nesting,
+        query::DEFAULT_MAX_FRAGMENT_NESTING
+    );
 }
 
 #[test]
@@ -231,4 +235,33 @@ fn valuelogfilesize_is_not_serialized_into_generated_config() {
         !yaml.contains("valuelogfilesize"),
         "generated config.yaml must not carry the key:\n{yaml}"
     );
+}
+
+#[test]
+fn test_api_config_reads_query_max_fragment_nesting_from_yaml() {
+    let config: ApiConfig =
+        serde_yaml::from_str("query_max_fragment_nesting: 64\n").expect("api config loads");
+    assert_eq!(config.query_max_fragment_nesting, 64);
+}
+
+#[test]
+fn test_api_config_refuses_a_fragment_nesting_the_stack_cannot_hold() {
+    let safe_max = query::max_fragment_nesting_for_stack(query::query_thread_stack_bytes());
+    for refused in [0, safe_max + 1] {
+        let config = ApiConfig {
+            query_max_fragment_nesting: refused,
+            ..ApiConfig::default()
+        };
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("--query-max-fragment-nesting"), "{error}");
+        assert!(
+            error.contains(&format!("set it from 1 to {safe_max}")),
+            "{error}"
+        );
+    }
+    let config = ApiConfig {
+        query_max_fragment_nesting: safe_max,
+        ..ApiConfig::default()
+    };
+    config.validate().unwrap();
 }

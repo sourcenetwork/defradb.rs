@@ -20,18 +20,21 @@ use axum::{
     response::Response,
     Router,
 };
-use defra_http::router::{AppStateBuilder, CollectionVersionOperations};
-use defra_http::{MockQueryExecutor, MockRestOperations, MockTransactionOperations};
+use defra_http::router::AppStateBuilder;
+use defra_http::MockRestOperations;
+use query::executor::{QueryExecutor, QueryRequest, QueryResponse};
 use query::rest::RestOperations;
+use query::{TransactionError, TransactionHandle};
 use schema::CollectionVersion;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
-/// The stored versions, covering every branch of Go's candidate switch:
-/// a collection with both an active and an inactive version, a plain active
-/// one, and a wholly inactive one.
+/// An executor over stored versions covering every branch of Go's candidate
+/// switch: a collection with both an active and an inactive version, a plain
+/// active one, and a wholly inactive one. It selects with the core's
+/// [`schema::CollectionSelector::select`].
 ///
-/// Counts which listing the handler asked for, so the cheap path can be
+/// Counts which listing each request needed, so the cheap path can be
 /// asserted rather than assumed.
 #[derive(Debug, Default)]
 struct Versions {
@@ -67,15 +70,64 @@ impl Versions {
 }
 
 #[async_trait]
-impl CollectionVersionOperations for Versions {
-    async fn get_all_collections(&self) -> Result<Vec<CollectionVersion>, String> {
-        self.all_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Self::stored())
+impl QueryExecutor for Versions {
+    fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn execute(&self, _request: QueryRequest) -> QueryResponse {
+        QueryResponse::success(serde_json::json!({}))
     }
 
-    async fn get_active_collections(&self) -> Result<Vec<CollectionVersion>, String> {
-        self.active_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Self::stored().into_iter().filter(|v| v.is_active).collect())
+    async fn schema(&self) -> query::Result<String> {
+        Ok(String::new())
+    }
+
+    async fn execute_in_txn(
+        &self,
+        request: QueryRequest,
+        _handle: &TransactionHandle,
+    ) -> QueryResponse {
+        self.execute(request).await
+    }
+
+    async fn begin_txn(&self, _readonly: bool) -> Result<TransactionHandle, TransactionError> {
+        Err(TransactionError::not_supported("no transactions here"))
+    }
+
+    async fn commit_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
+        Err(TransactionError::not_supported("no transactions here"))
+    }
+
+    async fn discard_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
+        Err(TransactionError::not_supported("no transactions here"))
+    }
+
+    /// Inside a transaction only the collection that transaction added is
+    /// visible.
+    async fn get_collections_as(
+        &self,
+        context: &defra_core::RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> Result<Vec<CollectionVersion>, TransactionError> {
+        let stored = match context.txn() {
+            Some(_) => vec![version("MockCollection", "mock-v1", "mock-c", true)],
+            None => Self::stored(),
+        };
+        let versions = match selector.needs_all_versions() {
+            true => {
+                self.all_calls.fetch_add(1, Ordering::SeqCst);
+                stored
+            }
+            false => {
+                self.active_calls.fetch_add(1, Ordering::SeqCst);
+                stored.into_iter().filter(|v| v.is_active).collect()
+            }
+        };
+        selector.select(versions).ok_or_else(|| {
+            TransactionError::operation(format!(
+                "collection not found. collection version: {}",
+                selector.version_id.clone().unwrap_or_default()
+            ))
+        })
     }
 }
 
@@ -84,17 +136,7 @@ fn router() -> Router {
 }
 
 fn router_with(versions: Arc<Versions>) -> Router {
-    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
-        .with_rest(Arc::new(MockRestOperations::new()) as Arc<dyn RestOperations>)
-        .with_collection_versions(versions)
-        .with_txn_ops(Arc::new(MockTransactionOperations::new()))
-        .build();
-    defra_http::create_router_with_state(state)
-}
-
-/// A router with no version store, so no listing can be answered.
-fn router_without_versions() -> Router {
-    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
+    let state = AppStateBuilder::new(versions, edge::testing::edge())
         .with_rest(Arc::new(MockRestOperations::new()) as Arc<dyn RestOperations>)
         .build();
     defra_http::create_router_with_state(state)
@@ -232,17 +274,6 @@ async fn an_inactive_collection_is_absent_from_narrowed_and_unnarrowed_alike() {
 
 /// Every request reads the same source, so a missing version store fails the
 /// same way for all of them rather than quietly answering from somewhere else.
-#[tokio::test]
-async fn every_request_needs_the_version_store() {
-    for query in ["", "?name=Users"] {
-        let (status, _) = get(router_without_versions(), query).await;
-        assert!(
-            status.is_server_error() || status.is_client_error(),
-            "{query:?} should fail without a version store, got {status}"
-        );
-    }
-}
-
 /// A selector Rust cannot parse must be refused, not dropped.
 #[tokio::test]
 async fn an_unparseable_selector_is_refused() {
@@ -299,17 +330,19 @@ async fn view_refresh_uses_the_same_json_selector_error() {
     assert!(error["error"].as_str().is_some(), "{error}");
 }
 
-#[tokio::test]
-async fn a_transaction_header_reads_transaction_visible_collections() {
-    assert!(names("?name=MockCollection").await.is_empty());
+#[test]
+fn a_transaction_header_reads_transaction_visible_collections() {
+    workers::block_on(async {
+        assert!(names("?name=MockCollection").await.is_empty());
 
-    let response =
-        get_response_with_txn(router(), "?name=MockCollection", Some("transaction-id")).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
-    assert_eq!(body.as_array().unwrap().len(), 1);
-    assert_eq!(body[0]["Name"], "MockCollection");
+        let response = get_response_with_txn(router(), "?name=MockCollection", Some("123")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["Name"], "MockCollection");
+    })
+    .unwrap()
 }
 
 /// Go keys the selectors off `Query().Has(..)`, so `?name=` is a name set to

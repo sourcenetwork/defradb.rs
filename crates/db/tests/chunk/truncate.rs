@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use defra_core::RequestContext;
 use document::{Document, NormalValue};
-use query::{DocMutator, Filter};
+use query::documents::Filter;
+use query::DocMutator;
 
 use crate::common::fixture::make_test_db_with_bus;
 
@@ -34,9 +36,7 @@ fn article(title: &str) -> Document {
 }
 
 fn title(value: &str) -> Filter {
-    let mut conditions = serde_json::Map::new();
-    conditions.insert("title".into(), serde_json::json!({"_eq": value}));
-    Filter::from_conditions(conditions)
+    serde_json::json!({"title": {"_eq": value}}).into()
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn truncating_the_parent_empties_its_chunks_and_chunks_alone_are_refused() {
         let created = mutator.create("Article", article("a")).await.unwrap();
 
         let err = db
-            .truncate_collection("Article__body_chunk", None)
+            .truncate_collection_as(&RequestContext::ambient(), "Article__body_chunk", None)
             .await
             .unwrap_err();
         assert!(
@@ -58,7 +58,9 @@ fn truncating_the_parent_empties_its_chunks_and_chunks_alone_are_refused() {
             "{err}"
         );
 
-        db.truncate_collection("Article", None).await.unwrap();
+        db.truncate_collection_as(&RequestContext::ambient(), "Article", None)
+            .await
+            .unwrap();
         for write in &created.derived {
             assert!(!mutator
                 .exists("Article__body_chunk", &write.doc_id)
@@ -80,7 +82,7 @@ fn a_filtered_truncate_takes_only_the_matching_parents_chunks() {
         let gone = mutator.create("Article", article("a")).await.unwrap();
         let kept = mutator.create("Article", article("b")).await.unwrap();
 
-        db.truncate_collection_with_filter("Article", title("a"), None)
+        db.truncate_collection_as(&RequestContext::ambient(), "Article", Some(&title("a")))
             .await
             .unwrap();
 
@@ -152,6 +154,49 @@ fn deleting_the_parent_deletes_its_chunk_collection() {
                 .await
                 .unwrap();
             assert!(db.get_collection("Article__body_chunk").unwrap().is_some());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn purging_a_parent_purges_its_chunks_and_chunks_alone_are_refused() {
+    workers::block_on(async {
+        let (db, _bus) = make_test_db_with_bus().await;
+        db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
+            .await
+            .unwrap();
+        let mutator = db::AutoCommitMutator::new(Arc::clone(&db));
+        let gone = mutator.create("Article", article("a")).await.unwrap();
+        let kept = mutator.create("Article", article("b")).await.unwrap();
+
+        let chunk = kept.derived[0].doc_id.clone();
+        let err = db
+            .purge_by_doc_ids("Article__body_chunk", &[chunk], None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("emptied only with its parent"),
+            "{err}"
+        );
+
+        let parent = gone.doc_id.clone();
+        let purged = db
+            .purge_by_doc_ids("Article", &[parent], None)
+            .await
+            .unwrap();
+        assert_eq!(purged, 1);
+        for write in &gone.derived {
+            assert!(!mutator
+                .exists("Article__body_chunk", &write.doc_id)
+                .await
+                .unwrap());
+        }
+        for write in &kept.derived {
+            assert!(mutator
+                .exists("Article__body_chunk", &write.doc_id)
+                .await
+                .unwrap());
         }
     })
     .unwrap()

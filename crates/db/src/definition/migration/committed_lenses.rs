@@ -134,14 +134,12 @@ impl TransformStore for CommittedLensStore {
             })
     }
 
-    async fn list(&self) -> lens::Result<RapidHashMap<String, lens::LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, Vec<lens::LensModule>>> {
         let mut modules = self.base.list().await?;
         for (id, config) in self.owed.iter() {
-            if let Some(module) = config.lens() {
-                modules
-                    .entry(id.to_string())
-                    .or_insert_with(|| module.clone());
-            }
+            modules
+                .entry(id.to_string())
+                .or_insert_with(|| config.lenses.clone());
         }
         Ok(modules)
     }

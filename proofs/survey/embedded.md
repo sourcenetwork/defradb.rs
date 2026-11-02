@@ -1,7 +1,7 @@
-# Survey: `crates/embedded/`
+# Survey: node assembly in `crates/defra-node/`
 
 ## Purpose
-Node-assembly / wiring layer. `build_with_store` composes an `EmbeddedNode` from
+Node-assembly / wiring layer. `assemble` composes an `Node` from
 components owned by other crates: transport (libp2p / iroh), `SyncCoordinator`,
 merge handler, document-ACP + NAC, KMS transport, SE query transport, and the
 replicator-retry loops. The crate is the embedded-node equivalent of the CLI's
@@ -9,10 +9,10 @@ replicator-retry loops. The crate is the embedded-node equivalent of the CLI's
 the spawn/shutdown lifecycle.
 
 ## State machines
-- **Node lifecycle / shutdown ordering** (`node.rs` `ShutdownHandle`): coordinator
+- **Node lifecycle / shutdown ordering** (`managed_p2p.rs` `ShutdownHandle`): coordinator
   shutdown -> abort background tasks -> transport shutdown -> clear identity store.
   Plain teardown; no concurrency invariant beyond ordering.
-- **Replicator retry pass** (`node_tasks.rs` `run_{libp2p,iroh}_retry_pass`): per-peer
+- **Replicator retry pass** (`libp2p_tasks.rs`, `p2p_runtime.rs` retry pass): per-peer
   `Active`/`Inactive` status + `RetryInfo` backoff `bump`/`is_due`, driven by a 2s
   ticker and an on-demand FFI trigger. This is orchestration of state owned by
   `defra-p2p-adapter` (`set_persisted_replicator_status`) and `storage` (`RetryInfo`).

@@ -27,6 +27,15 @@ pub(super) fn validate_chunks_not_modified(
     let mut errs = Vec::new();
     for new_col in &new_state.collections {
         let Some(old_col) = previous(old_state, new_col) else {
+            // Only the SDL can add chunk settings, since it also generates the chunk collection.
+            if !new_col.is_placeholder
+                && (!new_col.chunked_fields.is_empty() || new_col.chunk_of.is_some())
+            {
+                errs.push(format!(
+                    "chunk settings cannot be added by a patch. Collection: {}",
+                    new_col.name
+                ));
+            }
             continue;
         };
         if new_col.chunked_fields != old_col.chunked_fields || new_col.chunk_of != old_col.chunk_of

@@ -9,6 +9,7 @@ pub use chunk_split::{list, split};
 pub mod access;
 pub(crate) mod encryption;
 pub mod guard;
+pub(crate) mod purge;
 pub(crate) mod sync;
 pub(crate) mod user_writes;
 pub mod window;

@@ -3,7 +3,7 @@
 ## Purpose
 Reusable **embedded DefraDB node builder**. Wraps the library crates (`db`, `query`,
 `p2p`, `acp`, `events`, `defra-http`, `db-merge`, `storage`) behind a `NodeBuilder` /
-`EmbeddedNode` API so downstream binaries embed a node without duplicating wiring.
+`Node` API so downstream binaries embed a node without duplicating wiring.
 Responsibilities: construct the store + DB + query executor, optionally start the HTTP
 server and the Iroh P2P stack, and spawn background tasks. Plus crate-local search
 helpers (`dense_search`, `coding_search`, `search_chunks`) that just shape GraphQL

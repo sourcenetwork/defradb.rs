@@ -109,7 +109,7 @@ pub unsafe extern "C" fn p2p_add_replicator_with_filter(
             Err(error) => return FfiResult::error(error.message),
         };
         let filters = if filters_json.is_null() {
-            defra_http::router::ReplicationFilters::new()
+            defra_p2p_adapter::ReplicationFilters::new()
         } else {
             let filters_str = try_ffi!(require_c_str(filters_json, "filters_json"));
             match parse_filters_json(&filters_str) {

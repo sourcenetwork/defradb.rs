@@ -2,13 +2,12 @@
 
 use axum::{extract::State, Json};
 
-use super::{map_p2p_bad_request, map_p2p_internal};
-use crate::error::HttpError;
+use super::map_p2p_internal;
+use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission, P2pDocumentRequest, SyncDocumentsRequest};
-use crate::validation::validate_doc_id;
+use crate::router::{peer, AppState, NodePermission, SyncDocumentsRequest};
 
 /// List P2P documents (Go-compatible).
 ///
@@ -22,102 +21,38 @@ pub async fn list_documents(
     identity: ExtractIdentity,
 ) -> Result<Json<Vec<String>>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pDocumentList).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    let docs = p2p.get_documents().await.map_err(map_p2p_internal)?;
-
-    // Convert to flat array of document IDs (Go-compatible format)
-    let doc_ids: Vec<String> = docs.into_iter().map(|d| d.doc_id).collect();
-
-    Ok(Json(doc_ids))
+    Ok(Json(
+        peer::list_p2p_documents(&*p2p)
+            .await
+            .map_err(peer_refused)?,
+    ))
 }
 
-/// Add documents to P2P replication (Go-compatible).
-///
-/// POST /api/v0/p2p/documents
-///
-/// Go DefraDB accepts flat array of document IDs: `["doc-id-1", "doc-id-2"]`
-///
-/// Requires `P2pDocumentAdd` permission when NAC is enabled.
+/// Go's `POST /p2p/documents`.
 pub async fn add_documents(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(doc_ids): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pDocumentAdd).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    if doc_ids.is_empty() {
-        return Err(HttpError::BadRequest(
-            "at least one document is required".into(),
-        ));
-    }
-
-    // Validate doc IDs
-    for doc_id in &doc_ids {
-        validate_doc_id(doc_id)?;
-    }
-
-    // Convert flat doc IDs to P2pDocumentRequest format
-    // Note: Go DefraDB infers collection from doc ID prefix
-    let docs: Vec<P2pDocumentRequest> = doc_ids
-        .into_iter()
-        .map(|doc_id| P2pDocumentRequest {
-            collection: String::new(), // Collection inferred from doc ID
-            doc_id,
-        })
-        .collect();
-
-    p2p.add_documents(docs).await.map_err(map_p2p_bad_request)?;
-
-    // Go returns 200 OK with empty body
-    Ok(())
+    peer::add_p2p_documents(&*p2p, &doc_ids)
+        .await
+        .map_err(peer_refused)
 }
 
-/// Remove documents from P2P replication (Go-compatible).
-///
-/// DELETE /api/v0/p2p/documents
-///
-/// Go DefraDB accepts body JSON with flat array of document IDs: `["doc-id-1", "doc-id-2"]`
-///
-/// Requires `P2pDocumentDelete` permission when NAC is enabled.
+/// Go's `DELETE /p2p/documents`.
 pub async fn remove_documents(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(doc_ids): Json<Vec<String>>,
 ) -> Result<(), HttpError> {
     require_permission(&state, &identity, NodePermission::P2pDocumentDelete).await?;
-
     let p2p = bound(state.require_p2p()?, &identity.context());
-
-    if doc_ids.is_empty() {
-        return Err(HttpError::BadRequest(
-            "at least one document is required".into(),
-        ));
-    }
-
-    // Validate doc IDs
-    for doc_id in &doc_ids {
-        validate_doc_id(doc_id)?;
-    }
-
-    // Convert flat doc IDs to P2pDocumentRequest format
-    let docs: Vec<P2pDocumentRequest> = doc_ids
-        .into_iter()
-        .map(|doc_id| P2pDocumentRequest {
-            collection: String::new(),
-            doc_id,
-        })
-        .collect();
-
-    p2p.remove_documents(docs)
+    peer::delete_p2p_documents(&*p2p, &doc_ids)
         .await
-        .map_err(map_p2p_bad_request)?;
-
-    // Go returns 200 OK with empty body
-    Ok(())
+        .map_err(peer_refused)
 }
 
 /// Sync specific documents from connected peers.

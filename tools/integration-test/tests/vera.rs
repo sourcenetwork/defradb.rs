@@ -1,5 +1,9 @@
 #[path = "vera/acp_tuning.rs"]
 mod acp_tuning;
+#[path = "vera/chunk_access.rs"]
+mod chunk_access;
+#[path = "chunk/support.rs"]
+mod chunk_support;
 #[path = "vera/compartments.rs"]
 mod compartments;
 #[path = "vera/encryption_acp.rs"]

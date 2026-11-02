@@ -95,56 +95,7 @@ impl Planner {
             }
         }
 
-        // Compute ordering-only fields: nested relation fields used in ORDER BY but not in selection.
-        // These will be stripped from the final output.
-        let ordering_only_fields: Vec<(String, String)> = select
-            .order_by
-            .as_ref()
-            .map(|order_by| {
-                let mut result = Vec::new();
-                for condition in &order_by.conditions {
-                    // Look for nested relation orders like ["author", "verified"]
-                    if condition.fields.len() > 1 {
-                        let relation_field_name = &condition.fields[0];
-                        let nested_field_name = &condition.fields[1];
-
-                        // Check if there's a nested selection for this relation
-                        let nested_selection_fields: Vec<&String> = select
-                            .fields
-                            .iter()
-                            .filter_map(|f| {
-                                if let Requestable::Select(nested) = f {
-                                    if &nested.field.name == relation_field_name {
-                                        // Get selected field names from nested selection
-                                        return Some(
-                                            nested
-                                                .fields
-                                                .iter()
-                                                .filter_map(|nf| {
-                                                    if let Requestable::Field(field) = nf {
-                                                        Some(&field.name)
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                                .collect::<Vec<_>>(),
-                                        );
-                                    }
-                                }
-                                None
-                            })
-                            .flatten()
-                            .collect();
-
-                        // If nested_field is not in the selected fields, it's ordering-only
-                        if !nested_selection_fields.contains(&nested_field_name) {
-                            result.push((relation_field_name.clone(), nested_field_name.clone()));
-                        }
-                    }
-                }
-                result
-            })
-            .unwrap_or_default();
+        let ordering_only_fields = super::ordering_only::ordering_only_fields(select);
 
         // Check if GROUP BY references relation fields (needs full schema mapping for joins)
         let group_by_has_relations = select

@@ -19,6 +19,9 @@ mod join_many;
 mod join_one;
 mod mapping;
 mod multi_level;
+mod relation_paths;
+#[cfg(test)]
+mod relation_paths_tests;
 mod secondary_id;
 mod selection;
 mod selection_join;

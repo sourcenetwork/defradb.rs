@@ -249,3 +249,90 @@ fn retained_json_scalar_values_do_not_relax_other_field_kinds() {
         assert!(collection.validate_document(&doc).is_err());
     }
 }
+
+fn single_field_collection(name: &str, kind: FieldKind) -> Collection {
+    Collection::new(
+        CollectionVersion::new(
+            "Users",
+            "users_version",
+            "users_collection",
+            vec![FieldDescription::new(
+                "1",
+                name,
+                kind,
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
+}
+
+#[test]
+fn non_nillable_scalar_array_rejects_null_elements_like_go() {
+    for (kind, json) in [
+        (
+            schema::ScalarArrayKind::IntArray,
+            r#"{"values":[1,null,3]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::Float64Array,
+            r#"{"values":[1.5,null]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::Float32Array,
+            r#"{"values":[null,1.5]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::StringArray,
+            r#"{"values":["a",null]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::BoolArray,
+            r#"{"values":[true,null]}"#,
+        ),
+    ] {
+        let collection = single_field_collection("values", FieldKind::ScalarArray(kind));
+        let doc = Document::from_json_str(json, collection.schema_arc()).unwrap();
+        let error = collection.validate_document(&doc).unwrap_err().to_string();
+        assert!(
+            error.contains("null value provided for non-nillable field. Name: values"),
+            "{kind:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn relation_id_of_wrong_length_is_rejected_like_go() {
+    let collection = single_field_collection("_authorID", FieldKind::doc_id());
+    let invalid = Document::from_json_str(
+        r#"{"_authorID":"bae-35953ca-518d-9e6b-9ce6cd00eff5"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    let error = collection
+        .validate_relation_ids(&invalid, None)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(
+            "uuid: incorrect UUID length 30 in string \"35953ca-518d-9e6b-9ce6cd00eff5\""
+        ),
+        "{error}"
+    );
+
+    let valid = Document::from_json_str(
+        r#"{"_authorID":"bae-c94acbfa-dd53-40d0-97f3-29ce16c333fc"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    collection.validate_relation_ids(&valid, None).unwrap();
+
+    // Setting a malformed ID over a valid one is refused; keeping a malformed
+    // ID an earlier version stored is not, so other fields stay updatable.
+    assert!(collection
+        .validate_relation_ids(&invalid, Some(&valid))
+        .is_err());
+    collection
+        .validate_relation_ids(&invalid, Some(&invalid))
+        .unwrap();
+}

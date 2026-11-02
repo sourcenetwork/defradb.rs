@@ -66,11 +66,11 @@ async fn document_api_writes_keep_chunks_exact() {
     let client = cluster.client(0);
 
     let doc = format!(r#"{{"title": "t", "body": "{}"}}"#, body(5, "deserts"));
-    let created = client.collection_create("Article", &doc).unwrap();
-    let doc_id = created["_docID"]
+    client.collection_create("Article", &doc).unwrap();
+    let data = client.query("query { Article { _docID } }").unwrap();
+    let doc_id = data["Article"][0]["_docID"]
         .as_str()
-        .or_else(|| created[0]["_docID"].as_str())
-        .expect("document add returns the docID")
+        .expect("the added document")
         .to_string();
     assert_eq!(
         visible_hashes(&client, None),

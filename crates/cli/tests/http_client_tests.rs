@@ -49,6 +49,7 @@ fn test_graphql_response_has_errors() {
         errors: vec![GraphQLError {
             message: "error".to_string(),
         }],
+        extensions: None,
     };
     assert!(response.has_errors());
     assert_eq!(response.error_message(), "error");
@@ -59,6 +60,7 @@ fn test_graphql_response_no_errors() {
     let response = GraphQLResponse {
         data: Some(serde_json::json!({})),
         errors: vec![],
+        extensions: None,
     };
     assert!(!response.has_errors());
 }

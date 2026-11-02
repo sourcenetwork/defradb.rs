@@ -5,7 +5,6 @@ use db::database::{DbOptions, DB};
 use db::AutoCommitMutator;
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
-use query::Filter;
 use rapidhash::RapidHashSet;
 use regolith::sync::OnceCell;
 
@@ -130,14 +129,18 @@ fn a_filtered_truncate_runs_a_page_again_after_a_concurrent_write() {
         let (db, armed) = racing_node(3, rename).await;
         create(&db, "draft", "The first text.\n\nThe second text.").await;
 
-        let mut conditions = serde_json::Map::new();
-        conditions.insert("body".into(), serde_json::json!({"_like": "%first%"}));
+        let filter: query::documents::Filter =
+            serde_json::json!({"body": {"_like": "%first%"}}).into();
         // The page's last staged write, after the truncate's bookkeeping and
         // every read the page decides on.
         armed.store(44, Ordering::SeqCst);
-        db.truncate_collection_with_filter("Article", Filter::from_conditions(conditions), None)
-            .await
-            .expect("the page runs again instead of failing the truncate");
+        db.truncate_collection_as(
+            &defra_core::RequestContext::ambient(),
+            "Article",
+            Some(&filter),
+        )
+        .await
+        .expect("the page runs again instead of failing the truncate");
         assert_eq!(armed.load(Ordering::SeqCst), 0, "the title write ran");
 
         let docs = db::LensedAutoCommitFetcher::new(Arc::clone(&db));

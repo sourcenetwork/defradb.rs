@@ -1,10 +1,10 @@
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use schema::IndexedFieldDescription;
 
 #[test]
 fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type IndexedNote { node: String @index session: String @index text: String }")
         .await
         .unwrap();
@@ -60,7 +60,7 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     let explain = node.execute(&format!("query @explain {filtered}")).await;
     assert!(!explain.has_errors(), "{:?}", explain.errors);
     assert!(explain.data.unwrap().to_string().contains("node_session"));
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
 })
     .unwrap()
 }
@@ -79,7 +79,7 @@ fn scan_count(value: &serde_json::Value, name: &str) -> Option<u64> {
 #[test]
 fn ordered_index_stream_stops_after_passing_residual_rows() {
     workers::block_on(async {
-        let node = EmbeddedNode::builder().build().await.unwrap();
+        let node = Node::builder().build().await.unwrap();
         node.add_collection("type Entry { scope: String seq: Int keep: Boolean }")
             .await
             .unwrap();
@@ -127,7 +127,7 @@ fn ordered_index_stream_stops_after_passing_residual_rows() {
             (24..=25).contains(&fetched),
             "must consume rejected rows, then stop: {plan}"
         );
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }
@@ -135,7 +135,7 @@ fn ordered_index_stream_stops_after_passing_residual_rows() {
 #[test]
 fn ordered_prefix_sorts_only_the_boundary_tie_group() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type TieEntry @index(fields: [\"scope\", \"seq\"], unique: true) { scope: String seq: Int rank: Int }")
         .await.unwrap();
     let inputs = (0..120)
@@ -178,7 +178,7 @@ fn ordered_prefix_sorts_only_the_boundary_tie_group() {
         let fetched = scan_count(&plan, "docFetches").unwrap();
         assert!(fetched <= 6, "page must not materialize 122 rows: {plan}");
     }
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
     })
     .unwrap()
 }
@@ -186,7 +186,7 @@ fn ordered_prefix_sorts_only_the_boundary_tie_group() {
 #[test]
 fn partial_index_order_keeps_residual_filter_and_page_offset() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type TiePage @index(fields: [\"scope\", \"seq\"]) { scope: String @index seq: Int rank: Int keep: Boolean }").await.unwrap();
     let input = (0..120)
         .map(|i| {
@@ -221,7 +221,7 @@ fn partial_index_order_keeps_residual_filter_and_page_offset() {
         scan_count(&plan, "docFetches").unwrap() <= 8,
         "must finish two matching tie groups: {plan}"
     );
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
     })
     .unwrap()
 }
