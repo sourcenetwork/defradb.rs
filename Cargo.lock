@@ -3995,7 +3995,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "urlencoding",
  "workers",
 ]
 
