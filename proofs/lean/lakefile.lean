@@ -143,3 +143,6 @@ lean_lib CarClosureDepth where
 
 @[default_target]
 lean_lib TxnAdmission where
+
+@[default_target]
+lean_lib Arbitration where

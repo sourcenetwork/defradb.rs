@@ -226,6 +226,17 @@ pub struct SyncStatus {
     pub quarantined_pending_dags: usize,
     /// One line per tracked peer: when it was last seen and last synced.
     pub peers: Vec<crate::sync::peer_state::PeerSummary>,
+    /// Median and largest per-root estimate of a slow, unshed, incomplete
+    /// attempt's duration, over pending roots that have one.
+    pub pending_dag_attempt_ewma_median_ms: Option<u64>,
+    pub pending_dag_attempt_ewma_max_ms: Option<u64>,
+    /// Median per-root estimate of attempts that left the root as it was.
+    pub pending_dag_no_progress_median_ppm: Option<u64>,
+    /// Dispatch passes whose due order the 1 s tie-break would have changed.
+    /// Measured only: dispatch keeps due-time order.
+    pub pending_dag_tie_reorders: u64,
+    /// Per source peer: pending entries held now and over recent minutes.
+    pub pending_dag_peer_occupancy: Vec<crate::sync::arbitration::PendingPeerOccupancy>,
 }
 
 struct SyncShutdownState {
@@ -957,6 +968,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
         let peer_fetches = self.transport().fetch_stats().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
+        let estimates = self.manager.pending_dag_estimates();
         SyncStatus {
             push_backlog,
             broadcast_coalesced_total: self.runtime.broadcast_coalescer.coalesced(),
@@ -1008,6 +1020,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             pending_dag_terminal_quarantined: diagnostics.pending_dag_terminal_quarantined,
             quarantined_pending_dags: self.manager.quarantined_pending_count(),
             peers: self.access.peer_state.summaries(),
+            pending_dag_attempt_ewma_median_ms: estimates.attempt_ewma_median_ms,
+            pending_dag_attempt_ewma_max_ms: estimates.attempt_ewma_max_ms,
+            pending_dag_no_progress_median_ppm: estimates.no_progress_median_ppm,
+            pending_dag_tie_reorders: diagnostics.pending_dag_tie_reorders,
+            pending_dag_peer_occupancy: estimates.peer_occupancy,
         }
     }
 

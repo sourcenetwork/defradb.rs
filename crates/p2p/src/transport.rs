@@ -336,6 +336,10 @@ pub struct PeerFetchStats {
     pub in_flight: u64,
     /// Response bytes received so far by fetches still in flight.
     pub in_flight_bytes: u64,
+    /// Time-decayed estimates, half-life `PROVIDER_HALF_LIFE`; `None` until a
+    /// fetch has finished. Exported only: ranking still reads the ratios above.
+    #[serde(flatten)]
+    pub estimates: crate::sync::arbitration::ProviderEstimateExport,
 }
 
 /// The live connection to one peer, as far as the transport can see it.

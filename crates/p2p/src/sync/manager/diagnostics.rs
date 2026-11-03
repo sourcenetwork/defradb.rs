@@ -152,6 +152,7 @@ pub struct SyncDiagnostics {
     pending_dag_fetch_exhausted: AtomicU64,
     pending_dag_terminal_merged: AtomicU64,
     pending_dag_terminal_quarantined: AtomicU64,
+    pending_dag_tie_reorders: AtomicU64,
     dag_fetch_logs: DagFetchLogThrottles,
 }
 
@@ -187,6 +188,8 @@ pub struct SyncDiagnosticsSnapshot {
     /// Pending-DAG registrations moved to quarantine after a deterministic
     /// merge rejection (#1128). See `SyncManager::quarantine_pending_dag`.
     pub pending_dag_terminal_quarantined: u64,
+    /// Dispatch passes whose due order the tie-break would have changed.
+    pub pending_dag_tie_reorders: u64,
     /// Process-global; see [`record_gossip_decode_failure`].
     pub gossip_decode_failures: u64,
     /// Process-global recent samples captured by
@@ -235,6 +238,7 @@ impl SyncDiagnostics {
             pending_dag_terminal_quarantined: self
                 .pending_dag_terminal_quarantined
                 .load(Ordering::Relaxed),
+            pending_dag_tie_reorders: self.pending_dag_tie_reorders.load(Ordering::Relaxed),
             gossip_decode_failures: GOSSIP_DECODE_FAILURES.load(Ordering::Relaxed),
             recent_gossip_decode_failures: RECENT_GOSSIP_DECODE_FAILURES
                 .peek(|recent| recent.iter().cloned().collect()),
@@ -368,6 +372,11 @@ impl SyncDiagnostics {
 
     pub fn record_pending_dag_terminal_quarantined(&self) {
         self.pending_dag_terminal_quarantined
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_pending_dag_tie_reorder(&self) {
+        self.pending_dag_tie_reorders
             .fetch_add(1, Ordering::Relaxed);
     }
 }

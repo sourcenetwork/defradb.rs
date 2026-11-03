@@ -91,6 +91,8 @@ pub struct PendingDag {
     pub storage_blocker: Option<Cid>,
     /// Who put this entry in the map.
     pub origin: PendingOrigin,
+    /// How this root's attempts have gone; exported, read by nothing else.
+    pub estimates: crate::sync::arbitration::RootEstimates,
 }
 
 impl PendingDag {
@@ -240,6 +242,11 @@ impl PendingDagRegistry {
             }
         }
         Some(Arc::try_unwrap(dag).unwrap_or_else(|shared| PendingDag::clone(&shared)))
+    }
+
+    /// Entries held per source peer.
+    pub(super) fn held_by_source(&self) -> RapidHashMap<Arc<str>, usize> {
+        self.roots_by_source.clone()
     }
 
     pub(super) fn source_count(&self, source_peer: &str) -> usize {
