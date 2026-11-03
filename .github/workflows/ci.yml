@@ -494,6 +494,7 @@ jobs:
     timeout-minutes: 45
     env:
       DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
+      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info

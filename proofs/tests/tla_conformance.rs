@@ -54,3 +54,6 @@ mod kms;
 
 #[path = "behavioral/model_trace.rs"]
 mod model_trace;
+
+#[path = "behavioral/delivery.rs"]
+mod delivery;
