@@ -102,7 +102,6 @@ defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }
 tower = { workspace = true, features = ["util"] }
-urlencoding = "2.1"
 crypto = { path = "../crypto" }
 
 # Enable test-utils feature for integration tests

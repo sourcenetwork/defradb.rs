@@ -65,8 +65,7 @@ wasm = []
 test-suite = []
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
-uuid = { version = "1.0", features = ["v4", "js"] }
+uuid = { workspace = true, features = ["v4", "js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Catches a panicking post-commit hook; the conformance suite joins its tasks.
