@@ -49,7 +49,6 @@ rapidhash.workspace = true
 blst = "0.3"
 
 [build-dependencies]
-tonic-build = { workspace = true }
 tonic-prost-build = { workspace = true }
 
 [lints]

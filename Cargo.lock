@@ -2444,7 +2444,6 @@ dependencies = [
  "base64 0.23.1",
  "blockstore",
  "bytes",
- "cid",
  "clap",
  "crypto",
  "db",
@@ -2978,7 +2977,6 @@ dependencies = [
  "nuclei",
  "serde",
  "serde_json",
- "serial_test",
  "thiserror 2.0.21",
 ]
 
@@ -3839,7 +3837,6 @@ dependencies = [
  "datastore",
  "defra-core",
  "document",
- "ed25519-dalek 2.2.0",
  "edge",
  "events",
  "futures",
@@ -3999,7 +3996,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "urlencoding",
  "workers",
 ]
 
@@ -8844,7 +8840,6 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tonic",
- "tonic-build",
  "tonic-prost",
  "tonic-prost-build",
  "uuid",
@@ -12128,7 +12123,6 @@ dependencies = [
  "defra-core",
  "document",
  "futures",
- "getrandom 0.2.17",
  "hex",
  "kovan",
  "proptest",

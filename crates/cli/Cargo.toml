@@ -152,7 +152,6 @@ axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 defra-http = { path = "../http", features = ["test-utils"] }
 kovan.workspace = true
-cid.workspace = true
 rcgen = "0.13"
 toml = "0.9"
 tempfile = "3.17"

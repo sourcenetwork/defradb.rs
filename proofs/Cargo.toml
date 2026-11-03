@@ -28,7 +28,6 @@ thiserror.workspace = true
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "501bff096be8a3e1de1d203f4cad0f95e8d4883a" }
 edge = { path = "../crates/edge" }
 nuclei.workspace = true
-serial_test = "3"
 
 [lints]
 workspace = true

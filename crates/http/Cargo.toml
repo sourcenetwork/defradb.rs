@@ -100,7 +100,6 @@ regolith.workspace = true
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 tower = { workspace = true, features = ["util"] }
-urlencoding = "2.1"
 crypto = { path = "../crypto" }
 
 # Enable test-utils feature for integration tests
