@@ -82,13 +82,9 @@ pub(super) async fn report_observed_head(
     .await
 }
 
-/// Report a delivered head. With `clears_marker` the ack carries the job's
-/// marker generation, which completes its scope; without, it records the
-/// head and leaves the marker to the retry ladder.
 pub(super) async fn report_push_ack(
     failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
-    clears_marker: bool,
 ) -> bool {
     report_push_event(
         failure_tx,
@@ -101,7 +97,7 @@ pub(super) async fn report_push_ack(
         true,
         None,
         false,
-        job.marker_generation.filter(|_| clears_marker),
+        job.marker_generation,
         false,
     )
     .await
@@ -111,8 +107,10 @@ pub(super) async fn report_push_ack(
 /// Whether `job`'s head is the whole current frontier of its scope. A marker
 /// stands for every head registered under it, and the live path sends only
 /// the latest; with a sibling head beside this one, only the retry ladder,
-/// which sends every current head, may complete the scope. A failed lookup
-/// leaves the marker in place.
+/// which sends every current head, may complete the scope, and this head's
+/// ack is not reported: without its generation the recorder would record it
+/// unfenced, over the frontier the ladder records. A failed lookup leaves the
+/// marker in place.
 async fn is_whole_frontier<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool {
     let heads = if job.doc_id.is_empty() {
         context
@@ -344,8 +342,9 @@ where
         .await;
         JobCompletion::Failed
     } else if context.backlog.is_current(job).await {
-        let clears_marker = is_whole_frontier(context, job).await;
-        let _ = report_push_ack(&context.failure_tx, job, clears_marker).await;
+        if job.marker_generation.is_none() || is_whole_frontier(context, job).await {
+            let _ = report_push_ack(&context.failure_tx, job).await;
+        }
         JobCompletion::Succeeded
     } else {
         JobCompletion::Retired
