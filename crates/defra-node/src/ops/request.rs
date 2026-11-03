@@ -8,7 +8,7 @@ use identity::Did;
 use query::{QueryRequest, QueryResponse, TransactionError, TransactionHandle};
 use schema::CollectionVersion;
 
-use crate::{Error, Node, Result};
+use crate::{refused_transaction, Error, Node, Result};
 
 impl Node {
     /// Parse `sdl`, check it and create every collection it defines, or none,
@@ -61,12 +61,14 @@ impl Node {
     }
 
     /// Begin an explicit transaction for the caller `context` names. Requests
-    /// whose context carries the returned ID run in it.
+    /// whose context carries the returned ID run in it. Begun as a request,
+    /// as [`Node::begin_transaction`] is.
     pub async fn txn_begin(&self, context: &RequestContext, read_only: bool) -> Result<TxnId> {
+        let (runner, caller) = (Arc::clone(self.runner()), self.caller(context));
         let handle = self
-            .runner()
-            .begin_txn_as(&self.caller(context), read_only)
+            .as_request(async move { runner.begin_txn_as(&caller, read_only).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
             .map_err(transaction_error)?;
         handle.parse().map_err(|_| {
             Error::Transaction(TransactionError::Operation(format!(
@@ -75,11 +77,13 @@ impl Node {
         })
     }
 
-    /// Make the writes of transaction `id` durable and end it.
+    /// Make the writes of transaction `id` durable and end it, admitted as
+    /// [`Node::commit_transaction`] admits it.
     pub async fn txn_commit(&self, context: &RequestContext, id: TxnId) -> Result<()> {
-        self.runner()
-            .commit_txn_as(&self.caller(context), &handle(id))
+        let (runner, caller) = (Arc::clone(self.runner()), self.caller(context));
+        self.as_request(async move { runner.commit_txn_as(&caller, &handle(id)).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
             .map_err(transaction_error)
     }
 

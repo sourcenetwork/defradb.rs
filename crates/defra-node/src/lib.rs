@@ -898,6 +898,27 @@ impl Node {
             network.drain().await;
         }
 
+        // Nothing opens a transaction for the node any more: those left open
+        // (a client gone mid-transaction, a commit refused above) end while
+        // their owners' workers still run, so the store's close does not
+        // wait out its timeout for them.
+        match self
+            .txn_registry
+            .cleanup_stale_transactions(Duration::ZERO)
+            .await
+        {
+            Ok(ended) if ended.cleaned > 0 => {
+                tracing::info!(
+                    ended = ended.cleaned,
+                    "shutdown ended transactions left open"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "shutdown could not end the transactions left open");
+            }
+        }
+
         // Nothing reaches the data path any more: the worker pool finishes
         // what it admitted and stops, then the store closes.
         let closed = self.database.close().await;
