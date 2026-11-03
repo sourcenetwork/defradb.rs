@@ -37,8 +37,7 @@ fn owner_token(owner: &TestIdentity, worker: &NativeWorker) -> String {
     let message = format!("{header}.{payload}");
     let (signature, _) = key
         .underlying()
-        .sign_prehash_recoverable(&crypto::sha256(message.as_bytes()))
-        .unwrap();
+        .sign_prehash_recoverable(&crypto::sha256(message.as_bytes()));
     format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes()))
 }
 
