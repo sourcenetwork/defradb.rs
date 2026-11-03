@@ -16,6 +16,9 @@ mod acked_pending_ttl;
 #[path = "../../../../tests/unit/durable_only_repush.rs"]
 mod durable_only_repush;
 
+#[path = "../../../../tests/unit/estimators_observe_only.rs"]
+mod estimators_observe_only;
+
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
         0x55,
@@ -57,6 +60,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         merge_continuation: false,
         storage_blocker: None,
         origin: crate::sync::manager::pending::PendingOrigin::Push,
+        estimates: crate::sync::arbitration::RootEstimates::default(),
     }
 }
 

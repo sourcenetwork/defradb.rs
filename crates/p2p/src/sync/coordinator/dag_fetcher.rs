@@ -26,6 +26,7 @@ use super::fetch_failures::{FetchFailures, WindowFailure};
 use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::provider_health::ProviderHealth;
 use super::DagFetchLimiter;
+use crate::sync::arbitration::AttemptSample;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
@@ -129,6 +130,7 @@ pub(crate) enum FetchTaskEnd {
 /// reported exhausted once per `MAX_FETCH_ATTEMPTS` incomplete attempts. An
 /// attempt that keeps making progress ends at `CLOCK_ATTEMPT_QUANTUM`, at its
 /// next window boundary, keeping what it fetched (`FetchTaskEnd::Preempted`).
+/// The `AttemptSample` beside it feeds the root's estimators and nothing else.
 ///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
@@ -143,7 +145,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     context: DagFetchContext,
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
-) -> FetchTaskEnd {
+) -> (FetchTaskEnd, AttemptSample) {
     // libp2p keeps the context's order: its rooted CAR goes to the announcing
     // publisher, whose reply is what lets the dead-Bitswap repair fire.
     let health = transport
@@ -177,7 +179,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             .is_ok_and(|missing| missing.is_empty())
         {
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
-            return FetchTaskEnd::Settled;
+            return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
     }
 
@@ -193,11 +195,12 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             providers = ?providers.peers(),
             "Deferring pending DAG fetch until a qualified provider reconnects"
         );
-        return FetchTaskEnd::Settled;
+        return (FetchTaskEnd::Settled, AttemptSample::Skipped);
     }
 
     let mut remaining_count = 0usize;
     let mut last_failures = FetchFailures::default();
+    let mut sample = AttemptSample::Skipped;
     let (attempts, mut busy_retries) = if context.is_clock_owned() {
         (1, 0)
     } else {
@@ -211,7 +214,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 collection_id = %context.collection_id,
                 "Stopping fetch for superseded sender/scope head"
             );
-            return FetchTaskEnd::Settled;
+            return (FetchTaskEnd::Settled, sample);
         }
         if attempt > 1 {
             let backoff = retry_backoff(attempt);
@@ -236,11 +239,12 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     attempt = attempt,
                     "DAG fetch limiter closed, abandoning fetch"
                 );
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             };
             if !context.is_current() {
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
+            let started = Instant::now();
             let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref())
                 .with_quantum(context.is_clock_owned());
             let outcome = fetch_dag_attempt(
@@ -252,6 +256,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 &mut state,
             )
             .await;
+            sample = attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed());
             if outcome != FetchAttemptOutcome::ProviderBusy || busy_retries == 0 {
                 break outcome;
             }
@@ -264,16 +269,16 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             );
             n0_future::time::sleep(retry_backoff(attempt + 1)).await;
             if !context.is_current() {
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
         };
 
         match outcome {
-            FetchAttemptOutcome::Complete => return FetchTaskEnd::Settled,
+            FetchAttemptOutcome::Complete => return (FetchTaskEnd::Settled, sample),
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Incomplete(remaining, failures) => {
                 remaining_count = remaining;
@@ -285,13 +290,13 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     root_cid = %root_cid,
                     "CAR ingest coalesced behind a storage owner; deferring to the per-root clock"
                 );
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::ProviderBusy => {
                 diagnostics.record_pending_dag_fetch_deferred_busy();
                 debug!(root_cid = %root_cid, providers = ?providers.peers(),
                     "A provider shed the fetch as busy and none delivered; deferring to the per-root clock");
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Preempted => {
                 debug!(
@@ -299,7 +304,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     quantum_secs = CLOCK_ATTEMPT_QUANTUM.as_secs(),
                     "DAG fetch still making progress at its quantum; giving its slot back"
                 );
-                return FetchTaskEnd::Preempted;
+                return (FetchTaskEnd::Preempted, sample);
             }
         }
     }
@@ -315,7 +320,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             remaining_count,
             "Qualified providers disconnected during fetch; deferring to the per-root clock"
         );
-        return FetchTaskEnd::Settled;
+        return (FetchTaskEnd::Settled, sample);
     }
 
     // A clock-dispatched fetch made one attempt. Its root has used up a fetch
@@ -331,9 +336,9 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     remaining_count,
                     "DAG fetch incomplete; the per-root clock retries it after its backoff"
                 );
-                return FetchTaskEnd::Settled;
+                return (FetchTaskEnd::Settled, sample);
             }
-            None => return FetchTaskEnd::Settled,
+            None => return (FetchTaskEnd::Settled, sample),
         }
     } else {
         MAX_FETCH_ATTEMPTS
@@ -350,7 +355,27 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         diagnostics.dag_fetch_logs(),
     );
     drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
-    FetchTaskEnd::Settled
+    (FetchTaskEnd::Settled, sample)
+}
+
+/// What an attempt that ended with `outcome` after `elapsed` tells its root's
+/// estimators.
+fn attempt_sample(
+    outcome: &FetchAttemptOutcome,
+    elapsed: Duration,
+    progressed: bool,
+) -> AttemptSample {
+    match outcome {
+        FetchAttemptOutcome::Complete => AttemptSample::Complete,
+        FetchAttemptOutcome::ProviderBusy => AttemptSample::Shed,
+        FetchAttemptOutcome::Preempted => AttemptSample::Preempted,
+        FetchAttemptOutcome::Incomplete(..) => AttemptSample::Incomplete {
+            duration: elapsed,
+            fast: elapsed < FAST_REFUSAL,
+            progressed,
+        },
+        FetchAttemptOutcome::Deferred | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
+    }
 }
 
 /// Hang up on a connection whose Bitswap is dead while the connection lives.
