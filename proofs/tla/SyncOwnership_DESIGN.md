@@ -453,19 +453,34 @@ they have no clock to hand their blocks to, and the model keeps them as
 
 `MC_SyncOwnership_Memory.tla` runs every action of this model with the
 receiver's bounded in-memory map in front of `pending`. Only roots in memory
-(`mem`) can be claimed, and a registration needs an entry first
-(`try_insert_pending_dag`): with the map full the push is nacked (`MNack`)
-before anything is durable, so the sender keeps its marker. The durable set
-can be larger than the map: before the one restart the map holds the whole
-durable set, after it `MemCap` entries, which is an upgrade or a lower cap. The
-restart restores only what fits (`Resync`). Roots of `Dead` scopes sort first
-in key order, the worst case for a key-order sweep.
+(`mem`) can be claimed. The durable set can be larger than the map: before the
+one restart the map holds the whole durable set, after it `MemCap` entries,
+which is an upgrade or a lower cap. The restart restores only what fits
+(`Resync`). Roots of `Dead` scopes sort first in key order, the worst case for
+a key-order sweep.
 
 - As in the dispatch model, every variable is code state, mapped in the
   module header: `mem` and `conts` are the map's keys by `PendingDag::origin`,
   `dispatches` is `PendingDag::dispatches` (counted up to `RotateAfter`),
   `dueOrder` and `backoff` are `next_retry_at` by its order, and `cursor` is
   `pending_resync_cursor`.
+- Admission has two tiers (`process_block_inner`). A new head takes an entry
+  and its durable record (`MRegister`, `try_insert_pending_dag`). With the map
+  full it takes the durable record alone and is acknowledged
+  (`MRegisterDurable`); it waits like any durable root without an entry, the
+  rotation below gives it one, and it holds its place in the store's key order
+  like the others. `AdmissionMode = "MemoryOnly"`, the rule before, nacks it
+  instead (`MNack`) while the store has room: the sender keeps its marker,
+  parks the peer and offers it again, and with the map full of acknowledged
+  roots whose providers never serve, no durable root waits, nothing gives an
+  entry up, and the head is nacked for ever.
+- Each sending peer (`PeerScopes`) holds at most `DurableQuota` durable roots
+  (`durable_share_admits`, `max_persisted_pending_per_peer`, a quarter of the
+  durable cap, as the map's per-peer quota is a quarter of the map), in either
+  tier. A head that would take its peer past it is nacked; nothing else is,
+  except at the store's own cap (`ProcessNack`). With no quota
+  (`DurableQuota = Cap`) one peer's never-serving roots fill the store and
+  every other peer's head is nacked for ever.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
   (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
   entry up once its attempt has ended, while the map is full and a durable
@@ -497,7 +512,13 @@ dispatch model's scheduler-level fairness and environment assumption. Claims
 follow `next_retry_at` order (`dueOrder`), as in the dispatch model, so no
 root needs claim fairness of its own here either. Nothing is recorded only to
 state a property: the end of a continuation is the liveness property
-`LIVE_ContinuationEnds` over the map itself.
+`LIVE_ContinuationEnds` over the map itself. The quota checks add a third
+document: one peer pushes `d1` and `d2`, both dead, the other `d3`. Senders
+get fairness per peer, never per scope: each peer's retry ledger offers one of
+its dirty markers again, and the receiver answers one of that peer's hints, so
+a peer may keep offering a nacked head instead of another.
+`LIVE_WrittenHeadMerged` promises a merge only to scopes of peers with no
+never-serving scope, since such a root can hold its peer's quota.
 
 ## Checked properties
 
@@ -605,6 +626,11 @@ state a property: the end of a continuation is the liveness property
   reaches the hub's downstream replicator, despite drops, nacks and one hub
   restart. The forward and the downstream hop are fair at the scheduler level
   only.
+- `INV_DurablePeerQuota` (memory): no peer holds more durable roots than its
+  quota.
+- `LIVE_WrittenHeadMerged` (memory): every head a sender writes, on a serving
+  scope of a peer whose quota no never-serving root can hold, is merged: a
+  full map never leaves it nacked, and owned by the sender, for ever.
 
 The register-then-ack deviation from Go remains honest because `pending` is
 durable in the green policy. An optimistic acknowledgement for an in-flight
@@ -655,11 +681,14 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_Dispatch_PeerPermits.cfg` | GREEN | the clock takes a slot with a permit of the root's source peer: while d1's trickling attempt holds its spoke's only permit, d2 is passed over and the second slot goes to d3, from another peer |
 | `MC_SyncOwnership_Green_Dispatch_PullPermit.cfg` | GREEN | a pull fetch holds d1's peer's only permit: d1 is passed over, d2 takes the slot, and both heads merge across a restart |
 | `MC_SyncOwnership_Red_SlotBeforePermit.cfg` | RED | the slot is reserved first and the fetch waits for its peer's permit inside it: d2 waits in the second slot while d3, able to start at once, finds none (`INV_NoSlotWaitsForPermit`) |
-| `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a local continuation ends when it stops yielding |
+| `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a head written while the map is full is acknowledged on its durable record and merges; a local continuation ends when it stops yielding |
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ImmortalContinuation.cfg` | RED | a local continuation whose turn skips keeps its entry and is re-driven for ever (`LIVE_ContinuationEnds`) |
 | `MC_SyncOwnership_Red_UndrainedMarker.cfg` | RED | P2P stops with a transactional write's marker registration pending; the dropped task returns the commit, which is acknowledged with no marker owing its head |
+| `MC_SyncOwnership_Green_TwoTierQuota.cfg` | GREEN | one peer's two never-serving scopes and another peer's serving scope: the first peer is held at its quota of one durable root, and the other's head is acknowledged in either tier and merges |
+| `MC_SyncOwnership_Red_MemoryOnlyAdmission.cfg` | RED | a full map nacks `d2`'s head while the store has room; `d1` never gives its entry up because no durable root waits, so the head is nacked and offered again for ever and its marker stays with the sender (`LIVE_WrittenHeadMerged`) |
+| `MC_SyncOwnership_Red_NoDurablePeerQuota.cfg` | RED | no per-peer quota: one peer's two never-serving roots fill the durable store and the other peer's head is nacked for ever (`LIVE_WrittenHeadMerged`) |
 | `MC_SyncOwnership_Red_ShedAsStall.cfg` | RED | a provider that sheds a CAR request as busy is read as a stalled window, so repeated shedding by a saturated hub burns the attempt budget into terminal provider exhaustion. `ProviderShed` is the release of an attempt in which every provider shed one batch, or in which a provider shed and none delivered, including a busy hub beside alternates that do not hold the root; like `BusyExhaustion`, this guards the classification, and the provider mix itself is tested in `busy_provider_rotation.rs` |
 
 Each red configuration checks only type safety plus the property it is meant to

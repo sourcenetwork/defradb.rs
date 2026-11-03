@@ -31,7 +31,8 @@ EXTENDS Naturals, FiniteSets
 
 CONSTANTS
   Docs,         \* pushed documents (each = one head push contending for admission)
-  Cap,          \* pending-DAG capacity (SyncConfig::max_pending_dags)
+  Cap,          \* durable admission capacity: a full in-memory map still admits on the durable
+                \* record alone (two tiers and per-peer shares: MC_SyncOwnership_Memory)
   RecoveryMode  \* "Persist" | "ProcessLocal"
 
 ASSUME Docs # {}

@@ -209,7 +209,10 @@ Read this before trusting a verdict; it states the model's honest reach.
   the convergence liveness results; weak fairness on protocol actions; an **eventually
   serving provider** (strong fairness on some completed fetch) for the SyncOwnership
   dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
-  merge promise. Those results give fairness to the scheduler only, never to a root.
+  merge promise. Those results give fairness to the scheduler only, never to a root; the
+  memory results give it to each sending peer's retry ledger and to the receiver's answers
+  to that peer, never to a scope, and promise nothing to a peer whose durable quota a
+  never-serving root can hold.
   The PushBacklog liveness result assumes every running push send ends, by a reply or
   its send timeout; its dispatch fairness is the scheduler's only, never a peer's.
 - **Crypto boundary (KMS):** ECIES is abstracted — a node can use an envelope iff it is
