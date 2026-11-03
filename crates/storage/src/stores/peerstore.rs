@@ -121,6 +121,7 @@ enum PeerstoreRetryAttempt {
         expected_generation: Option<u64>,
         acked_key: Vec<u8>,
         acked: Vec<u8>,
+        schedule: super::RetrySchedule,
     },
     ClearPeer {
         peer_id: String,
@@ -287,6 +288,7 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                     expected_generation,
                     acked_key,
                     acked,
+                    schedule,
                 } => {
                     let mut io = txn.begin_attempt_io()?;
                     if io
@@ -352,12 +354,23 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                         for empty_key in empty_legacy_keys {
                             io.delete(&empty_key).await?;
                         }
-                        let retry_info_key = ReplicatorRetryIDKey::new(peer_id.as_str());
-                        if let Some(bytes) = io.get(&retry_info_key.bytes()).await? {
-                            let retry_info = super::RetryInfo::from_bytes(&bytes)
+                    }
+                    let delivered = !acked.is_empty();
+                    if !has_markers || delivered {
+                        let retry_info_key = ReplicatorRetryIDKey::new(peer_id.as_str()).bytes();
+                        if let Some(bytes) = io.get(&retry_info_key).await? {
+                            let mut retry_info = super::RetryInfo::from_bytes(&bytes)
                                 .map_err(crate::corekv::Error::Other)?;
-                            if retry_info.is_backpressure_elapsed() {
-                                io.delete(&retry_info_key.bytes()).await?;
+                            if !has_markers && retry_info.is_backpressure_elapsed() {
+                                io.delete(&retry_info_key).await?;
+                            } else if delivered
+                                && retry_info.restart_after_delivery(peer_id, schedule)
+                            {
+                                io.set(
+                                    &retry_info_key,
+                                    &retry_info.to_bytes().map_err(crate::corekv::Error::Other)?,
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -1361,7 +1374,8 @@ impl<S: Store> Peerstore<S> {
     /// `acked_heads` are the verified-current heads the peer acknowledged; in
     /// the same transaction they replace the scope's acknowledged record.
     /// Empty means nothing was delivered (the document is gone or filtered
-    /// out) and clears it.
+    /// out) and clears it. A delivery returns a peer clock that outlives the
+    /// marker to the first rung ([`super::RetryInfo::restart_after_delivery`]).
     pub async fn complete_retry_scope(
         &self,
         peer_id: &str,
@@ -1428,6 +1442,7 @@ impl<S: Store> Peerstore<S> {
             expected_generation,
             acked_key,
             acked: acked.join("\n").into_bytes(),
+            schedule: self.retry_schedule.clone(),
         }))
         .await
     }
