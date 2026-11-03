@@ -1917,6 +1917,84 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     markers.abort();
 }
 
+/// The live acknowledgement of one head clears its scope's marker, and the
+/// marker stands for every head registered under it. A hub that merged two
+/// concurrent heads of a document holds both; the ack of either leaves the
+/// other undelivered, so only an ack of the document's whole frontier may
+/// clear the marker. The retry ladder delivers the rest.
+#[nuclei::test]
+async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let composite = |priority: u64, field: &str, parents: Vec<Cid>| {
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "version1".to_string(),
+                priority,
+                status: 1,
+            }),
+            parents,
+            vec![DAGLink::new(field, cid_for(field.as_bytes()))],
+        );
+        (block.generate_cid().unwrap(), block.to_dag_cbor().unwrap())
+    };
+    let (base, _) = composite(1, "base", vec![]);
+    let (left, _) = composite(2, "left", vec![base]);
+    let (right, right_data) = composite(2, "right", vec![base]);
+
+    for (heads, clears) in [(vec![left, right], false), (vec![right], true)] {
+        let transport = NoopTransport::new();
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+            transport.clone(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(StaticHeadProvider { heads }),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        )
+        .await
+        .unwrap();
+        let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
+        coordinator.set_failure_channel(failure_tx);
+        transport
+            .create_replicator(&random_peer_id(), vec!["collection1".to_string()])
+            .await
+            .unwrap();
+
+        let (acks_tx, mut acks) = crate::rt::mpsc::unbounded_channel();
+        let recorder = crate::rt::spawn(async move {
+            while let Some(mut event) = failure_rx.recv().await {
+                if event.acknowledged {
+                    let _ = acks_tx.send(event.marker_generation);
+                }
+                if let Some(reply) = event.durable_tx.take() {
+                    let _ = reply.send(Some(event.marker_generation.unwrap_or(7)));
+                }
+            }
+        });
+        coordinator
+            .push_to_replicators(&right, &right_data, "doc1", "collection1")
+            .await
+            .unwrap();
+        let generation = timeout(Duration::from_secs(5), acks.recv())
+            .await
+            .expect("the live push is acknowledged")
+            .expect("the recorder is running");
+        assert_eq!(
+            generation.is_some(),
+            clears,
+            "an ack clears the marker only when its head is the whole frontier"
+        );
+        coordinator.shutdown().await;
+        recorder.abort();
+    }
+}
+
 #[nuclei::test(start_paused = true)]
 async fn car_authorization_timeout_preserves_only_independent_grants() {
     use ipld_core::{codec::Codec, ipld};
