@@ -9,6 +9,14 @@ enum EffectiveLinkedDelta {
     SkipField,
 }
 
+pub(super) fn indexes_field(collection: &Collection, field: &str) -> bool {
+    collection
+        .schema()
+        .indexes
+        .iter()
+        .any(|index| index.fields.iter().any(|indexed| indexed.name == field))
+}
+
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     pub(crate) async fn process_linked_field_blocks(
         &self,
@@ -161,15 +169,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ));
         }
 
-        // A field merge of an operation type writes its merged value into
-        // the document, so the index update has to start from a read before.
-        if let Some(collection) = context
-            .collection
-            .as_ref()
-            .filter(|collection| !collection.schema().indexes.is_empty())
-        {
+        // Some field merges write the merged value into the document, so the
+        // index update has to start from a read taken before them.
+        if let Some(collection) = context.collection.as_ref().filter(|collection| {
+            pending.iter().any(|(_, _, deltas)| {
+                deltas.iter().any(|effective| {
+                    effective
+                        .field()
+                        .is_some_and(|delta| indexes_field(collection, delta.field_name))
+                })
+            })
+        }) {
             let doc_id = DocID::from_string(context.doc_id_str)
-                .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
+                .map_err(|e| MergeError::MergeFailed(format!("invalid doc_id: {e}")))?;
             let before = state
                 .reads
                 .document(collection, datastore, context.doc_short_id, &doc_id)
@@ -237,7 +249,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         state.field_priorities.insert(field_name.clone(), order);
                     }
                     // An operation is an operand on the stored value.
-                    None => state.reads.wrote_document(),
+                    None => state.reads.wrote_field(
+                        &field_name,
+                        result.value.as_ref().filter(|_| result.op.is_none()),
+                    ),
                 }
                 if result.applied {
                     state.any_field_applied = true;

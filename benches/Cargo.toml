@@ -165,6 +165,10 @@ name = "merge_dag"
 harness = false
 
 [[bench]]
+name = "merge_indexed"
+harness = false
+
+[[bench]]
 name = "p2p_codec"
 harness = false
 
