@@ -54,7 +54,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
 | DiskANN back-edges in place | Lean | db-index (vector) |
-| Retry input and marker fencing | TLA+ | db, query, storage |
+| Retry input and marker fencing | TLA+ | db, query, storage, p2p-adapter |
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |
 | Peer connection observation | TLA+ / Lean | p2p |
@@ -248,7 +248,11 @@ once keys and reopen through the adapter.
 an attempt and reused after a commit conflict; its RED cases run provider work
 inside an attempt or clear the memo and repeat provider work. It does not establish that every remote ACP/Vera/KMS/decrypt call
 is lifted out of retry attempts. `RetryMarkerGeneration.tla` models generation
-compare-delete and the peer-incarnation fence on clear across forget/re-add.
+compare-delete and the peer-incarnation fence on clear across forget/re-add,
+and the sweep over several scopes: a tick reads one probe and at most one page
+after a durable cursor, and a purged document's marker is discharged with only
+the tick, the pass and the clock fair. Its mutants read every marker before the
+due check, keep the vanished marker, or never move the cursor.
 `RetryPushAdmission.tla` checks that queued pushes still own the exact live marker
 and satisfy backpressure at admission. Its mutants remove presence, generation
 or deadline checks; already-admitted external I/O is outside that boundary. Their

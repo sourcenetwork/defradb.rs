@@ -130,9 +130,12 @@ RUNS=(
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
-  "MC_RetryMarkerGeneration_Green.cfg RetryMarkerGeneration.tla GREEN" # old ack and peer clear are fenced
+  "MC_RetryMarkerGeneration_Green.cfg RetryMarkerGeneration.tla GREEN" # old ack and peer clear are fenced; a tick reads one page; a vanished document's marker is discharged
   "MC_RetryMarkerGeneration_Red_StaleAck.cfg RetryMarkerGeneration.tla RED" # stale ack erases newer registration
   "MC_RetryMarkerGeneration_Red_Readd.cfg RetryMarkerGeneration.tla RED" # stale peer clear erases re-added retry state
+  "MC_RetryMarkerGeneration_Red_UnboundedReads.cfg RetryMarkerGeneration.tla RED" # every tick loads every marker before asking whether the peer is due (INV_SweepReadsBounded)
+  "MC_RetryMarkerGeneration_Red_KeepVanished.cfg RetryMarkerGeneration.tla RED" # a purged document's marker errors on every replay and is never discharged (LIVE_VanishedMarkerDischarged)
+  "MC_RetryMarkerGeneration_Red_NoRotation.cfg RetryMarkerGeneration.tla RED" # a failing head marker is replayed first forever and the tail is never reached (LIVE_VanishedMarkerDischarged)
   "MC_RetryPushAdmission_Green.cfg RetryPushAdmission.tla GREEN"
   "MC_RetryPushAdmission_Red_NoPresence.cfg RetryPushAdmission.tla RED"
   "MC_RetryPushAdmission_Red_NoGeneration.cfg RetryPushAdmission.tla RED"

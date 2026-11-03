@@ -433,6 +433,14 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Retry input and marker fencing",
+        name: "INV_SweepReadsBounded / LIVE_VanishedMarkerDischarged — a sweep tick reads one probe and at most one page of markers; a purged document's marker is discharged under scheduler fairness only",
+        axis: Tla,
+        anchor: "crates/p2p-adapter/src/retry.rs run_retry_pass; crates/storage/src/stores/peerstore.rs get_retry_page, load_scope_markers, reschedule_retry_peer_for_incarnation; crates/db/src/merge/push_docs.rs retry_doc; crates/db/src/merge/push_docs_common.rs complete_document_retry_if_absent",
+        model_ref: "MC_RetryMarkerGeneration_{Green,Red_UnboundedReads,Red_KeepVanished,Red_NoRotation}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Retry input and marker fencing",
         name: "INV_QueuedPushOwnsLiveMarker — admission requires current durable ownership and elapsed backpressure",
         axis: Tla,
         anchor: "crates/storage/src/stores/peerstore.rs admit_push_scope; crates/p2p-adapter/src/retry.rs spawn_failure_recorder; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job",

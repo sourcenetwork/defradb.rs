@@ -34,6 +34,16 @@ pub fn decode_retry_marker_generation(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_be_bytes(generation_bytes))
 }
 
+/// The durable key of one of `peer_id`'s scope markers.
+fn scope_marker_key(peer_id: &str, scope: super::RetryScope, id: &str) -> Vec<u8> {
+    match scope {
+        super::RetryScope::Document => ReplicatorRetryDocIDKey::new(peer_id, id).bytes(),
+        super::RetryScope::CollectionCommit => {
+            ReplicatorRetryCollectionKey::new(peer_id, id).bytes()
+        }
+    }
+}
+
 /// Peerstore provides storage for peer and replication metadata
 pub struct Peerstore<S: Store> {
     store: NamespacedStore<S>,
@@ -87,13 +97,13 @@ enum PeerstoreRetryAttempt {
         peer_id: String,
         expected_incarnation: Option<u64>,
         defer_for: Option<std::time::Duration>,
-        advance_cursor_by: u64,
+        resume_after: Option<(super::RetryScope, String)>,
         schedule: super::RetrySchedule,
     },
     Restart {
         peer_id: String,
         expected_incarnation: Option<u64>,
-        advance_cursor_by: u64,
+        resume_after: Option<(super::RetryScope, String)>,
         schedule: super::RetrySchedule,
     },
     RecordHint {
@@ -155,7 +165,7 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                     peer_id,
                     expected_incarnation,
                     defer_for,
-                    advance_cursor_by,
+                    resume_after,
                     schedule,
                 } => {
                     if txn
@@ -182,7 +192,9 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                     };
                     let mut info = super::RetryInfo::from_bytes(&bytes)
                         .map_err(crate::corekv::Error::Other)?;
-                    info.advance_dispatch_cursor(*advance_cursor_by);
+                    if let Some(after) = resume_after {
+                        info.dispatch_after = Some(after.clone());
+                    }
                     if let Some(delay) = defer_for {
                         info.defer_for(*delay);
                     } else {
@@ -195,7 +207,7 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                 Attempt::Restart {
                     peer_id,
                     expected_incarnation,
-                    advance_cursor_by,
+                    resume_after,
                     schedule,
                 } => {
                     if txn
@@ -222,7 +234,9 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                     };
                     let mut info = super::RetryInfo::from_bytes(&bytes)
                         .map_err(crate::corekv::Error::Other)?;
-                    info.advance_dispatch_cursor(*advance_cursor_by);
+                    if let Some(after) = resume_after {
+                        info.dispatch_after = Some(after.clone());
+                    }
                     info.num_retries = 0;
                     info.bump_with_schedule(peer_id, schedule);
                     txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
@@ -1080,73 +1094,97 @@ impl<S: Store> Peerstore<S> {
             .await
     }
 
-    async fn load_scope_markers(&self, peer_id: &str) -> Result<Vec<super::PushRetryMarker>> {
+    /// Up to `limit` of `peer_id`'s markers in dispatch order: the scopes after
+    /// the schedule's cursor, then the rest from the start. Reads no more
+    /// marker keys than it returns, apart from empty legacy keys.
+    async fn load_scope_markers(
+        &self,
+        peer_id: &str,
+        limit: usize,
+    ) -> Result<Vec<super::PushRetryMarker>> {
+        use super::RetryScope::{CollectionCommit, Document};
         let retry_info = self
             .get_retry_info(peer_id)
             .await?
             .and_then(|bytes| super::RetryInfo::from_bytes(&bytes).ok())
             .unwrap_or_else(super::RetryInfo::new_initial);
+        let ranges = match &retry_info.dispatch_after {
+            None => vec![(Document, None, None), (CollectionCommit, None, None)],
+            Some((scope, id)) => {
+                let other = match scope {
+                    Document => CollectionCommit,
+                    CollectionCommit => Document,
+                };
+                let mut after = scope_marker_key(peer_id, *scope, id);
+                after.push(0);
+                vec![
+                    (*scope, Some(after.clone()), None),
+                    (other, None, None),
+                    (*scope, None, Some(after)),
+                ]
+            }
+        };
         let txn = self.store.new_txn(true).await?;
         let mut result = Vec::new();
-
-        let doc_prefix = ReplicatorRetryDocIDKey::peer_prefix(peer_id);
-        let expected_doc = format!("/rep/retry/doc/{peer_id}/");
-        let mut docs = txn
-            .iterator(IterOptions::new().with_prefix(doc_prefix))
-            .await?;
-        while let Some(pair) = docs.next().await? {
-            let key = String::from_utf8_lossy(&pair.key);
-            let Some(doc_id) = key.strip_prefix(&expected_doc) else {
-                continue;
+        for (scope, start, end) in ranges {
+            if result.len() >= limit {
+                break;
+            }
+            let (prefix, expected) = match scope {
+                Document => (
+                    ReplicatorRetryDocIDKey::peer_prefix(peer_id),
+                    format!("/rep/retry/doc/{peer_id}/"),
+                ),
+                CollectionCommit => (
+                    ReplicatorRetryCollectionKey::peer_prefix(peer_id),
+                    format!("/rep/retry/col/{peer_id}/"),
+                ),
             };
-            if !doc_id.is_empty() {
+            let mut opts = IterOptions::new().with_prefix(prefix);
+            if let Some(start) = start {
+                opts = opts.with_start(start);
+            }
+            if let Some(end) = end {
+                opts = opts.with_end(end);
+            }
+            let mut markers = txn.iterator(opts).await?;
+            while result.len() < limit {
+                let Some(pair) = markers.next().await? else {
+                    break;
+                };
+                let key = String::from_utf8_lossy(&pair.key);
+                let Some(id) = key.strip_prefix(&expected).filter(|id| !id.is_empty()) else {
+                    continue;
+                };
+                let (doc_id, collection_id) = match scope {
+                    Document => (id.to_string(), String::new()),
+                    CollectionCommit => (String::new(), id.to_string()),
+                };
                 result.push(super::PushRetryMarker {
-                    doc_id: doc_id.to_string(),
-                    collection_id: String::new(),
-                    scope: super::RetryScope::Document,
+                    doc_id,
+                    collection_id,
+                    scope,
                     retry_info: retry_info.clone(),
                     generation: decode_retry_marker_generation(&pair.value).unwrap_or(0),
                 });
             }
-        }
-        drop(docs);
-
-        let col_prefix = ReplicatorRetryCollectionKey::peer_prefix(peer_id);
-        let expected_col = format!("/rep/retry/col/{peer_id}/");
-        let mut cols = txn
-            .iterator(IterOptions::new().with_prefix(col_prefix))
-            .await?;
-        while let Some(pair) = cols.next().await? {
-            let key = String::from_utf8_lossy(&pair.key);
-            let Some(collection_id) = key.strip_prefix(&expected_col) else {
-                continue;
-            };
-            if !collection_id.is_empty() {
-                result.push(super::PushRetryMarker {
-                    doc_id: String::new(),
-                    collection_id: collection_id.to_string(),
-                    scope: super::RetryScope::CollectionCommit,
-                    retry_info: retry_info.clone(),
-                    generation: decode_retry_marker_generation(&pair.value).unwrap_or(0),
-                });
-            }
-        }
-        result.sort_by(|a, b| {
-            a.scope
-                .cmp(&b.scope)
-                .then_with(|| a.doc_id.cmp(&b.doc_id))
-                .then_with(|| a.collection_id.cmp(&b.collection_id))
-        });
-        if !result.is_empty() {
-            let offset = retry_info.dispatch_cursor as usize % result.len();
-            result.rotate_left(offset);
         }
         Ok(result)
     }
 
     /// Load document and collection scopes on the peer clock.
     pub async fn get_retry_documents(&self, peer_id: &str) -> Result<Vec<super::PushRetryMarker>> {
-        self.load_scope_markers(peer_id).await
+        self.load_scope_markers(peer_id, usize::MAX).await
+    }
+
+    /// Load at most `limit` scopes on the peer clock, in dispatch order. The
+    /// sweep reads one page per pass, never the peer's whole marker set.
+    pub async fn get_retry_page(
+        &self,
+        peer_id: &str,
+        limit: usize,
+    ) -> Result<Vec<super::PushRetryMarker>> {
+        self.load_scope_markers(peer_id, limit).await
     }
 
     /// Count durable scope markers and report the oldest shared peer schedule.
@@ -1202,20 +1240,20 @@ impl<S: Store> Peerstore<S> {
     /// schedule, so forget and concurrent schedule updates serialize through
     /// ordinary transaction conflicts.
     ///
-    /// `advance_cursor_by` is the number of markers the finished pass consumed:
-    /// a bounded pass must resume past them, or the tail of a large marker set
-    /// is never reached.
+    /// `resume_after` is the last marker the finished pass tried: a bounded
+    /// pass must resume past it, or the tail of a large marker set is never
+    /// reached.
     pub async fn reschedule_retry_peer(
         &self,
         peer_id: &str,
         defer_for: Option<std::time::Duration>,
-        advance_cursor_by: u64,
+        resume_after: Option<&super::PushRetryMarker>,
     ) -> Result<bool> {
         self.transact_conflicts(Box::new(PeerstoreRetryAttempt::Reschedule {
             peer_id: peer_id.to_owned(),
             expected_incarnation: None,
             defer_for,
-            advance_cursor_by,
+            resume_after: resume_after.map(super::PushRetryMarker::dispatch_key),
             schedule: self.retry_schedule.clone(),
         }))
         .await
@@ -1228,13 +1266,13 @@ impl<S: Store> Peerstore<S> {
         peer_id: &str,
         expected_incarnation: u64,
         defer_for: Option<std::time::Duration>,
-        advance_cursor_by: u64,
+        resume_after: Option<&super::PushRetryMarker>,
     ) -> Result<bool> {
         self.transact_conflicts(Box::new(PeerstoreRetryAttempt::Reschedule {
             peer_id: peer_id.to_owned(),
             expected_incarnation: Some(expected_incarnation),
             defer_for,
-            advance_cursor_by,
+            resume_after: resume_after.map(super::PushRetryMarker::dispatch_key),
             schedule: self.retry_schedule.clone(),
         }))
         .await
@@ -1243,11 +1281,15 @@ impl<S: Store> Peerstore<S> {
     /// Return a peer to the first ladder rung after a pass that delivered
     /// documents. Escalation is evidence of an unreachable peer; a peer that
     /// is taking documents has refuted it.
-    pub async fn restart_retry_peer(&self, peer_id: &str, advance_cursor_by: u64) -> Result<bool> {
+    pub async fn restart_retry_peer(
+        &self,
+        peer_id: &str,
+        resume_after: Option<&super::PushRetryMarker>,
+    ) -> Result<bool> {
         self.transact_conflicts(Box::new(PeerstoreRetryAttempt::Restart {
             peer_id: peer_id.to_owned(),
             expected_incarnation: None,
-            advance_cursor_by,
+            resume_after: resume_after.map(super::PushRetryMarker::dispatch_key),
             schedule: self.retry_schedule.clone(),
         }))
         .await
@@ -1259,12 +1301,12 @@ impl<S: Store> Peerstore<S> {
         &self,
         peer_id: &str,
         expected_incarnation: u64,
-        advance_cursor_by: u64,
+        resume_after: Option<&super::PushRetryMarker>,
     ) -> Result<bool> {
         self.transact_conflicts(Box::new(PeerstoreRetryAttempt::Restart {
             peer_id: peer_id.to_owned(),
             expected_incarnation: Some(expected_incarnation),
-            advance_cursor_by,
+            resume_after: resume_after.map(super::PushRetryMarker::dispatch_key),
             schedule: self.retry_schedule.clone(),
         }))
         .await

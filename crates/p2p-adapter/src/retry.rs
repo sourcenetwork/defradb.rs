@@ -411,22 +411,32 @@ pub async fn run_retry_pass<S, T>(
         };
         let peer_id = PeerId::new(peer_id_str.clone());
 
-        let markers = match retry_documents(peerstore, &peer_id_str).await {
+        // Every marker shares the peer clock, so one marker answers both
+        // "any work?" and "due?". The page is read only for a due peer.
+        let probe = match retry_page(peerstore, &peer_id_str, 1).await {
+            Ok(probe) => probe,
+            Err(error) => {
+                tracing::debug!(peer_id = %peer_id, %error, "failed to load retry markers");
+                continue;
+            }
+        };
+        if probe.is_empty() {
+            finish_peer(peerstore, &peer_id_str, incarnation, true).await;
+            continue;
+        }
+        if !probe.iter().any(|marker| {
+            marker.retry_info.is_backpressure_elapsed() && (force || marker.retry_info.is_due())
+        }) {
+            continue;
+        }
+        let markers = match retry_page(peerstore, &peer_id_str, MAX_MARKERS_PER_PEER_PASS + 1).await
+        {
             Ok(markers) => markers,
             Err(error) => {
                 tracing::debug!(peer_id = %peer_id, %error, "failed to load retry markers");
                 continue;
             }
         };
-        if markers.is_empty() {
-            finish_peer(peerstore, &peer_id_str, incarnation, true).await;
-            continue;
-        }
-        if !markers.iter().any(|marker| {
-            marker.retry_info.is_backpressure_elapsed() && (force || marker.retry_info.is_due())
-        }) {
-            continue;
-        }
 
         // A failed peer observation is not evidence of disconnection. Keeping
         // the peer's state and letting the replay below charge the configured
@@ -438,7 +448,8 @@ pub async fn run_retry_pass<S, T>(
                 // second two-second redial clock for markers whose ladder has not
                 // elapsed yet. `run_reconnect_pass` owns the off-ladder probing.
                 redial_replicator(peerstore, transport, &peer_id).await;
-                let _ = reschedule(peerstore, &peer_id_str, incarnation, None, 1).await;
+                let _ =
+                    reschedule(peerstore, &peer_id_str, incarnation, None, markers.first()).await;
                 finish_peer(peerstore, &peer_id_str, incarnation, false).await;
                 continue;
             }
@@ -455,6 +466,7 @@ pub async fn run_retry_pass<S, T>(
         let mut failed = false;
         let mut progressed = false;
         let mut deferred = false;
+        let mut last_tried = None;
         let mut report = PassReport::default();
         for marker in &markers {
             // A live push can install a newer peer deadline while this pass
@@ -481,6 +493,7 @@ pub async fn run_retry_pass<S, T>(
                 break;
             }
             attempted += 1;
+            last_tried = Some(marker);
             if marker.retry_info.not_before_unix > 0 {
                 tracing::debug!(target: "p2p::retry_after", peer_id = %peer_id,
                     retry_not_before_unix = marker.retry_info.not_before_unix,
@@ -528,10 +541,14 @@ pub async fn run_retry_pass<S, T>(
                             .and_then(|bytes| storage::stores::RetryInfo::from_bytes(&bytes).ok())
                             .is_some_and(|info| !info.is_backpressure_elapsed());
                         let delay = if hinted { Duration::ZERO } else { delay };
-                        let attempts = attempted as u64;
-                        let _ =
-                            reschedule(peerstore, &peer_id_str, incarnation, Some(delay), attempts)
-                                .await;
+                        let _ = reschedule(
+                            peerstore,
+                            &peer_id_str,
+                            incarnation,
+                            Some(delay),
+                            last_tried,
+                        )
+                        .await;
                         // Receiver saturation applies to the peer, not just
                         // this scope.  Rotate the durable cursor and wait for
                         // the paced sweep rather than hammering adjacent docs.
@@ -560,20 +577,24 @@ pub async fn run_retry_pass<S, T>(
             // was unreachable.
             let _ = if progressed {
                 let peer = peer_id_str.clone();
-                let attempts = attempted as u64;
+                let resume_after = last_tried.cloned();
                 peerstore
                     .run(move |peerstore| async move {
                         peerstore
-                            .restart_retry_peer_for_incarnation(&peer, incarnation, attempts)
+                            .restart_retry_peer_for_incarnation(
+                                &peer,
+                                incarnation,
+                                resume_after.as_ref(),
+                            )
                             .await
                     })
                     .await
             } else {
-                reschedule(peerstore, &peer_id_str, incarnation, None, attempted as u64).await
+                reschedule(peerstore, &peer_id_str, incarnation, None, last_tried).await
             };
         }
 
-        let complete = retry_documents(peerstore, &peer_id_str)
+        let complete = retry_page(peerstore, &peer_id_str, 1)
             .await
             .is_ok_and(|markers| markers.is_empty());
         finish_peer(peerstore, &peer_id_str, incarnation, complete).await;
@@ -625,14 +646,15 @@ async fn retry_peers<S: storage::corekv::Store + 'static>(
         .await
 }
 
-/// `peer`'s retry markers.
-async fn retry_documents<S: storage::corekv::Store + 'static>(
+/// Up to `limit` of `peer`'s retry markers, in dispatch order.
+async fn retry_page<S: storage::corekv::Store + 'static>(
     peerstore: &storage::stores::Peerstore<S>,
     peer: &str,
+    limit: usize,
 ) -> storage::corekv::Result<Vec<storage::stores::PushRetryMarker>> {
     let peer = peer.to_owned();
     peerstore
-        .run(move |peerstore| async move { peerstore.get_retry_documents(&peer).await })
+        .run(move |peerstore| async move { peerstore.get_retry_page(&peer, limit).await })
         .await
 }
 
@@ -647,19 +669,26 @@ async fn retry_info<S: storage::corekv::Store + 'static>(
         .await
 }
 
-/// Moves `peer`'s schedule on by `attempts` rungs, or to `delay`.
+/// Moves `peer`'s schedule on one rung, or to `delay`, and its cursor past
+/// `resume_after`.
 async fn reschedule<S: storage::corekv::Store + 'static>(
     peerstore: &storage::stores::Peerstore<S>,
     peer: &str,
     incarnation: u64,
     delay: Option<Duration>,
-    attempts: u64,
+    resume_after: Option<&storage::stores::PushRetryMarker>,
 ) -> storage::corekv::Result<bool> {
     let peer = peer.to_owned();
+    let resume_after = resume_after.cloned();
     peerstore
         .run(move |peerstore| async move {
             peerstore
-                .reschedule_retry_peer_for_incarnation(&peer, incarnation, delay, attempts)
+                .reschedule_retry_peer_for_incarnation(
+                    &peer,
+                    incarnation,
+                    delay,
+                    resume_after.as_ref(),
+                )
                 .await
         })
         .await
@@ -762,6 +791,10 @@ where
 mod sweep_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "retry_sweep_reads_tests.rs"]
+mod sweep_reads_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "retry_pool_tests.rs"]
 mod pool_tests;
 
@@ -772,6 +805,10 @@ mod hint_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/selected_push_cancel.rs"]
 mod selected_push_cancel_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/retry_terminal.rs"]
+mod terminal_tests;
 
 #[cfg(test)]
 mod tests {
@@ -806,7 +843,7 @@ mod tests {
     }
 
     impl FakeTransport {
-        fn new(connected: Option<Vec<PeerId>>) -> Self {
+        pub(super) fn new(connected: Option<Vec<PeerId>>) -> Self {
             Self {
                 peer_id: PeerId::new("local".to_string()),
                 pubkey: vec![1],
@@ -1150,7 +1187,7 @@ mod tests {
         seed_retry_peer(&peerstore, "peer-a", "/memory/1").await;
         // Stand in for a configured second rung far out on the ladder.
         peerstore
-            .reschedule_retry_peer("peer-a", Some(std::time::Duration::from_secs(3600)), 0)
+            .reschedule_retry_peer("peer-a", Some(std::time::Duration::from_secs(3600)), None)
             .await
             .unwrap();
         let before = next_retry_unix(&peerstore, "peer-a").await;
