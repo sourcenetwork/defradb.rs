@@ -341,3 +341,70 @@ async fn a_demoted_lone_exhaustion_is_summarized_for_its_provider_set() {
         "1 roots exhausted against other-peer in last 60s: refused=1"
     );
 }
+
+/// A fetch the per-root clock dispatched makes one attempt, so a stalled
+/// root comes back to the fetcher once per attempt. Terminal exhaustion (the
+/// counter, the ERROR line, the summary and the dead-Bitswap hang-up) still
+/// happens once per `MAX_FETCH_ATTEMPTS` incomplete attempts of the root.
+#[tokio::test(start_paused = true)]
+async fn clock_dispatches_report_exhaustion_once_per_attempt_budget() {
+    use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    let (manager, _events) = crate::sync::manager::SyncManager::new(
+        blockstore.clone(),
+        Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        crate::sync::manager::SyncConfig::default(),
+    );
+    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    pending_store
+        .put(
+            &root_cid,
+            &PersistedPendingDag {
+                doc_id: "doc-id".to_string(),
+                collection_id: "collection-id".to_string(),
+                head_priority: None,
+                creator: "creator-id".to_string(),
+                source_peer: Some("dead-peer".to_string()),
+                alternate_providers: vec!["alt-peer".to_string()],
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+            },
+        )
+        .await
+        .unwrap();
+    manager.install_pending_dag_store(pending_store).await;
+    assert_eq!(manager.resync_persisted_pending_dags().await, 1);
+    let diagnostics = diagnostics();
+
+    for dispatch in 1..=2 * MAX_FETCH_ATTEMPTS {
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        poll_fetch_dag(
+            transport.clone(),
+            blockstore.clone(),
+            event_tx,
+            root_cid,
+            context
+                .clone()
+                .with_pending_lease(manager.pending_dag_lease(root_cid)),
+            DagFetchLimiter::new(2),
+            diagnostics.clone(),
+        )
+        .await;
+        assert_eq!(
+            diagnostics.snapshot().pending_dag_fetch_exhausted,
+            u64::from(dispatch / MAX_FETCH_ATTEMPTS),
+            "after clock dispatch {dispatch}"
+        );
+    }
+
+    assert_eq!(
+        transport.disconnected_peers(),
+        vec!["dead-peer".to_string(); 2],
+        "the publisher is hung up on once per exhausted budget"
+    );
+}

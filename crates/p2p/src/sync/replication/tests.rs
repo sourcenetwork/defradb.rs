@@ -2153,13 +2153,28 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
         .await
         .unwrap();
 
-    dispatch_one_pending_dag_fetch(&coordinator, &mut events, root_cid).await;
-
-    // The fetch spends its whole budget against the dead queue and hangs up.
+    // Each clock dispatch makes one attempt against the dead queue. Once the
+    // root has spent a fetch budget over those attempts, it hangs up.
     let deadline = n0_future::time::Instant::now() + Duration::from_secs(1200);
     while transport_handle.disconnected_peers().is_empty()
         && n0_future::time::Instant::now() < deadline
     {
+        if coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now())
+            == 1
+        {
+            let needs_fetch = events.recv().await.expect("DagNeedsFetch");
+            let started = process_event(
+                &coordinator,
+                needs_fetch,
+                &TestMergeHandler::new(true, false),
+                &ReplicationConfig::default(),
+            )
+            .await;
+            assert!(matches!(
+                started,
+                ReplicationResult::DagFetchStarted { root_cid: cid } if cid == root_cid
+            ));
+        }
         n0_future::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(

@@ -122,13 +122,18 @@ pub struct SyncManager<B: Blockstore> {
     /// Resync invocation counter; every Nth sweep skips the steady-state
     /// early-exit so store/set desyncs from rare races self-heal.
     pub(super) pending_resync_tick: std::sync::atomic::AtomicUsize,
+
+    /// The durable root the last resync sweep admitted. The next sweep
+    /// resumes after it in key order, so roots past the in-memory cap take
+    /// turns instead of the first keys being admitted every time.
+    pub(super) pending_resync_cursor: kovan::Atom<Option<Cid>>,
 }
 
 /// Every Nth resync is a forced full sweep (see `pending_resync_tick`).
 pub(super) const PENDING_RESYNC_FORCED_TICK: usize = 10;
 
-/// Durable registrations may outlive their in-memory pending entries (TTL
-/// eviction frees the map slot but not the recovery obligation), so the
+/// Durable registrations may outlive their in-memory pending entries (a
+/// restart empties the map and the resync restores what fits), so the
 /// durable set gets its own, larger cap. At the cap new registrations are
 /// nacked, the hub refuses the obligation while the pusher still owns its
 /// retry state, rather than accepting and later dropping it.
@@ -230,6 +235,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
+            pending_resync_cursor: kovan::Atom::new(None),
         };
 
         (manager, event_rx)
@@ -287,10 +293,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Sole successful-merge cleanup transition; the caller has established
     /// the durable merged bit. A root with a durable record has a pending
-    /// entry from its registration until this cleanup or a TTL eviction, or
-    /// is in the view, so this pays a transaction only for such a root; one
-    /// missed after an eviction is discharged by the resync sweep, which
-    /// finds it merged.
+    /// entry from its registration until this cleanup or a restart, or is in
+    /// the view, so this pays a transaction only for such a root; one missed
+    /// after a restart is discharged by the resync sweep, which finds it
+    /// merged.
     pub(super) async fn discharge_merged(&self, cid: &Cid) {
         let had_entry = self.clear_pending_dag(cid);
         if (had_entry || self.persisted.contains(cid)) && self.remove_persisted_pending(cid).await {

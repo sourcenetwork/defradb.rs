@@ -703,16 +703,13 @@ fn test_secp256k1_high_s_signature_is_rejected() {
     let high_s_signature = to_high_s_der(low_s_signature);
     assert_ne!(high_s_signature, low_s_signature);
     let high_s = Signature::from_der(&high_s_signature).expect("High-S variant should parse");
-    assert!(
-        high_s.normalize_s().is_some(),
+    assert_ne!(
+        high_s,
+        high_s.normalize_s(),
         "Derived signature must actually be high-S"
     );
     assert_eq!(
-        high_s
-            .normalize_s()
-            .expect("High-S signature should normalize")
-            .to_der()
-            .as_bytes(),
+        high_s.normalize_s().to_der().as_bytes(),
         low_s_signature,
         "High-S variant should be mathematically equivalent to the known-valid low-S signature"
     );
