@@ -714,6 +714,94 @@ fn encrypting_a_chunked_field_encrypts_its_chunk_list() {
 }
 
 #[test]
+fn encrypting_a_chunked_field_encrypts_its_chunk_documents_and_reads_back() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.set_kms(Arc::new(CountingKms::default()));
+        db.create_collections_atomic(
+            query::parse_sdl("type Article { title: String body: String @chunk(maxChars: 64) }")
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let schema = db
+            .get_collection("Article")
+            .unwrap()
+            .unwrap()
+            .schema()
+            .clone();
+        let text = "A secret first paragraph.\n\nA secret second paragraph that is longer.";
+        let mutator = AutoCommitMutator::new(Arc::clone(&db));
+        let article = |body: &str| {
+            let mut doc = Document::new(schema.clone());
+            doc.set("title", "t").unwrap();
+            doc.set("body", body).unwrap();
+            doc
+        };
+
+        set_encryption_config(Some(EncryptionConfig {
+            encrypt_doc: false,
+            encrypt_fields: vec!["body".to_string()],
+        }));
+        let encrypted = mutator.create("Article", article(text)).await.unwrap();
+        set_encryption_config(None);
+        let plain = mutator
+            .create("Article", article("A plain paragraph."))
+            .await
+            .unwrap();
+
+        assert!(encrypted.derived.len() > 1);
+        for write in &encrypted.derived {
+            assert!(
+                field_encrypted(&db, &write.commit_block, "text").await,
+                "the text of {} is stored in the clear",
+                write.doc_id
+            );
+        }
+        for write in &plain.derived {
+            assert!(!field_encrypted(&db, &write.commit_block, "text").await);
+        }
+
+        let runner = query::QueryRunner::with_provider(
+            db::LensedAutoCommitFetcher::new(Arc::clone(&db)),
+            db::DbCollectionProvider::new_arc(Arc::clone(&db)),
+        );
+        let response = query::QueryExecutor::execute(
+            &runner,
+            query::QueryRequest::new("query { Article__body_chunk { text hash } }"),
+        )
+        .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        let mut texts: Vec<&str> = data["Article__body_chunk"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk["text"].as_str().unwrap())
+            .collect();
+        texts.sort_unstable();
+        let mut expected: Vec<String> = encrypted
+            .derived
+            .iter()
+            .chain(&plain.derived)
+            .map(|write| {
+                write
+                    .document
+                    .as_ref()
+                    .and_then(|doc| doc.get("text"))
+                    .and_then(document::NormalValue::as_str)
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(texts, expected);
+        assert!(expected.iter().any(|t| t.contains("secret")));
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_plain_update_of_encrypted_text_encrypts_its_new_chunks() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
