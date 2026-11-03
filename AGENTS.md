@@ -318,11 +318,13 @@ that is correct but slower is not done.
 - The network runtime runs on cores of its own: sized from the machine, it holds a quarter of the cores alone in the
   workers' CPU ledger (`workers::EdgeCores`), one nuclei shard pinned per CPU there, and a worker pool plans its
   workers on the rest and sets nothing aside for it. Network threads and database workers never share a core.
-- No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included.
+- No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included, except `edge`, which owns
+  the one tokio runtime `edge::compat` enters.
   Every socket of ours is a nuclei socket: `net` serves HTTP and gRPC, is the HTTP client in place of reqwest, and is
   the gRPC channel tonic's clients run on; libp2p's TCP and WebSocket transports run on nuclei sockets too. A library
   that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
-  inside `edge::compat`, the one place async-compat's tokio runtime is entered.
+  inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
+  and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - The data-path crates (storage, datastore, blockstore, crdt, defra-core, query, db, acp, zanzibar, lens, kms, events)
   do not depend on a runtime: no `nuclei::spawn`, `nuclei::time`, `block_on`, and no tokio at all.
 - A network task that panics fails only its own request. Every completion a worker waits on carries a deadline.

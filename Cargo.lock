@@ -4527,6 +4527,7 @@ dependencies = [
  "nuclei",
  "regolith 0.2.3",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "workers",
 ]

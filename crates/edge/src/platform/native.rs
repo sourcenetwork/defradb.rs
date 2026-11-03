@@ -222,9 +222,15 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
         Some(threads) => workers::EdgeCores::unpinned(threads),
         None => workers::EdgeCores::reserve(),
     });
-    crate::compat::start_runtime();
     crate::compat::start_timer();
-    let runtime = match build(&config, &cores) {
+    let compat = match crate::compat::runtime(&config, &cores) {
+        Ok(compat) => compat,
+        Err(error) => {
+            let _ = started.send(Err(EdgeError::Start(error.to_string())));
+            return;
+        }
+    };
+    let runtime = match build(&config, &cores, compat.handle()) {
         Ok(runtime) => runtime,
         Err(error) => {
             let _ = started.send(Err(EdgeError::Start(error.to_string())));
@@ -254,6 +260,7 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
     let drained = runtime.block_on(drain_gate(&gate, &shared, config.drain));
     shared.stop();
     runtime.shutdown_timeout(config.stop);
+    compat.shutdown_timeout(config.stop);
 
     if drained.is_complete() {
         tracing::info!("network runtime stopped");
@@ -282,22 +289,29 @@ impl Drop for Finished<'_> {
 /// own, nuclei pins each shard to one CPU of the calling thread's affinity,
 /// which [`workers::EdgeCores::reserve`] set to them, and every thread that
 /// starts later pins itself there. The hook keeps `cores`, so the hold
-/// outlives the last thread placed through it.
-fn build(config: &EdgeConfig, cores: &Arc<workers::EdgeCores>) -> std::io::Result<Runtime> {
-    let mut builder = Runtime::builder()
+/// outlives the last thread placed through it. Each thread also enters the
+/// edge's tokio runtime, so [`Compat`](crate::Compat) futures polled on it
+/// run there.
+fn build(
+    config: &EdgeConfig,
+    cores: &Arc<workers::EdgeCores>,
+    compat: &tokio::runtime::Handle,
+) -> std::io::Result<Runtime> {
+    let builder = Runtime::builder()
         .thread_name(config.thread_name.clone())
         .worker_threads(cores.threads())
         .pin_workers(cores.is_pinned())
         .local_spawn_margin(0);
     let hook = config.on_thread_start.clone();
-    if cores.is_pinned() || hook.is_some() {
-        let cores = Arc::clone(cores);
-        builder = builder.on_thread_start(move || {
+    let cores = Arc::clone(cores);
+    let compat = compat.clone();
+    builder
+        .on_thread_start(move || {
             cores.pin_current_thread();
+            crate::compat::enter(&compat);
             if let Some(hook) = &hook {
                 hook();
             }
-        });
-    }
-    builder.build()
+        })
+        .build()
 }

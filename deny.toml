@@ -119,7 +119,7 @@ allow = []
 # server feature (not one this workspace enables by default) uses it.
 # No crate of ours depends on tokio: nuclei runs our tasks, timers and
 # sockets, and a library that needs a tokio runtime is reached through
-# `edge::compat` (async-compat, `edge`'s alone). tokio stays in the graph only
+# `edge::compat` (async-compat and the runtime it enters, `edge`'s alone). tokio stays in the graph only
 # under the third-party crates listed here, which bring it themselves.
 # Regenerate the third-party list with
 #   cargo tree -i tokio -e normal,build --depth 1 --workspace --target all
@@ -129,7 +129,7 @@ deny = [
     { name = "tokio", wrappers = [
         # Third-party crates that are themselves network or runtime code.
         "acp-light-client", "async-compat", "axum", "backon", "commonware-macros",
-        "commonware-runtime", "commonware-utils", "defra-harness", "h2", "hickory-proto",
+        "commonware-runtime", "commonware-utils", "defra-harness", "edge", "h2", "hickory-proto",
         "hickory-resolver", "hyper", "hyper-rustls", "hyper-tls", "hyper-util", "if-watch",
         "igd-next", "iroh", "iroh-dns", "iroh-relay", "jsonrpsee-client-transport",
         "jsonrpsee-core", "jsonrpsee-server", "libp2p-quic", "libp2p-swarm", "libp2p-tcp",

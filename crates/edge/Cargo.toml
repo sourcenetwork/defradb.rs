@@ -33,6 +33,8 @@ tracing.workspace = true
 nuclei.workspace = true
 # The way into a library that needs a tokio runtime (`compat`).
 async-compat.workspace = true
+# The runtime `compat` enters, owned by the edge on its cores.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time"] }
 # libp2p's timer thread, started on the edge's cores.
 futures-timer = "3"
 
