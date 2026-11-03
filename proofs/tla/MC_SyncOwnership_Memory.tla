@@ -10,25 +10,49 @@
 \* Who acts: the sender (writes and hints), the receiver (registration, the
 \* clock's claims, fetches, merges, the resync sweep that admits durable roots
 \* into memory, a root giving its entry up), a pull-sync merge and its turns,
-\* and a one-shot restart.
+\* the wall clock (a root's retry deadline passes), and a one-shot restart.
 \*
 \* What must never happen:
-\*   - the map holds more than it may (INV_MemoryBounded), or an entry for a
-\*     root nobody acknowledged as durable (INV_MemoryHoldsDurable);
+\*   - the map holds more than it may (INV_MemoryBounded), or an acknowledged
+\*     entry without its durable record (INV_MemoryHoldsDurable);
 \*   - a local continuation is an acknowledged obligation
 \*     (INV_ContinuationsNeverAcked): ending one must drop nothing a sender
 \*     relies on;
-\*   - a continuation whose turn ended without yielding again keeps its entry
-\*     (INV_StoppedContinuationReleased);
 \* and what must eventually happen:
 \*   - every acknowledged durable head whose provider serves is merged, even
 \*     when roots whose providers never serve were restored first and fill
 \*     the map (LIVE_DurableRootMerged);
-\*   - every local continuation leaves the map (LIVE_ContinuationEnds).
+\*   - every local continuation leaves the map (LIVE_ContinuationEnds): a turn
+\*     that does not yield again ends it.
 \* A local continuation is not promised a merge: no sender waits on it, and a
 \* non-terminal skip waits on an input the receiver does not own, so the
 \* LIVE_AckedRootMerged promise of MC_SyncOwnership_Dispatch does not extend
 \* to it. Its blocks stay local and the next pull or push starts it again.
+\*
+\* Every variable this module adds is state the code holds, and the
+\* properties are stated over it; nothing is recorded only to state them.
+\* Variables and the code state each one is (crates/p2p/src/sync):
+\*   mem        the keys of the in-memory pending map (SyncManager::pending_dags,
+\*              manager/process/mod.rs:86) whose PendingDag::origin (manager/pending.rs:93)
+\*              is Push or Restored.
+\*   conts      the keys of the same map whose origin is LocalContinuation.
+\*   dispatches PendingDag::dispatches (manager/pending.rs:83): claims since the entry
+\*              was made, counted by try_claim_pending_dag_dispatch
+\*              (manager/process/pending_dag.rs:562), up to RotateAfter, the
+\*              PENDING_ROTATE_AFTER_DISPATCHES (manager/pending.rs:353) that
+\*              PendingDagLease::finish_attempt (pending_dag.rs:80) compares it with.
+\*   dueOrder   the entries in mem whose PendingDag::next_retry_at (manager/pending.rs:81)
+\*              has passed, in next_retry_at order (due_pending_dag_retries,
+\*              pending_dag.rs:722); next_retry_at is kept by its order, the only
+\*              thing the code reads from it.
+\*   backoff    the entries in mem whose next_retry_at is still ahead. Which passes
+\*              next is left open (BecomeDue), so every order of deadlines is explored.
+\*   cursor     SyncManager::pending_resync_cursor (manager/process/mod.rs): the root
+\*              the last sweep admitted, as its place in key order (0: none).
+\* SyncOwnership's pending is the durable record set (PersistedView,
+\* pending_store/view.rs:27), flights the fetch reservation
+\* (SyncShutdownHandle's pending_dag_fetch_tasks, coordinator/mod.rs), and crashed
+\* the restart.
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   manager/process/pending_dag.rs  try_insert_pending_dag (the map's cap; overflow nacks),
@@ -45,6 +69,7 @@ EXTENDS SyncOwnership, Sequences
 
 CONSTANTS
   MemCap,          \* in-memory entries after the restart; before it the map held the whole durable set
+  RotateAfter,     \* dispatches after which a root may give its entry up (PENDING_ROTATE_AFTER_DISPATCHES)
   Dead,            \* scopes whose provider never serves a fetch: busy, stalled or gone, for good
   PullScopes,      \* scopes the receiver also pulls, whose merges can leave a local continuation
   OverflowMode,    \* "Rotate" | "KeyOrder": the bug, the sweep restarts at the first key | "Retained": the bug, a root never gives its entry up
@@ -52,6 +77,8 @@ CONSTANTS
 
 \* The map holds at least one entry and no more than the durable cap.
 ASSUME MemCap \in Nat /\ MemCap >= 1 /\ MemCap <= Cap
+\* A root gives its entry up only after at least one dispatch.
+ASSUME RotateAfter \in Nat /\ RotateAfter >= 1
 \* Never-serving providers belong to some of the scopes.
 ASSUME Dead \subseteq Scopes
 \* The receiver pulls some of the scopes.
@@ -64,15 +91,15 @@ ASSUME ContinuationMode \in {"EndOnStop", "Retained"}
 ASSUME RegisterMode = "Durable"
 
 VARIABLES
-  mem,     \* acknowledged roots with an in-memory entry (pushed or restored)
-  turns,   \* roots in memory with no fetch running, in the order they became claimable
-  spent,   \* roots in memory with an attempt that failed since they were admitted
-  cursor,  \* position in KeyOrder of the root the last resync admitted (0: none yet)
-  conts,   \* local pull-sync continuations, each holding an in-memory entry
-  stopped  \* roots whose last continuation turn ended without yielding again
+  mem,        \* entries of acknowledged roots (origin Push or Restored)
+  conts,      \* entries of local pull-sync continuations (origin LocalContinuation)
+  dispatches, \* [Roots -> 0..RotateAfter], claims since the entry was made
+  dueOrder,   \* entries in mem whose next_retry_at has passed, in next_retry_at order
+  backoff,    \* entries in mem whose next_retry_at is still ahead
+  cursor      \* the root the last resync admitted, as its place in key order (0: none)
 
 \* The variables this module adds.
-mvars == <<mem, turns, spent, cursor, conts, stopped>>
+mvars == <<mem, conts, dispatches, dueOrder, backoff, cursor>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, mvars>>
 
@@ -85,6 +112,8 @@ Before(q, r) == {q[i] : i \in 1..((CHOOSE k \in 1..Len(q) : q[k] = r) - 1)}
 \* The roots of a finite set as a sequence, in one fixed order.
 AsSeq(S) == CHOOSE f \in [1..Cardinality(S) -> S] :
               \A i, j \in 1..Cardinality(S) : i # j => f[i] # f[j]
+\* The smaller of two numbers.
+Min(a, b) == IF a < b THEN a ELSE b
 \* Roots whose provider never serves.
 DeadRoots == {r \in Roots : r[1] \in Dead}
 \* The store's key order, worst case first: the never-serving roots sort first.
@@ -102,7 +131,6 @@ Start == IF OverflowMode = "Rotate" THEN cursor ELSE 0
 \* How far after the start a root comes, wrapping around.
 Rank(r) == IF Position(r) > Start THEN Position(r) - Start
            ELSE Position(r) + Len(KeyOrder) - Start
-
 \* A root the clock could hand the slot to: servable, with a provider, and no
 \* fetch running.
 CanClaim(r) ==
@@ -110,29 +138,32 @@ CanClaim(r) ==
   /\ (r \in serveAuth \/ r[1] \in serveScopes)
   /\ HasQualifiedProvider(r)
   /\ flights[r] = 0
+\* The entry fields of the roots in S, as a new entry has them: no dispatches.
+Reset(S) == [r \in Roots |-> IF r \in S THEN 0 ELSE dispatches[r]]
 
 \* A SyncOwnership step that does not admit anything: memory forgets what the
 \* step retired.
 M(A) ==
   /\ A
   /\ mem' = mem \cap pending'
-  /\ turns' = SelectSeq(turns, LAMBDA r : r \in pending')
-  /\ spent' = spent \cap pending'
-  /\ UNCHANGED <<cursor, conts, stopped>>
+  /\ dueOrder' = SelectSeq(dueOrder, LAMBDA r : r \in pending')
+  /\ backoff' = backoff \cap pending'
+  /\ dispatches' = Reset(mem \ pending')
+  /\ UNCHANGED <<conts, cursor>>
 
 \* Registration needs an in-memory entry first (try_insert_pending_dag): a new
-\* root takes one, and a push for a root with a local continuation takes over
-\* that continuation's entry.
+\* root takes one, due at once, and a push for a root with a local
+\* continuation takes over that continuation's entry.
 MRegister(s, v) ==
   /\ ProcessRegister(s, v)
   /\ LET added == pending' \ pending
          retired == pending \ pending'
      IN /\ mem' = (mem \ retired) \cup added
-        /\ turns' = Without(turns, retired) \o AsSeq(added)
         /\ conts' = conts \ added
         /\ Cardinality(mem' \cup conts') <= MemBound
-        /\ spent' = spent \ retired
-        /\ stopped' = stopped \ added
+        /\ dueOrder' = Without(dueOrder, retired) \o AsSeq(added)
+        /\ backoff' = backoff \ retired
+        /\ dispatches' = Reset(retired \cup added)
   /\ UNCHANGED cursor
 
 \* With the map full the push is nacked before anything is durable
@@ -154,63 +185,72 @@ MNack(s, v) ==
                  terminalFlights, fetchExhausted, lostCompletions, mergedV, crashed>>
   /\ UNCHANGED mvars
 
-\* The clock claims only a root it holds in memory, and the first of them in
-\* turn that it can: the due order of MC_SyncOwnership_Dispatch, without its
-\* deadlines.
+\* The clock claims the oldest due entry that can take the slot
+\* (dispatch_due_pending_dag_fetches): its next deadline is armed and its
+\* dispatches counted (try_claim_pending_dag_dispatch).
 MClaim(s, v) ==
-  /\ <<s, v>> \in Members(turns)
-  /\ \A q \in Before(turns, <<s, v>>) : ~CanClaim(q)
+  /\ <<s, v>> \in Members(dueOrder)
+  /\ \A q \in Before(dueOrder, <<s, v>>) : ~CanClaim(q)
   /\ ClaimFetch(s, v)
-  /\ turns' = Without(turns, {<<s, v>>})
-  /\ UNCHANGED <<mem, spent, cursor, conts, stopped>>
+  /\ dueOrder' = Without(dueOrder, {<<s, v>>})
+  /\ backoff' = backoff \cup {<<s, v>>}
+  /\ dispatches' = [dispatches EXCEPT ![<<s, v>>] = Min(@ + 1, RotateAfter)]
+  /\ UNCHANGED <<mem, conts, cursor>>
 
 \* An attempt ends without the DAG: it failed, was shed as busy, or deferred
-\* behind a local storage owner. Every dispatch counts toward the budget, as
-\* `dispatches` does in Rust whatever the attempt's outcome.
+\* behind a local storage owner. The root waits out its backoff.
 MFail(s, v) ==
   /\ FailFetchBeforeWaiter(s, v) \/ ProviderShed(s, v) \/ ContendedIngest(s, v)
-  /\ spent' = spent \cup ({<<s, v>>} \cap mem)
-  /\ turns' = IF <<s, v>> \in mem THEN Append(turns, <<s, v>>) ELSE turns
-  /\ UNCHANGED <<mem, cursor, conts, stopped>>
+  /\ UNCHANGED mvars
 
 \* A completed fetch, which a provider that never serves never gives.
 MComplete(s, v) ==
   /\ s \notin Dead
   /\ CompleteFetch(s, v)
-  /\ turns' = IF <<s, v>> \in mem THEN Append(turns, <<s, v>>) ELSE turns
-  /\ UNCHANGED <<mem, spent, cursor, conts, stopped>>
+  /\ UNCHANGED mvars
 
-\* At the end of an attempt a root that spent its dispatches gives its entry
-\* up, keeping its durable record, when the map is full and a durable root
-\* has no entry (PendingDagLease::finish_attempt). The Rust budget of
-\* PENDING_ROTATE_AFTER_DISPATCHES dispatches is one failed attempt here.
+\* The root's next_retry_at passes; its attempt has ended (the deadline runs
+\* from the end of the attempt, PendingDagLease::finish_attempt).
+BecomeDue(s, v) ==
+  /\ <<s, v>> \in backoff
+  /\ flights[<<s, v>>] = 0
+  /\ backoff' = backoff \ {<<s, v>>}
+  /\ dueOrder' = Append(dueOrder, <<s, v>>)
+  /\ UNCHANGED <<vars, mem, conts, dispatches, cursor>>
+
+\* At the end of an attempt a root that had RotateAfter dispatches gives its
+\* entry up, keeping its durable record, when the map is full and a durable
+\* root has no entry (PendingDagLease::finish_attempt).
 Yield(s, v) ==
   \* Retained, the rule before, never gives an acknowledged entry up.
   /\ OverflowMode # "Retained"
-  \* The root holds an entry, spent its dispatches and has no attempt running.
-  /\ <<s, v>> \in mem \cap spent
+  \* The root holds an entry, had its dispatches, and its attempt has ended.
+  /\ <<s, v>> \in mem
+  /\ dispatches[<<s, v>>] >= RotateAfter
   /\ flights[<<s, v>>] = 0
   \* Another durable root waits for an entry, and the map is full.
   /\ Waiting # {}
   /\ Cardinality(Held) >= MemBound
   \* The entry goes; the durable record (pending) stays.
   /\ mem' = mem \ {<<s, v>>}
-  /\ turns' = Without(turns, {<<s, v>>})
-  /\ spent' = spent \ {<<s, v>>}
-  /\ UNCHANGED <<vars, cursor, conts, stopped>>
+  /\ dueOrder' = Without(dueOrder, {<<s, v>>})
+  /\ backoff' = backoff \ {<<s, v>>}
+  /\ dispatches' = Reset({<<s, v>>})
+  /\ UNCHANGED <<vars, conts, cursor>>
 
-\* The resync sweep admits the next waiting durable root in key order: after
-\* the root it admitted last (Rotate), or from the first key (KeyOrder and
-\* Retained), which re-admits the roots that just gave their entries up.
+\* The resync sweep admits the next waiting durable root in key order, due at
+\* once: after the root it admitted last (Rotate), or from the first key
+\* (KeyOrder and Retained), which re-admits the roots that just gave their
+\* entries up.
 Resync ==
   /\ Waiting # {}
   /\ Cardinality(Held) < MemBound
   /\ LET r == CHOOSE q \in Waiting : \A p \in Waiting : Rank(q) <= Rank(p)
      IN /\ mem' = mem \cup {r}
-        /\ turns' = Append(turns, r)
-        /\ spent' = spent \ {r}
+        /\ dueOrder' = Append(dueOrder, r)
+        /\ dispatches' = Reset({r})
         /\ cursor' = IF OverflowMode = "Rotate" THEN Position(r) ELSE cursor
-  /\ UNCHANGED <<vars, conts, stopped>>
+  /\ UNCHANGED <<vars, conts, backoff>>
 
 \* A pull-sync merge of a head nobody pushed yields its work budget and takes
 \* an in-memory entry for its next turn (continue_merge).
@@ -220,43 +260,41 @@ PullYield(s, v) ==
   /\ mergedV[s] < v
   /\ Cardinality(Held) < MemBound
   /\ conts' = conts \cup {<<s, v>>}
-  /\ stopped' = stopped \ {<<s, v>>}
-  /\ UNCHANGED <<vars, mem, turns, spent, cursor>>
+  /\ UNCHANGED <<vars, mem, dispatches, dueOrder, backoff, cursor>>
 
 \* A continuation's next turn ends without yielding again: it merged, or it
 \* skipped or failed with no terminal outcome. EndOnStop removes the entry
-\* when the turn ends (MergeTurn); Retained keeps it, and the clock re-drives
-\* it, turn after turn.
+\* when the turn ends (MergeTurn); Retained, the rule before, leaves it, and
+\* the clock re-drives it, turn after turn.
 ContinuationStop(s, v) ==
   /\ <<s, v>> \in conts
   /\ conts' = IF ContinuationMode = "EndOnStop" THEN conts \ {<<s, v>>} ELSE conts
-  /\ stopped' = stopped \cup {<<s, v>>}
-  /\ UNCHANGED <<vars, mem, turns, spent, cursor>>
+  /\ UNCHANGED <<vars, mem, dispatches, dueOrder, backoff, cursor>>
 
 \* The restart: memory, the cursor and every continuation are gone; the
 \* durable roots stay, and from now on the map holds MemCap entries.
 MCrash ==
   /\ Crash
   /\ mem' = {}
-  /\ turns' = <<>>
-  /\ spent' = {}
-  /\ cursor' = 0
   /\ conts' = {}
-  /\ stopped' = {}
+  /\ dispatches' = [r \in Roots |-> 0]
+  /\ dueOrder' = <<>>
+  /\ backoff' = {}
+  /\ cursor' = 0
 
 \* Nothing in memory, no continuation, no sweep yet.
 MInit ==
   /\ Init
   /\ mem = {}
-  /\ turns = <<>>
-  /\ spent = {}
-  /\ cursor = 0
   /\ conts = {}
-  /\ stopped = {}
+  /\ dispatches = [r \in Roots |-> 0]
+  /\ dueOrder = <<>>
+  /\ backoff = {}
+  /\ cursor = 0
 
 \* Every SyncOwnership action, with registration, nack, claim, failure,
-\* completion and restart in their memory-aware forms, plus the sweep, the
-\* yield and the continuations.
+\* completion and restart in their memory-aware forms, plus the deadline, the
+\* sweep, the yield and the continuations.
 MNext ==
   \/ \E s \in Scopes : M(Update(s)) \/ M(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
@@ -264,7 +302,7 @@ MNext ==
        \/ MRegister(s, v) \/ M(ProcessNack(s, v)) \/ MNack(s, v)
        \/ M(SameRootReannounce(s, v))
        \/ M(OfferQualifiedAlternate(s, v)) \/ M(AddQualifiedAlternate(s, v))
-       \/ MClaim(s, v) \/ MFail(s, v)
+       \/ MClaim(s, v) \/ MFail(s, v) \/ BecomeDue(s, v)
        \/ M(StarveTransportCompletion(s, v)) \/ M(StarveRecoveryServe(s, v))
        \/ M(StarveRecoveryAuthorization(s, v))
        \/ MComplete(s, v) \/ M(ClaimMerge(s, v))
@@ -279,13 +317,14 @@ MNext ==
 MSpec == MInit /\ [][MNext]_allVars
 
 \* Liveness runs: only the receiver is fair, and only at the scheduler, as in
-\* MC_SyncOwnership_Dispatch: the clock claims whenever it can (in turn), the
-\* sweep runs, a spent root gives its entry up when one keeps being able to,
-\* merges run, and a continuation's next turn comes. Per root there is only a
-\* timer: an attempt's windows end. Pull-sync merges, failures, nacks, the
-\* cleanup after a merge and the restart are never forced: neither promise
-\* needs them. The environment assumption is the dispatch model's: a fetch
-\* that can complete eventually does (strong fairness on some MComplete).
+\* MC_SyncOwnership_Dispatch: the clock claims whenever it can (in due order),
+\* the sweep runs, a root that may give its entry up eventually does when it
+\* keeps being able to, merges run, and a continuation's next turn comes. Per
+\* root there are only timers: a deadline passes, an attempt's windows end.
+\* Pull-sync merges, failures, nacks, the cleanup after a merge and the
+\* restart are never forced: neither promise needs them. The environment
+\* assumption is the dispatch model's: a fetch that can complete eventually
+\* does (strong fairness on some MComplete).
 MFairSpec ==
   /\ MSpec
   /\ SF_allVars(Resync)
@@ -295,17 +334,24 @@ MFairSpec ==
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : M(ClaimMerge(s, v)))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : M(CompleteMerge(s, v)))
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : ContinuationStop(s, v))
-  /\ \A s \in Scopes : WF_allVars(\E v \in 1..MaxV : MFail(s, v))
+  /\ \A s \in Scopes :
+       /\ WF_allVars(\E v \in 1..MaxV : MFail(s, v))
+       /\ WF_allVars(\E v \in 1..MaxV : BecomeDue(s, v))
 
 \* Promise: the added variables keep their shapes, on top of SyncOwnership's.
 INV_MemoryTypeOK ==
   /\ TypeOK
   /\ mem \subseteq Roots
-  /\ turns \in Seq(mem)
-  /\ spent \subseteq mem
-  /\ cursor \in 0..Len(KeyOrder)
   /\ conts \subseteq Roots
-  /\ stopped \subseteq Roots
+  /\ dispatches \in [Roots -> 0..RotateAfter]
+  /\ dueOrder \in Seq(mem)
+  /\ backoff \subseteq mem
+  /\ cursor \in 0..Len(KeyOrder)
+
+\* Promise: an entry with no fetch running is either due or waiting out its
+\* backoff, never both and never neither, so no entry is lost to the clock.
+INV_DueOrBackoff ==
+  \A r \in mem : flights[r] = 0 => ((r \in backoff) # (r \in Members(dueOrder)))
 
 \* Promise: the map never holds more entries than it may.
 INV_MemoryBounded == Cardinality(Held) <= MemBound
@@ -316,9 +362,6 @@ INV_MemoryHoldsDurable == mem \subseteq pending
 \* Promise: a local continuation is never an acknowledged obligation, so
 \* ending one drops nothing a sender relies on.
 INV_ContinuationsNeverAcked == conts \cap pending = {}
-
-\* Promise: a continuation whose turn ended without yielding holds no entry.
-INV_StoppedContinuationReleased == stopped \cap conts = {}
 
 \* Promise: every acknowledged durable head whose provider serves is merged,
 \* however many never-serving roots were restored ahead of it.

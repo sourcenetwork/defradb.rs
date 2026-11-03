@@ -371,9 +371,9 @@ RUNS=(
   "MC_SyncOwnership_Red_BusyExhaustion.cfg SyncOwnership.tla RED" # local shared-CID ingest contention is deferred, never counted as terminal provider exhaustion
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: due roots go in order and every acked head merges across a restart
-  "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and retries ahead of an acked root (INV_ReadyRootsServedInOrder)
-  "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root retakes the slot ahead of roots acked during its attempt (INV_ReadyRootsServedInOrder)
-  "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (INV_ExpiryKeepsOwner)
+  "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and starts the next attempt ahead of an acked root (ACT_AttemptsStartInDueOrder)
+  "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root ends due ahead of roots acked during its attempt (ACT_EndedAttemptQueuesBehind)
+  "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (ACT_AckedRootLeavesOwned)
   "MC_SyncOwnership_Green_Dispatch_DeadProvider.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a provider that never serves keeps its head but does not stop the other head from merging
   "MC_SyncOwnership_Green_Dispatch_Trickle.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a trickling attempt gives its slot back at its quantum; the other head still merges
   "MC_SyncOwnership_Red_UnboundedProductive.cfg MC_SyncOwnership_Dispatch.tla RED" # no quantum: a trickling attempt holds the only slot for good (LIVE_AckedRootMerged)

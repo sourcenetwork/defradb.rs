@@ -210,11 +210,13 @@ acknowledged head would wait behind them, and a wall-clock pending TTL would
 drop acknowledged heads that were never fetched although their senders ended
 their scope markers on the success reply.
 
-- `backoff` holds the roots waiting for their `next_retry_at`; `BecomeDue` is
-  that deadline passing. `dueOrder` is the clock's due queue in the order the
-  deadlines passed (`due_pending_dag_retries` sorts by `next_retry_at` and
-  returns only due roots), and `readyOrder` the order in which roots became
-  due with no fetch running. An acknowledged root is due at once
+- The module adds only state the code holds; its header maps each variable
+  to its Rust field. `dueOrder` and `backoff` are `PendingDag::next_retry_at`
+  kept by its order, the only thing the code reads from it: `dueOrder` holds
+  the roots whose deadline has passed, in `next_retry_at` order (what
+  `due_pending_dag_retries` returns), and `backoff` the roots whose deadline
+  is still ahead; `BecomeDue` is a deadline passing, in any order. `tries` is
+  the loop index of `poll_fetch_dag`'s attempts. An acknowledged root is due at once
   (`next_retry_at = now` at registration, and at restore). `WClaim` is
   `ClaimFetch` restricted to a due root, and to the oldest due root that could
   take a slot (`dispatch_due_pending_dag_fetches`); a root still in backoff is
@@ -269,7 +271,7 @@ fairness on some `WComplete`: a fetch that can complete eventually does.
 Reachability alone does not give it, since a reachable provider can answer
 busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
 `Dead` and `Trickle` providers never complete in the model. Their heads stay
-owned (`INV_ExpiryKeepsOwner`) and keep being retried, but
+owned (`ACT_AckedRootLeavesOwned`) and keep being retried, but
 `LIVE_AckedRootMerged` promises them nothing; it promises that they do not
 stop the other heads from merging. `MC_SyncOwnership_Green_Dispatch_DeadProvider`
 and `MC_SyncOwnership_Green_Dispatch_Trickle` check that; with the property
@@ -289,11 +291,16 @@ durable set, after it `MemCap` entries, which is an upgrade or a lower cap. The
 restart restores only what fits (`Resync`). Roots of `Dead` scopes sort first
 in key order, the worst case for a key-order sweep.
 
-- `OverflowMode = "Rotate"`: a root that has spent its dispatches gives its
-  entry up while the map is full and a durable root waits, keeping its record
-  (`Yield`; `PendingDagLease::finish_attempt` after
-  `PENDING_ROTATE_AFTER_DISPATCHES` dispatches, which the model abstracts to
-  one failed, shed or deferred attempt). The sweep resumes after the root it
+- As in the dispatch model, every variable is code state, mapped in the
+  module header: `mem` and `conts` are the map's keys by `PendingDag::origin`,
+  `dispatches` is `PendingDag::dispatches` (counted up to `RotateAfter`),
+  `dueOrder` and `backoff` are `next_retry_at` by its order, and `cursor` is
+  `pending_resync_cursor`.
+- `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
+  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
+  entry up once its attempt has ended, while the map is full and a durable
+  root waits, keeping its record (`Yield`; `PendingDagLease::finish_attempt`).
+  The sweep resumes after the root it
   admitted last (`records_after_resync_cursor`). `"KeyOrder"` yields but
   sweeps from the first key, re-admitting the root that just gave its entry up.
   `"Retained"`, the rule before, never gives an acknowledged entry up.
@@ -317,8 +324,10 @@ the next pull or push of the head starts the merge again.
 The checks use two documents (`d1` dead and first in key order, `d2` also
 pulled), `MaxV = 1`, one fetch slot, a map of one after the restart, and the
 dispatch model's scheduler-level fairness and environment assumption. Claims
-follow `turns`, the order in which in-memory roots became claimable, so no
-root needs claim fairness of its own here either.
+follow `next_retry_at` order (`dueOrder`), as in the dispatch model, so no
+root needs claim fairness of its own here either. Nothing is recorded only to
+state a property: the end of a continuation is the liveness property
+`LIVE_ContinuationEnds` over the map itself.
 
 ## Checked properties
 
@@ -376,21 +385,23 @@ root needs claim fairness of its own here either.
   scope eventually stays current despite drops, nacks, and one restart.
 - `LIVE_EventualReceiverQuiescence`: currency is not enough; every merged durable
   receiver obligation is eventually retired.
-- `INV_ReadyRootsServedInOrder` (dispatch): a due root waiting for a fetch
-  slot is never passed by a root that became due after it, so a head
+- `ACT_AttemptsStartInDueOrder`, `ACT_EndedAttemptQueuesBehind` (dispatch),
+  both properties of every step over `next_retry_at` order: an attempt starts
+  only for the oldest due root that can run, and an attempt that ends leaves
+  its root behind every root already waiting. Together a due root waiting for
+  a fetch slot is never passed by a root that became due after it, so a head
   acknowledged after a restart is not starved by catch-up roots retrying.
 - `INV_DueOrBackoff` (dispatch): an idle pending root is either due or waiting
   out its backoff.
-- `INV_ExpiryKeepsOwner` (dispatch): an acknowledged head never leaves the
-  receiver while nobody else (sender marker, a hint, a newer pending head or
-  the merge) still owns it.
+- `ACT_AckedRootLeavesOwned` (dispatch), a property of every step: an
+  acknowledged head leaves the receiver only while someone else (sender
+  marker, a hint, a newer pending head or the merge) still owns it.
 - `LIVE_AckedRootMerged` (dispatch): every acknowledged head whose provider
   eventually serves is merged (the environment assumption above).
 - `INV_MemoryBounded`, `INV_MemoryHoldsDurable` (memory): the map never holds
   more entries than it may, and an acknowledged entry always has its record.
-- `INV_ContinuationsNeverAcked`, `INV_StoppedContinuationReleased` (memory): a
-  local continuation is never an acknowledged obligation, and one whose turn
-  did not yield again holds no entry.
+- `INV_ContinuationsNeverAcked` (memory): a local continuation is never an
+  acknowledged obligation.
 - `LIVE_DurableRootMerged` (memory): every acknowledged durable head whose
   provider serves is merged, however many never-serving roots were restored
   ahead of it into a map too small for all of them.
@@ -436,9 +447,9 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_Dispatch_DeadProvider.cfg` | GREEN | the same with `d1`'s provider never serving: `d1`'s head is kept, `d2`'s still merges |
 | `MC_SyncOwnership_Green_Dispatch_Trickle.cfg` | GREEN | the same with `d1`'s provider trickling: `d1`'s attempt gives its slot back at its quantum and `d2`'s head still merges |
 | `MC_SyncOwnership_Red_UnboundedProductive.cfg` | RED | no quantum: `d1`'s trickling attempt never ends, holds the only slot, and `d2` is never dispatched (`LIVE_AckedRootMerged`) |
-| `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and retries ahead of a head acknowledged while it held the slot |
-| `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root retakes the slot ahead of heads acknowledged during its attempt |
-| `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker |
+| `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and starts the next ahead of a head acknowledged while it held the slot (`ACT_AttemptsStartInDueOrder`) |
+| `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root ends due ahead of heads acknowledged during its attempt (`ACT_EndedAttemptQueuesBehind`) |
+| `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker (`ACT_AckedRootLeavesOwned`) |
 | `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a local continuation ends when it stops yielding |
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
