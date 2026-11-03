@@ -57,9 +57,9 @@ pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
 pub(crate) use manager::record_gossip_decode_failure_sample;
 pub use manager::{
-    default_rate_limit_backoff, GossipDecodeFailureSample, GossipTransport, SyncConfig,
-    SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver, SyncManager,
-    DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
+    default_rate_limit_backoff, DagFetchPeerPermit, GossipDecodeFailureSample, GossipTransport,
+    SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver,
+    SyncManager, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
     DEFAULT_MAX_CONCURRENT_PUSH_TASKS, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_MAX_PENDING_DAGS, DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
     DEFAULT_PUSH_SEND_TIMEOUT, DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST,

@@ -1884,7 +1884,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     // if the permit spanned all attempts this would only resolve after
     // the fetch task finished.
     let permits = limiter
-        .acquire(&PeerId::new("other-peer".to_string()))
+        .acquire(&PeerId::new("other-peer".to_string()), None)
         .await
         .expect("limiter must grant a permit while the fetch is backing off");
     assert!(
