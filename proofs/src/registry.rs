@@ -727,6 +727,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Admission has two tiers: a head the full map has no entry for is
+        // acknowledged on its durable record alone and joins the rotation,
+        // instead of being nacked while the store has room, which left the
+        // obligation with the sender for as long as the map stayed full.
+        // Each peer holds at most its share of the durable records, so one
+        // peer's never-serving roots cannot fill the store and leave every
+        // other peer nacked. Fairness is per scheduler: each sending peer's
+        // retry ledger and the receiver's answers to that peer, never a scope.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "LIVE_WrittenHeadMerged / INV_DurablePeerQuota: a full map admits on the durable record within each peer's share",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits, admits_durable_only, max_persisted_pending_per_peer, try_insert_pending_dag; crates/p2p/src/sync/pending_store/view.rs PersistedView::source_count",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_TwoTierQuota,Red_MemoryOnlyAdmission,Red_NoDurablePeerQuota}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A second PushLog for a CID already being processed joins that
         // processing instead of being nacked: it waits, bounded by a deadline,
         // looks again once the owner lets go, and either acks a block already

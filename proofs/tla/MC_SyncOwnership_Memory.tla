@@ -7,14 +7,22 @@
 \* receiver also pulls documents itself: a pull-sync merge that yields its
 \* work budget leaves a local continuation in the same map.
 \*
-\* Who acts: the sender (writes and hints), the receiver (registration, the
-\* clock's claims, fetches, merges, the resync sweep that admits durable roots
-\* into memory, a root giving its entry up), a pull-sync merge and its turns,
-\* the wall clock (a root's retry deadline passes), and a one-shot restart.
+\* Admission has two tiers. A new head takes an entry and a durable record;
+\* when the map is full it takes the durable record alone and is
+\* acknowledged, and waits for the sweep like any durable root past the map.
+\* Each sending peer holds at most DurableQuota durable roots: a head that
+\* would take its peer past it is nacked, and the sender keeps its marker.
+\*
+\* Who acts: the senders (writes, hints and the retry of a nacked marker),
+\* the receiver (its answer to a hint, the clock's claims, fetches, merges,
+\* the resync sweep that admits durable roots into memory, a root giving its
+\* entry up), a pull-sync merge and its turns, the wall clock (a root's retry
+\* deadline passes), and a one-shot restart.
 \*
 \* What must never happen:
 \*   - the map holds more than it may (INV_MemoryBounded), or an acknowledged
 \*     entry without its durable record (INV_MemoryHoldsDurable);
+\*   - a peer holds more durable roots than its quota (INV_DurablePeerQuota);
 \*   - a local continuation is an acknowledged obligation
 \*     (INV_ContinuationsNeverAcked): ending one must drop nothing a sender
 \*     relies on;
@@ -22,6 +30,10 @@
 \*   - every acknowledged durable head whose provider serves is merged, even
 \*     when roots whose providers never serve were restored first and fill
 \*     the map (LIVE_DurableRootMerged);
+\*   - every head a sender writes, whose provider serves and whose peer is
+\*     not held at its quota by never-serving roots, is merged: a full map
+\*     does not leave it nacked for ever, with the sender holding it
+\*     (LIVE_WrittenHeadMerged);
 \*   - every local continuation leaves the map (LIVE_ContinuationEnds): a turn
 \*     that does not yield again ends it.
 \* A local continuation is not promised a merge: no sender waits on it, and a
@@ -50,20 +62,25 @@
 \*   cursor     SyncManager::pending_resync_cursor (manager/process/mod.rs): the root
 \*              the last sweep admitted, as its place in key order (0: none).
 \* SyncOwnership's pending is the durable record set (PersistedView,
-\* pending_store/view.rs:27), flights the fetch reservation
+\* pending_store/view.rs), and the count of a peer's roots in it is
+\* PersistedView::source_count, by the record's source_peer (PeerScopes); flights the fetch reservation
 \* (SyncShutdownHandle's pending_dag_fetch_tasks, coordinator/mod.rs), and crashed
 \* the restart.
 \*
 \* Code it models (crates/p2p/src/sync):
-\*   manager/process/pending_dag.rs  try_insert_pending_dag (the map's cap; overflow nacks),
+\*   manager/process/pushlog.rs  process_block_inner (the two tiers, the share check and the nack)
+\*   manager/process/pending_dag.rs  try_insert_pending_dag (the map's cap),
+\*     durable_share_admits, admits_durable_only, max_persisted_pending_per_peer (the quota),
+\*     restored_root_fits (the sweep admits only what the map has a place for),
 \*     resync_persisted_pending_dags_inner and records_after_resync_cursor (admit durable
 \*     roots, resuming after the root admitted last), PendingDagLease::finish_attempt
 \*     (a root that spent its dispatches gives its entry up while a durable root waits),
 \*     continue_merge (a local continuation), consume_pending_merge_continuation and
 \*     MergeTurn (the continuation ends when a turn does not yield again)
 \*   manager/pending.rs  PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES
+\*   pending_store/view.rs  PersistedView::source_count (each peer's durable roots)
 \*   replication/handlers.rs  handle_block_received, process_merge_batch (hold the turn)
-\* Rust tests: tests/unit/durable_overflow_rotation.rs,
+\* Rust tests: tests/unit/durable_overflow_rotation.rs (both tests), tests/unit/durable_share.rs,
 \*   replication/continuation_tests.rs a_local_continuation_ends_on_a_non_terminal_skip.
 EXTENDS SyncOwnership, Sequences
 
@@ -73,7 +90,10 @@ CONSTANTS
   Dead,            \* scopes whose provider never serves a fetch: busy, stalled or gone, for good
   PullScopes,      \* scopes the receiver also pulls, whose merges can leave a local continuation
   OverflowMode,    \* "Rotate" | "KeyOrder": the bug, the sweep restarts at the first key | "Retained": the bug, a root never gives its entry up
-  ContinuationMode \* "EndOnStop": a turn that does not yield ends the continuation | "Retained": the bug, it keeps its entry
+  ContinuationMode, \* "EndOnStop": a turn that does not yield ends the continuation | "Retained": the bug, it keeps its entry
+  AdmissionMode,   \* "TwoTier": a full map admits on the durable record alone | "MemoryOnly": the bug, a full map nacks
+  PeerScopes,      \* the sending peers, each the set of scopes it pushes (PersistedPendingDag::source_peer)
+  DurableQuota     \* durable roots one peer may hold (max_persisted_pending_per_peer); Cap removes the quota
 
 \* The map holds at least one entry and no more than the durable cap.
 ASSUME MemCap \in Nat /\ MemCap >= 1 /\ MemCap <= Cap
@@ -89,6 +109,13 @@ ASSUME OverflowMode \in {"Rotate", "KeyOrder", "Retained"}
 ASSUME ContinuationMode \in {"EndOnStop", "Retained"}
 \* Acknowledged roots are durable: rotation keeps the record, never the entry alone.
 ASSUME RegisterMode = "Durable"
+\* The admission knob takes one of its named values.
+ASSUME AdmissionMode \in {"TwoTier", "MemoryOnly"}
+\* Every scope is pushed by exactly one peer.
+ASSUME /\ UNION PeerScopes = Scopes
+       /\ \A P, Q \in PeerScopes : P # Q => P \cap Q = {}
+\* A peer may hold at least one durable root and at most the whole store.
+ASSUME DurableQuota \in 1..Cap
 
 VARIABLES
   mem,        \* entries of acknowledged roots (origin Push or Restored)
@@ -120,12 +147,28 @@ DeadRoots == {r \in Roots : r[1] \in Dead}
 KeyOrder == AsSeq(DeadRoots) \o AsSeq(Roots \ DeadRoots)
 \* Where a root sits in key order.
 Position(r) == CHOOSE i \in 1..Len(KeyOrder) : KeyOrder[i] = r
+\* The scopes of the peer that pushes scope s.
+PeerOf(s) == CHOOSE P \in PeerScopes : s \in P
 \* Before the restart the map held the whole durable set; after it, MemCap.
 MemBound == IF crashed THEN MemCap ELSE Cap
 \* Every in-memory entry: acknowledged roots and local continuations.
 Held == mem \cup conts
 \* Acknowledged durable roots with no in-memory entry.
 Waiting == pending \ mem
+\* The map has no place for one more entry.
+MemoryFull == Cardinality(Held) >= MemBound
+\* The scope's current head, which the head links, holds an entry the head
+\* would take over.
+ReplacesInMemory(s, v) == Supersedes(s, v) \cap mem # {}
+\* The durable roots of scope s that head v retires (ScopeCurrent): the
+\* scope's current head, only when v links it, as ProcessRegister retires.
+Retires(s, v) == IF PendingMode = "ScopeCurrent" THEN Supersedes(s, v) ELSE {}
+\* The head needs a durable record of its own: it is not registered yet.
+NewRecord(s, v) == <<s, v>> \notin pending
+\* The head's peer stays within its quota once the head is registered: what
+\* it retires gives its record up (durable_share_admits).
+DurableRoom(s, v) ==
+  Cardinality({r \in pending \ Retires(s, v) : r[1] \in PeerOf(s)}) < DurableQuota
 \* Where the sweep starts: after the cursor when it rotates, at the first key otherwise.
 Start == IF OverflowMode = "Rotate" THEN cursor ELSE 0
 \* How far after the start a root comes, wrapping around.
@@ -151,10 +194,13 @@ M(A) ==
   /\ dispatches' = Reset(mem \ pending')
   /\ UNCHANGED <<conts, cursor>>
 
-\* Registration needs an in-memory entry first (try_insert_pending_dag): a new
-\* root takes one, due at once, and a push for a root with a local
-\* continuation takes over that continuation's entry.
+\* The first tier: the head takes an in-memory entry and its durable record
+\* (try_insert_pending_dag). A new root takes an entry, due at once, and a
+\* push for a root with a local continuation takes over that continuation's
+\* entry. A head that needs a record of its own needs room in its peer's
+\* quota first.
 MRegister(s, v) ==
+  /\ NewRecord(s, v) => DurableRoom(s, v)
   /\ ProcessRegister(s, v)
   /\ LET added == pending' \ pending
          retired == pending \ pending'
@@ -166,17 +212,44 @@ MRegister(s, v) ==
         /\ dispatches' = Reset(retired \cup added)
   /\ UNCHANGED cursor
 
-\* With the map full the push is nacked before anything is durable
-\* (PendingDagCapacity); the sender keeps its marker and offers it again.
+\* The second tier: the map is full, so the head takes its durable record
+\* alone and is acknowledged; it waits for the sweep like any durable root
+\* without an entry (resident false in process_block_inner).
+MRegisterDurable(s, v) ==
+  \* MemoryOnly, the rule before, has no second tier.
+  /\ AdmissionMode = "TwoTier"
+  \* A head that needs a record of its own, with no entry it could take over.
+  /\ <<s, v>> \notin pending \cup conts
+  /\ NewRecord(s, v)
+  /\ ~ReplacesInMemory(s, v)
+  \* The map is full, and the peer has room in its quota.
+  /\ MemoryFull
+  /\ DurableRoom(s, v)
+  \* The durable registration and its acknowledgement (ProcessRegister keeps Cap).
+  /\ ProcessRegister(s, v)
+  \* No entry is taken; what the head retires leaves memory too.
+  /\ LET retired == pending \ pending'
+     IN /\ mem' = mem \ retired
+        /\ dueOrder' = Without(dueOrder, retired)
+        /\ backoff' = backoff \ retired
+        /\ dispatches' = Reset(retired)
+  /\ UNCHANGED <<conts, cursor>>
+
+\* The nack (PendingDagCapacity): the sender keeps its marker and offers the
+\* head again. TwoTier nacks only a head its peer's quota has no room for;
+\* MemoryOnly also nacks every head the full map has no entry for.
 MNack(s, v) ==
   \* An unmerged hint for a root the receiver does not hold yet.
   /\ <<s, v>> \in inflight
   /\ mergedV[s] < v
   /\ <<s, v>> \notin pending \cup conts
-  \* It links no current head of its scope in memory that it would replace.
-  /\ Supersedes(s, v) \cap mem = {}
-  \* The map is full.
-  /\ Cardinality(Held) >= MemBound
+  /\ NewRecord(s, v)
+  \* Its peer is at its quota, or (MemoryOnly) the map is full and the scope
+  \* head it links holds no entry it would take over.
+  /\ \/ ~DurableRoom(s, v)
+     \/ /\ AdmissionMode = "MemoryOnly"
+        /\ ~ReplacesInMemory(s, v)
+        /\ MemoryFull
   \* The hint is answered with a nack; the sender's marker stays.
   /\ inflight' = inflight \ {<<s, v>>}
   /\ serveAuth' = serveAuth \ {<<s, v>>}
@@ -294,14 +367,20 @@ MInit ==
   /\ backoff = {}
   /\ cursor = 0
 
+\* The receiver's answer to a hint from scope s: acknowledged as merged,
+\* registered in either tier, or nacked.
+Answer(s, v) ==
+  \/ M(ProcessMerged(s, v)) \/ MRegister(s, v) \/ MRegisterDurable(s, v)
+  \/ MNack(s, v) \/ M(ProcessNack(s, v))
+
 \* Every SyncOwnership action, with registration, nack, claim, failure,
-\* completion and restart in their memory-aware forms, plus the deadline, the
-\* sweep, the yield and the continuations.
+\* completion and restart in their memory-aware forms, plus the second tier,
+\* the deadline, the sweep, the yield and the continuations.
 MNext ==
   \/ \E s \in Scopes : M(Update(s)) \/ M(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
        \/ M(ReHintPayload(s, v)) \/ M(DropHint(s, v)) \/ M(ProcessMerged(s, v))
-       \/ MRegister(s, v) \/ M(ProcessNack(s, v)) \/ MNack(s, v)
+       \/ MRegister(s, v) \/ MRegisterDurable(s, v) \/ M(ProcessNack(s, v)) \/ MNack(s, v)
        \/ M(SameRootReannounce(s, v))
        \/ M(OfferQualifiedAlternate(s, v)) \/ M(AddQualifiedAlternate(s, v))
        \/ MClaim(s, v) \/ MFail(s, v) \/ BecomeDue(s, v)
@@ -318,17 +397,22 @@ MNext ==
 \* Safety runs.
 MSpec == MInit /\ [][MNext]_allVars
 
-\* Liveness runs: only the receiver is fair, and only at the scheduler, as in
+\* Liveness runs: fairness is the schedulers' only, as in
 \* MC_SyncOwnership_Dispatch: the clock claims whenever it can (in due order),
 \* the sweep runs, a root that may give its entry up eventually does when it
-\* keeps being able to, merges run, and a continuation's next turn comes. Per
-\* root there are only timers: a deadline passes, an attempt's windows end.
-\* Pull-sync merges, failures, nacks, the cleanup after a merge and the
-\* restart are never forced: neither promise needs them. The environment
+\* keeps being able to, merges run, and a continuation's next turn comes.
+\* Each sending peer's retry ledger offers one of its dirty markers again,
+\* and the receiver answers one of that peer's hints: one scheduler per peer,
+\* never per scope, so a peer may keep offering a head that is nacked for
+\* ever instead of another. Per root there are only timers: a deadline
+\* passes, an attempt's windows end. Pull-sync merges, failures, the cleanup
+\* after a merge and the restart are never forced. The environment
 \* assumption is the dispatch model's: a fetch that can complete eventually
 \* does (strong fairness on some MComplete).
 MFairSpec ==
   /\ MSpec
+  /\ \A P \in PeerScopes : WF_allVars(\E s \in P : M(ReHintMarker(s)))
+  /\ \A P \in PeerScopes : SF_allVars(\E s \in P, v \in 1..MaxV : Answer(s, v))
   /\ SF_allVars(Resync)
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : MClaim(s, v))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : MComplete(s, v))
@@ -361,6 +445,10 @@ INV_MemoryBounded == Cardinality(Held) <= MemBound
 \* Promise: an acknowledged entry in memory always has its durable record.
 INV_MemoryHoldsDurable == mem \subseteq pending
 
+\* Promise: no peer holds more durable roots than its quota.
+INV_DurablePeerQuota ==
+  \A P \in PeerScopes : Cardinality({r \in pending : r[1] \in P}) <= DurableQuota
+
 \* Promise: a local continuation is never an acknowledged obligation, so
 \* ending one drops nothing a sender relies on.
 INV_ContinuationsNeverAcked == conts \cap pending = {}
@@ -372,4 +460,13 @@ LIVE_DurableRootMerged ==
 
 \* Promise: every local continuation leaves the map.
 LIVE_ContinuationEnds == \A r \in Roots : (r \in conts) ~> (r \notin conts)
+
+\* Promise: every head a sender writes on a scope whose provider serves is
+\* merged, when no never-serving root of the same peer could hold its quota.
+\* A head nacked for ever stays the sender's: this fails when a full map
+\* nacks it while nothing gives an entry up.
+LIVE_WrittenHeadMerged ==
+  \A s \in Scopes :
+    (PeerOf(s) \cap Dead = {}) =>
+      \A v \in 1..MaxV : (localV[s] >= v) ~> (mergedV[s] >= v)
 ====
