@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::message::{IdentityRequest, IdentityResponse, IDENTITY_UNCONFIGURED_ERROR};
+
 use super::super::endpoint::EndpointResources;
 use super::super::endpoint_config::AllowlistState;
 use super::super::endpoint_streams::handle_incoming;
@@ -283,6 +285,109 @@ fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
             assert!(cache.legacy_connections.get(&peer.id()).is_none());
             endpoint.close().await;
             peer.close().await;
+        }))
+        .unwrap();
+}
+
+fn managed_resources(endpoint: Endpoint) -> EndpointResources {
+    let gossip = GossipHandle::new();
+    EndpointResources {
+        endpoint,
+        gossip: gossip.clone(),
+        peer_map: Arc::new(SharedPeerMap::new()),
+        connection_cache: new_connection_cache(gossip),
+        spawned_tasks: Arc::new(TaskRegistry::new(edge::testing::edge())),
+        node_identity: None,
+        admission: Arc::new(PeerAdmission::new(AllowlistState::AcceptAll)),
+        inbound_budget: Arc::default(),
+        fetch_stats: Arc::default(),
+        records: RecordsHandle::new(),
+        solicited: Arc::new(Solicited::new()),
+    }
+}
+
+async fn identity_rpc(
+    from: &EndpointResources,
+    to: &Endpoint,
+    direct: Option<std::net::SocketAddr>,
+    direction: &str,
+) -> IdentityResponse {
+    let peer = PeerId::new(to.id().to_string());
+    crate::rt::time::timeout(
+        std::time::Duration::from_secs(2),
+        handle_request_response::<_, IdentityResponse>(
+            &from.endpoint,
+            &peer,
+            protocols::STREAM_IDENTITY,
+            &IdentityRequest::new(from.endpoint.id().to_string()),
+            direct,
+            &from.connection_cache,
+            &from.admission,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("the {direction} identity request must be served"))
+    .unwrap()
+}
+
+/// The dialer's only path to the acceptor is the RPC cache miss, so the
+/// acceptor's reverse request can only be served by the dialer pumping the
+/// connection that cache miss created.
+#[test]
+fn rpc_dialed_connection_serves_reverse_service_request() {
+    edge::testing::edge()
+        .block_on(edge::compat(async {
+            let dialer = managed_resources(tests::localhost_endpoint(vec![]).await);
+            let acceptor = managed_resources(
+                tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await,
+            );
+            let (events, _received) = crate::sync::dispatch_queue(8);
+            let accept_loop = crate::rt::spawn(edge::compat({
+                let acceptor = acceptor.clone();
+                async move {
+                    let incoming = acceptor.endpoint.accept().await.unwrap();
+                    handle_incoming(incoming, &acceptor, &events).await;
+                    futures::future::pending::<()>().await;
+                }
+            }));
+
+            let direct = acceptor.endpoint.addr().ip_addrs().next().copied();
+            let forward = identity_rpc(&dialer, &acceptor.endpoint, direct, "forward").await;
+            assert_eq!(
+                forward.err_message.as_deref(),
+                Some(IDENTITY_UNCONFIGURED_ERROR)
+            );
+            let dialed = cached_connection(
+                &dialer.connection_cache,
+                &PeerId::new(acceptor.endpoint.id().to_string()),
+            )
+            .unwrap()
+            .expect("the RPC dial must cache the connection it created");
+
+            let reverse = identity_rpc(&acceptor, &dialer.endpoint, None, "reverse").await;
+            assert_eq!(
+                reverse.err_message.as_deref(),
+                Some(IDENTITY_UNCONFIGURED_ERROR)
+            );
+            assert_eq!(
+                cached_connection(
+                    &dialer.connection_cache,
+                    &PeerId::new(acceptor.endpoint.id().to_string()),
+                )
+                .unwrap()
+                .unwrap()
+                .stable_id(),
+                dialed.stable_id(),
+                "the reverse request must ride the dialed connection"
+            );
+
+            accept_loop.abort();
+            for resources in [&dialer, &acceptor] {
+                for task in resources.spawned_tasks.close() {
+                    let _ = task.await;
+                }
+                resources.endpoint.close().await;
+            }
         }))
         .unwrap();
 }
