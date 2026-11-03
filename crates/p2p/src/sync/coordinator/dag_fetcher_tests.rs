@@ -10,6 +10,8 @@ mod dag_fetch_depth;
 mod dag_fetch_logs;
 #[path = "../../../tests/unit/provider_ranking.rs"]
 mod provider_ranking;
+#[path = "../../../tests/unit/restart_slot_fairness.rs"]
+mod restart_slot_fairness;
 use crate::error::Result as P2PResult;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,

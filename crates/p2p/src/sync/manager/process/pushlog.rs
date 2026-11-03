@@ -534,7 +534,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // ack destroys the pusher's retry record, so an unpersisted
             // registration must fail closed as an error reply instead
             // (#1099; proofs/tla/PendingDagRestart.tla INV_AckBacked).
-            // Durable records outlive TTL-evicted map entries, so they carry
+            // Durable records outlive the map across a restart, so they carry
             // their own larger cap; at the cap the obligation is refused
             // (backpressure nack) while the pusher still owns retry state.
             // The cap, the retirement of the older durable head of the

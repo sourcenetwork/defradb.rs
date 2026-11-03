@@ -114,6 +114,11 @@ impl DagFetchContext {
         self
     }
 
+    /// Whether the per-root retry clock dispatched this fetch and owns its retries.
+    pub(crate) fn is_clock_owned(&self) -> bool {
+        self.pending_lease.is_some()
+    }
+
     pub(crate) fn is_current(&self) -> bool {
         self.pending_lease
             .as_ref()
