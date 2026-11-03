@@ -21,6 +21,9 @@ mod sibling_durable_repush;
 #[path = "../../../../tests/unit/estimators_observe_only.rs"]
 mod estimators_observe_only;
 
+#[path = "../../../../tests/unit/durable_share.rs"]
+mod durable_share;
+
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
         0x55,
