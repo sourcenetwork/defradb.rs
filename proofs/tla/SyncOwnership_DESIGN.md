@@ -196,6 +196,30 @@ stage 3 does not enable the stage-4 gossip-direction change. A root-only gossip
 relay has not completed `Merge` and therefore cannot become the downstream
 provider.
 
+The hand-off between the two hops is modelled, not assumed. The receiver is
+the hub B: `fwdDirty` is B's durable B→C scope marker, `downV` is the head C
+holds, and `DeliverDownstream` abstracts C's instance of this same protocol
+(the one-hop machine is what delivers a durable marker). B's upstream record
+in `pending` and B's downstream marker must overlap: `ClaimTerminal` records
+the marker before `CompleteTerminal` discharges the record. In Rust,
+`replication/handlers.rs` `forward_merged` registers B's replicator markers
+before `mark_as_merged` discharges the pending record. Every route to the
+terminal step forwards first: a fresh merge, a re-drive after a forward that
+failed in this process (the root stays unmarked and in the owed set of
+`manager/process/owed_forward.rs`, because the database answers its second
+merge with an in-process "already merged" skip), and a re-drive after a
+restart (the database merges the root again). A forward that fails is the
+terminal step not having happened: the root stays unmarked, its record stays,
+and the receiver clock re-drives it.
+
+`MergeMode = "DischargeBeforeForward"` is the order this replaced:
+`mark_as_merged` first, then the forward from the still-running handler
+(`fwdDue`, volatile). A crash between the two (`Crash`), a forward that fails
+after the discharge (`ForwardFail`: shutdown, an unreadable replicator list,
+or a recorder that cannot make the marker durable), or a re-drive that finds
+the root already merged after a crash, each leaves a head C lacks with nothing
+on B that still owes it.
+
 Reconnect is evidence that an existing sender scope marker is deliverable
 again, so the runtime moves that peer's existing marker schedule to "due now"
 without resetting its retry rung. This is an enabling event for
@@ -411,6 +435,13 @@ state a property: the end of a continuation is the liveness property
   provider serves is merged, however many never-serving roots were restored
   ahead of it into a map too small for all of them.
 - `LIVE_ContinuationEnds` (memory): every local continuation leaves the map.
+- `INV_ForwardObligationOwned`: a head the hub merged and its downstream
+  replicator lacks is still owed by the hub's durable downstream marker, by the
+  upstream pending record of that head or a newer one, or by a running handler.
+- `LIVE_EventualDownstreamCurrency`: every head the sender writes eventually
+  reaches the hub's downstream replicator, despite drops, nacks and one hub
+  restart. The forward and the downstream hop are fair at the scheduler level
+  only.
 
 The register-then-ack deviation from Go remains honest because `pending` is
 durable in the green policy. An optimistic acknowledgement for an in-flight
@@ -442,6 +473,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_EveryRoot.cfg` | RED | successive current heads from one sender/scope accumulate obsolete durable roots |
 | `MC_SyncOwnership_Red_ParallelMerge.cfg` | RED | frontend-selected parallel merge workers overlap independent receiver writers |
 | `MC_SyncOwnership_Red_DuplicateTerminal.cfg` | RED | two terminal observations concurrently delete the same durable pending root |
+| `MC_SyncOwnership_Red_DischargeBeforeForward.cfg` | RED | the hub discharges a merged head's upstream record before its downstream marker is durable; a failed forward or a crash between loses the head for the downstream replicator |
 | `MC_SyncOwnership_Red_EdgeTriggeredCompletion.cfg` | RED | a fast CAR failure is discarded before the fetch owner registers its completion waiter |
 | `MC_SyncOwnership_Red_WorkerSaturatedCompletion.cfg` | RED | saturated spawned workers stop draining the CAR completion required by an active fetch owner |
 | `MC_SyncOwnership_Red_SharedServeWorkers.cfg` | RED | slow ownership registration consumes every worker needed to serve receiver-owned CAR recovery |

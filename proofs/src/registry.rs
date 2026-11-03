@@ -596,6 +596,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A hub that merges an upstream head forwards it to its own
+        // replicators before the merge discharges the upstream pending
+        // record; a forward that fails leaves the root unmarked and owed.
+        // The witness is the p2p crate's forward_tests, outside this
+        // conformance binary's harness.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_ForwardObligationOwned / LIVE_EventualDownstreamCurrency: the downstream marker is durable before the upstream discharge",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/replication/handlers.rs forward_merged, handle_block_received, process_merge_batch; crates/p2p/src/sync/manager/process/owed_forward.rs; crates/p2p/src/sync/replication/forward_tests.rs",
+        model_ref: "MC_SyncOwnership_{Green,Green_Liveness_Doc,Red_DischargeBeforeForward}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A second PushLog for a CID already being processed joins that
         // processing instead of being nacked: it waits, bounded by a deadline,
         // looks again once the owner lets go, and either acks a block already
