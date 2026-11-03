@@ -22,7 +22,7 @@ use crate::sync::broadcaster::Broadcaster;
 use crate::sync::collection_store::{MemoryCollectionStorage, P2PCollectionStorage};
 use crate::sync::head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 use crate::sync::manager::{
-    SyncConfig, SyncEvent, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+    SyncConfig, SyncEventReceiver, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_PUSH_SEND_TIMEOUT,
 };
 use crate::sync::peer_state::PeerStateTracker;
@@ -37,7 +37,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         transport: T,
         blockstore: Arc<B>,
         config: SyncConfig,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
@@ -59,7 +59,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         config: SyncConfig,
         access_mode: AccessMode,
         collection_store: Arc<dyn P2PCollectionStorage>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
@@ -84,7 +84,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         replicators: Arc<ReplicatorRegistry>,
         collection_store: Arc<dyn P2PCollectionStorage>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control_and_serve_gate(
             transport,
             blockstore,
@@ -112,7 +112,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
@@ -141,7 +141,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         collection_store: Arc<dyn P2PCollectionStorage>,
         head_provider: Arc<dyn DocumentHeadProvider>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
@@ -171,7 +171,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         let local_peer_id = transport.local_peer_id().to_string();
         let broadcaster = Broadcaster::new(transport.clone());
         let peer_state = Arc::new(PeerStateTracker::new());

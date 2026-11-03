@@ -709,7 +709,7 @@ mod pending_persistence {
         store: Arc<RegolithStore>,
     ) -> (
         SyncManager<DefraBlockstore<RegolithStore>>,
-        tokio::sync::mpsc::Receiver<SyncEvent>,
+        p2p::sync::SyncEventReceiver,
         Arc<PendingDagStore<RegolithStore>>,
     ) {
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));

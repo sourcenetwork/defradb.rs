@@ -2230,7 +2230,7 @@ async fn dispatch_one_pending_dag_fetch(
         DefraBlockstore<RegolithStore>,
         PollFetchTransport,
     >,
-    events: &mut tokio::sync::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
     root_cid: Cid,
 ) {
     assert_eq!(
@@ -2719,7 +2719,7 @@ async fn test_run_serializes_duplicate_cids() {
 
     ReplicationLoop::run(
         Arc::new(coordinator),
-        rx,
+        rx.into(),
         handler.clone(),
         ReplicationConfig::default(),
         move |result| {
@@ -2865,7 +2865,7 @@ async fn test_run_uses_one_observable_batch_merge_pipeline() {
     let observed_merges_for_loop = observed_merges.clone();
     ReplicationLoop::run(
         Arc::new(coordinator),
-        rx,
+        rx.into(),
         handler.clone(),
         ReplicationConfig::default(),
         move |result| {
@@ -2898,7 +2898,7 @@ async fn test_process_next_batch_caps_drain_at_config_batch_size() {
     .await
     .unwrap();
 
-    let (tx, mut rx) = mpsc::channel(16);
+    let (tx, rx) = mpsc::channel(16);
     for i in 0..10 {
         let data = format!("block{}", i);
         let cid = make_cid(data.as_bytes());
@@ -2923,13 +2923,18 @@ async fn test_process_next_batch_caps_drain_at_config_batch_size() {
     };
     let handler = BatchTestHandler::new();
 
+    let mut events = crate::sync::SyncEventReceiver::from(rx);
     let results =
-        ReplicationLoop::process_next_batch(&coordinator, &mut rx, &handler, &config).await;
+        ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
 
     assert_eq!(results.len(), 3);
     assert_eq!(handler.batch_calls(), 1);
     assert_eq!(handler.batch_block_count(), 3);
-    assert_eq!(rx.len(), 7, "remaining backlog must stay queued");
+    assert_eq!(
+        std::iter::from_fn(|| events.try_recv().ok()).count(),
+        7,
+        "remaining backlog must stay queued"
+    );
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ type TestCoordinator = SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTrans
 async fn restart(
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     pending: Arc<PendingDagStore<RegolithStore>>,
-) -> (TestCoordinator, mpsc::Receiver<SyncEvent>) {
+) -> (TestCoordinator, crate::sync::SyncEventReceiver) {
     let (coordinator, events) = SyncCoordinator::with_access_control(
         NoopTransport::new(),
         blockstore,
@@ -161,7 +161,7 @@ async fn pulled_roots_continue_without_a_pushlog_registration() {
 // path. DagNeedsFetch here would redo discovery even if no network call occurs.
 async fn assert_local_turn(
     coordinator: &TestCoordinator,
-    events: &mut mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
     root: Cid,
 ) {
     let event = events.try_recv().expect("scheduled continuation");

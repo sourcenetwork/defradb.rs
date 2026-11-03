@@ -35,6 +35,7 @@ use crate::sync::PeerStateTracker;
 use super::super::queue::ProcessQueue;
 use super::config::SyncConfig;
 use super::diagnostics::SyncDiagnostics;
+use super::event_lanes::{DispatchLane, SyncEventReceiver};
 use super::events::SyncEvent;
 use super::pending::SharedPendingDags;
 use crate::sync::pending_store::{PendingDagStorage, PersistedView};
@@ -77,6 +78,9 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Channel for emitting sync events
     pub(super) event_tx: mpsc::Sender<SyncEvent>,
+
+    /// The receiver clock's own lane into the merge loop, taken first.
+    pub(super) dispatch_lane: Arc<DispatchLane>,
 
     /// Peer state tracker for finding providers
     pub(super) peer_state: Arc<PeerStateTracker>,
@@ -183,13 +187,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         blockstore: Arc<B>,
         peer_state: Arc<PeerStateTracker>,
         config: SyncConfig,
-    ) -> (Self, mpsc::Receiver<SyncEvent>) {
+    ) -> (Self, SyncEventReceiver) {
         let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size);
+        let dispatch_lane = Arc::new(DispatchLane::new(config.max_concurrent_dag_fetches));
 
         let manager = Self {
             blockstore,
             process_queue: ProcessQueue::new(),
             event_tx,
+            dispatch_lane: Arc::clone(&dispatch_lane),
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
@@ -210,7 +216,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             pending_resync_cursor: kovan::Atom::new(None),
         };
 
-        (manager, event_rx)
+        (manager, SyncEventReceiver::new(dispatch_lane, event_rx))
     }
 
     /// Check if a block exists and is merged.
@@ -316,6 +322,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Get a clone of the sync event sender for spawning background tasks.
     pub fn event_sender(&self) -> mpsc::Sender<SyncEvent> {
         self.event_tx.clone()
+    }
+
+    /// Whether the receiver clock's lane into the merge loop has room.
+    pub(crate) fn can_dispatch(&self) -> bool {
+        self.dispatch_lane.has_room()
+    }
+
+    /// Hands a receiver-clock dispatch to the merge loop ahead of its queued
+    /// merge work; `false` when the lane is full.
+    pub(crate) fn dispatch(&self, event: SyncEvent) -> bool {
+        self.dispatch_lane.push(event)
     }
 
     /// Shared reference to the sync diagnostics counters.

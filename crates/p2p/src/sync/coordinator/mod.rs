@@ -1176,13 +1176,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// Each dispatch takes the clock's own lane into the merge loop, which
+    /// has room for one per fetch slot and which the merge loop empties
+    /// before its channel of merge work: a dispatch never competes with the
+    /// senders waiting for room in that channel.
     fn dispatch_due_pending_dag_fetches(&self, now: n0_future::time::Instant) -> usize {
         let due = self.manager.due_pending_dag_retries(now);
-        let event_tx = self.manager.event_sender();
         let mut available = self.runtime.shutdown.available_pending_dag_fetch_slots();
         let mut count = 0;
         for (root_cid, dag) in due {
-            if available == 0 {
+            if available == 0 || !self.manager.can_dispatch() {
                 break;
             }
             // A slot given to a root whose peer has no permit free would sit
@@ -1201,12 +1204,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             available -= 1;
 
-            let Ok(event_permit) = event_tx.try_reserve() else {
-                self.runtime
-                    .shutdown
-                    .release_pending_dag_fetch_reservation(&root_cid);
-                break;
-            };
             if !self.manager.try_claim_pending_dag_dispatch(&root_cid, now) {
                 self.runtime
                     .shutdown
@@ -1215,7 +1212,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 continue;
             }
 
-            self.dispatch_pending_dag_fetch(root_cid, &dag, event_permit, peer_permit);
+            if !self
+                .manager
+                .dispatch(self.pending_dag_dispatch(root_cid, &dag, peer_permit))
+            {
+                self.runtime
+                    .shutdown
+                    .release_pending_dag_fetch_reservation(&root_cid);
+                break;
+            }
             count += 1;
         }
         count
@@ -1233,15 +1238,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// availability evidence plus the authenticated DAG origin. A newly
     /// connected or root-only peer may expedite the receiver clock, but it
     /// must not become a linked-DAG provider merely by doing so (#1512).
-    fn dispatch_pending_dag_fetch(
+    fn pending_dag_dispatch(
         &self,
         root_cid: Cid,
         dag: &PendingDag,
-        event_permit: tokio::sync::mpsc::Permit<'_, crate::sync::SyncEvent>,
         peer_permit: DagFetchPeerPermit,
-    ) {
+    ) -> crate::sync::SyncEvent {
         if dag.merge_continuation {
-            event_permit.send(crate::sync::SyncEvent::DagReady {
+            return crate::sync::SyncEvent::DagReady {
                 root_cid,
                 doc_id: dag.doc_id.clone(),
                 collection_id: dag.collection_id.clone(),
@@ -1249,8 +1253,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 sender_peer: dag.source_peer.clone(),
                 is_explicit_replicator: dag.is_explicit_replicator,
                 explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
-            });
-            return;
+            };
         }
         let missing: Vec<_> = dag.missing.iter().copied().collect();
         let mut providers = self.manager.get_providers_for_cids(&missing);
@@ -1274,7 +1277,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             fetch_failures = dag.fetch_failures,
             "Dispatching pending DAG fetch"
         );
-        event_permit.send(crate::sync::SyncEvent::DagNeedsFetch {
+        crate::sync::SyncEvent::DagNeedsFetch {
             root_cid,
             missing,
             providers,
@@ -1285,16 +1288,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             is_explicit_replicator: dag.is_explicit_replicator,
             explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
             peer_permit,
-        });
+        }
     }
 
     #[cfg(test)]
     fn dispatch_pending_dag_fetch_for_test(&self, root_cid: Cid, dag: &PendingDag) {
-        let event_tx = self.manager.event_sender();
-        let event_permit = event_tx
-            .try_reserve()
-            .expect("test event receiver must have capacity");
-        self.dispatch_pending_dag_fetch(root_cid, dag, event_permit, Default::default());
+        assert!(
+            self.manager
+                .dispatch(self.pending_dag_dispatch(root_cid, dag, Default::default())),
+            "the dispatch lane must have room"
+        );
     }
 
     pub fn shutdown_handle(&self) -> SyncShutdownHandle {
