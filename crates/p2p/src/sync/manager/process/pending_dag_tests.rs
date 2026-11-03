@@ -13,6 +13,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 
 #[path = "../../../../tests/unit/acked_pending_ttl.rs"]
 mod acked_pending_ttl;
+#[path = "../../../../tests/unit/durable_only_ack.rs"]
+mod durable_only_ack;
 #[path = "../../../../tests/unit/durable_only_repush.rs"]
 mod durable_only_repush;
 #[path = "../../../../tests/unit/sibling_durable_repush.rs"]
