@@ -616,6 +616,32 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A success reply ends the pusher's retry record, so every acked head
+        // must stay reachable from a pending or merged head. A head retires
+        // its scope's current head only when it links it as a parent; no head
+        // is acked on another head's strength. Witnessed by
+        // pushlog.rs sibling_heads_from_one_sender_are_both_retained and
+        // sync_manager_tests.rs sibling_heads_from_one_sender_are_both_durable.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_SuccessImpliesRegisteredOrMerged / INV_AckedHeadReachable / EventuallyAllMerged: overflow nacks, and sibling heads of one sender scope each keep their registration",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner, assert_pushlog_left_durable_state; crates/p2p/src/sync/manager/process/pending_dag.rs try_insert_pending_dag; crates/p2p/src/sync/pending_store/store.rs register",
+        model_ref: "MC_PushLogAdmission_{Green,Green_Siblings,Red_SuccessOnFull,Red_PriorityCover}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A live ack clears its scope's marker only when the acked head is the
+        // scope's whole frontier; with a sibling beside it, the retry ladder
+        // sends every current head. Witnessed by access_tests.rs
+        // live_ack_of_a_sibling_head_does_not_clear_the_scope_marker.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_OneLiveHead / INV_NoStaleRetry / INV_NewestRetained / INV_ClearedScopeDelivered: latest-head coalescing, and a cleared marker never hides an undelivered sibling",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier; crates/storage/src/stores/peerstore.rs complete_retry_scope",
+        model_ref: "MC_PushCoalescing_{Green,Green_Siblings,Red_AppendEvery,Red_StaleRetry,Red_SiblingClear}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Multi-instance claim",
         name: "INV_EventualUnique — claim CAS converges to a single winner",
         axis: Tla,

@@ -18,10 +18,40 @@ The green configuration proves:
 - `INV_NoStaleRetry`: a persisted retry is always the newest known head.
 - `INV_NewestRetained`: retirement never drops the newest obligation; it is queued,
   active, persisted, or already acknowledged.
+- `INV_ClearedScopeDelivered`: once a scope's marker is clear, every head offered to
+  the peer is delivered or an ancestor of a delivered head.
 
 `MC_PushCoalescing_Red_AppendEvery.cfg` demonstrates the live-queue failure, while
 `MC_PushCoalescing_Red_StaleRetry.cfg` demonstrates the active-send race that recreates
 a superseded persisted retry.
+
+## Sibling heads and the marker (F1)
+
+Heads carry a `Parent` relation. A hub forwards every merged remote head, so two heads
+written concurrently on different peers reach the live path for one `(scope, peer)` as
+siblings. The live path still sends only one of them: the backlog retires the queued
+older version, and the worker's admission check fences any job whose marker
+generation is no longer the newest. Retiring a sibling from the volatile queue loses
+nothing by itself; the durable marker still stands for it. The loss is the ack: the
+ack of the head holding the newest generation cleared the marker, and with it the
+sibling that was never sent (`CompleteRule = "Generation"`).
+
+The code's rule (`CompleteRule = "Frontier"`): the worker reads the scope's current
+heads (`DocumentHeadProvider`) and the ack carries the marker generation only when the
+acked head is the whole frontier, so every head registered before it is one of its
+ancestors (`push_worker.rs` `is_whole_frontier`). Otherwise the marker stays set and
+the retry ladder sends every current head and clears it once they are acked and
+unchanged (`Ladder`; `retry_doc`, `complete_document_retry_if_current`). A failed head
+lookup leaves the marker set. One writer's linear heads always have a one-head
+frontier, so their acks clear the marker as before.
+
+| Config | Parents | `CompleteRule` | Verdict |
+|--------|---------|----------------|---------|
+| `MC_PushCoalescing_Green.cfg` | linear | `Frontier` | GREEN: all six invariants |
+| `MC_PushCoalescing_Red_AppendEvery.cfg` | linear | `Frontier` | RED: `INV_OneLiveHead` |
+| `MC_PushCoalescing_Red_StaleRetry.cfg` | linear | `Frontier` | RED: `INV_NoStaleRetry` |
+| `MC_PushCoalescing_Green_Siblings.cfg` | 2 and 3 over 1 | `Frontier` | GREEN: all six invariants |
+| `MC_PushCoalescing_Red_SiblingClear.cfg` | 2 and 3 over 1 | `Generation` | RED: `INV_ClearedScopeDelivered` (3 retires queued 2, 3's ack clears the marker) |
 
 The model makes `Fail` and its current-version check atomic. The runtime check and
 peerstore write are separated by an asynchronous recorder channel: a newer-head
@@ -56,11 +86,9 @@ If a locally produced head cannot be decoded to obtain its priority, it uses a
 CID-scoped volatile obligation key and bypasses scope coalescing; an unproven version
 is never retired as an older scope head. The CID is not persisted.
 
-Latest-head retirement assumes that a later locally produced scope head subsumes its
-earlier linear predecessor. Concurrent sibling heads that must both remain heads do
-not enter this live update path: replay and field/KMS DAG paths bypass the outbound
-backlog, collection commits use separate collection-scoped markers, and
-`rebroadcast_on_merge` is false at every production construction site. Enabling that
-flag, or adding another live producer of non-subsuming document siblings, requires
-distinct obligation keys or extending the model from one total-order head to an
-antichain.
+Latest-head retirement in the volatile queue keeps one head per `(scope, peer)`.
+Sibling heads do enter this live path: the post-merge replicator fan-out forwards
+every merged remote head. Their delivery rests on the marker, which only an ack of the
+whole frontier, or the retry ladder, clears (see above). Replay and field/KMS DAG paths
+bypass the outbound backlog, and `rebroadcast_on_merge` (gossip) is false at every
+production construction site.
