@@ -1,5 +1,5 @@
 use super::*;
-use crate::sync::pending_store::PendingDagStore;
+use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 use crate::sync::{
     BlockMetadata, MergeHandler, MergeOutcome, ReplicationConfig, ReplicationLoop,
     ReplicationResult, SyncConfig, SyncCoordinator,
@@ -23,6 +23,22 @@ impl MergeHandler for NoMerge {
         _metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, NoMergeExpected> {
         Err(NoMergeExpected)
+    }
+}
+
+struct MergeAll;
+
+#[async_trait]
+impl MergeHandler for MergeAll {
+    type Error = NoMergeExpected;
+
+    async fn handle_block(
+        &self,
+        _cid: &Cid,
+        _block_data: &[u8],
+        _metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, NoMergeExpected> {
+        Ok(MergeOutcome::Merged)
     }
 }
 
@@ -274,5 +290,95 @@ async fn no_permit_held_in_emit_dag_ready() {
     assert_eq!(
         free_permits, 2,
         "a fetch waiting to report a complete DAG still holds a fetch permit"
+    );
+}
+
+/// A restored record that names no source peer is fetched by transport block
+/// sync, which asks every provider for the whole DAG when nothing is missing.
+/// A full channel hands its complete root to the clock, and that block sync's
+/// completion hands it back while the channel stays full. The merge loop must
+/// merge such a root once it has the dispatch, with no transport call.
+#[tokio::test(start_paused = true)]
+async fn complete_sourceless_root_merges_without_block_sync() {
+    let blockstore = Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    ));
+    let (head, head_data, leaf, leaf_data) = head_and_field();
+    blockstore.put(&head, &head_data).await.unwrap();
+    blockstore.put(&leaf, &leaf_data).await.unwrap();
+    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    pending_store
+        .put(
+            &head,
+            &PersistedPendingDag {
+                doc_id: "doc".to_string(),
+                collection_id: "collection".to_string(),
+                head_priority: Some(1),
+                creator: "creator".to_string(),
+                source_peer: None,
+                alternate_providers: Vec::new(),
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+            },
+        )
+        .await
+        .unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        head,
+        head_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    transport.set_connected_peers(vec![PeerId::new("provider".to_string())]);
+    let config = SyncConfig {
+        event_buffer_size: 1,
+        ..SyncConfig::default()
+    };
+    let (coordinator, mut events) =
+        SyncCoordinator::new(transport.clone(), blockstore.clone(), config)
+            .await
+            .unwrap();
+    coordinator.install_pending_dag_store(pending_store).await;
+    coordinator
+        .manager()
+        .event_sender()
+        .send(merge_work())
+        .await
+        .unwrap();
+    assert_eq!(coordinator.restore_pending_dags().await, 1);
+
+    let now = n0_future::time::Instant::now();
+    let dispatched = coordinator.dispatch_due_pending_dag_fetches_for_test(now);
+    let config = ReplicationConfig::default();
+    let result = ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await;
+    if let ReplicationResult::BitswapFetchStarted { query_id, .. } = result {
+        coordinator
+            .handle_bitswap_complete(query_id, Ok(()), None)
+            .await
+            .unwrap();
+    }
+    let redispatched = coordinator.dispatch_due_pending_dag_fetches_for_test(now);
+    let merged = coordinator.manager().is_merged(&head).await.unwrap();
+
+    coordinator.shutdown().await;
+
+    assert_eq!(dispatched, 1);
+    assert_eq!(
+        transport.sync_batches(),
+        Vec::<Vec<Cid>>::new(),
+        "the merge loop asked the transport for a DAG it already holds"
+    );
+    assert!(
+        matches!(result, ReplicationResult::Merged { cid, .. } if cid == head),
+        "the dispatched complete root was not merged: {result:?}"
+    );
+    assert!(merged);
+    assert_eq!(
+        redispatched, 0,
+        "the root went straight back to the clock, ahead of its backoff"
     );
 }

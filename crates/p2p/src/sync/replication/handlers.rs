@@ -7,6 +7,7 @@ use super::config::ReplicationConfig;
 use super::result::ReplicationResult;
 use crate::sync::coordinator::dag_context::DagFetchContext;
 use crate::sync::coordinator::SyncCoordinator;
+use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
@@ -1117,6 +1118,53 @@ where
     }
 }
 
+/// The root of a dispatch that names no source peer and misses no block.
+fn sourceless_complete_dispatch(event: &SyncEvent) -> Option<Cid> {
+    match event {
+        SyncEvent::DagNeedsFetch {
+            root_cid,
+            missing,
+            sender_peer: None,
+            ..
+        } if missing.is_empty() => Some(*root_cid),
+        _ => None,
+    }
+}
+
+/// Whether the root block and every block it links are stored.
+async fn dag_is_local<B: Blockstore>(blockstore: &B, root_cid: &Cid) -> bool {
+    match blockstore.get(root_cid).await {
+        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data)
+            .await
+            .is_ok_and(|missing| missing.is_empty()),
+        _ => false,
+    }
+}
+
+fn into_dag_ready(event: SyncEvent) -> SyncEvent {
+    match event {
+        SyncEvent::DagNeedsFetch {
+            root_cid,
+            doc_id,
+            collection_id,
+            creator,
+            sender_peer,
+            is_explicit_replicator,
+            explicit_replay_authorization,
+            ..
+        } => SyncEvent::DagReady {
+            root_cid,
+            doc_id,
+            collection_id,
+            creator,
+            sender_peer,
+            is_explicit_replicator,
+            explicit_replay_authorization,
+        },
+        other => other,
+    }
+}
+
 /// Process one sync event, unless the block it would merge already merged.
 ///
 /// It takes no merge lock and waits for no other merge or fetch of the CID: one
@@ -1135,8 +1183,24 @@ where
     H: MergeHandler + ?Sized + 'static,
 {
     // Own the queued slot before reconciliation can return without merging.
-    let _pending_owner =
-        event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
+    // A dispatch without a source peer goes to transport block sync, which
+    // asks for the whole DAG when nothing is missing: a complete root merges
+    // here instead.
+    let (event, _pending_owner) = match sourceless_complete_dispatch(&event) {
+        Some(root_cid) => {
+            let owner = coordinator.pending_dag_merge_guard(root_cid);
+            if dag_is_local(coordinator.blockstore().as_ref(), &root_cid).await {
+                (into_dag_ready(event), owner)
+            } else {
+                (event, None)
+            }
+        }
+        None => {
+            let owner =
+                event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
+            (event, owner)
+        }
+    };
     if let Some(cid) = event_merge_cid(&event) {
         if let Some(result) = skipped_if_already_merged(coordinator, &event, cid).await {
             return result;
