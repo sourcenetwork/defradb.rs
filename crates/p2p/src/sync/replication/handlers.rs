@@ -265,7 +265,7 @@ where
 {
     // Load block from blockstore
     let _pending_owner = coordinator.pending_dag_merge_guard(cid);
-    coordinator
+    let _turn = coordinator
         .manager()
         .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
@@ -644,10 +644,10 @@ where
         .filter_map(event_merge_cid)
         .map(|cid| {
             let owner = coordinator.pending_dag_merge_guard(cid);
-            coordinator
+            let turn = coordinator
                 .manager()
                 .consume_pending_merge_continuation(&cid);
-            owner
+            (owner, turn)
         })
         .collect();
 

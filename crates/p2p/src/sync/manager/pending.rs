@@ -18,6 +18,22 @@ use crate::ExplicitReplayAuthorization;
 /// indefinitely stale DAGs from accumulating.
 pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
 
+/// Who put an entry in the pending map, which decides how it leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOrigin {
+    /// A sender's PushLog registered it. Once acknowledged it is the head's
+    /// one owner, so it leaves only on merge, quarantine or a newer head of
+    /// its scope.
+    Push,
+    /// The resync sweep re-registered it from its durable record (a push
+    /// acknowledged before a restart). It leaves as a `Push` entry does.
+    Restored,
+    /// A local pull-sync merge yielded its work budget. No sender waits on it
+    /// and it has no durable record, so it lives only while its merge keeps
+    /// yielding: the first turn that ends any other way removes it.
+    LocalContinuation,
+}
+
 /// Metadata for a pending DAG sync waiting for Bitswap to complete.
 #[derive(Debug, Clone)]
 pub struct PendingDag {
@@ -73,13 +89,16 @@ pub struct PendingDag {
     pub merge_continuation: bool,
     /// Transient local contention; discarded with this bounded pending root.
     pub storage_blocker: Option<Cid>,
+    /// Who put this entry in the map.
+    pub origin: PendingOrigin,
 }
 
 impl PendingDag {
     /// An entry expires only while it is not acknowledged. Once the sender has
     /// a success reply it has dropped its retry marker, so this entry is the
     /// head's one owner: it stays until merge, quarantine or a newer head of
-    /// its scope, bounded by `max_pending_dags`.
+    /// its scope, bounded by `max_pending_dags`. A local continuation does not
+    /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
     pub fn is_expired(&self, now: Instant) -> bool {
         !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL
     }
