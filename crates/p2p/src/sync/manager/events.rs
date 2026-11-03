@@ -4,9 +4,6 @@ use cid::Cid;
 
 use crate::ExplicitReplayAuthorization;
 
-/// The channel the sync coordinator emits its [`SyncEvent`]s on.
-pub type SyncEventReceiver = crate::rt::mpsc::Receiver<SyncEvent>;
-
 /// A fetch permit of a root's source peer, taken by the retry clock together
 /// with the root's fetch slot, so the fetch never holds a slot while it waits
 /// for a permit. Only the fetch it was taken for uses it: a clone of the

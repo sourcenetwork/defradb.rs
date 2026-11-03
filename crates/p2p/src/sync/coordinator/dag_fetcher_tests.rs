@@ -8,6 +8,8 @@ mod car_size_retry;
 mod dag_fetch_depth;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
+#[path = "../../../tests/unit/dispatch_merge_fifo.rs"]
+mod dispatch_merge_fifo;
 #[path = "../../../tests/unit/durable_overflow_rotation.rs"]
 mod durable_overflow_rotation;
 #[path = "../../../tests/unit/productive_quantum.rs"]
