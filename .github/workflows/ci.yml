@@ -241,23 +241,9 @@ jobs:
         with:
           shared-key: integration-binaries
           save-if: false
-      - name: Dump a test's stacks when it hangs
-        env:
-          WATCH_TESTS: '1'
-        run: |
-          uname -a
-          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
       - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
-      - name: Upload test stacks
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feature-tests-stacks
-          path: target/e2e/**/logs/*.log
-          retention-days: 7
-          if-no-files-found: ignore
 
   wasm-check:
     name: WASM Build Check
@@ -372,7 +358,6 @@ jobs:
       RUST_LOG: info
       NUCLEI_BACKEND: ${{ matrix.io.backend }}
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
-      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -390,10 +375,6 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
-      - name: Dump node stacks when a client command hangs
-        run: |
-          uname -a
-          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - name: Upload harness node logs
@@ -442,10 +423,6 @@ jobs:
         run: |
           chmod +x target/ci/defra target/ci/defra-iroh
           target/ci/defra version --format json
-      - name: Dump node stacks when a client command hangs
-        run: |
-          uname -a
-          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
@@ -610,7 +587,6 @@ jobs:
       RUST_LOG: info
       NUCLEI_BACKEND: ${{ matrix.io.backend }}
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
-      DEFRA_DIAG_DIR: ${{ github.workspace }}/target/e2e/diag
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -628,10 +604,6 @@ jobs:
           name: defra-ci-binaries
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
-      - name: Dump node stacks when a client command hangs
-        run: |
-          uname -a
-          nohup .github/scripts/stack-watchdog.sh > /dev/null 2>&1 &
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test p2p

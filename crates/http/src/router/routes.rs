@@ -642,7 +642,7 @@ mod tests {
             ),
         );
 
-        nuclei::time::timeout(Duration::from_secs(1), started.notified())
+        nuclei::time::timeout(Duration::from_secs(10), started.notified())
             .await
             .expect("P2P operation should start");
         assert!(

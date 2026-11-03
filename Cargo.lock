@@ -17,7 +17,7 @@ dependencies = [
  "datastore",
  "defra-core",
  "identity",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "rapidhash",
  "regolith 0.2.3",
  "serde",
@@ -1870,7 +1870,7 @@ dependencies = [
  "futures",
  "hex",
  "keyed_priority_queue",
- "kovan-channel 0.2.2",
+ "kovan-channel 0.2.3",
  "libp2p",
  "libp2p-stream",
  "multihash",
@@ -2463,7 +2463,7 @@ dependencies = [
  "iroh",
  "keyring 0.5.0",
  "kms",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "lens",
  "libc",
  "libp2p",
@@ -3785,7 +3785,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3831,9 +3831,9 @@ dependencies = [
  "identity",
  "inputs",
  "kms",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "libp2p",
  "multihash",
@@ -3897,8 +3897,8 @@ dependencies = [
  "cid",
  "futures",
  "ipld-core",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "multibase",
  "multihash",
  "multihash-codetable",
@@ -3960,9 +3960,9 @@ dependencies = [
  "hex",
  "hyper 1.9.0",
  "identity",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "net",
  "nuclei",
@@ -4004,8 +4004,8 @@ dependencies = [
  "hex",
  "identity",
  "kms",
- "kovan 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "mimalloc",
  "net",
@@ -4051,9 +4051,9 @@ dependencies = [
  "identity",
  "iroh",
  "kms",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "libp2p",
  "n0-future",
@@ -4606,7 +4606,7 @@ dependencies = [
  "identity",
  "keyring 0.5.0",
  "kms",
- "kovan-queue 0.2.2",
+ "kovan-queue 0.2.3",
  "lens",
  "libp2p",
  "p2p",
@@ -4768,7 +4768,7 @@ dependencies = [
  "bytes",
  "cid",
  "defra-core",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "rapidhash",
  "regolith 0.2.3",
  "thiserror 2.0.21",
@@ -4882,10 +4882,10 @@ dependencies = [
  "futures-lite",
  "hex",
  "identity",
- "kovan 0.2.2",
- "kovan-channel 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-channel 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "p2p",
  "query",
@@ -6217,7 +6217,7 @@ dependencies = [
  "hex",
  "identity",
  "keyring 0.5.0",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "libc",
  "mach2 0.4.3",
  "net",
@@ -6884,9 +6884,9 @@ dependencies = [
  "futures",
  "identity",
  "inputs",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "nuclei",
  "orbis",
  "rand 0.8.8",
@@ -6915,9 +6915,9 @@ dependencies = [
 
 [[package]]
 name = "kovan"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30de8e1f374a1d4cb20f4031a771b0b9c34352c9fd35be65efd1407f71186675"
+checksum = "daa9f1b7bd4e214a839ec477347103f4265810e25cab696762ac65bd8701963b"
 dependencies = [
  "once_cell",
  "portable-atomic",
@@ -6936,12 +6936,12 @@ dependencies = [
 
 [[package]]
 name = "kovan-channel"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28714e9cbbaf6278719faa02950a2d6c7776fcdeb79f931c0880b13a769141a5"
+checksum = "9132bf6a8ccf1d07adaf2e53383167b26938c6bee94aefef9f386a804b5b9e9d"
 dependencies = [
  "crossbeam-utils",
- "kovan 0.2.2",
+ "kovan 0.2.3",
 ]
 
 [[package]]
@@ -6956,12 +6956,12 @@ dependencies = [
 
 [[package]]
 name = "kovan-map"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba041f9f2d2a9912ea2b823a3db44af8d1070c558cd933e419ee69dac17c6143"
+checksum = "e37b89c7827b824d80ef7a8dba6aebd394d790dd571f6e0f00d0f8f6f6094de0"
 dependencies = [
  "foldhash 0.2.0",
- "kovan 0.2.2",
+ "kovan 0.2.3",
 ]
 
 [[package]]
@@ -6976,12 +6976,12 @@ dependencies = [
 
 [[package]]
 name = "kovan-queue"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c446fe17daab001a9a8d2edc9b6f5fe8cb8f0fd29a90a4b4fbbf85d049897ee1"
+checksum = "dfb6480396d536cecf454bad4c133fd9a0130bac03306d2b8ece1f5d3000803a"
 dependencies = [
  "crossbeam-utils",
- "kovan 0.2.2",
+ "kovan 0.2.3",
 ]
 
 [[package]]
@@ -7027,7 +7027,7 @@ dependencies = [
  "base64 0.23.1",
  "futures",
  "hex",
- "kovan-map 0.2.2",
+ "kovan-map 0.2.3",
  "rapidhash",
  "regolith 0.2.3",
  "serde",
@@ -8368,23 +8368,26 @@ dependencies = [
 
 [[package]]
 name = "nuclei"
-version = "0.5.1"
-source = "git+https://github.com/vertexclique/nuclei?rev=5ad39f47c92b7fdf73f681826dcc1ffcfeb75298#5ad39f47c92b7fdf73f681826dcc1ffcfeb75298"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d34b71a38bbf91ac6603ed202dbf71eff4fd4462444edea2d14f6dcebc8b41d7"
 dependencies = [
  "futures-core",
  "futures-io",
- "kovan 0.2.2",
- "kovan-channel 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-channel 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "libc",
+ "log",
  "nuclei-macros",
 ]
 
 [[package]]
 name = "nuclei-macros"
-version = "0.5.0"
-source = "git+https://github.com/vertexclique/nuclei?rev=5ad39f47c92b7fdf73f681826dcc1ffcfeb75298#5ad39f47c92b7fdf73f681826dcc1ffcfeb75298"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95f0643adedf240128849eb7909e7e4d4b10dabe095707c1c842bfe2ff790b76"
 
 [[package]]
 name = "num"
@@ -8932,10 +8935,10 @@ dependencies = [
  "iroh-relay",
  "iroh-tickets",
  "kms",
- "kovan 0.2.2",
- "kovan-channel 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-channel 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "libp2p",
  "libp2p-stream",
  "lru",
@@ -9194,7 +9197,7 @@ dependencies = [
  "edge",
  "futures",
  "identity",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "nuclei",
  "pgwire",
  "query",
@@ -9944,9 +9947,9 @@ dependencies = [
  "graphql-parser",
  "identity",
  "inputs",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "lens",
  "rapidhash",
  "regex",
@@ -10421,10 +10424,10 @@ dependencies = [
  "aes-gcm-siv",
  "getrandom 0.4.3",
  "js-sys",
- "kovan 0.2.2",
- "kovan-channel 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-channel 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "libc",
  "loom",
  "lz4_flex",
@@ -10470,7 +10473,7 @@ dependencies = [
 name = "replication-filter"
 version = "0.5.0"
 dependencies = [
- "kovan-map 0.2.2",
+ "kovan-map 0.2.3",
  "p2p",
  "query",
  "rapidhash",
@@ -12456,7 +12459,7 @@ version = "0.5.0"
 dependencies = [
  "async-trait",
  "edge",
- "kovan 0.2.2",
+ "kovan 0.2.3",
  "net",
  "opentelemetry",
  "opentelemetry-http",
@@ -13473,9 +13476,9 @@ dependencies = [
  "inputs",
  "k256",
  "keyring 0.5.0",
- "kovan 0.2.2",
- "kovan-map 0.2.2",
- "kovan-queue 0.2.2",
+ "kovan 0.2.3",
+ "kovan-map 0.2.3",
+ "kovan-queue 0.2.3",
  "n0-future",
  "net",
  "nuclei",
@@ -15317,7 +15320,7 @@ dependencies = [
  "async-trait",
  "futures",
  "identity",
- "kovan-map 0.2.2",
+ "kovan-map 0.2.3",
  "proptest",
  "rapidhash",
  "serde",
