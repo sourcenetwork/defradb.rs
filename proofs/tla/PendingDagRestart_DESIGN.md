@@ -41,8 +41,9 @@ what the ack promised.
 
 ## Abstractions
 
-- **As in `PushLogAdmission`**: docs are the unit, "the pusher" is the per-doc
-  ack/retry record, and how a push comes to have missing links is irrelevant.
+- **As in `PushLogAdmission`'s independent-head configurations**: docs are the unit,
+  "the pusher" is the per-doc ack/retry record, and how a push comes to have missing
+  links is irrelevant.
 - **The pusher process survives the hub crash** — its records are in another process.
 - **The crash is one-shot and atomic with restart** (the hub is immediately back up);
   a modeled down-window adds states without adding durability-relevant behaviors.
