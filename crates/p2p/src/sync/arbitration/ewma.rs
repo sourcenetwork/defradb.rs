@@ -1,9 +1,9 @@
-//! The two fixed-point updates, the Q16 weight of a gap, and the packed word
-//! that holds a time-decayed estimate (Lean: `roll`, `troll`, `weightQ16`).
+//! The two fixed-point updates, the Q32 weight of a gap, and the packed word
+//! that holds a time-decayed estimate (Lean: `roll`, `troll`, `weightQ32`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{LN2_Q16, TIME_BITS, VALUE_BITS, WEIGHT_ONE, WEIGHT_TABLE};
+use super::{TIME_BITS, VALUE_BITS, WEIGHT_ONE, WEIGHT_TABLE};
 
 /// Largest value a packed estimate holds; larger samples saturate to it.
 pub(crate) const VALUE_MAX: u64 = (1 << VALUE_BITS) - 1;
@@ -29,41 +29,56 @@ pub(crate) const fn roll(avg: u64, sample: u64, shift: u32) -> u64 {
     avg - keep + add
 }
 
-/// Moves `v` a `w / WEIGHT_ONE` share of the way to `x`, rounding toward `v`,
-/// so the result lies between them for any weight.
-pub(crate) const fn troll(v: u64, x: u64, w: u64) -> u64 {
+/// Moves `v` a `w / WEIGHT_ONE` share of the way to `x`, the share's fraction
+/// rounded by `dither`: down unless `dither` makes up the rest. Over a uniform
+/// `dither` the move is the exact share (Lean `dither_mean`), so a share below
+/// one unit still moves the estimate in proportion instead of freezing it. The
+/// result lies between `v` and `x` for any weight and dither.
+pub(crate) const fn troll(v: u64, x: u64, w: u64, dither: u64) -> u64 {
     let w = if w > WEIGHT_ONE { WEIGHT_ONE } else { w } as u128;
+    let dither = (dither & (WEIGHT_ONE - 1)) as u128;
+    let one = WEIGHT_ONE as u128;
     if v <= x {
-        v + ((x - v) as u128 * w / WEIGHT_ONE as u128) as u64
+        v + (((x - v) as u128 * w + dither) / one) as u64
     } else {
-        v - ((v - x) as u128 * w / WEIGHT_ONE as u128) as u64
+        v - (((v - x) as u128 * w + dither) / one) as u64
     }
 }
 
-/// `1 - 2^(-gap / half_life)` in Q16, never decreasing in `gap`.
+/// `1 - 2^(-gap / half_life)` in Q32, never decreasing in `gap`.
 ///
-/// Whole half-lives halve the kept share; the remainder picks one of 64 table
-/// steps. A gap under one step is linear (`gap · ln 2 / half_life`), capped at
-/// the first step so the weight never falls as the gap grows.
-pub(crate) const fn weight_q16(gap_ms: u64, half_life_ms: u64) -> u64 {
+/// Whole half-lives halve the kept share; within one, the share is
+/// interpolated between two of the table's 64 steps, so even a 1 ms gap has a
+/// weight and every gap is within about 1e-5 of exact.
+pub(crate) const fn weight_q32(gap_ms: u64, half_life_ms: u64) -> u64 {
     if half_life_ms == 0 {
         return WEIGHT_ONE;
     }
     let halvings = gap_ms / half_life_ms;
-    if halvings > 16 {
+    if halvings > 32 {
         return WEIGHT_ONE;
     }
-    let step = ((gap_ms % half_life_ms) as u128 * 64 / half_life_ms as u128) as usize & 63;
-    if halvings == 0 && step == 0 {
-        let linear = (gap_ms as u128 * LN2_Q16 as u128 / half_life_ms as u128) as u64;
-        let first_step = WEIGHT_ONE - WEIGHT_TABLE[1];
-        return if linear < first_step {
-            linear
-        } else {
-            first_step
-        };
-    }
-    WEIGHT_ONE - (WEIGHT_TABLE[step] >> halvings)
+    let position = (gap_ms % half_life_ms) as u128 * 64;
+    let step = (position / half_life_ms as u128) as usize & 63;
+    let fraction = position % half_life_ms as u128;
+    let upper = WEIGHT_TABLE[step];
+    let lower = if step < 63 {
+        WEIGHT_TABLE[(step + 1) & 63]
+    } else {
+        WEIGHT_TABLE[0] / 2
+    };
+    let fall = ((upper - lower) as u128) << 16;
+    let keep = ((upper as u128) << 16) - fall * fraction / half_life_ms as u128;
+    WEIGHT_ONE - (keep >> halvings) as u64
+}
+
+/// A dither for the update of `word` at `now_ms`: deterministic, so a replay
+/// reproduces it, and spread over `[0, WEIGHT_ONE)` (splitmix64).
+const fn dither(word: u64, now_ms: u64) -> u64 {
+    let mut z = (word ^ now_ms.rotate_left(32)).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    (z ^ (z >> 31)) & (WEIGHT_ONE - 1)
 }
 
 /// An estimate's value and the time of its last sample.
@@ -107,7 +122,8 @@ pub(crate) const fn record_word(word: u64, now_ms: u64, sample: u64, half_life_m
         Some(last) => troll(
             last.value,
             sample,
-            weight_q16(now_ms.saturating_sub(last.at), half_life_ms),
+            weight_q32(now_ms.saturating_sub(last.at), half_life_ms),
+            dither(word, now_ms),
         ),
     };
     encode(now_ms, value)

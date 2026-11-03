@@ -11,9 +11,11 @@ holds. Each average is a whole number. Two updates move it:
 * `roll`, per sample: a new sample counts for one part in `w` (`w = 2^shift`)
   and the old average for the rest, `avg - avg / w + sample / w`. The per-root
   averages use `w = 2`, the per-peer occupancy `w = 128` once per tick.
-* `troll`, per unit of time: the average moves a `w / 65536` share of the way to
+* `troll`, per unit of time: the average moves a `w / 2^32` share of the way to
   the sample, where `w` grows with the time since the last sample. The
   per-provider averages use it, so their half-life is in seconds on every link.
+  The share's fraction is dithered, so a share below one unit still moves the
+  average in proportion, on average, instead of freezing it.
 
 The first sample is taken as is. Nothing reads these averages yet except the
 sync status.
@@ -24,7 +26,8 @@ What must never happen:
   `troll_between_down`, `troll_le_bound`);
 * the first sample is mixed with a made-up zero (`record_first`, `troll_full`);
 * a time-weighted sample removes less than its share of the distance
-  (`troll_decay_up`, `troll_decay_down`).
+  (`troll_decay_up`, `troll_decay_down`), or the dither biases the move away
+  from its exact share (`dither_mean`).
 
 How the averages behave over many samples is in `Arbitration.Dynamics`.
 
@@ -149,129 +152,200 @@ theorem roll_le_bound {w avg s bound : Nat} (hw : 0 < w) (ha : avg ≤ bound) (h
 
 /-! ## The time-weighted update -/
 
--- `troll`: move `w/65536` of the way from `v` to `x`, rounding toward `v`.
-def troll (v x w : Nat) : Nat :=
-  -- Rising: add the share of the distance; falling: subtract it.
-  if v ≤ x then v + (x - v) * w / 65536 else v - (v - x) * w / 65536
+-- A weight of one, in Q32.
+def one : Nat := 4294967296
 
--- A Q16 share of a distance is at most the distance.
-theorem share_le (d w : Nat) (hw : w ≤ 65536) : d * w / 65536 ≤ d := by
-  -- It is enough that `d * w ≤ d * 65536`.
-  apply Nat.div_le_of_le_mul
-  -- Put the factors in the same order.
-  rw [Nat.mul_comm 65536 d]
+-- `troll`: move `w / one` of the way from `v` to `x`. The share's fraction is
+-- rounded by the dither `r < one`: down, unless `r` makes up the rest.
+def troll (v x w r : Nat) : Nat :=
+  -- Rising: add the dithered share of the distance; falling: subtract it.
+  if v ≤ x then v + ((x - v) * w + r) / one else v - ((v - x) * w + r) / one
+
+-- A dithered share of a distance is at most the distance.
+theorem share_le (d w r : Nat) (hw : w ≤ one) (hr : r < one) : (d * w + r) / one ≤ d := by
+  -- It is enough that the dividend is below `(d + 1) · one`.
+  apply Nat.le_of_lt_succ
+  apply (Nat.div_lt_iff_lt_mul (by decide : 0 < one)).2
   -- A weight of at most one only shrinks the distance.
-  exact Nat.mul_le_mul_left _ hw
+  have : d * w ≤ d * one := Nat.mul_le_mul_left _ hw
+  -- `(d + 1) · one = d · one + one`, and `r < one`.
+  rw [Nat.succ_mul]
+  omega
 
 -- Promise: the first sample (or the first after a long silence) has full
--- weight, so the estimate becomes the sample itself.
-theorem troll_full (v x : Nat) : troll v x 65536 = x := by
+-- weight, so the estimate becomes the sample itself, whatever the dither.
+theorem troll_full (v x r : Nat) (hr : r < one) : troll v x one r = x := by
   -- Open the update.
   unfold troll
+  -- The whole distance moves: `(d · one + r) / one = d` for `r < one`.
+  have q : ∀ d, (d * one + r) / one = d := fun d => by
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ (by decide : 0 < one),
+      Nat.div_eq_of_lt hr, Nat.zero_add]
   -- Rising or falling.
   split
-  -- Rising: the whole distance is added.
-  · rw [Nat.mul_div_cancel _ (by decide : 0 < 65536)]
-    -- `v + (x - v) = x`.
-    omega
-  -- Falling: the whole distance is subtracted.
-  · rw [Nat.mul_div_cancel _ (by decide : 0 < 65536)]
-    -- `v - (v - x) = x`.
-    omega
+  -- Rising: `v + (x - v) = x`.
+  · rw [q]; omega
+  -- Falling: `v - (v - x) = x`.
+  · rw [q]; omega
 
--- Promise: for any weight in `[0, 65536]`, a rising estimate lies between the
--- old one and the sample.
-theorem troll_between_up {v x w : Nat} (hvx : v ≤ x) (hw : w ≤ 65536) :
-    v ≤ troll v x w ∧ troll v x w ≤ x := by
+-- Promise: for any weight in `[0, one]` and any dither, a rising estimate lies
+-- between the old one and the sample.
+theorem troll_between_up {v x w r : Nat} (hvx : v ≤ x) (hw : w ≤ one) (hr : r < one) :
+    v ≤ troll v x w r ∧ troll v x w r ≤ x := by
   -- Open the update and take the rising branch.
   unfold troll
   simp only [hvx, ite_true]
   -- The share added is at most the distance.
-  have := share_le (x - v) w hw
-  -- The rest is linear arithmetic.
+  have := share_le (x - v) w r hw hr
+  -- Name the share; the rest is linear arithmetic.
+  generalize ((x - v) * w + r) / one = q at *
   omega
 
 -- Promise: the falling case of the same.
-theorem troll_between_down {v x w : Nat} (hxv : x < v) (hw : w ≤ 65536) :
-    x ≤ troll v x w ∧ troll v x w ≤ v := by
+theorem troll_between_down {v x w r : Nat} (hxv : x < v) (hw : w ≤ one) (hr : r < one) :
+    x ≤ troll v x w r ∧ troll v x w r ≤ v := by
   -- Open the update and take the falling branch.
   unfold troll
   simp only [show ¬ v ≤ x by omega, ite_false]
   -- The share subtracted is at most the distance.
-  have := share_le (v - x) w hw
-  -- The rest is linear arithmetic.
+  have := share_le (v - x) w r hw hr
+  -- Name the share; the rest is linear arithmetic.
+  generalize ((v - x) * w + r) / one = q at *
   omega
 
 -- Promise: an estimate and a sample within a bound stay within it, so a
 -- 24-bit value field never overflows.
-theorem troll_le_bound {v x w bound : Nat} (hw : w ≤ 65536) (hv : v ≤ bound) (hx : x ≤ bound) :
-    troll v x w ≤ bound := by
+theorem troll_le_bound {v x w r bound : Nat} (hw : w ≤ one) (hr : r < one) (hv : v ≤ bound)
+    (hx : x ≤ bound) : troll v x w r ≤ bound := by
   -- Either the sample is above the estimate or below it.
   rcases Nat.lt_or_ge v (x + 1) with h | h
   -- Above or equal: the new estimate is at most the sample.
-  · exact Nat.le_trans (troll_between_up (by omega) hw).2 hx
+  · exact Nat.le_trans (troll_between_up (by omega) hw hr).2 hx
   -- Below: the new estimate is at most the old one.
-  · exact Nat.le_trans (troll_between_down (by omega) hw).2 hv
+  · exact Nat.le_trans (troll_between_down (by omega) hw hr).2 hv
+
+-- A dithered share is at least the exact share less one unit:
+-- `one · ((d w + r) / one) + one ≥ d w + 1`.
+theorem share_ge (d w r : Nat) : d * w + 1 ≤ one * ((d * w + r) / one) + one := by
+  -- Split the dividend into quotient and remainder.
+  have dm := Nat.div_add_mod (d * w + r) one
+  -- The remainder is below one.
+  have ml := Nat.mod_lt (d * w + r) (by decide : one > 0)
+  -- The rest is linear arithmetic.
+  omega
 
 -- Promise (one step, rising): the remaining distance is at most the old one
--- less its `w/65536` share, plus one unit of rounding. Chained over samples
--- this is `e_k ≲ Π (1 - w_i) e_0 = 2^(-(t_k - t_0)/H) e_0`: a half-life of `H`
+-- less its `w/one` share, plus one unit of rounding. Chained over samples this
+-- is `e_k ≲ Π (1 - w_i) e_0 = 2^(-(t_k - t_0)/H) e_0`: a half-life of `H`
 -- seconds whatever the sample rate.
-theorem troll_decay_up {v x w : Nat} (hvx : v ≤ x) (hw : w ≤ 65536) :
-    65536 * (x - troll v x w) ≤ (65536 - w) * (x - v) + 65536 := by
+theorem troll_decay_up {v x w r : Nat} (hvx : v ≤ x) (hw : w ≤ one) (hr : r < one) :
+    one * (x - troll v x w r) ≤ (one - w) * (x - v) + one := by
+  -- The new estimate is within the distance.
+  have b := (troll_between_up hvx hw hr).2
   -- Open the update and take the rising branch.
-  unfold troll
-  simp only [hvx, ite_true]
-  -- Split the product into quotient and remainder.
-  have dm := Nat.div_add_mod ((x - v) * w) 65536
-  -- The remainder is below 65536.
-  have ml := Nat.mod_lt ((x - v) * w) (show 65536 > 0 by decide)
-  -- The share is at most the distance.
-  have d := share_le (x - v) w hw
-  -- Distribute 65536 over the remaining distance.
-  have e1 : 65536 * (x - (v + (x - v) * w / 65536))
-      = 65536 * (x - v) - 65536 * ((x - v) * w / 65536) := by
-    -- The remaining distance is the old one less the share.
-    rw [show x - (v + (x - v) * w / 65536) = (x - v) - (x - v) * w / 65536 by omega]
-    -- Multiplication distributes over truncated subtraction.
+  unfold troll at b ⊢
+  simp only [hvx, ite_true] at b ⊢
+  -- The share is at least the exact share less one unit.
+  have g := share_ge (x - v) w r
+  -- Distribute `one` over the remaining distance.
+  have e1 : one * (x - (v + ((x - v) * w + r) / one))
+      = one * (x - v) - one * (((x - v) * w + r) / one) := by
+    rw [show x - (v + ((x - v) * w + r) / one) = (x - v) - ((x - v) * w + r) / one by omega]
     exact Nat.mul_sub_left_distrib _ _ _
   -- Distribute the kept weight over the old distance.
-  have e2 : (65536 - w) * (x - v) = 65536 * (x - v) - w * (x - v) :=
-    Nat.mul_sub_right_distrib _ _ _
+  have e2 : (one - w) * (x - v) = one * (x - v) - w * (x - v) := Nat.mul_sub_right_distrib _ _ _
   -- Products commute.
   have e3 : w * (x - v) = (x - v) * w := Nat.mul_comm _ _
   -- The weight is at most one.
-  have e4 : w * (x - v) ≤ 65536 * (x - v) := Nat.mul_le_mul_right _ hw
+  have e4 : w * (x - v) ≤ one * (x - v) := Nat.mul_le_mul_right _ hw
   -- The rest is linear arithmetic.
   omega
 
 -- Promise (one step, falling): the same bound when the sample is below.
-theorem troll_decay_down {v x w : Nat} (hxv : x < v) (hw : w ≤ 65536) :
-    65536 * (troll v x w - x) ≤ (65536 - w) * (v - x) + 65536 := by
+theorem troll_decay_down {v x w r : Nat} (hxv : x < v) (hw : w ≤ one) (hr : r < one) :
+    one * (troll v x w r - x) ≤ (one - w) * (v - x) + one := by
+  -- The new estimate is within the distance.
+  have b := (troll_between_down hxv hw hr).1
   -- Open the update and take the falling branch.
-  unfold troll
-  simp only [show ¬ v ≤ x by omega, ite_false]
-  -- Split the product into quotient and remainder.
-  have dm := Nat.div_add_mod ((v - x) * w) 65536
-  -- The remainder is below 65536.
-  have ml := Nat.mod_lt ((v - x) * w) (show 65536 > 0 by decide)
+  unfold troll at b ⊢
+  simp only [show ¬ v ≤ x by omega, ite_false] at b ⊢
+  -- The share is at least the exact share less one unit.
+  have g := share_ge (v - x) w r
   -- The share is at most the distance.
-  have d := share_le (v - x) w hw
-  -- Distribute 65536 over the remaining distance.
-  have e1 : 65536 * (v - (v - x) * w / 65536 - x)
-      = 65536 * (v - x) - 65536 * ((v - x) * w / 65536) := by
-    -- The remaining distance is the old one less the share.
-    rw [show v - (v - x) * w / 65536 - x = (v - x) - (v - x) * w / 65536 by omega]
-    -- Multiplication distributes over truncated subtraction.
+  have l := share_le (v - x) w r hw hr
+  -- Distribute `one` over the remaining distance.
+  have e1 : one * (v - ((v - x) * w + r) / one - x)
+      = one * (v - x) - one * (((v - x) * w + r) / one) := by
+    rw [show v - ((v - x) * w + r) / one - x = (v - x) - ((v - x) * w + r) / one by omega]
     exact Nat.mul_sub_left_distrib _ _ _
   -- Distribute the kept weight over the old distance.
-  have e2 : (65536 - w) * (v - x) = 65536 * (v - x) - w * (v - x) :=
-    Nat.mul_sub_right_distrib _ _ _
+  have e2 : (one - w) * (v - x) = one * (v - x) - w * (v - x) := Nat.mul_sub_right_distrib _ _ _
   -- Products commute.
   have e3 : w * (v - x) = (v - x) * w := Nat.mul_comm _ _
   -- The weight is at most one.
-  have e4 : w * (v - x) ≤ 65536 * (v - x) := Nat.mul_le_mul_right _ hw
+  have e4 : w * (v - x) ≤ one * (v - x) := Nat.mul_le_mul_right _ hw
   -- The rest is linear arithmetic.
   omega
+
+/-! ## The dither moves by the exact share on average
+
+A share below one unit, rounded down every time, would never move the
+estimate. The dither rounds it up for a matching fraction of its values:
+summed over every dither `r < n`, the moves add up to exactly the share's
+numerator `a`, so on average each moves `a / n`, fraction included.
+-/
+
+-- The sum of `f r` over `r < n`.
+def sumBelow (f : Nat → Nat) : Nat → Nat
+  -- Nothing below zero;
+  | 0 => 0
+  -- one more term.
+  | n + 1 => sumBelow f n + f n
+
+-- Shifting the numerator by one trades the first term for one past the end.
+theorem sum_shift (n a k : Nat) :
+    sumBelow (fun r => (a + 1 + r) / n) k + a / n = sumBelow (fun r => (a + r) / n) k + (a + k) / n := by
+  -- Induct on the number of terms.
+  induction k with
+  -- No terms: both sides are `a / n`.
+  | zero => simp [sumBelow]
+  -- One more term on each side.
+  | succ k ih =>
+    -- Open one step of each sum.
+    simp only [sumBelow]
+    -- The new left term is the right side's `(a + (k + 1)) / n`.
+    rw [show a + 1 + k = a + (k + 1) by omega]
+    -- The rest is linear arithmetic over the claim for `k`.
+    omega
+
+-- Promise (`dither_mean`): over every dither `r < n`, the rounded shares add up
+-- to the numerator, `Σ_{r<n} ⌊(a + r) / n⌋ = a` (Hermite's identity), so a
+-- uniform dither moves the estimate by the exact share on average.
+theorem dither_mean (n a : Nat) (hn : 0 < n) : sumBelow (fun r => (a + r) / n) n = a := by
+  -- Induct on the numerator.
+  induction a with
+  -- Zero: every term `r / n` with `r < n` is zero.
+  | zero =>
+    -- The partial sums up to any `k ≤ n` are zero.
+    have z : ∀ k, k ≤ n → sumBelow (fun r => (0 + r) / n) k = 0 := by
+      -- Induct on the number of terms.
+      intro k
+      induction k with
+      -- No terms.
+      | zero => intro _; rfl
+      -- One more term, below `n`, so zero.
+      | succ k ih =>
+        intro hk
+        simp only [sumBelow]
+        rw [ih (by omega), Nat.div_eq_of_lt (by omega : 0 + k < n)]
+    exact z n (Nat.le_refl n)
+  -- One more: shift the sum by one term.
+  | succ a ih =>
+    -- The shifted sum, at `k = n`.
+    have s := sum_shift n a n
+    -- `(a + n) / n = a / n + 1`.
+    rw [Nat.add_div_right a hn, ih] at s
+    -- The rest is linear arithmetic.
+    omega
 
 end Arbitration

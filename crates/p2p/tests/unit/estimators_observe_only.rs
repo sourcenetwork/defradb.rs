@@ -12,7 +12,8 @@ fn samples() -> Vec<AttemptSample> {
     let mut samples = vec![
         AttemptSample::Skipped,
         AttemptSample::Complete,
-        AttemptSample::Shed,
+        AttemptSample::Shed { progressed: false },
+        AttemptSample::Shed { progressed: true },
         AttemptSample::Preempted,
     ];
     for duration in [Duration::ZERO, Duration::from_millis(300), Duration::MAX] {

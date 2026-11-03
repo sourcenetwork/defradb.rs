@@ -871,6 +871,9 @@ async fn request_car_response(
     };
 
     let outcome = car_reply_outcome(&car_data);
+    if crate::sync::car::car_has_any_block(&car_data) {
+        timer.carried_blocks();
+    }
     if event_tx
         .send(TransportEvent::CarFetchResponse {
             query_id: None,
@@ -1082,6 +1085,9 @@ async fn try_fetch_from_provider(
     // "none returned usable blocks" WARN is suppressed when every provider
     // replies empty (issue #858 review round 3).
     let has_blocks = crate::sync::car::car_has_any_block(&car_data);
+    if has_blocks {
+        timer.carried_blocks();
+    }
     let busy = crate::sync::car::is_car_busy(&car_data);
     let has_notices =
         crate::sync::car::decode_car_oversized(&car_data).is_ok_and(|notices| !notices.is_empty());
@@ -1338,6 +1344,22 @@ mod tests {
         assert_eq!(car_reply_outcome(&with_block), FetchOutcome::Success);
         let size_limited = encode_car_response(&[root], &[], &[(root, 1 << 30)]).unwrap();
         assert_eq!(car_reply_outcome(&size_limited), FetchOutcome::Partial);
+        assert!(!crate::sync::car::car_has_any_block(&size_limited));
+        let child = cid(b"child");
+        let size_limited_with_block = encode_car_response(
+            &[root],
+            &[(&root, b"block".as_slice())],
+            &[(child, 1 << 30)],
+        )
+        .unwrap();
+        assert_eq!(
+            car_reply_outcome(&size_limited_with_block),
+            FetchOutcome::Partial
+        );
+        assert!(
+            crate::sync::car::car_has_any_block(&size_limited_with_block),
+            "only a notice that carries a block feeds the useful share"
+        );
         let busy = crate::sync::car::encode_car_busy(&root).unwrap();
         assert_eq!(car_reply_outcome(&busy), FetchOutcome::Busy);
     }

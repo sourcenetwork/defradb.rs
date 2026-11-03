@@ -70,6 +70,7 @@ impl FetchStats {
             rtt: None,
             started: Instant::now(),
             epoch: self.epoch,
+            carried_blocks: false,
         }
     }
 
@@ -178,6 +179,9 @@ pub struct FetchTimer {
     rtt: Option<Duration>,
     started: Instant,
     epoch: Instant,
+    /// The reply carried at least one block. A size-limit notice is recorded
+    /// `Partial` with or without blocks, so the outcome alone cannot say.
+    carried_blocks: bool,
 }
 
 impl FetchTimer {
@@ -190,6 +194,12 @@ impl FetchTimer {
         if let Some(counters) = &self.counters {
             counters.in_flight_bytes.fetch_add(len, Ordering::Relaxed);
         }
+    }
+
+    /// The reply carried at least one block: the fetch was useful, whatever
+    /// its outcome says.
+    pub fn carried_blocks(&mut self) {
+        self.carried_blocks = true;
     }
 
     /// The connection's round-trip time while this fetch ran.
@@ -211,11 +221,10 @@ impl FetchTimer {
             });
         counters.record(outcome, self.bytes, rate, self.rtt);
         let now = Instant::now();
-        let useful = matches!(outcome, FetchOutcome::Success | FetchOutcome::Partial);
         counters.estimates.record(
             millis_since(self.epoch, now),
             now.saturating_duration_since(self.started),
-            useful,
+            self.carried_blocks,
         );
     }
 }
@@ -351,7 +360,21 @@ mod tests {
         drop(stats.start(&peer("a")));
         assert_eq!(only(&stats).estimates, Default::default());
 
-        stats.start(&peer("a")).finish(FetchOutcome::Success);
+        let mut notice_only = stats.start(&peer("a"));
+        notice_only.received(64);
+        notice_only.finish(FetchOutcome::Partial);
+        let estimates = only(&stats).estimates;
+        assert_eq!(
+            estimates.useful_ewma_ppm,
+            Some(0),
+            "a notice without blocks is not useful"
+        );
+        assert_eq!(estimates.success_latency_micros, None);
+
+        let stats = FetchStats::default();
+        let mut delivered = stats.start(&peer("a"));
+        delivered.carried_blocks();
+        delivered.finish(FetchOutcome::Success);
         let estimates = only(&stats).estimates;
         assert!(estimates.success_latency_micros.is_some());
         assert_eq!(estimates.useful_ewma_ppm, Some(SCALE));

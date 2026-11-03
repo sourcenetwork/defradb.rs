@@ -367,7 +367,7 @@ fn attempt_sample(
 ) -> AttemptSample {
     match outcome {
         FetchAttemptOutcome::Complete => AttemptSample::Complete,
-        FetchAttemptOutcome::ProviderBusy => AttemptSample::Shed,
+        FetchAttemptOutcome::ProviderBusy => AttemptSample::Shed { progressed },
         FetchAttemptOutcome::Preempted => AttemptSample::Preempted,
         FetchAttemptOutcome::Incomplete(..) => AttemptSample::Incomplete {
             duration: elapsed,

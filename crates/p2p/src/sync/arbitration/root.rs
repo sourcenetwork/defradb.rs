@@ -16,8 +16,12 @@ pub(crate) enum AttemptSample {
     /// root (deferred, abandoned, unservable).
     Skipped,
     Complete,
-    /// Every provider that answered shed the request, and none delivered.
-    Shed,
+    /// The attempt ended shed: its last batch was refused busy. Its duration
+    /// is a load signal and never feeds the attempt-duration estimate.
+    Shed {
+        /// An earlier batch of the same attempt delivered blocks.
+        progressed: bool,
+    },
     /// Still making progress at its quantum. Its duration is censored at the
     /// quantum, so it never feeds the attempt-duration estimate.
     Preempted,
@@ -48,7 +52,9 @@ impl RootEstimates {
         match sample {
             AttemptSample::Skipped => {}
             AttemptSample::Complete | AttemptSample::Preempted => self.no_progress(0),
-            AttemptSample::Shed => self.no_progress(NO_PROGRESS),
+            AttemptSample::Shed { progressed } => {
+                self.no_progress(if progressed { 0 } else { NO_PROGRESS });
+            }
             AttemptSample::Incomplete {
                 duration,
                 fast,

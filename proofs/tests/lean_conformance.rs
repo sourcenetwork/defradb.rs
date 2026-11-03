@@ -75,7 +75,6 @@ fn arbitration_constants() -> Vec<String> {
         format!("VALUE_BITS={VALUE_BITS}"),
         format!("TIME_BITS={TIME_BITS}"),
         format!("WEIGHT_ONE={WEIGHT_ONE}"),
-        format!("LN2_Q16={LN2_Q16}"),
         format!("PROVIDER_HALF_LIFE_MS={}", millis(PROVIDER_HALF_LIFE)),
         format!("ROOT_SHIFT={ROOT_SHIFT}"),
         format!("OCCUPANCY_SHIFT={OCCUPANCY_SHIFT}"),

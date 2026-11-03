@@ -5,15 +5,15 @@ import Arbitration.Dynamics
 import Arbitration.DueOrder
 
 /-!
-# Arbitration.Constants: the estimators' constants, the Q16 weight of a gap,
+# Arbitration.Constants: the estimators' constants, the Q32 weight of a gap,
 # and the side conditions the lemmas need, checked on exactly these values
 
 The story, in plain words. A time-decayed estimate weighs a new sample by
 `1 - 2^(-gap / H)`: the longer since the last sample, the more the new one
-counts. Rust computes that weight in whole numbers out of 65536 from a table of
-64 steps per half-life, halving per whole half-life, and linearly for a gap
-under one step. Each estimate is one 64-bit word: 40 bits of time above 24
-bits of value.
+counts. Rust computes that weight in whole numbers out of `2^32`, interpolating
+between the steps of a table of 64 per half-life and halving per whole
+half-life, so even a 1 ms gap weighs something. Each estimate is one 64-bit
+word: 40 bits of time above 24 bits of value.
 
 What must never happen:
 * the table is not the floor of `65536 · 2^(-i/64)`, or it does not fall step
@@ -22,9 +22,10 @@ What must never happen:
 * a weight exceeds one, so an update could pass its sample
   (`weight_le_one`), or a long silence fails to start the estimate over
   (`weight_full_after_silence`), or a gap of zero (a clock that went
-  backwards) moves the estimate (`weight_zero_gap`);
+  backwards) moves the estimate (`weight_zero_gap`), or a 1 ms gap weighs
+  nothing (`weight_first_ms`);
 * a packed word overflows: value and time do not fill exactly 64 bits, a
-  share of one does not fit the value field, a Q16 product or the expected-time
+  share of one does not fit the value field, a dithered Q32 product or the expected-time
   read does not fit 64 bits, or the clock wraps within decades
   (`packed_word_fits`, `ppm_fits_value`, `troll_product_fits`,
   `expected_useful_fits`, `timestamp_lasts`);
@@ -36,7 +37,7 @@ What must never happen:
   (`occupancy_half_life_ticks`).
 
 Rust anchors: the constants in `crates/p2p/src/sync/arbitration/mod.rs`,
-`weight_q16` in `ewma.rs`. `Conformance.lean` emits `contract` and
+`weight_q32` in `ewma.rs`. `Conformance.lean` emits `contract` and
 `proofs/tests/lean_conformance.rs` asserts the Rust constants format to the
 same strings.
 -/
@@ -49,10 +50,8 @@ namespace Arbitration
 def valueBits : Nat := 24
 -- Bits holding the time of the last sample.
 def timeBits : Nat := 40
--- A weight of one, in Q16.
-def weightOne : Nat := 65536
--- `⌊65536 · ln 2⌋`: the weight per half-life of a gap under one table step.
-def ln2Q16 : Nat := 45426
+-- A weight of one, in Q32: `one` of `troll`.
+def weightOne : Nat := one
 -- Half-life of the per-provider estimators, in ms.
 def providerHalfLifeMs : Nat := 60000
 -- Per-root estimators weigh an attempt one part in `2^rootShift`.
@@ -83,56 +82,69 @@ def weightTable : List Nat :=
 -- Step `i` of the table; zero past its end, which Rust's mask never reaches.
 def tableAt (i : Nat) : Nat := weightTable.getD i 0
 
+-- The step after `i`: the next entry, or past the last one, half the first,
+-- which is where the next half-life starts.
+def tableNext (i : Nat) : Nat := if i < 63 then tableAt (i + 1) else tableAt 0 / 2
+
 /-! ## The weight of a gap -/
 
--- `weightQ16`: `1 - 2^(-gap / h)` in Q16, as Rust's `weight_q16` computes it.
-def weightQ16 (gap h : Nat) : Nat :=
+-- `weightQ32`: `1 - 2^(-gap / h)` in Q32, as Rust's `weight_q32` computes it:
+-- the kept share is interpolated between two table steps, in Q32, then
+-- halved once per whole half-life.
+def weightQ32 (gap h : Nat) : Nat :=
   -- No half-life: every sample is taken as is.
   if h = 0 then weightOne
-  -- Past 16 half-lives the kept share rounds to nothing.
-  else if gap / h > 16 then weightOne
-  -- Under one table step: linear in the gap, capped at the first step.
-  else if gap / h = 0 ∧ gap % h * 64 / h = 0 then min (gap * ln2Q16 / h) (weightOne - tableAt 1)
-  -- Otherwise: the step's kept share, halved per whole half-life.
-  else weightOne - tableAt (gap % h * 64 / h % 64) / 2 ^ (gap / h)
+  -- Past 32 half-lives the kept share rounds to nothing.
+  else if gap / h > 32 then weightOne
+  -- Otherwise: one less the interpolated kept share, halved per half-life.
+  else
+    weightOne
+      - (tableAt (gap % h * 64 / h % 64) * 65536
+          - (tableAt (gap % h * 64 / h % 64) - tableNext (gap % h * 64 / h % 64)) * 65536
+              * (gap % h * 64 % h) / h)
+        / 2 ^ (gap / h)
 
 -- Promise: a weight never exceeds one, so `troll` stays between its inputs.
-theorem weight_le_one (gap h : Nat) : weightQ16 gap h ≤ weightOne := by
+theorem weight_le_one (gap h : Nat) : weightQ32 gap h ≤ weightOne := by
   -- Open the weight and take each branch.
-  unfold weightQ16
+  unfold weightQ32
   split
   -- No half-life: exactly one.
   · exact Nat.le_refl _
   split
   -- A long gap: exactly one.
   · exact Nat.le_refl _
-  split
-  -- The linear branch is capped below one.
-  · exact Nat.le_trans (Nat.min_le_right _ _) (Nat.sub_le _ _)
-  -- A table branch subtracts from one.
+  -- The interpolated branch subtracts from one.
   · exact Nat.sub_le _ _
 
--- Promise: after more than 16 half-lives of silence the next sample is taken
+-- Promise: after more than 32 half-lives of silence the next sample is taken
 -- as is: the estimate starts over without a staleness rule.
-theorem weight_full_after_silence (gap h : Nat) (hh : 0 < h) (hg : 17 * h ≤ gap) :
-    weightQ16 gap h = weightOne := by
-  -- The gap spans at least 17 half-lives.
-  have : 17 ≤ gap / h := (Nat.le_div_iff_mul_le hh).2 (by omega)
+theorem weight_full_after_silence (gap h : Nat) (hh : 0 < h) (hg : 33 * h ≤ gap) :
+    weightQ32 gap h = weightOne := by
+  -- The gap spans at least 33 half-lives.
+  have : 33 ≤ gap / h := (Nat.le_div_iff_mul_le hh).2 (by omega)
   -- So the second branch is taken.
-  unfold weightQ16
-  simp only [show ¬ h = 0 by omega, show gap / h > 16 by omega, ite_true, ite_false]
+  unfold weightQ32
+  simp only [show ¬ h = 0 by omega, show gap / h > 32 by omega, ite_true, ite_false]
 
 -- Promise: a zero gap, which is how a clock that went backwards reads, weighs
 -- the sample at nothing: the estimate stays where it was.
-theorem weight_zero_gap (h : Nat) (hh : 0 < h) : weightQ16 0 h = 0 := by
-  -- Every quotient of zero is zero, so the linear branch gives zero.
-  unfold weightQ16
-  simp [show ¬ h = 0 by omega]
+theorem weight_zero_gap (h : Nat) (hh : 0 < h) : weightQ32 0 h = 0 := by
+  -- Every quotient and remainder of zero is zero, so nothing is interpolated.
+  unfold weightQ32
+  simp only [show ¬ h = 0 by omega, Nat.zero_mod, Nat.zero_mul, Nat.zero_div, Nat.mul_zero,
+    Nat.sub_zero, Nat.pow_zero, Nat.div_one, ite_false, show ¬ (0 > 32) by omega]
+  -- Step 0 keeps everything: `65536 · 65536 = one`.
+  decide
+
+-- Promise: at the provider half-life, a gap of one millisecond already weighs
+-- something, so a stream of samples a millisecond apart moves the estimate.
+theorem weight_first_ms : 0 < weightQ32 1 providerHalfLifeMs := by decide
 
 /-! ## The table, checked entry by entry -/
 
--- Promise: the table has 64 steps and starts at one.
-theorem table_shape : weightTable.length = 64 ∧ tableAt 0 = weightOne := by decide
+-- Promise: the table has 64 steps and starts at one, in Q16.
+theorem table_shape : weightTable.length = 64 ∧ tableAt 0 = 65536 := by decide
 
 -- Promise: each step is the floor of `65536 · 2^(-i/64)`:
 -- `t^64 · 2^i ≤ 2^1024 < (t + 1)^64 · 2^i`.
@@ -160,8 +172,9 @@ theorem packed_word_fits : valueBits + timeBits = 64 := by decide
 -- Promise: a share of one fits the 24-bit value field.
 theorem ppm_fits_value : scalePpm < 2 ^ valueBits := by decide
 
--- Promise: a value times a weight fits 64 bits (Rust widens to 128 anyway).
-theorem troll_product_fits : 2 ^ valueBits * weightOne < 2 ^ 64 := by decide
+-- Promise: a value times a weight, plus a dither, fits 64 bits (Rust widens to
+-- 128 anyway).
+theorem troll_product_fits : 2 ^ valueBits * weightOne + weightOne < 2 ^ 64 := by decide
 
 -- Promise: the largest cost, in µs, times a share of one fits 64 bits.
 theorem expected_useful_fits : 2 ^ valueBits * latencyUnitMicros * scalePpm < 2 ^ 64 := by
@@ -194,7 +207,6 @@ def contract : List String :=
   [ "VALUE_BITS=" ++ toString valueBits
   , "TIME_BITS=" ++ toString timeBits
   , "WEIGHT_ONE=" ++ toString weightOne
-  , "LN2_Q16=" ++ toString ln2Q16
   , "PROVIDER_HALF_LIFE_MS=" ++ toString providerHalfLifeMs
   , "ROOT_SHIFT=" ++ toString rootShift
   , "OCCUPANCY_SHIFT=" ++ toString occupancyShift

@@ -8,7 +8,7 @@ use std::time::Duration;
 use rapidhash::{HashMapExt, RapidHashMap};
 
 use super::due_order::tie_break_order;
-use super::ewma::{decode, encode, record_word, troll, weight_q16};
+use super::ewma::{decode, encode, record_word, troll, weight_q32};
 use super::occupancy::advance;
 use super::provider::expected_useful;
 use super::*;
@@ -60,11 +60,15 @@ fn troll_stays_between_its_inputs_for_any_weight() {
     let mut rng = Rng(2);
     for _ in 0..CASES {
         let (v, x) = (rng.below(VALUE_MAX + 1), rng.below(VALUE_MAX + 1));
-        let w = rng.below(2 * WEIGHT_ONE);
-        let moved = troll(v, x, w);
-        assert!(between(moved, v, x), "{v} {x} {w}");
+        let (w, dither) = (rng.below(2 * WEIGHT_ONE), rng.next());
+        let moved = troll(v, x, w, dither);
+        assert!(between(moved, v, x), "{v} {x} {w} {dither}");
         assert!(moved <= VALUE_MAX);
-        assert!(between(troll(rng.next(), rng.next(), w), 0, u64::MAX));
+        assert!(between(
+            troll(rng.next(), rng.next(), w, dither),
+            0,
+            u64::MAX
+        ));
     }
 }
 
@@ -78,7 +82,10 @@ fn the_first_sample_is_taken_as_is() {
             decode(record_word(0, now, sample, H)).map(|e| e.value),
             Some(sample)
         );
-        assert_eq!(troll(rng.below(VALUE_MAX), sample, WEIGHT_ONE), sample);
+        assert_eq!(
+            troll(rng.below(VALUE_MAX), sample, WEIGHT_ONE, rng.next()),
+            sample
+        );
         assert_eq!(
             decode(advance(None, now, sample)).map(|e| e.value),
             Some(sample)
@@ -141,11 +148,11 @@ fn a_step_decays_geometrically_to_the_dead_zone() {
             }
         }
     }
-    // troll_decay_up, troll_decay_down: 65536 e' <= (65536 - w) e + 65536
+    // troll_decay_up, troll_decay_down: ONE e' <= (ONE - w) e + ONE
     for _ in 0..CASES {
         let (v, x) = (rng.below(VALUE_MAX + 1), rng.below(VALUE_MAX + 1));
         let w = rng.below(WEIGHT_ONE + 1);
-        let after = u128::from(x.abs_diff(troll(v, x, w)));
+        let after = u128::from(x.abs_diff(troll(v, x, w, rng.next())));
         let before = u128::from(x.abs_diff(v));
         let one = u128::from(WEIGHT_ONE);
         assert!(one * after <= (one - u128::from(w)) * before + one);
@@ -154,24 +161,81 @@ fn a_step_decays_geometrically_to_the_dead_zone() {
 
 #[test]
 fn the_weight_tracks_its_half_life_and_never_falls() {
-    // weight_le_one, weight_full_after_silence, weight_zero_gap; within 1/64
+    // weight_le_one, weight_full_after_silence, weight_zero_gap,
+    // weight_first_ms; within 1e-4 of exact at every millisecond
     let mut previous = 0;
-    for gap in (0..20 * H).step_by(97) {
-        let w = weight_q16(gap, H);
+    for gap in 0..20 * H {
+        let w = weight_q32(gap, H);
         assert!(w <= WEIGHT_ONE && w >= previous, "gap {gap}");
+        assert!(gap == 0 || w > 0, "gap {gap} must weigh something");
         previous = w;
         let exact = 1.0 - (-(gap as f64) / H as f64).exp2();
         assert!(
-            (w as f64 / WEIGHT_ONE as f64 - exact).abs() < 1.0 / 64.0,
+            (w as f64 / WEIGHT_ONE as f64 - exact).abs() < 1e-4,
             "gap {gap}"
         );
     }
-    assert_eq!(weight_q16(0, H), 0);
-    assert_eq!(weight_q16(17 * H, H), WEIGHT_ONE);
+    assert_eq!(weight_q32(0, H), 0);
+    assert_eq!(weight_q32(33 * H, H), WEIGHT_ONE);
     for (i, step) in WEIGHT_TABLE.iter().enumerate() {
-        let exact = (WEIGHT_ONE as f64 * (-(i as f64) / 64.0).exp2()).floor() as u64;
+        let exact = (65_536.0 * (-(i as f64) / 64.0).exp2()).floor() as u64;
         assert_eq!(*step, exact, "table step {i}");
     }
+}
+
+#[test]
+fn the_dither_moves_by_the_exact_share_on_average() {
+    // dither_mean: over a uniform dither the move is the exact share
+    let mut rng = Rng(9);
+    for _ in 0..200 {
+        let (v, x) = (rng.below(1_000), 1_000 + rng.below(1_000));
+        let w = rng.below(WEIGHT_ONE / 1_000);
+        let exact = (x - v) as f64 * w as f64 / WEIGHT_ONE as f64;
+        let draws = 4_000;
+        let total: u64 = (0..draws).map(|_| troll(v, x, w, rng.next()) - v).sum();
+        let mean = total as f64 / draws as f64;
+        assert!(
+            (mean - exact).abs() < 0.05 + exact * 0.05,
+            "{mean} vs {exact}"
+        );
+    }
+}
+
+#[test]
+fn rounding_never_freezes_an_estimate() {
+    // One useful fetch, then a failure every millisecond: the useful share
+    // halves within its half-life and keeps falling.
+    let mut word = record_word(0, 0, SCALE_PPM, H);
+    let mut halved_at = None;
+    for now in 1..=10 * H {
+        word = record_word(word, now, 0, H);
+        if halved_at.is_none() && decode(word).unwrap().value < SCALE_PPM / 2 {
+            halved_at = Some(now);
+        }
+    }
+    let halved_at = halved_at.expect("the useful share halves");
+    assert!(
+        (57_000..=63_000).contains(&halved_at),
+        "halved at {halved_at} ms"
+    );
+    assert!(decode(word).unwrap().value < SCALE_PPM / 500);
+
+    // Latency steps from 1 ms to 2 ms (250 to 500 units), sampled every 100 ms:
+    // each sample's exact share is under one unit, yet the estimate follows.
+    let mut word = record_word(0, 0, 250, H);
+    let mut halfway_at = None;
+    for sample in 1..=6_000 {
+        word = record_word(word, sample * 100, 500, H);
+        if halfway_at.is_none() && decode(word).unwrap().value >= 375 {
+            halfway_at = Some(sample * 100);
+        }
+    }
+    let halfway_at = halfway_at.expect("the latency estimate follows the step");
+    assert!(
+        (40_000..=80_000).contains(&halfway_at),
+        "half-way at {halfway_at} ms"
+    );
+    assert!(decode(word).unwrap().value >= 499);
 }
 
 #[test]
@@ -258,7 +322,7 @@ fn a_clock_that_goes_backwards_costs_one_sample() {
 fn saturated_inputs_degrade_instead_of_panicking() {
     for half_life in [0, 1, H, u64::MAX] {
         for gap in [0, 1, H, u64::MAX - 1, u64::MAX] {
-            assert!(weight_q16(gap, half_life) <= WEIGHT_ONE);
+            assert!(weight_q32(gap, half_life) <= WEIGHT_ONE);
             let word = record_word(encode(u64::MAX, VALUE_MAX), gap, u64::MAX, half_life);
             assert!(decode(word).unwrap().value <= VALUE_MAX);
         }
@@ -320,7 +384,7 @@ fn a_contended_word_never_tears() {
 #[test]
 fn shed_and_fast_refused_attempts_never_feed_the_backoff_estimate() {
     let mut root = RootEstimates::default();
-    root.observe(AttemptSample::Shed);
+    root.observe(AttemptSample::Shed { progressed: false });
     root.observe(AttemptSample::Incomplete {
         duration: Duration::from_millis(400),
         fast: true,
@@ -330,15 +394,21 @@ fn shed_and_fast_refused_attempts_never_feed_the_backoff_estimate() {
     root.observe(AttemptSample::Preempted);
     assert_eq!(root.attempt_ms, None);
     assert_eq!(root.no_progress_q16, Some(32_768));
-    root.observe(AttemptSample::Shed);
+    root.observe(AttemptSample::Shed { progressed: false });
     assert_eq!(root.no_progress_q16, Some(49_151));
+    root.observe(AttemptSample::Shed { progressed: true });
+    assert_eq!(root.no_progress_q16, Some(24_576));
+    assert_eq!(
+        root.attempt_ms, None,
+        "a shed attempt never feeds the backoff estimate"
+    );
     root.observe(AttemptSample::Incomplete {
         duration: Duration::from_secs(8),
         fast: false,
         progressed: true,
     });
     assert_eq!(root.attempt_ms, Some(8_000));
-    assert_eq!(root.no_progress_q16, Some(24_576));
+    assert_eq!(root.no_progress_q16, Some(12_288));
 }
 
 #[test]

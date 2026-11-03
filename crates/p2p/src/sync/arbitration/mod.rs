@@ -35,11 +35,11 @@ pub const VALUE_BITS: u32 = 24;
 /// milliseconds (or ticks) since its owner's epoch: 34.8 years of ms.
 pub const TIME_BITS: u32 = 40;
 
-/// A weight of one, in Q16.
-pub const WEIGHT_ONE: u64 = 1 << 16;
+/// A weight of one, in Q32.
+pub const WEIGHT_ONE: u64 = 1 << 32;
 
-/// `⌊WEIGHT_ONE · 2^(-i/64)⌋`: the share of an estimate that a gap of `i/64`
-/// half-lives keeps.
+/// `⌊65536 · 2^(-i/64)⌋`: the share of an estimate, in Q16, that a gap of
+/// `i/64` half-lives keeps; `weight_q32` interpolates between the steps.
 pub const WEIGHT_TABLE: [u64; 64] = [
     65536, 64830, 64131, 63440, 62757, 62081, 61412, 60751, 60096, 59449, 58809, 58175, 57548,
     56928, 56315, 55709, 55108, 54515, 53928, 53347, 52772, 52204, 51641, 51085, 50535, 49990,
@@ -47,9 +47,6 @@ pub const WEIGHT_TABLE: [u64; 64] = [
     42957, 42494, 42037, 41584, 41136, 40693, 40254, 39821, 39392, 38967, 38548, 38132, 37722,
     37315, 36913, 36516, 36122, 35733, 35348, 34968, 34591, 34218, 33850, 33485, 33124,
 ];
-
-/// `⌊WEIGHT_ONE · ln 2⌋`: the weight per half-life of a gap under 1/64 of one.
-pub const LN2_Q16: u64 = 45_426;
 
 /// Half-life of the per-provider estimators, in time rather than samples:
 /// sample rates differ about 5000× between the fleet's links.
