@@ -39,6 +39,9 @@ pub async fn read_owners<S>(db: &DB<S>, txn: &DbTxn<S>, doc_ids: Vec<String>) ->
 where
     S: Store,
 {
+    if !db.has_chunk_collections() {
+        return Ok(doc_ids);
+    }
     let systemstore = txn.systemstore()?;
     let mut owners = Vec::with_capacity(doc_ids.len());
     for doc_id in doc_ids {
