@@ -186,7 +186,7 @@ fn create_test_coordinator(
     peer_state: Arc<PeerStateTracker>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_rate_limiter(
         access_mode,
@@ -203,7 +203,7 @@ fn create_test_coordinator_with_rate_limiter(
     rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -221,7 +221,7 @@ fn create_test_coordinator_with_sync_config(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -240,7 +240,7 @@ fn create_test_coordinator_with_options(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     // Most limiter tests exercise one path at a time; share the injected
     // limiter across gossip and request intake so either path sees it.
@@ -263,7 +263,7 @@ fn create_test_coordinator_with_split_limiters(
     request_rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_full(
         access_mode,
@@ -284,7 +284,7 @@ fn create_test_coordinator_full(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     let transport = NoopTransport::new();
     let local_peer_id = transport.local_peer_id().to_string();
@@ -325,7 +325,7 @@ fn create_test_coordinator_with_blockstore<B: Blockstore + 'static>(
     params: TestCoordinatorParams<B>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_blockstore_and_head_provider(params, Arc::new(NoOpHeadProvider))
 }
@@ -335,7 +335,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
     head_provider: Arc<dyn DocumentHeadProvider>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     let TestCoordinatorParams {
         sync_config,
@@ -1201,7 +1201,7 @@ fn two_stream_event(
 }
 
 async fn recv_block_received(
-    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
 ) -> crate::sync::manager::SyncEvent {
     timeout(Duration::from_secs(1), events.recv())
         .await
@@ -1229,7 +1229,7 @@ async fn dispatch_complete_pending<B: Blockstore + 'static, T: P2PTransport>(
 
 async fn recv_complete_pushlog<B: Blockstore + 'static, T: P2PTransport>(
     coordinator: &SyncCoordinator<B, T>,
-    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
 ) -> SyncEvent {
     dispatch_complete_pending(coordinator).await;
     recv_block_received(events).await
