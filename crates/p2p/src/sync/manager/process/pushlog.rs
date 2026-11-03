@@ -179,8 +179,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     }
 
     /// Hold the ack contract for a block that carries a document head: success
-    /// means it is merged, registered as pending, or covered by a newer head
-    /// already durable for the same sender scope. The sender stops retrying on
+    /// means it is merged, registered as pending (in memory or by its durable
+    /// record alone), or covered by a newer head already durable for the same
+    /// sender scope. The sender stops retrying on
     /// success, and only those states leave something on this side to finish
     /// the work, so acking without one loses the update for good, silently,
     /// because nothing failed.
@@ -201,7 +202,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let AnnouncedBlockKind::Head(head_priority) = announced_block_kind(&msg.block) else {
             return Ok(());
         };
-        if self.is_pending_dag_recovery_registered(cid) {
+        if self.is_pending_dag_owned(cid) {
             return Ok(());
         }
         if self.scope_head_is_covered_by_current(
@@ -417,8 +418,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // that durable registration. Do not let a relay or another
             // collection-authorized peer replace its recovery provider, reset
             // its backoff, or rewrite its authorization metadata merely by
-            // replaying the same signed head bytes.
-            if let Some(existing) = self.pending_dag_snapshot(cid) {
+            // replaying the same signed head bytes. A local continuation owns
+            // nothing for a sender: the push registers the root itself below,
+            // replacing that entry, before it is acknowledged.
+            if let Some(existing) = self.pending_dag_snapshot(cid).filter(|dag| {
+                dag.origin != crate::sync::manager::pending::PendingOrigin::LocalContinuation
+            }) {
                 return self
                     .extend_registered_root(
                         cid,
@@ -481,8 +486,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         last_fetch_error: None,
                         next_retry_at: n0_future::time::Instant::now(),
                         dispatches: 0,
+                        incomplete_attempts: 0,
                         merge_continuation: false,
                         storage_blocker: None,
+                        origin: crate::sync::manager::pending::PendingOrigin::Push,
                     },
                 );
                 // Report the limit that actually tripped so the nack and its
@@ -534,7 +541,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // ack destroys the pusher's retry record, so an unpersisted
             // registration must fail closed as an error reply instead
             // (#1099; proofs/tla/PendingDagRestart.tla INV_AckBacked).
-            // Durable records outlive TTL-evicted map entries, so they carry
+            // Durable records outlive the map across a restart, so they carry
             // their own larger cap; at the cap the obligation is refused
             // (backpressure nack) while the pusher still owns retry state.
             // The cap, the retirement of the older durable head of the
