@@ -66,7 +66,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ | defra-node, embedded, edge, acp, http, query |
+| Node shutdown order | TLA+ | defra-node, embedded, edge, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |

@@ -1265,12 +1265,13 @@ pub const PROPERTIES: &[Property] = &[
         // drain gives up at its deadline; a refused telemetry flush moves to
         // a thread of its own instead of the caller. Requests and in-process
         // writes stop and drain before P2P, so every admitted write registers
-        // its head marker.
+        // its head marker; the transactions callers left open end before
+        // regolith closes.
         family: "Node shutdown order",
-        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, every admitted write is marked, shutdown returns",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / INV_CloseWaitsForNoTransaction / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, every admitted write is marked, the close waits for no transaction left open, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
-        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted}.cfg",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/defra-node/src/ops/request.rs Node::txn_begin, Node::txn_commit; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted,Red_OpenTransaction}.cfg",
         tiers: &[Boundary],
     },
     Property {

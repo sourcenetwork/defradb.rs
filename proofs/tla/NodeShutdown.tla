@@ -10,9 +10,13 @@
 \* Requests (signed queries, HTTP requests, an accepted connection's included)
 \* arrive while the node admits them. So do in-process writes: an unsigned
 \* Node::execute_request, Node::execute_as and the commit of an explicit
-\* transaction (Node::commit_transaction, NodeTransaction::commit). A write
-\* commits, then registers the durable head marker that owes its head to the
-\* replicators; that registration needs P2P not yet shutting down.
+\* transaction (Node::commit_transaction, NodeTransaction::commit,
+\* Node::txn_commit). A write commits, then registers the durable head marker
+\* that owes its head to the replicators; that registration needs P2P not yet
+\* shutting down. A caller may also leave an explicit transaction open: an
+\* HTTP client gone mid-transaction, or a commit refused at shutdown, whose
+\* discard over HTTP is refused too. It holds a store transaction in the
+\* registry until something ends it.
 \*
 \* Shutting the node down runs one sequence (defra-node Node::shutdown
 \* in crates/defra-node/src/lib.rs, and ShutdownHandle::stop in
@@ -31,11 +35,15 @@
 \*   4. stop accepting the rest of the node's network work and drain it, up
 \*      to a deadline (NodeEdge::drain). This closes the node's scope, and
 \*      with it the request scope if it was still open;
-\*   5. stop the workers: the pool finishes what it admitted and stops;
-\*   6. close regolith (close_database);
-\*   7. flush telemetry, handing the exporter join to the network runtime, or
+\*   5. end the explicit transactions callers left open
+\*      (DbTransactionRegistry::cleanup_stale_transactions with no idle
+\*      allowance). Regolith's close waits its whole timeout for a store
+\*      transaction still open, then fails;
+\*   6. stop the workers: the pool finishes what it admitted and stops;
+\*   7. close regolith (close_database);
+\*   8. flush telemetry, handing the exporter join to the network runtime, or
 \*      to a thread of its own when the runtime refuses it;
-\*   8. drop the network runtime (NodeEdge::stop_owned).
+\*   9. drop the network runtime (NodeEdge::stop_owned).
 \* An aborted task stops at its next poll: a storage call it is in the middle
 \* of finishes first. Awaiting the task is what tells shutdown it is over.
 \*
@@ -50,7 +58,9 @@
 \*      its head marker is never registered - INV_AdmittedWritesMarked. The
 \*      one exception is a write that outlived the request drain's deadline:
 \*      shutdown stops waiting for it, and its commit is past the promise;
-\*   5. shutdown never finishes - LIVE_ShutdownTerminates.
+\*   5. regolith's close waits for a transaction a caller left open
+\*      - INV_CloseWaitsForNoTransaction;
+\*   6. shutdown never finishes - LIVE_ShutdownTerminates.
 \*
 \* The Rust code each guard models:
 \*   RedriveInSet    crates/defra-node/src/node_acp.rs gate_external_acp: the
@@ -76,8 +86,17 @@
 \*                   begin_transaction_guard), commit_transaction (and
 \*                   NodeTransaction::commit), execute_as and the unsigned
 \*                   execute_prepared_request run as tasks of the request
-\*                   scope, as signed queries do. The raw runner() is outside
-\*                   the promise.
+\*                   scope, as signed queries do, and with them the ops API's
+\*                   Node::txn_begin and Node::txn_commit
+\*                   (crates/defra-node/src/ops/request.rs). The raw runner()
+\*                   is outside the promise, as are the ops that write no
+\*                   document head (truncate_collection_as purges, and the
+\*                   schema and lens ops);
+\*   EndsOpenTransactions crates/defra-node/src/lib.rs Node::shutdown, which
+\*                   ends the registry's transactions after the node's drain
+\*                   and before close_database. Regression:
+\*                   a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown
+\*                   in crates/defra-node/tests/commit_during_shutdown.rs.
 
 EXTENDS Naturals  \* numbers, for comparing step positions
 
@@ -87,7 +106,8 @@ CONSTANTS
   DrainDeadline,    \* TRUE: each drain gives up on requests at its deadline
   SlotKeepsHandle,  \* TRUE: a refused flush keeps its handle for its own thread
   RequestsFirst,    \* TRUE: requests stop and drain before P2P shuts down
-  CommitsAdmitted   \* TRUE: in-process writes are admitted as requests are
+  CommitsAdmitted,  \* TRUE: in-process begins and commits are admitted as requests are
+  EndsOpenTransactions \* TRUE: shutdown ends transactions left open
 
 Tasks == {"redrive", "service"}  \* the two background tasks modeled
 
@@ -105,8 +125,8 @@ InSet(t) == t = "redrive" /\ RedriveInSet
 \* drain always has its place; without RequestsFirst it closes nothing and
 \* waits for nothing, so requests are still admitted while P2P shuts down.
 Order == [Running |-> 1, Abort |-> 2, Await |-> 3, Requests |-> 4, P2P |-> 5,
-          Drain |-> 6, StopWorkers |-> 7, CloseStore |-> 8, Flush |-> 9,
-          DropRuntime |-> 10, Done |-> 11]
+          Drain |-> 6, EndTxns |-> 7, StopWorkers |-> 8, CloseStore |-> 9,
+          Flush |-> 10, DropRuntime |-> 11, Done |-> 12]
 
 \* The position of a step in that order.
 Pos(p) == Order[p]
@@ -127,12 +147,14 @@ VARIABLES
   p2pDown,        \* TRUE once P2P began shutting down
   deadlinePassed, \* TRUE once the current drain's deadline went by
   storeOpen,      \* TRUE until regolith closes
+  txnOpen,        \* TRUE while a transaction a caller left open is in the registry
+  closeWaited,    \* TRUE once regolith's close waited out its timeout for one
   flush,          \* telemetry: "pending", "thread" (on its own thread) or "done"
   callerJoined    \* TRUE if the shutdown caller ran the exporter join itself
 
 taskVars == <<status, inOp>>                                    \* the tasks
 reqVars == <<inflight, commits, admitting, overdue, markerLost>> \* requests
-endVars == <<storeOpen, flush, callerJoined>>                   \* the end
+endVars == <<storeOpen, txnOpen, closeWaited, flush, callerJoined>> \* the end
 vars == <<phase, taskVars, reqVars, p2pDown, deadlinePassed, endVars>> \* all
 
 TypeOK ==
@@ -147,6 +169,8 @@ TypeOK ==
   /\ p2pDown \in BOOLEAN                                 \* a flag
   /\ deadlinePassed \in BOOLEAN                          \* a flag
   /\ storeOpen \in BOOLEAN                               \* a flag
+  /\ txnOpen \in BOOLEAN                                 \* a flag
+  /\ closeWaited \in BOOLEAN                             \* a flag
   /\ flush \in {"pending", "thread", "done"}             \* a known flush state
   /\ callerJoined \in BOOLEAN                            \* a flag
 
@@ -162,6 +186,8 @@ Init ==
   /\ p2pDown = FALSE                         \* P2P runs
   /\ deadlinePassed = FALSE                  \* no drain has started
   /\ storeOpen = TRUE                        \* regolith is open
+  /\ txnOpen = FALSE                         \* no transaction left open yet
+  /\ closeWaited = FALSE                     \* the close waited for nothing
   /\ flush = "pending"                       \* telemetry not flushed yet
   /\ callerJoined = FALSE                    \* the caller joined nothing
 
@@ -224,12 +250,21 @@ Complete ==
   /\ UNCHANGED <<phase, taskVars, commits, admitting, overdue, p2pDown,
                  deadlinePassed, endVars>>
 
+\* A caller begins an explicit transaction and leaves it open: admitted while
+\* the node admits requests, or, unadmitted, any time the store is open.
+BeginTxn ==
+  /\ IF CommitsAdmitted THEN admitting ELSE storeOpen \* where it may begin
+  /\ ~txnOpen                                \* keep the instance small
+  /\ txnOpen' = TRUE                         \* it holds a store transaction
+  /\ UNCHANGED <<phase, taskVars, reqVars, p2pDown, deadlinePassed, storeOpen,
+                 closeWaited, flush, callerJoined>>
+
 \* The telemetry thread of its own finishes the exporter join.
 ThreadFlush ==
   /\ flush = "thread"                        \* the join was handed to it
   /\ flush' = "done"                         \* and it ran there
   /\ UNCHANGED <<phase, taskVars, reqVars, p2pDown, deadlinePassed, storeOpen,
-                 callerJoined>>
+                 txnOpen, closeWaited, callerJoined>>
 
 \* Time passes during a drain until its deadline.
 DeadlinePasses ==
@@ -307,9 +342,19 @@ Drain ==
   /\ Pending = 0 \/ deadlinePassed           \* drained, or out of time
   /\ admitting' = FALSE                      \* no request admitted any more
   /\ deadlinePassed' = FALSE                 \* the next drain has its own
-  /\ phase' = "StopWorkers"                  \* next: the pool
+  /\ phase' = "EndTxns"                      \* next: transactions left open
   /\ UNCHANGED <<taskVars, inflight, commits, overdue, markerLost, p2pDown,
                  endVars>>
+
+\* Shutdown ends the transactions left open, while their workers still run.
+EndTxns ==
+  /\ phase = "EndTxns"                       \* this step
+  /\ IF EndsOpenTransactions
+     THEN txnOpen' = FALSE                   \* each one ended
+     ELSE UNCHANGED txnOpen                  \* left in the registry
+  /\ phase' = "StopWorkers"                  \* next: the pool
+  /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, storeOpen,
+                 closeWaited, flush, callerJoined>>
 
 \* The pool stops. A background task still on it is dropped with its worker.
 StopWorkers ==
@@ -321,12 +366,14 @@ StopWorkers ==
   /\ phase' = "CloseStore"                   \* next: regolith
   /\ UNCHANGED <<reqVars, p2pDown, deadlinePassed, endVars>>
 
-\* Regolith closes.
+\* Regolith closes, after waiting out its timeout for a transaction still
+\* open.
 CloseStore ==
   /\ phase = "CloseStore"                    \* this step
   /\ storeOpen' = FALSE                      \* storage is gone
+  /\ closeWaited' = (closeWaited \/ txnOpen) \* waited out its timeout for one
   /\ phase' = "Flush"                        \* next: telemetry
-  /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, flush,
+  /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, txnOpen, flush,
                  callerJoined>>
 
 \* The runtime runs the flush on one of its blocking threads.
@@ -335,7 +382,7 @@ FlushAccepted ==
   /\ flush' = "done"                         \* flushed off the caller
   /\ phase' = "DropRuntime"                  \* next: the runtime
   /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, storeOpen,
-                 callerJoined>>
+                 txnOpen, closeWaited, callerJoined>>
 
 \* The runtime refuses the flush. With the slot, the handle goes to a thread of
 \* its own; without it, the refused closure drops the handle on the caller,
@@ -348,7 +395,8 @@ FlushRefused ==
      ELSE /\ flush' = "done"                 \* flushed, but by the caller
           /\ callerJoined' = TRUE            \* the caller ran the join
   /\ phase' = "DropRuntime"                  \* next: the runtime
-  /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, storeOpen>>
+  /\ UNCHANGED <<taskVars, reqVars, p2pDown, deadlinePassed, storeOpen,
+                 txnOpen, closeWaited>>
 
 \* The network runtime goes, and with it every task and request on it.
 DropRuntime ==
@@ -367,9 +415,10 @@ DropRuntime ==
 Next ==
   \/ \E t \in Tasks : BeginOp(t) \/ EndOp(t) \/ Finish(t)  \* a task acts
   \/ Arrive \/ Complete \/ ArriveCommit \/ CompleteCommit  \* requests, writes
+  \/ BeginTxn                                             \* a transaction left open
   \/ ThreadFlush \/ DeadlinePasses                         \* time and threads
   \/ Begin \/ Abort \/ Await \/ Requests \/ P2PStart       \* shutdown steps
-  \/ P2PEnd \/ Drain \/ StopWorkers \/ CloseStore
+  \/ P2PEnd \/ Drain \/ EndTxns \/ StopWorkers \/ CloseStore
   \/ FlushAccepted \/ FlushRefused \/ DropRuntime
 
 \* Fairness: shutdown is called and each of its steps is taken once possible;
@@ -381,7 +430,7 @@ Spec ==
   /\ WF_vars(Begin)                                   \* shutdown is called
   /\ WF_vars(Abort) /\ WF_vars(Await) /\ WF_vars(Requests) \* steps proceed
   /\ WF_vars(P2PStart) /\ WF_vars(P2PEnd) /\ WF_vars(Drain)
-  /\ WF_vars(StopWorkers) /\ WF_vars(CloseStore)
+  /\ WF_vars(EndTxns) /\ WF_vars(StopWorkers) /\ WF_vars(CloseStore)
   /\ WF_vars(FlushAccepted \/ FlushRefused) /\ WF_vars(DropRuntime)
   /\ \A t \in Tasks : WF_vars(EndOp(t)) /\ WF_vars(Finish(t)) \* tasks move
   /\ WF_vars(DeadlinePasses) /\ WF_vars(ThreadFlush)  \* time and threads
@@ -402,6 +451,9 @@ INV_CallerNeverJoinsExporter == ~callerJoined
 \* Every write registered its head marker, unless shutdown gave up on it at
 \* the request drain's deadline.
 INV_AdmittedWritesMarked == markerLost => overdue
+
+\* Regolith's close never waits for a transaction a caller left open.
+INV_CloseWaitsForNoTransaction == ~closeWaited
 
 \* Shutdown always returns.
 LIVE_ShutdownTerminates == <>(phase = "Done")
