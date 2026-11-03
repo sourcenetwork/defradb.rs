@@ -204,32 +204,62 @@ struct Node {
     index_id: u32,
 }
 
+fn with_type() -> Crdts {
+    Crdts::new([crdt::Registration::new(Tally)]).unwrap()
+}
+
 impl Node {
     async fn open() -> Self {
-        let crdts = Crdts::new([crdt::Registration::new(Tally)]).unwrap();
-        let options = RegolithStoreOptions::memory().with_crdts(crdts);
-        let store = Arc::new(RegolithStore::open_with_options("regolith-memory", options).unwrap());
-        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        db.create_collection(collection()).await.unwrap();
-        let index = db
-            .create_index(
-                COLLECTION,
-                Some("by_count"),
-                vec![IndexedFieldDescription {
-                    name: "count".to_string(),
-                    descending: false,
-                }],
-                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
-            )
-            .await
-            .unwrap();
+        let options = RegolithStoreOptions::memory().with_crdts(with_type());
+        let store = RegolithStore::open_with_options("regolith-memory", options).unwrap();
+        Self::on(store, true).await
+    }
+
+    /// The node on disk at `path`, with the type or without it.
+    async fn on_disk(path: &std::path::Path, typed: bool, fresh: bool) -> Self {
+        let options = RegolithStoreOptions::default();
+        let options = if typed {
+            options.with_crdts(with_type())
+        } else {
+            options
+        };
+        Self::on(
+            RegolithStore::open_with_options(path, options).unwrap(),
+            fresh,
+        )
+        .await
+    }
+
+    async fn on(store: RegolithStore, fresh: bool) -> Self {
+        let store = Arc::new(store);
+        let (db, index_id) = if fresh {
+            let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+            db.create_collection(collection()).await.unwrap();
+            let index = db
+                .create_index(
+                    COLLECTION,
+                    Some("by_count"),
+                    vec![IndexedFieldDescription {
+                        name: "count".to_string(),
+                        descending: false,
+                    }],
+                    IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+                )
+                .await
+                .unwrap();
+            (db, index.id)
+        } else {
+            let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+            let index_id = db.require_collection(COLLECTION).unwrap().schema().indexes[0].id;
+            (db, index_id)
+        };
         let blocks = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new(db.clone(), blocks.clone());
         Self {
             db,
             blocks,
             handler,
-            index_id: index.id,
+            index_id,
         }
     }
 
@@ -413,6 +443,38 @@ fn a_batch_of_merged_increments_moves_the_entry_to_the_total() {
             (1, [(1, 0), (3, 0), (5, 1)]),
             "one entry, at the merged total"
         );
+    })
+    .unwrap()
+}
+
+/// A node built without the type parks the counter's blocks. Built again
+/// with it, the replay moves the entry to the total, not to the increment.
+#[test]
+fn replayed_parked_increments_move_the_entry_to_the_total() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = Node::open().await;
+        let bob = Node::on_disk(dir.path(), false, true).await;
+        let doc_id = alice.create(1).await;
+        bob.receive(&alice, &doc_id, &alice.head(&doc_id).await)
+            .await;
+        for _ in 0..2 {
+            alice.increment(&doc_id, 2).await;
+            bob.receive(&alice, &doc_id, &alice.head(&doc_id).await)
+                .await;
+        }
+        bob.db.close().await.unwrap();
+        drop(bob);
+
+        let bob = Node::on_disk(dir.path(), true, false).await;
+        assert_eq!(bob.handler.replay_parked().await.unwrap(), 3);
+        assert_eq!(bob.count().await, Some(NormalValue::Int(5)));
+        assert_eq!(
+            bob.entries([1, 3, 5]).await,
+            (1, [(1, 0), (3, 0), (5, 1)]),
+            "one entry, at the replayed total"
+        );
+        bob.db.close().await.unwrap();
     })
     .unwrap()
 }
