@@ -1907,9 +1907,10 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // The binary built with `model-trace` logs one event per model
         // action; TLC replays a recorded run through the model under the
-        // fixed design's knobs. Two recorded runs and five planted mutants
-        // run in run-all.sh; the live replay needs DEFRA_TRACE_BINARY and a
-        // JDK, and runs in the Conformance job.
+        // fixed design's knobs. Two recorded runs and eleven planted RED
+        // configurations, one per replay guard, run in run-all.sh; the live
+        // replay needs DEFRA_TRACE_BINARY and a JDK, and runs in the
+        // Conformance job.
         family: "P2P delivery liveness",
         name: "TRACE_P2PDelivery — a recorded run of the binary is a behaviour of P2PDelivery: every logged event is a model step from the state the earlier ones left, the replayed states keep INV_ObligationOwned and INV_Bounded, and the run settles",
         axis: Tla,

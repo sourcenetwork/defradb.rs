@@ -583,6 +583,20 @@ pub struct Verdict {
     pub output: String,
 }
 
+/// Whether TLC's `output` accepts a replay of `events` events. Each event
+/// fixes its step, so the replay is one path: it must start from exactly one
+/// state and walk past every event to the settled rest. A replay with no
+/// initial state also finds no error, having checked nothing.
+fn accepts(output: &str, events: usize) -> bool {
+    let depth = format!(
+        "The depth of the complete state graph search is {}.",
+        events + 1
+    );
+    output.contains("No error has been found")
+        && output.contains("Finished computing initial states: 1 distinct state generated")
+        && output.contains(&depth)
+}
+
 /// Replays module `name` (written with its configuration into `work`)
 /// through TLC, using the models and the pinned TLC wrapper in `tla_dir`.
 pub fn replay(
@@ -622,7 +636,7 @@ pub fn replay(
     let outcome = work.join("tlc.out");
     std::fs::write(&outcome, &output).map_err(io(&outcome))?;
     Ok(Verdict {
-        accepted: run.status.success() && output.contains("No error has been found"),
+        accepted: run.status.success() && accepts(&output, trace.steps.len()),
         output,
     })
 }
@@ -728,6 +742,29 @@ mod tests {
         let config = trace.config("MC_Example");
         assert!(config.contains("MaxCrash = 2"), "{config}");
         assert!(config.contains("SPECIFICATION TraceSpec"), "{config}");
+    }
+
+    #[test]
+    fn a_replay_is_accepted_only_when_it_walks_every_event() {
+        let walked = "Finished computing initial states: 1 distinct state generated at now.\n\
+                      Model checking completed. No error has been found.\n\
+                      The depth of the complete state graph search is 36.\n";
+        assert!(accepts(walked, 35));
+        assert!(
+            !accepts(walked, 34),
+            "a replay that stops short of an event"
+        );
+        assert!(
+            !accepts(&walked.replace("is 36.", "is 360."), 35),
+            "the depth is matched whole"
+        );
+        let vacuous = "Finished computing initial states: 0 distinct states generated at now.\n\
+                       Model checking completed. No error has been found.\n\
+                       The depth of the complete state graph search is 1.\n";
+        assert!(
+            !accepts(vacuous, 0),
+            "a replay with no initial state checks nothing"
+        );
     }
 
     #[test]
