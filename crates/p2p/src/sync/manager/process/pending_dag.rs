@@ -457,8 +457,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// at most one quarter of the global map so one noisy pusher cannot starve
     /// every other peer (#1088 W2).
     /// An acknowledged entry never expires: the ack ended the sender's retry
-    /// marker, so it stays until merge, quarantine or a newer scope head, and
-    /// counts against the cap meanwhile.
+    /// marker, so it stays until merge, quarantine or a scope head that links
+    /// it, and counts against the cap meanwhile.
     /// Admit a registration into the in-memory map, reporting `true` on
     /// success. Callers that need to distinguish the failing limit (to nack
     /// with the right number) use [`Self::try_insert_pending_dag`].

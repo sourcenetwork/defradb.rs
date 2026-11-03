@@ -173,8 +173,8 @@ MNack(s, v) ==
   /\ <<s, v>> \in inflight
   /\ mergedV[s] < v
   /\ <<s, v>> \notin pending \cup conts
-  \* No older head of its scope in memory that it would replace.
-  /\ ~\E r \in mem : r[1] = s /\ r[2] < v
+  \* It links no current head of its scope in memory that it would replace.
+  /\ Supersedes(s, v) \cap mem = {}
   \* The map is full.
   /\ Cardinality(Held) >= MemBound
   \* The hint is answered with a nack; the sender's marker stays.

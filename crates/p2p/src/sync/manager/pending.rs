@@ -22,8 +22,8 @@ pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingOrigin {
     /// A sender's PushLog registered it. Once acknowledged it is the head's
-    /// one owner, so it leaves only on merge, quarantine or a newer head of
-    /// its scope.
+    /// one owner, so it leaves only on merge, quarantine or a head of its
+    /// scope that links it.
     Push,
     /// The resync sweep re-registered it from its durable record (a push
     /// acknowledged before a restart). It leaves as a `Push` entry does.
@@ -98,8 +98,8 @@ pub struct PendingDag {
 impl PendingDag {
     /// An entry expires only while it is not acknowledged. Once the sender has
     /// a success reply it has dropped its retry marker, so this entry is the
-    /// head's one owner: it stays until merge, quarantine or a newer head of
-    /// its scope, bounded by `max_pending_dags`. A local continuation does not
+    /// head's one owner: it stays until merge, quarantine or a head of its
+    /// scope that links it, bounded by `max_pending_dags`. A local continuation does not
     /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
     pub fn is_expired(&self, now: Instant) -> bool {
         !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL

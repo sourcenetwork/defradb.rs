@@ -29,7 +29,8 @@
 \*               "DuplicateTerminal"
 \*
 \* A scope is either a document or a branchable collection.  A monotonically
-\* increasing version abstracts the current composite/collection head CID.
+\* increasing version abstracts the current composite/collection head CID;
+\* each write links the head before it, so <<s, v - 1>> is <<s, v>>'s parent.
 \* ProviderMode abstracts the least-qualified peer admitted to a root's fetch
 \* rotation, including alternates. A receiver chooses OriginBound only when
 \* the independently authenticated origin has a reconnectable transport route,
@@ -254,11 +255,21 @@ ProcessMerged(s, v) ==
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed>>
 
+\* The scope's current head (PendingDagRegistry current_by_source_scope and
+\* the durable scope key): its newest registered head.
+ScopeHead(s) ==
+  {r \in pending : r[1] = s /\ \A q \in pending : q[1] = s => q[2] <= r[2]}
+
+\* What <<s, v>> retires: the scope's current head, only when it is v's parent.
+Supersedes(s, v) == {r \in ScopeHead(s) : r[2] = v - 1}
+
+\* A root already registered is acked as it is; any other head registers on
+\* its own, whatever its version, and retires only the head it links.
 ProcessRegister(s, v) ==
   /\ <<s, v>> \in inflight
   /\ mergedV[s] < v
-  /\ LET covered == \E r \in pending : r[1] = s /\ r[2] >= v
-         superseded == {r \in pending : r[1] = s /\ r[2] < v}
+  /\ LET covered == <<s, v>> \in pending
+         superseded == Supersedes(s, v)
          retired == IF PendingMode = "ScopeCurrent" THEN superseded ELSE {}
          retained == IF PendingMode = "ScopeCurrent"
                      THEN pending \ superseded
@@ -684,11 +695,13 @@ INV_ProviderShedDoesNotExhaust == fetchExhausted = {}
 
 INV_ReceiverQueueBounded == Cardinality(pending) <= Cap
 
-\* A sender has one current durable obligation per document/collection scope.
-\* A newer head causally subsumes that sender's older head; retaining both
-\* recreates unbounded per-root ownership under a live heartbeat stream.
-INV_OnePendingHeadPerScope ==
-  \A s \in Scopes : Cardinality({r \in pending : r[1] = s}) <= 1
+\* A head registered while its parent is the scope's current head takes over
+\* that registration, so heads that arrive in order keep one per scope; keeping
+\* both recreates unbounded per-root ownership under a live heartbeat stream.
+\* A head that links no current head keeps its own until it merges.
+ACT_LinkingHeadRetiresScopeHead ==
+  [][\A s \in Scopes, v \in 1..MaxV :
+       <<s, v>> \in pending' \ pending => Supersedes(s, v) \cap pending' = {}]_vars
 
 \* An acknowledged receiver obligation must retain a CAR-serving path across
 \* sender restart. A process-local/expiring grant violates this immediately.
