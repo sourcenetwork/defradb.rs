@@ -6,7 +6,8 @@ audit **F24**):
 - `crates/p2p/src/sync/push_backlog.rs`: `BacklogOwner::enqueue` (admission against the
   item and byte caps, coalescing, explicit rejection), `BacklogOwner::pop_eligible`
   (which job a free worker takes next: the per-peer cap, the parked peers, the
-  unreachable peers' shared cap), `BacklogOwner::park_peer`, `BacklogOwner::peer_answered`,
+  unreachable peers' shared cap, and which job is a probe), `BacklogOwner::park_peer`,
+  `BacklogOwner::park_peer_unreachable`, `BacklogOwner::peer_answered`,
   `BacklogOwner::take_queued_for_peer`, `BacklogOwner::job_done`.
 - `crates/p2p/src/sync/coordinator/push_worker.rs`: `spawn_push_workers` (the fixed
   pool) and `run_push_job` (send with `send_timeout`, park the peer on a capacity nack,
@@ -29,12 +30,18 @@ reply and ends at its send timeout (30 s). The per-peer cap isolates *one* such 
 but with the default pool (8 workers, 4 per peer) two dead replicators hold every
 worker, and the old code let them take each freed worker straight back after every
 timeout: healthy peers got about one pool's worth of jobs per timeout (F24). Now a
-transport failure **parks** the peer like a capacity nack (an escalating cooldown, its
-queued jobs moved to the retry ledger) and marks it **unreachable** until it answers
-again. Unreachable peers **share one `PerPeerCap`**: together they hold the workers of
-one slow peer at most, however many there are.
+transport failure **parks** the peer with an escalating cooldown, like a capacity nack,
+and marks it **unreachable** until it answers again. Unreachable peers **share one
+`PerPeerCap`**: together they hold the workers of one slow peer at most, however many
+there are.
 
-Five knobs isolate the five rules:
+A job started while its peer is unreachable (so after the park's cooldown ran out) is a
+**probe**. The peer's queued jobs move to the retry ledger only when a probe fails on
+transport too. A peer that answers right after one failed round (a timeout, a lost
+connection) keeps its queue live; a dead peer's queue moves to the ledger one cooldown
+plus one send timeout after its first failure.
+
+Five knobs; each RED value breaks one rule:
 
 | Knob | GREEN | RED |
 |------|-------|-----|
@@ -42,7 +49,7 @@ Five knobs isolate the five rules:
 | `ReleaseMode` | `"Release"` — a finished job returns the worker slot | `"Leak"` — it does not |
 | `HandleMode` | `"FixedWorkers"` — only pool handles retained | `"RetainAll"` — every finished handle retained, never pruned |
 | `FairnessMode` | `"PerPeerCap"` — ≤ `PerPeerCap` running per peer | `"Unfair"` — one peer may hold every worker |
-| `ParkMode` | `"ParkUnreachable"` — a timeout parks the peer; unreachable peers share one cap | `"RetryUnreachable"` — a timeout frees the worker and nothing else (the code before F24) |
+| `ParkMode` | `"ParkUnreachable"` — a timeout parks the peer; unreachable peers share one cap; a failed probe demotes the queue | `"RetryUnreachable"` — a timeout frees the worker and nothing else (the code before F24); `"DemoteEveryTimeout"` — every timeout demotes the queue, probe or not |
 
 ## Properties
 
@@ -56,6 +63,10 @@ Five knobs isolate the five rules:
 - `INV_UnreachableLeaveAWorker` — jobs started for peers already known to be
   unreachable (probes) never hold every worker. Violated by `RetryUnreachable`: two dead
   peers each take a freed worker back after their timeouts.
+- `INV_DemoteAfterFailedProbe` — a peer's queued jobs move to the ledger only once one of
+  its probes has timed out in its current spell. With `MaxGlitches = 1` a healthy peer is
+  never demoted. Violated by `DemoteEveryTimeout`: a healthy peer's one timeout hands its
+  queue to the ledger although it answers its next send.
 - `LIVE_HealthyProgress` (under `FairSpec`) — every job admitted for a healthy peer
   leaves the queue (its reply, or the ledger after a transient timeout).
 
@@ -80,7 +91,12 @@ GREEN liveness result is not vacuous.
   case for the bounds. The real cooldown escalates from 2 s up to 64 s (plus jitter)
   while sends keep failing; it only spaces the probes out.
 - **`probes` is a ghost**: running jobs started during the peer's current unreachable
-  spell. A reply ends the spell, and the peer's leftover jobs become ordinary jobs.
+  spell. A reply ends the spell, and the peer's leftover jobs become ordinary jobs. The
+  code knows which job is a probe: `pop_eligible` stamps each job with the spell it was
+  started in (`PushJobSpec::probe_of`), and `park_peer_unreachable` demotes only for a
+  probe of the current spell.
+- **`probeTimedOut` and `demoted` are ghosts**: the peers one of whose probes timed out,
+  and the peers whose queued jobs moved to the ledger, in the current spell.
 - **Rejected, timed-out and demoted jobs are terminal ledger entries.** The re-push
   loop they feed is `Replicator.tla`'s subject.
 - **Round-robin order is not modeled** — the scheduler may give a free worker to any
@@ -97,6 +113,7 @@ GREEN liveness result is not vacuous.
 | `MC_PushBacklog_Green_TwoDead.cfg` | all GREEN knobs | GREEN | F24 fix: two dead peers, 2 workers, cap 1 — a worker always remains for the healthy peer |
 | `MC_PushBacklog_Green_SharedCap.cfg` | all GREEN knobs | GREEN | F24 fix with 3 workers, cap 2 (the real pool's shape): several probes per peer, a reply mid-probe |
 | `MC_PushBacklog_Red_TwoDead.cfg` | `ParkMode="RetryUnreachable"` | RED | the code before F24: dead peers take freed workers back → `INV_UnreachableLeaveAWorker` violated |
+| `MC_PushBacklog_Red_DemoteEveryTimeout.cfg` | `ParkMode="DemoteEveryTimeout"` | RED | two healthy peers, one timeout: its queue goes to the ledger → `INV_DemoteAfterFailedProbe` violated |
 | `MC_PushBacklog_Red_SpawnPerItem.cfg` | `AdmissionMode="SpawnPerItem"` | RED | spawn before the semaphore → `INV_QueueBounded` violated |
 | `MC_PushBacklog_Red_PermitLeak.cfg` | `ReleaseMode="Leak"` | RED | a finished job keeps its worker slot → `INV_PermitConservation` violated |
 | `MC_PushBacklog_Red_RetainHandles.cfg` | `HandleMode="RetainAll"` | RED | `SyncShutdownHandle` retention → `INV_HandlesBounded` violated |
@@ -108,10 +125,12 @@ so the failure is attributable.
 ## Conformance fence
 
 The Rust-side fence is the `crates/p2p/src/sync/push_backlog.rs` unit tests (queue
-caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_cap`),
-the worker tests in `crates/p2p/src/sync/coordinator/push_worker_tests.rs`
+caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_cap`,
+`only_a_failed_probe_demotes_an_unreachable_peer`), the worker tests in
+`crates/p2p/src/sync/coordinator/push_worker_tests.rs`
 (`slow_peer_does_not_starve_healthy_peers`,
-`two_stalled_replicators_do_not_starve_healthy_peer` on the default pool and send
+`two_stalled_replicators_do_not_starve_healthy_peer` and
+`transient_transport_failure_keeps_queued_jobs_live` on the default pool and send
 timeout under paused time), and the fan-out integration test
 `tools/integration-test/tests/p2p_backlog.rs`
 (`outbound_backlog_bounded_under_fanout_with_dead_peer`), which asserts bounded

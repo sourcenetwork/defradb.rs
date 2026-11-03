@@ -26,4 +26,9 @@ mcTwoDeadWeight == [p \in mcTwoDeadPeers |-> 1]
 \* other probe still runs.
 mcSharedCapWorkers == 3
 mcSharedCapPerPeerCap == 2
+
+\* No dead peer: two healthy peers, and one of their sends may time out once.
+mcHealthyPeers == {"h1", "h2"}
+mcNoSlowPeers == {}
+mcHealthyWeight == [p \in mcHealthyPeers |-> 1]
 ====
