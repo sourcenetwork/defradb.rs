@@ -250,6 +250,7 @@ Expire(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, serveAuth, serveScopes,
                  ready, mergeFlights, terminalFlights, fetchExhausted, mergedV,
                  crashed, fwdVars>>
+  /\ UNCHANGED senderVars
   \* The queues drop it too.
   /\ QueueStep
 

@@ -184,6 +184,7 @@ MNack(s, v) ==
                  qualifiedProvider, serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, lostCompletions, mergedV, crashed,
                  fwdVars>>
+  /\ UNCHANGED senderVars
   /\ UNCHANGED mvars
 
 \* The clock claims the oldest due entry that can take the slot
