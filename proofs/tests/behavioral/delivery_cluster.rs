@@ -155,7 +155,7 @@ pub async fn sync_status(cluster: &TestCluster, node: usize) -> Value {
         .unwrap_or_else(|e| panic!("node{node} sync status: {e}"))
 }
 
-pub fn count(value: &Value, field: &str) -> u64 {
+fn count(value: &Value, field: &str) -> u64 {
     value[field].as_u64().unwrap_or(0)
 }
 
