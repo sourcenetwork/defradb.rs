@@ -4,10 +4,10 @@
 
 use std::time::Duration;
 
+use edge::Task;
 use futures::{AsyncReadExt, AsyncWriteExt, FutureExt, StreamExt};
 use net::http::{Client, Response};
 use nuclei::net::TcpListener;
-use nuclei::Task;
 
 const LIMIT: Duration = Duration::from_millis(500);
 
@@ -16,7 +16,7 @@ const LIMIT: Duration = Duration::from_millis(500);
 async fn serving(answer: &'static [u8]) -> (String, Task<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("binds");
     let address = listener.get_ref().local_addr().expect("an address");
-    let server = nuclei::spawn(async move {
+    let server = edge::testing::edge().spawn(async move {
         let (mut socket, _) = listener.accept().await.expect("a connection");
         let (mut head, mut byte) = (Vec::new(), [0]);
         while !head.ends_with(b"\r\n\r\n") {
@@ -49,49 +49,61 @@ async fn stalled_response(url: String) -> Response {
         .expect("the head before the limit")
 }
 
-#[nuclei::test]
-async fn a_stalled_body_stream_gives_one_timeout_then_ends() {
-    let (url, _server) = stalling().await;
-    let mut stream = stalled_response(url).await.bytes_stream();
+#[test]
+fn a_stalled_body_stream_gives_one_timeout_then_ends() {
+    edge::testing::edge()
+        .block_on(async {
+            let (url, _server) = stalling().await;
+            let mut stream = stalled_response(url).await.bytes_stream();
 
-    let first = stream.next().await;
+            let first = stream.next().await;
 
-    assert!(
-        matches!(&first, Some(Err(error)) if error.is_timeout()),
-        "{first:?}"
-    );
-    for _ in 0..2 {
-        let next = stream.next().now_or_never();
-        assert!(matches!(next, Some(None)), "{next:?}");
-    }
+            assert!(
+                matches!(&first, Some(Err(error)) if error.is_timeout()),
+                "{first:?}"
+            );
+            for _ in 0..2 {
+                let next = stream.next().now_or_never();
+                assert!(matches!(next, Some(None)), "{next:?}");
+            }
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn every_chunk_read_past_the_limit_times_out_at_once() {
-    let (url, _server) = stalling().await;
-    let mut response = stalled_response(url).await;
+#[test]
+fn every_chunk_read_past_the_limit_times_out_at_once() {
+    edge::testing::edge()
+        .block_on(async {
+            let (url, _server) = stalling().await;
+            let mut response = stalled_response(url).await;
 
-    let first = response.chunk().await;
-    let second = response.chunk().now_or_never();
+            let first = response.chunk().await;
+            let second = response.chunk().now_or_never();
 
-    assert!(first.is_err_and(|error| error.is_timeout()));
-    assert!(
-        second.is_some_and(|read| read.is_err_and(|error| error.is_timeout())),
-        "a read past the limit waits for nothing"
-    );
+            assert!(first.is_err_and(|error| error.is_timeout()));
+            assert!(
+                second.is_some_and(|read| read.is_err_and(|error| error.is_timeout())),
+                "a read past the limit waits for nothing"
+            );
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_piece_ready_past_the_limit_gives_the_timeout() {
-    let (url, _server) = serving(b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\nbody").await;
-    let mut stream = stalled_response(url).await.bytes_stream();
-    nuclei::time::sleep(LIMIT * 2).await;
+#[test]
+fn a_piece_ready_past_the_limit_gives_the_timeout() {
+    edge::testing::edge()
+        .block_on(async {
+            let (url, _server) = serving(b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\nbody").await;
+            let mut stream = stalled_response(url).await.bytes_stream();
+            nuclei::time::sleep(LIMIT * 2).await;
 
-    let first = stream.next().await;
+            let first = stream.next().await;
 
-    assert!(
-        matches!(&first, Some(Err(error)) if error.is_timeout()),
-        "{first:?}"
-    );
-    assert!(matches!(stream.next().now_or_never(), Some(None)));
+            assert!(
+                matches!(&first, Some(Err(error)) if error.is_timeout()),
+                "{first:?}"
+            );
+            assert!(matches!(stream.next().now_or_never(), Some(None)));
+        })
+        .unwrap();
 }

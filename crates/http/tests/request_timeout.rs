@@ -28,21 +28,30 @@ fn query(body: Body) -> Request<Body> {
         .unwrap()
 }
 
-#[nuclei::test]
-async fn a_request_done_in_time_gets_its_answer() {
-    let response = limited()
-        .oneshot(query(Body::from(r#"{"query":"{__typename}"}"#)))
-        .await
-        .unwrap();
+#[test]
+fn a_request_done_in_time_gets_its_answer() {
+    edge::testing::edge()
+        .block_on(async {
+            let response = limited()
+                .oneshot(query(Body::from(r#"{"query":"{__typename}"}"#)))
+                .await
+                .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.status(), StatusCode::OK);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_request_past_the_limit_is_answered_with_408() {
-    let never_sent = Body::from_stream(futures::stream::pending::<Result<Bytes, Infallible>>());
+#[test]
+fn a_request_past_the_limit_is_answered_with_408() {
+    edge::testing::edge()
+        .block_on(async {
+            let never_sent =
+                Body::from_stream(futures::stream::pending::<Result<Bytes, Infallible>>());
 
-    let response = limited().oneshot(query(never_sent)).await.unwrap();
+            let response = limited().oneshot(query(never_sent)).await.unwrap();
 
-    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        })
+        .unwrap();
 }

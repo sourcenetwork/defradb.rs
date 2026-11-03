@@ -186,148 +186,197 @@ async fn names(query: &str) -> Vec<String> {
 
 /// The regression: a request for one collection used to answer with all of
 /// them.
-#[nuclei::test]
-async fn a_name_selects_only_that_collection() {
-    assert_eq!(names("?name=Users").await, vec!["Users"]);
-    assert_eq!(names("?name=Books").await, vec!["Books"]);
+#[test]
+fn a_name_selects_only_that_collection() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(names("?name=Users").await, vec!["Users"]);
+            assert_eq!(names("?name=Books").await, vec!["Books"]);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn an_unknown_name_selects_nothing() {
-    assert!(names("?name=Nope").await.is_empty());
+#[test]
+fn an_unknown_name_selects_nothing() {
+    edge::testing::edge()
+        .block_on(async {
+            assert!(names("?name=Nope").await.is_empty());
+        })
+        .unwrap();
 }
 
 /// Go returns a named version whether or not it is active, which is why
 /// `version_id` alone reaches the inactive one.
-#[nuclei::test]
-async fn a_version_id_selects_that_version_even_when_inactive() {
-    assert_eq!(names("?version_id=users-v1").await, vec!["Users"]);
-    assert_eq!(names("?version_id=orders-v1").await, vec!["Orders"]);
+#[test]
+fn a_version_id_selects_that_version_even_when_inactive() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(names("?version_id=users-v1").await, vec!["Users"]);
+            assert_eq!(names("?version_id=orders-v1").await, vec!["Orders"]);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_collection_id_selects_its_active_version() {
-    assert_eq!(names("?collection_id=users-c").await, vec!["Users"]);
-    assert!(names("?collection_id=orders-c").await.is_empty());
+#[test]
+fn a_collection_id_selects_its_active_version() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(names("?collection_id=users-c").await, vec!["Users"]);
+            assert!(names("?collection_id=orders-c").await.is_empty());
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn get_inactive_widens_to_the_inactive_versions() {
-    assert_eq!(
-        names("?get_inactive=true").await,
-        vec!["Books", "Orders", "Users", "Users"]
-    );
-    assert_eq!(names("").await, vec!["Books", "Users"]);
+#[test]
+fn get_inactive_widens_to_the_inactive_versions() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                names("?get_inactive=true").await,
+                vec!["Books", "Orders", "Users", "Users"]
+            );
+            assert_eq!(names("").await, vec!["Books", "Users"]);
+        })
+        .unwrap();
 }
 
 /// Stage one of Go's lookup is a switch, so a name with `get_inactive` false
 /// wins outright and a disagreeing collection id never applies. A flat AND
 /// over the selectors would wrongly answer with nothing here.
-#[nuclei::test]
-async fn a_name_outranks_a_disagreeing_collection_id() {
-    assert_eq!(
-        names("?name=Users&collection_id=books-c").await,
-        vec!["Users"]
-    );
+#[test]
+fn a_name_outranks_a_disagreeing_collection_id() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                names("?name=Users&collection_id=books-c").await,
+                vec!["Users"]
+            );
+        })
+        .unwrap();
 }
 
 /// The case Go's switch exists for: name plus `get_inactive` skips the
 /// active-by-name arm and is narrowed by the stage-two name filter instead.
-#[nuclei::test]
-async fn a_name_with_get_inactive_reaches_an_inactive_version() {
-    assert_eq!(
-        names("?name=Orders&get_inactive=true").await,
-        vec!["Orders"]
-    );
-    assert!(names("?name=Orders").await.is_empty());
+#[test]
+fn a_name_with_get_inactive_reaches_an_inactive_version() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                names("?name=Orders&get_inactive=true").await,
+                vec!["Orders"]
+            );
+            assert!(names("?name=Orders").await.is_empty());
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn collection_listing_preserves_each_selected_version() {
-    let (status, body) = get(router(), "?collection_id=users-c&get_inactive=true").await;
-    assert_eq!(status, StatusCode::OK);
-    let actual: Vec<CollectionVersion> = serde_json::from_str(&body).unwrap();
-    assert_eq!(
-        actual,
-        vec![
-            version("Users", "users-v1", "users-c", false),
-            version("Users", "users-v2", "users-c", true)
-        ]
-    );
+#[test]
+fn collection_listing_preserves_each_selected_version() {
+    edge::testing::edge()
+        .block_on(async {
+            let (status, body) = get(router(), "?collection_id=users-c&get_inactive=true").await;
+            assert_eq!(status, StatusCode::OK);
+            let actual: Vec<CollectionVersion> = serde_json::from_str(&body).unwrap();
+            assert_eq!(
+                actual,
+                vec![
+                    version("Users", "users-v1", "users-c", false),
+                    version("Users", "users-v2", "users-c", true)
+                ]
+            );
+        })
+        .unwrap();
 }
 
 /// The divergence that two sources allowed: the collection cache deliberately
 /// holds inactive P2P-synced collections, so the unnarrowed listing used to
 /// name a collection the narrowed one dropped. Both read the stored versions
 /// now, as Go does, so an inactive collection is absent from both.
-#[nuclei::test]
-async fn an_inactive_collection_is_absent_from_narrowed_and_unnarrowed_alike() {
-    assert!(
-        !names("").await.contains(&"Orders".to_string()),
-        "an inactive collection must not be listed"
-    );
-    assert!(
-        names("?name=Orders").await.is_empty(),
-        "and must not be selectable by name either"
-    );
+#[test]
+fn an_inactive_collection_is_absent_from_narrowed_and_unnarrowed_alike() {
+    edge::testing::edge()
+        .block_on(async {
+            assert!(
+                !names("").await.contains(&"Orders".to_string()),
+                "an inactive collection must not be listed"
+            );
+            assert!(
+                names("?name=Orders").await.is_empty(),
+                "and must not be selectable by name either"
+            );
+        })
+        .unwrap();
 }
 
 /// Every request reads the same source, so a missing version store fails the
 /// same way for all of them rather than quietly answering from somewhere else.
 /// A selector Rust cannot parse must be refused, not dropped.
-#[nuclei::test]
-async fn an_unparseable_selector_is_refused() {
-    for query in ["?get_inactive=maybe", "?get_inactive="] {
-        let response = get_response(router(), query).await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
-        assert_eq!(
-            response.headers()["content-type"],
-            "application/json",
-            "{query} must use the Go error envelope"
-        );
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let error: serde_json::Value = serde_json::from_slice(&body).expect("JSON error body");
-        assert!(error["error"].as_str().is_some(), "{query}: {error}");
-    }
+#[test]
+fn an_unparseable_selector_is_refused() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in ["?get_inactive=maybe", "?get_inactive="] {
+                let response = get_response(router(), query).await;
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+                assert_eq!(
+                    response.headers()["content-type"],
+                    "application/json",
+                    "{query} must use the Go error envelope"
+                );
+                let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let error: serde_json::Value =
+                    serde_json::from_slice(&body).expect("JSON error body");
+                assert!(error["error"].as_str().is_some(), "{query}: {error}");
+            }
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn get_inactive_accepts_every_go_boolean_form() {
-    for value in ["1", "t", "T", "true", "TRUE", "True"] {
-        assert_eq!(
-            names(&format!("?get_inactive={value}")).await,
-            vec!["Books", "Orders", "Users", "Users"],
-            "{value} should be true"
-        );
-    }
-    for value in ["0", "f", "F", "false", "FALSE", "False"] {
-        assert_eq!(
-            names(&format!("?get_inactive={value}")).await,
-            vec!["Books", "Users"],
-            "{value} should be false"
-        );
-    }
+#[test]
+fn get_inactive_accepts_every_go_boolean_form() {
+    edge::testing::edge()
+        .block_on(async {
+            for value in ["1", "t", "T", "true", "TRUE", "True"] {
+                assert_eq!(
+                    names(&format!("?get_inactive={value}")).await,
+                    vec!["Books", "Orders", "Users", "Users"],
+                    "{value} should be true"
+                );
+            }
+            for value in ["0", "f", "F", "false", "FALSE", "False"] {
+                assert_eq!(
+                    names(&format!("?get_inactive={value}")).await,
+                    vec!["Books", "Users"],
+                    "{value} should be false"
+                );
+            }
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn view_refresh_uses_the_same_json_selector_error() {
-    let response = router()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/api/v0/view/refresh?get_inactive=maybe")
-                .header(HOST, "localhost:9181")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .expect("router should respond");
+#[test]
+fn view_refresh_uses_the_same_json_selector_error() {
+    edge::testing::edge()
+        .block_on(async {
+            let response = router()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/v0/view/refresh?get_inactive=maybe")
+                        .header(HOST, "localhost:9181")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("router should respond");
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(response.headers()["content-type"], "application/json");
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let error: serde_json::Value = serde_json::from_slice(&body).expect("JSON error body");
-    assert!(error["error"].as_str().is_some(), "{error}");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(response.headers()["content-type"], "application/json");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let error: serde_json::Value = serde_json::from_slice(&body).expect("JSON error body");
+            assert!(error["error"].as_str().is_some(), "{error}");
+        })
+        .unwrap();
 }
 
 #[test]
@@ -349,33 +398,41 @@ fn a_transaction_header_reads_transaction_visible_collections() {
 /// the empty string, not an absent selector. It matches nothing and comes back
 /// as an empty list (`http/handler_store.go:391`, then the stage-two name
 /// filter drops the zero-value collection because it is not active).
-#[nuclei::test]
-async fn an_empty_name_or_collection_id_selects_nothing() {
-    for query in [
-        "?name=",
-        "?collection_id=",
-        "?name=%20",
-        "?name=&get_inactive=true",
-    ] {
-        let (status, body) = get(router(), query).await;
-        assert_eq!(status, StatusCode::OK, "{query}: {body}");
-        assert!(
-            names(query).await.is_empty(),
-            "{query} should select nothing"
-        );
-    }
+#[test]
+fn an_empty_name_or_collection_id_selects_nothing() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in [
+                "?name=",
+                "?collection_id=",
+                "?name=%20",
+                "?name=&get_inactive=true",
+            ] {
+                let (status, body) = get(router(), query).await;
+                assert_eq!(status, StatusCode::OK, "{query}: {body}");
+                assert!(
+                    names(query).await.is_empty(),
+                    "{query} should select nothing"
+                );
+            }
+        })
+        .unwrap();
 }
 
 /// Go looks a version id up directly and returns `ErrCollectionNotFound`,
 /// which its error mapping turns into a 404 (`internal/db/collection.go:210`,
 /// `GetCollectionByID`). An unknown name is swallowed into an empty list, but
 /// an unknown version id is not, so a typo must not read as success.
-#[nuclei::test]
-async fn an_unknown_version_id_is_a_404() {
-    for query in ["?version_id=nope", "?version_id="] {
-        let (status, body) = get(router(), query).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{query}: {body}");
-    }
+#[test]
+fn an_unknown_version_id_is_a_404() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in ["?version_id=nope", "?version_id="] {
+                let (status, body) = get(router(), query).await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{query}: {body}");
+            }
+        })
+        .unwrap();
 }
 
 /// The 404 fires from Go's direct lookup, which the active-by-name arm
@@ -383,95 +440,119 @@ async fn an_unknown_version_id_is_a_404() {
 /// 200. `collection describe --collection-name X --version-id Y` sends exactly
 /// that combination (`cli/collection.go:86-100`), so getting this wrong 404s a
 /// working CLI call.
-#[nuclei::test]
-async fn a_name_pre_empts_the_version_lookup_so_a_bad_version_is_not_a_404() {
-    for query in [
-        "?name=Users&version_id=nope",
-        "?name=Books&version_id=users-v2",
-    ] {
-        let (status, body) = get(router(), query).await;
-        assert_eq!(status, StatusCode::OK, "{query}: {body}");
-        assert!(names(query).await.is_empty(), "{query} selects nothing");
-    }
+#[test]
+fn a_name_pre_empts_the_version_lookup_so_a_bad_version_is_not_a_404() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in [
+                "?name=Users&version_id=nope",
+                "?name=Books&version_id=users-v2",
+            ] {
+                let (status, body) = get(router(), query).await;
+                assert_eq!(status, StatusCode::OK, "{query}: {body}");
+                assert!(names(query).await.is_empty(), "{query} selects nothing");
+            }
+        })
+        .unwrap();
 }
 
 /// The name arm selects the active version before the version id filters it.
 /// A matching active id survives, while an inactive id cannot replace it.
-#[nuclei::test]
-async fn a_name_filters_its_active_candidate_by_version_id() {
-    assert_eq!(
-        names("?name=Users&version_id=users-v2").await,
-        vec!["Users"]
-    );
-    assert!(names("?name=Users&version_id=users-v1").await.is_empty());
+#[test]
+fn a_name_filters_its_active_candidate_by_version_id() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                names("?name=Users&version_id=users-v2").await,
+                vec!["Users"]
+            );
+            assert!(names("?name=Users&version_id=users-v1").await.is_empty());
+        })
+        .unwrap();
 }
 
 /// `get_inactive` takes the name arm out of the running, so the version
 /// lookup runs again and an id that exists is not an error even when the name
 /// filters it away.
-#[nuclei::test]
-async fn get_inactive_restores_the_version_lookup() {
-    let (status, body) = get(
-        router(),
-        "?name=Books&get_inactive=true&version_id=users-v2",
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(names("?name=Books&get_inactive=true&version_id=users-v2")
-        .await
-        .is_empty());
+#[test]
+fn get_inactive_restores_the_version_lookup() {
+    edge::testing::edge()
+        .block_on(async {
+            let (status, body) = get(
+                router(),
+                "?name=Books&get_inactive=true&version_id=users-v2",
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(names("?name=Books&get_inactive=true&version_id=users-v2")
+                .await
+                .is_empty());
 
-    let (status, _) = get(router(), "?name=Books&get_inactive=true&version_id=nope").await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "the lookup runs here, so a missing id is not found"
-    );
+            let (status, _) = get(router(), "?name=Books&get_inactive=true&version_id=nope").await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "the lookup runs here, so a missing id is not found"
+            );
+        })
+        .unwrap();
 }
 
 /// Go's message for this is `collection not found` (`client/errors.go:29`).
-#[nuclei::test]
-async fn the_not_found_body_matches_gos_message() {
-    let (_, body) = get(router(), "?version_id=nope").await;
-    assert!(
-        body.contains("collection not found"),
-        "expected Go's message, got {body}"
-    );
+#[test]
+fn the_not_found_body_matches_gos_message() {
+    edge::testing::edge()
+        .block_on(async {
+            let (_, body) = get(router(), "?version_id=nope").await;
+            assert!(
+                body.contains("collection not found"),
+                "expected Go's message, got {body}"
+            );
+        })
+        .unwrap();
 }
 
 /// Inactive versions cost a scan of every stored version. A selector that does
 /// not ask for them must take the active listing, the same branch
 /// `refresh_views` makes on the same selector.
-#[nuclei::test]
-async fn a_selector_that_needs_no_inactive_versions_takes_the_cheap_listing() {
-    for query in ["?name=Users", "?name=Users&version_id=users-v2"] {
-        let versions = Arc::new(Versions::default());
-        let (status, body) = get(router_with(versions.clone()), query).await;
-        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+#[test]
+fn a_selector_that_needs_no_inactive_versions_takes_the_cheap_listing() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in ["?name=Users", "?name=Users&version_id=users-v2"] {
+                let versions = Arc::new(Versions::default());
+                let (status, body) = get(router_with(versions.clone()), query).await;
+                assert_eq!(status, StatusCode::OK, "{query}: {body}");
 
-        assert_eq!(versions.active_calls.load(Ordering::SeqCst), 1, "{query}");
-        assert_eq!(
-            versions.all_calls.load(Ordering::SeqCst),
-            0,
-            "{query} must not scan every stored version"
-        );
-    }
+                assert_eq!(versions.active_calls.load(Ordering::SeqCst), 1, "{query}");
+                assert_eq!(
+                    versions.all_calls.load(Ordering::SeqCst),
+                    0,
+                    "{query} must not scan every stored version"
+                );
+            }
+        })
+        .unwrap();
 }
 
 /// The converse: asking for inactive versions, or for a version by id, does
 /// need the full listing.
-#[nuclei::test]
-async fn a_selector_that_needs_inactive_versions_takes_the_full_listing() {
-    for query in ["?get_inactive=true", "?version_id=users-v1"] {
-        let versions = Arc::new(Versions::default());
-        let (status, body) = get(router_with(versions.clone()), query).await;
-        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+#[test]
+fn a_selector_that_needs_inactive_versions_takes_the_full_listing() {
+    edge::testing::edge()
+        .block_on(async {
+            for query in ["?get_inactive=true", "?version_id=users-v1"] {
+                let versions = Arc::new(Versions::default());
+                let (status, body) = get(router_with(versions.clone()), query).await;
+                assert_eq!(status, StatusCode::OK, "{query}: {body}");
 
-        assert_eq!(
-            versions.all_calls.load(Ordering::SeqCst),
-            1,
-            "{query} needs every stored version"
-        );
-        assert_eq!(versions.active_calls.load(Ordering::SeqCst), 0, "{query}");
-    }
+                assert_eq!(
+                    versions.all_calls.load(Ordering::SeqCst),
+                    1,
+                    "{query} needs every stored version"
+                );
+                assert_eq!(versions.active_calls.load(Ordering::SeqCst), 0, "{query}");
+            }
+        })
+        .unwrap();
 }

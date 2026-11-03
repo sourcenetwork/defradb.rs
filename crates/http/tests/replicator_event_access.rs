@@ -68,33 +68,45 @@ fn completion() -> Message {
     })
 }
 
-#[nuclei::test]
-async fn wildcard_redacts_replicator_details_without_list_permission() {
-    assert_eq!(
-        frame(false, completion()).await,
-        serde_json::json!({"name": "replicator-completed", "data": {}})
-    );
+#[test]
+fn wildcard_redacts_replicator_details_without_list_permission() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                frame(false, completion()).await,
+                serde_json::json!({"name": "replicator-completed", "data": {}})
+            );
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn wildcard_includes_replicator_details_with_list_permission() {
-    let frame = frame(true, completion()).await;
-    assert_eq!(frame["name"], "replicator-completed");
-    assert_eq!(frame["data"]["peer_id"], "private-peer");
-    assert_eq!(
-        frame["data"]["collections"],
-        serde_json::json!(["PrivateCollection"])
-    );
-    assert_eq!(frame["data"]["skipped"], false);
-    assert_eq!(frame["data"]["error"], "private replay error");
+#[test]
+fn wildcard_includes_replicator_details_with_list_permission() {
+    edge::testing::edge()
+        .block_on(async {
+            let frame = frame(true, completion()).await;
+            assert_eq!(frame["name"], "replicator-completed");
+            assert_eq!(frame["data"]["peer_id"], "private-peer");
+            assert_eq!(
+                frame["data"]["collections"],
+                serde_json::json!(["PrivateCollection"])
+            );
+            assert_eq!(frame["data"]["skipped"], false);
+            assert_eq!(frame["data"]["error"], "private replay error");
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn legacy_completion_stays_payloadless_for_both_permissions() {
-    for can_list in [false, true] {
-        assert_eq!(
-            frame(can_list, Message::replicator_completed()).await,
-            serde_json::json!({"name": "replicator-completed", "data": {}})
-        );
-    }
+#[test]
+fn legacy_completion_stays_payloadless_for_both_permissions() {
+    edge::testing::edge()
+        .block_on(async {
+            for can_list in [false, true] {
+                assert_eq!(
+                    frame(can_list, Message::replicator_completed()).await,
+                    serde_json::json!({"name": "replicator-completed", "data": {}})
+                );
+            }
+        })
+        .unwrap();
 }

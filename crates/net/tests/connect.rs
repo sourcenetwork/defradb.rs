@@ -82,69 +82,81 @@ async fn takes(listener: &TcpListener, byte: u8) -> bool {
 // A listener with a full queue drops a new SYN only on Linux; macOS takes
 // the connection, so the first family is never silent there.
 #[cfg(target_os = "linux")]
-#[nuclei::test]
-async fn the_other_family_connects_when_the_first_is_silent_past_the_delay() {
-    let Some((first, other)) = both_families().await else {
-        return;
-    };
-    let (on_first, on_other, port) = one_port(first, other);
-    // A listener whose queue is full drops a new connection's SYN, so a
-    // connect to it waits as one to a dropping route does.
-    let silent = on_first.listen(0).expect("listens");
-    let _queued = TcpStream::connect(SocketAddr::new(first, port))
-        .await
-        .expect("the queue's one place");
-    let answering = on_other.listen(16).expect("listens");
-    let started = Instant::now();
+#[test]
+fn the_other_family_connects_when_the_first_is_silent_past_the_delay() {
+    edge::testing::edge()
+        .block_on(async {
+            let Some((first, other)) = both_families().await else {
+                return;
+            };
+            let (on_first, on_other, port) = one_port(first, other);
+            // A listener whose queue is full drops a new connection's SYN, so a
+            // connect to it waits as one to a dropping route does.
+            let silent = on_first.listen(0).expect("listens");
+            let _queued = TcpStream::connect(SocketAddr::new(first, port))
+                .await
+                .expect("the queue's one place");
+            let answering = on_other.listen(16).expect("listens");
+            let started = Instant::now();
 
-    let mut stream = timeout(LIMIT, net::connect(&localhost(port)))
-        .await
-        .expect("a connection before the limit")
-        .expect("a connection");
-    let waited = started.elapsed();
-    stream.write_all(b"!").await.expect("a byte sent");
+            let mut stream = timeout(LIMIT, net::connect(&localhost(port)))
+                .await
+                .expect("a connection before the limit")
+                .expect("a connection");
+            let waited = started.elapsed();
+            stream.write_all(b"!").await.expect("a byte sent");
 
-    assert!(takes(&answering, b'!').await);
-    assert!(
-        waited >= FALLBACK_DELAY,
-        "the other family started after {waited:?}"
-    );
-    drop(silent);
+            assert!(takes(&answering, b'!').await);
+            assert!(
+                waited >= FALLBACK_DELAY,
+                "the other family started after {waited:?}"
+            );
+            drop(silent);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn the_other_family_is_tried_when_the_first_refuses() {
-    let Some((first, other)) = both_families().await else {
-        return;
-    };
-    let (_refusing, on_other, port) = one_port(first, other);
-    let answering = on_other.listen(16).expect("listens");
+#[test]
+fn the_other_family_is_tried_when_the_first_refuses() {
+    edge::testing::edge()
+        .block_on(async {
+            let Some((first, other)) = both_families().await else {
+                return;
+            };
+            let (_refusing, on_other, port) = one_port(first, other);
+            let answering = on_other.listen(16).expect("listens");
 
-    let mut stream = timeout(LIMIT, net::connect(&localhost(port)))
-        .await
-        .expect("a connection before the limit")
-        .expect("a connection");
-    stream.write_all(b"!").await.expect("a byte sent");
+            let mut stream = timeout(LIMIT, net::connect(&localhost(port)))
+                .await
+                .expect("a connection before the limit")
+                .expect("a connection");
+            stream.write_all(b"!").await.expect("a byte sent");
 
-    assert!(takes(&answering, b'!').await);
+            assert!(takes(&answering, b'!').await);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn when_both_families_refuse_the_last_refusal_comes_back() {
-    let Some((first, other)) = both_families().await else {
-        return;
-    };
-    // Closed, not just bound: a bound socket that does not listen refuses
-    // only on Linux.
-    let (_, _, port) = one_port(first, other);
+#[test]
+fn when_both_families_refuse_the_last_refusal_comes_back() {
+    edge::testing::edge()
+        .block_on(async {
+            let Some((first, other)) = both_families().await else {
+                return;
+            };
+            // Closed, not just bound: a bound socket that does not listen refuses
+            // only on Linux.
+            let (_, _, port) = one_port(first, other);
 
-    let connected = timeout(LIMIT, net::connect(&localhost(port)))
-        .await
-        .expect("an answer before the limit");
+            let connected = timeout(LIMIT, net::connect(&localhost(port)))
+                .await
+                .expect("an answer before the limit");
 
-    let Err(error) = connected else {
-        panic!("nothing listens on either address");
-    };
-    let error = error.downcast::<io::Error>().expect("an I/O error");
-    assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+            let Err(error) = connected else {
+                panic!("nothing listens on either address");
+            };
+            let error = error.downcast::<io::Error>().expect("an I/O error");
+            assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+        })
+        .unwrap();
 }

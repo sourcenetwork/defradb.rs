@@ -11,40 +11,49 @@ use http_body_util::{BodyExt, Full};
 use net::grpc::{Channel, Endpoint};
 use tower::ServiceExt;
 
-#[nuclei::test]
-async fn a_call_reaches_the_endpoint_over_http2() {
-    let address = support::start(None).await;
-    let channel: Channel<Full<Bytes>> =
-        Endpoint::from_shared(format!("http://{address}"), edge::testing::edge())
-            .unwrap()
-            .connect_timeout(Duration::from_secs(5))
-            .connect()
-            .await
-            .unwrap();
+#[test]
+fn a_call_reaches_the_endpoint_over_http2() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+            let channel: Channel<Full<Bytes>> =
+                Endpoint::from_shared(format!("http://{address}"), edge::testing::edge())
+                    .unwrap()
+                    .connect_timeout(Duration::from_secs(5))
+                    .connect()
+                    .await
+                    .unwrap();
 
-    let request = Request::post("/echo")
-        .body(Full::new(Bytes::from_static(b"frame")))
+            let request = Request::post("/echo")
+                .body(Full::new(Bytes::from_static(b"frame")))
+                .unwrap();
+            let response = channel.oneshot(request).await.unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.version(), Version::HTTP_2);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(body, Bytes::from_static(b"frame"));
+        })
         .unwrap();
-    let response = channel.oneshot(request).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.version(), Version::HTTP_2);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(body, Bytes::from_static(b"frame"));
 }
 
-#[nuclei::test]
-async fn an_unreachable_endpoint_fails_at_connect() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    drop(listener);
+#[test]
+fn an_unreachable_endpoint_fails_at_connect() {
+    edge::testing::edge()
+        .block_on(async {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            drop(listener);
 
-    let connected = Endpoint::from_shared(format!("http://{address}"), edge::testing::edge())
-        .unwrap()
-        .connect::<Full<Bytes>>()
-        .await;
+            let connected =
+                Endpoint::from_shared(format!("http://{address}"), edge::testing::edge())
+                    .unwrap()
+                    .connect::<Full<Bytes>>()
+                    .await;
 
-    assert!(matches!(connected, Err(net::grpc::Error::Connect { .. })));
+            assert!(matches!(connected, Err(net::grpc::Error::Connect { .. })));
+        })
+        .unwrap();
 }
 
 #[test]

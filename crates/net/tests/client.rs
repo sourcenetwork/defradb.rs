@@ -21,209 +21,253 @@ fn plain() -> Client {
         .expect("a client")
 }
 
-#[nuclei::test]
-async fn a_json_body_goes_and_comes_back() {
-    let address = support::start(None).await;
-    let sent = json!({"name": "Inkheart", "pages": 534});
+#[test]
+fn a_json_body_goes_and_comes_back() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+            let sent = json!({"name": "Inkheart", "pages": 534});
 
-    let response = plain()
-        .post(url(address, "/echo"))
-        .json(&sent)
-        .send()
-        .await
+            let response = plain()
+                .post(url(address, "/echo"))
+                .json(&sent)
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["x-method"], "POST");
+            assert_eq!(response.json::<Value>().await.unwrap(), sent);
+        })
         .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()["x-method"], "POST");
-    assert_eq!(response.json::<Value>().await.unwrap(), sent);
 }
 
-#[nuclei::test]
-async fn a_query_is_appended_to_the_one_in_the_url() {
-    let address = support::start(None).await;
+#[test]
+fn a_query_is_appended_to_the_one_in_the_url() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
 
-    let text = plain()
-        .get(url(address, "/query?a=1"))
-        .query(&[("b", "two words")])
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-
-    assert_eq!(text, "a=1&b=two+words");
-}
-
-#[nuclei::test]
-async fn an_error_status_is_reported_with_the_status() {
-    let address = support::start(None).await;
-
-    let response = plain()
-        .get(url(address, "/status/404"))
-        .send()
-        .await
-        .unwrap();
-    let error = response.error_for_status().unwrap_err();
-
-    assert!(error.is_status());
-    assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
-}
-
-#[nuclei::test]
-async fn a_request_past_its_time_limit_fails_as_a_timeout() {
-    let address = support::start(None).await;
-
-    let error = plain()
-        .get(url(address, "/slow"))
-        .timeout(Duration::from_millis(100))
-        .send()
-        .await
-        .unwrap_err();
-
-    assert!(error.is_timeout());
-    assert!(!error.is_connect());
-}
-
-#[nuclei::test]
-async fn a_closed_port_is_a_connect_error() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    drop(listener);
-
-    let error = plain().get(url(address, "/")).send().await.unwrap_err();
-
-    assert!(error.is_connect());
-}
-
-#[nuclei::test]
-async fn redirects_are_followed_and_change_the_method_as_the_status_says() {
-    let address = support::start(None).await;
-    let client = plain();
-    let method_after = |code: u16| {
-        let client = client.clone();
-        async move {
-            client
-                .post(url(address, &format!("/redirect/{code}")))
-                .body("payload")
+            let text = plain()
+                .get(url(address, "/query?a=1"))
+                .query(&[("b", "two words")])
                 .send()
                 .await
                 .unwrap()
                 .text()
                 .await
+                .unwrap();
+
+            assert_eq!(text, "a=1&b=two+words");
+        })
+        .unwrap();
+}
+
+#[test]
+fn an_error_status_is_reported_with_the_status() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+
+            let response = plain()
+                .get(url(address, "/status/404"))
+                .send()
+                .await
+                .unwrap();
+            let error = response.error_for_status().unwrap_err();
+
+            assert!(error.is_status());
+            assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_request_past_its_time_limit_fails_as_a_timeout() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+
+            let error = plain()
+                .get(url(address, "/slow"))
+                .timeout(Duration::from_millis(100))
+                .send()
+                .await
+                .unwrap_err();
+
+            assert!(error.is_timeout());
+            assert!(!error.is_connect());
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_closed_port_is_a_connect_error() {
+    edge::testing::edge()
+        .block_on(async {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            drop(listener);
+
+            let error = plain().get(url(address, "/")).send().await.unwrap_err();
+
+            assert!(error.is_connect());
+        })
+        .unwrap();
+}
+
+#[test]
+fn redirects_are_followed_and_change_the_method_as_the_status_says() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+            let client = plain();
+            let method_after = |code: u16| {
+                let client = client.clone();
+                async move {
+                    client
+                        .post(url(address, &format!("/redirect/{code}")))
+                        .body("payload")
+                        .send()
+                        .await
+                        .unwrap()
+                        .text()
+                        .await
+                        .unwrap()
+                }
+            };
+
+            assert_eq!(method_after(302).await, "GET");
+            assert_eq!(method_after(303).await, "GET");
+            assert_eq!(method_after(307).await, "POST");
+            assert_eq!(method_after(308).await, "POST");
+        })
+        .unwrap();
+}
+
+#[test]
+fn credentials_follow_a_redirect_only_to_the_same_origin() {
+    edge::testing::edge()
+        .block_on(async {
+            let (first, second) = (support::start(None).await, support::start(None).await);
+            let mut defaults = HeaderMap::new();
+            defaults.insert(AUTHORIZATION, HeaderValue::from_static("Bearer default"));
+            let client = Client::builder(edge::testing::edge())
+                .no_proxy()
+                .default_headers(defaults)
+                .build()
+                .unwrap();
+            let redirect_to = |target| {
+                let location = url(target, "/authorization");
+                client.get(url(first, &format!("/redirect/302?to={location}")))
+            };
+            let seen = |request: RequestBuilder| async move {
+                request.send().await.unwrap().text().await.unwrap()
+            };
+
+            assert_eq!(seen(redirect_to(first)).await, "Bearer default");
+            assert_eq!(seen(redirect_to(second)).await, "");
+            assert_eq!(seen(redirect_to(second).bearer_auth("own")).await, "");
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_body_streams_in_pieces() {
+    edge::testing::edge()
+        .block_on(async {
+            let address = support::start(None).await;
+
+            let mut stream = plain()
+                .post(url(address, "/echo"))
+                .body(vec![7u8; 64 * 1024])
+                .send()
+                .await
                 .unwrap()
-        }
-    };
+                .bytes_stream();
+            let mut received = 0;
+            while let Some(piece) = stream.next().await {
+                received += piece.unwrap().len();
+            }
 
-    assert_eq!(method_after(302).await, "GET");
-    assert_eq!(method_after(303).await, "GET");
-    assert_eq!(method_after(307).await, "POST");
-    assert_eq!(method_after(308).await, "POST");
+            assert_eq!(received, 64 * 1024);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn credentials_follow_a_redirect_only_to_the_same_origin() {
-    let (first, second) = (support::start(None).await, support::start(None).await);
-    let mut defaults = HeaderMap::new();
-    defaults.insert(AUTHORIZATION, HeaderValue::from_static("Bearer default"));
-    let client = Client::builder(edge::testing::edge())
-        .no_proxy()
-        .default_headers(defaults)
-        .build()
-        .unwrap();
-    let redirect_to = |target| {
-        let location = url(target, "/authorization");
-        client.get(url(first, &format!("/redirect/302?to={location}")))
-    };
-    let seen = |request: RequestBuilder| async move {
-        request.send().await.unwrap().text().await.unwrap()
-    };
+#[test]
+fn https_negotiates_http2_and_trusts_an_added_root() {
+    edge::testing::edge()
+        .block_on(async {
+            let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
+            let address = support::start(Some(config)).await;
+            let client = Client::builder(edge::testing::edge())
+                .no_proxy()
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(root)
+                .build()
+                .unwrap();
 
-    assert_eq!(seen(redirect_to(first)).await, "Bearer default");
-    assert_eq!(seen(redirect_to(second)).await, "");
-    assert_eq!(seen(redirect_to(second).bearer_auth("own")).await, "");
+            let response = client
+                .get(format!("https://localhost:{}/method", address.port()))
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(response.version(), Version::HTTP_2);
+            assert_eq!(response.text().await.unwrap(), "GET");
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_body_streams_in_pieces() {
-    let address = support::start(None).await;
+#[test]
+fn http1_only_stays_on_http_1_1_and_tls_versions_can_be_pinned() {
+    edge::testing::edge()
+        .block_on(async {
+            let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
+            let address = support::start(Some(config)).await;
+            let client = Client::builder(edge::testing::edge())
+                .no_proxy()
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(root)
+                .http1_only()
+                .min_tls_version(TlsVersion::Tls12)
+                .max_tls_version(TlsVersion::Tls12)
+                .build()
+                .unwrap();
 
-    let mut stream = plain()
-        .post(url(address, "/echo"))
-        .body(vec![7u8; 64 * 1024])
-        .send()
-        .await
-        .unwrap()
-        .bytes_stream();
-    let mut received = 0;
-    while let Some(piece) = stream.next().await {
-        received += piece.unwrap().len();
-    }
+            let response = client
+                .get(format!("https://localhost:{}/method", address.port()))
+                .send()
+                .await
+                .unwrap();
 
-    assert_eq!(received, 64 * 1024);
+            assert_eq!(response.version(), Version::HTTP_11);
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn https_negotiates_http2_and_trusts_an_added_root() {
-    let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
-    let address = support::start(Some(config)).await;
-    let client = Client::builder(edge::testing::edge())
-        .no_proxy()
-        .tls_built_in_root_certs(false)
-        .add_root_certificate(root)
-        .build()
+#[test]
+fn an_untrusted_certificate_is_refused() {
+    edge::testing::edge()
+        .block_on(async {
+            let (config, _root) = support::localhost_tls(&[b"http/1.1"]);
+            let address = support::start(Some(config)).await;
+            let client = Client::builder(edge::testing::edge())
+                .no_proxy()
+                .tls_built_in_root_certs(false)
+                .build()
+                .unwrap();
+
+            let error = client
+                .get(format!("https://localhost:{}/method", address.port()))
+                .send()
+                .await
+                .unwrap_err();
+
+            assert!(error.is_connect());
+        })
         .unwrap();
-
-    let response = client
-        .get(format!("https://localhost:{}/method", address.port()))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.version(), Version::HTTP_2);
-    assert_eq!(response.text().await.unwrap(), "GET");
-}
-
-#[nuclei::test]
-async fn http1_only_stays_on_http_1_1_and_tls_versions_can_be_pinned() {
-    let (config, root) = support::localhost_tls(&[b"h2", b"http/1.1"]);
-    let address = support::start(Some(config)).await;
-    let client = Client::builder(edge::testing::edge())
-        .no_proxy()
-        .tls_built_in_root_certs(false)
-        .add_root_certificate(root)
-        .http1_only()
-        .min_tls_version(TlsVersion::Tls12)
-        .max_tls_version(TlsVersion::Tls12)
-        .build()
-        .unwrap();
-
-    let response = client
-        .get(format!("https://localhost:{}/method", address.port()))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.version(), Version::HTTP_11);
-}
-
-#[nuclei::test]
-async fn an_untrusted_certificate_is_refused() {
-    let (config, _root) = support::localhost_tls(&[b"http/1.1"]);
-    let address = support::start(Some(config)).await;
-    let client = Client::builder(edge::testing::edge())
-        .no_proxy()
-        .tls_built_in_root_certs(false)
-        .build()
-        .unwrap();
-
-    let error = client
-        .get(format!("https://localhost:{}/method", address.port()))
-        .send()
-        .await
-        .unwrap_err();
-
-    assert!(error.is_connect());
 }
 
 #[test]
