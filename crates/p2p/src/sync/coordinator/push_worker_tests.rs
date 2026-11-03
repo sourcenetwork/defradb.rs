@@ -228,6 +228,76 @@ async fn two_stalled_replicators_do_not_starve_healthy_peer() {
     backlog.close();
 }
 
+/// A peer whose first sends time out and that answers right afterwards keeps
+/// its queued jobs live. The timeouts park it, and only a failed probe (a send
+/// started after the park's cooldown ran out) moves its queue to the ledger.
+#[tokio::test(start_paused = true)]
+async fn transient_transport_failure_keeps_queued_jobs_live() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::sync::{
+        DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+        DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
+    };
+
+    const JOBS: u8 = 20;
+    let backlog = PushBacklog::new(
+        DEFAULT_PUSH_QUEUE_CAPACITY,
+        DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+        DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+        DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+    );
+    let transport = TestTransport::new(Vec::new()).with_stalled_peer("flaky");
+    let (context, mut failures) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        DEFAULT_PUSH_SEND_TIMEOUT,
+    );
+    let ledger = Arc::new(AtomicUsize::new(0));
+    let recorded = Arc::clone(&ledger);
+    tokio::spawn(async move {
+        while let Some(event) = failures.recv().await {
+            if event.create_retry {
+                recorded.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+    let shutdown = SyncShutdownHandle::new(4);
+    spawn_push_workers(context, &shutdown);
+    tokio::task::yield_now().await;
+
+    for seed in 0..JOBS {
+        assert_eq!(
+            backlog.try_enqueue(job("flaky", &[seed])).await,
+            EnqueueOutcome::Enqueued
+        );
+    }
+    n0_future::time::sleep(Duration::from_secs(1)).await;
+    transport.unstall_peer("flaky");
+
+    let live = usize::from(JOBS) - DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER;
+    let started = n0_future::time::Instant::now();
+    let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+    loop {
+        let sent = transport.sent().len();
+        if sent == live {
+            break;
+        }
+        assert!(
+            started.elapsed() <= limit,
+            "one transport failure cost a peer that answers its queue: {sent}/{live} sent live, {} handed to the ledger after {:?}",
+            ledger.load(Ordering::Relaxed),
+            started.elapsed()
+        );
+        n0_future::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        ledger.load(Ordering::Relaxed),
+        DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
+    );
+    backlog.close();
+}
+
 /// A stalled send fails via the send timeout, frees the worker, and lands
 /// in the persisted retry ladder through the failure channel.
 #[tokio::test]
