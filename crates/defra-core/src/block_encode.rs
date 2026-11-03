@@ -77,7 +77,10 @@ impl<'block> Payload<'block> {
             | CrdtDelta::CollectionSet(_)
             | CrdtDelta::FieldDefinition(_)
             | CrdtDelta::CollectionDefinition(_)
-            | CrdtDelta::Immutable(_) => None,
+            | CrdtDelta::Immutable(_)
+            | CrdtDelta::Text(_)
+            | CrdtDelta::Json(_)
+            | CrdtDelta::Custom(_) => None,
         }
     }
 }
@@ -222,7 +225,7 @@ where
             text(sink, "fieldName");
             text(sink, &lww.field_name);
             text(sink, "collectionVersionID");
-            text(sink, &lww.schema_version_id);
+            text(sink, &lww.collection_version_id);
         }
         Payload::Counter(counter) => {
             text(sink, "counter");
@@ -236,7 +239,7 @@ where
             text(sink, "fieldName");
             text(sink, &counter.field_name);
             text(sink, "collectionVersionID");
-            text(sink, &counter.schema_version_id);
+            text(sink, &counter.collection_version_id);
         }
         Payload::Composite(composite) => {
             text(sink, "composite");
@@ -246,7 +249,7 @@ where
             text(sink, "priority");
             head(sink, UNSIGNED, composite.priority);
             text(sink, "collectionVersionID");
-            text(sink, &composite.schema_version_id);
+            text(sink, &composite.collection_version_id);
         }
     }
 }
@@ -339,11 +342,11 @@ mod tests {
                 text_strategy(),
                 data_strategy()
             )
-                .prop_map(|(field_name, priority, schema_version_id, data)| {
+                .prop_map(|(field_name, priority, collection_version_id, data)| {
                     CrdtDelta::Lww(LwwDeltaPayload {
                         field_name,
                         priority,
-                        schema_version_id,
+                        collection_version_id,
                         data,
                     })
                 }),
@@ -354,19 +357,21 @@ mod tests {
                 text_strategy(),
                 data_strategy()
             )
-                .prop_map(|(field_name, priority, nonce, schema_version_id, data)| {
-                    CrdtDelta::Counter(CounterDeltaPayload {
-                        field_name,
-                        priority,
-                        nonce,
-                        schema_version_id,
-                        data,
-                    })
-                }),
+                .prop_map(
+                    |(field_name, priority, nonce, collection_version_id, data)| {
+                        CrdtDelta::Counter(CounterDeltaPayload {
+                            field_name,
+                            priority,
+                            nonce,
+                            collection_version_id,
+                            data,
+                        })
+                    }
+                ),
             (text_strategy(), unsigned_strategy(), any::<u8>()).prop_map(
-                |(schema_version_id, priority, status)| {
+                |(collection_version_id, priority, status)| {
                     CrdtDelta::Composite(CompositeDeltaPayload {
-                        schema_version_id,
+                        collection_version_id,
                         priority,
                         status,
                     })
@@ -417,7 +422,7 @@ mod tests {
     fn leaves_every_other_delta_to_serde() {
         let block = Block::new(
             CrdtDelta::Collection(CollectionDeltaPayload {
-                schema_version_id: "bafkcollection".to_owned(),
+                collection_version_id: "bafkcollection".to_owned(),
                 priority: 3,
             }),
             Vec::new(),

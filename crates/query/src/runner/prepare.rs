@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use chrono::{FixedOffset, Utc};
 use identity::Did;
-use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::error::{QueryError, Result};
 use crate::executor::QueryRequest;
 use crate::mapper::MutationType;
 use crate::prepared::{PreparedMutation, PreparedMutations};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::TransactionRegistry;
 
 use super::{DocFetcher, QueryRunner};
@@ -21,18 +21,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let Some(mutator) = self.mutator.as_ref() else {
             return Ok(None);
         };
+        let crdts = mutator.crdts();
         // Only an operation spelled with the `mutation` keyword is a mutation,
         // so a request without it is left to execution to parse, once.
-        if !request.query.contains("mutation") {
+        if request.parsed.is_none() && !request.query.contains("mutation") {
             return Ok(None);
         }
         let variables = super::executor::convert_variables(&request.variables);
-        let parsed = parse_request_with_limits(
-            &request.query,
-            variables.as_ref(),
-            request.operation_name.as_deref(),
-            self.query_limits,
-        )?;
+        let parsed = request.operation(variables.as_ref(), self.query_limits)?;
         let ParsedOperation::Mutation {
             mutations,
             explain: None,
@@ -96,7 +92,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mut permissions = rapidhash::RapidHashSet::default();
             for mutation in mutations {
                 match mutation.mutation_type {
-                    MutationType::Create | MutationType::Update | MutationType::Upsert => {
+                    MutationType::Add | MutationType::Update | MutationType::Upsert => {
                         permissions.insert(acp::nac::NodePermission::DocumentUpdate);
                     }
                     MutationType::Delete => {
@@ -129,7 +125,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         for mutation in mutations {
             if !matches!(
                 mutation.mutation_type,
-                MutationType::Create
+                MutationType::Add
                     | MutationType::Update
                     | MutationType::Upsert
                     | MutationType::Delete
@@ -179,7 +175,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .context()
                 .into_owned()
                 .or_encryption(mutation.encryption());
-            if mutation.mutation_type == MutationType::Create {
+            if mutation.mutation_type == MutationType::Add {
                 let docs = self
                     .build_create_inputs(mutation, collection)?
                     .into_iter()
@@ -219,9 +215,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     && collection.vector_embeddings.is_empty()
                     && mutator.supports_projected_updates()
                 {
-                    let patch_fields: RapidHashSet<String> =
-                        mutation.update_input.keys().cloned().collect();
-                    crate::update_parts::planned(collection, &patch_fields, None)
+                    let patch_fields = mutation.update_fields(collection)?;
+                    crate::update_parts::planned(&crdts, collection, &patch_fields, None)
                 } else {
                     None
                 };
@@ -267,12 +262,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             == MutationType::Update
                         {
                             let input = self.build_update_input(mutation, collection)?;
-                            input.apply_to_with_time(doc, Some(collection), Some(request_time))?;
-                            input.fields.keys().cloned().collect()
+                            input.apply_to_with_time(
+                                &crdts,
+                                doc,
+                                Some(collection),
+                                Some(request_time),
+                            )?;
+                            input.field_names()
                         } else {
                             let input = self
                                 .build_upsert_input_from_map(collection, &mutation.update_input)?;
-                            input.apply_to(doc, Some(collection), request_time)?;
+                            input.apply_to(&crdts, doc, Some(collection), request_time)?;
                             input.fields.keys().cloned().collect()
                         };
                         let doc = mutator

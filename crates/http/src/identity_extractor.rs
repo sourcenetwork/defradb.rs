@@ -200,7 +200,14 @@ impl IntoResponse for IdentityExtractionError {
             }
         };
 
-        (status, Json(ErrorResponse { error: message })).into_response()
+        (
+            status,
+            Json(ErrorResponse {
+                error: message,
+                code: None,
+            }),
+        )
+            .into_response()
     }
 }
 

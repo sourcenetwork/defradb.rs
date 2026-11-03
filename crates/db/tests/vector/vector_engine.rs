@@ -113,6 +113,34 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.delete_aux(kind, key).await
     }
 
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend,
@@ -121,33 +149,40 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
     }
 }
 
-#[tokio::test]
-async fn an_empty_graph_searches_without_error() {
-    let index = graph(GRAPH_SEED);
-    assert!(index
-        .search_with_ef(&[1.0, 0.0, 0.0], 10, DEFAULT_EF_SEARCH)
-        .await
-        .expect("empty graph is not an error")
-        .is_empty());
+#[test]
+fn an_empty_graph_searches_without_error() {
+    workers::block_on(async {
+        let index = graph(GRAPH_SEED);
+        assert!(index
+            .search_with_ef(&[1.0, 0.0, 0.0], 10, DEFAULT_EF_SEARCH)
+            .await
+            .expect("empty graph is not an error")
+            .is_empty());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn k_of_zero_returns_nothing() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(32, 8);
-    let index = build(&vectors, GRAPH_SEED).await;
-    assert!(index
-        .search_with_ef(&vectors[0], 0, DEFAULT_EF_SEARCH)
-        .await
-        .unwrap()
-        .is_empty());
+#[test]
+fn k_of_zero_returns_nothing() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(32, 8);
+        let index = build(&vectors, GRAPH_SEED).await;
+        assert!(index
+            .search_with_ef(&vectors[0], 0, DEFAULT_EF_SEARCH)
+            .await
+            .unwrap()
+            .is_empty());
+    })
+    .unwrap()
 }
 
 /// Every indexed vector must find itself first when used as its own query.
 /// This is exact, not approximate: a graph that cannot retrieve a point it
 /// contains is broken, whatever its recall on unseen queries.
-#[tokio::test]
-async fn every_indexed_vector_retrieves_itself_first() {
+#[test]
+fn every_indexed_vector_retrieves_itself_first() {
+    workers::block_on(async {
     let mut corpus = Corpus::new(CORPUS_SEED);
     let vectors = corpus.vectors(200, 16);
     let index = build(&vectors, GRAPH_SEED).await;
@@ -170,28 +205,33 @@ async fn every_indexed_vector_retrieves_itself_first() {
         vectors.len(),
         &misses[..misses.len().min(5)]
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn results_are_ordered_nearest_first() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(200, 16);
-    let index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn results_are_ordered_nearest_first() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(200, 16);
+        let index = build(&vectors, GRAPH_SEED).await;
 
-    let query = Corpus::new(QUERY_SEED).vector(16);
-    let hits = index
-        .search_with_ef(&query, 10, DEFAULT_EF_SEARCH)
-        .await
-        .unwrap();
-    assert!(hits.len() > 1, "expected several hits, got {}", hits.len());
-    for pair in hits.windows(2) {
-        assert!(
-            pair[0].distance <= pair[1].distance,
-            "out of order: {:?} then {:?}",
-            pair[0],
-            pair[1]
-        );
-    }
+        let query = Corpus::new(QUERY_SEED).vector(16);
+        let hits = index
+            .search_with_ef(&query, 10, DEFAULT_EF_SEARCH)
+            .await
+            .unwrap();
+        assert!(hits.len() > 1, "expected several hits, got {}", hits.len());
+        for pair in hits.windows(2) {
+            assert!(
+                pair[0].distance <= pair[1].distance,
+                "out of order: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// The Phase 1 gate. Records recall against an exact scan, alongside how much
@@ -202,390 +242,414 @@ async fn results_are_ordered_nearest_first() {
 /// of 32 dimensions an earlier version of this test read 74% of the corpus per
 /// query and scored a meaningless 1.0000. The assertion is a floor a broken
 /// graph would fail, not the figure being measured.
-#[tokio::test]
-async fn recall_against_an_exact_scan_is_recorded() {
-    const CORPUS: usize = 4000;
-    const DIMENSIONS: usize = 16;
-    const QUERIES: usize = 50;
-    const K: usize = 10;
-    const EF: usize = 32;
-    /// Well below what the graph should reach; present so a graph that stopped
-    /// working fails the suite. Not a quality target.
-    const BROKEN_BELOW: f64 = 0.75;
-    /// Above this the walk is a scan wearing a graph's clothes, and any recall
-    /// it reports is meaningless.
-    const NOT_APPROXIMATING_ABOVE: f64 = 0.35;
+#[test]
+fn recall_against_an_exact_scan_is_recorded() {
+    workers::block_on(async {
+        const CORPUS: usize = 4000;
+        const DIMENSIONS: usize = 16;
+        const QUERIES: usize = 50;
+        const K: usize = 10;
+        const EF: usize = 32;
+        /// Well below what the graph should reach; present so a graph that stopped
+        /// working fails the suite. Not a quality target.
+        const BROKEN_BELOW: f64 = 0.75;
+        /// Above this the walk is a scan wearing a graph's clothes, and any recall
+        /// it reports is meaningless.
+        const NOT_APPROXIMATING_ABOVE: f64 = 0.35;
 
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(CORPUS, DIMENSIONS);
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(CORPUS, DIMENSIONS);
 
-    let exact = flat(&vectors).await;
-    let mut index = Hnsw::new(
-        Counting::new(MemoryNodeStore::new()),
-        Metric::Cosine,
-        Params::new(DEFAULT_M),
-        GRAPH_SEED,
-    );
-    for (i, vector) in vectors.iter().enumerate() {
-        index.insert(NodeId(i as u64), vector).await.unwrap();
-    }
-
-    let mut queries = Corpus::new(QUERY_SEED);
-    let (mut hit, mut total, mut reads) = (0usize, 0usize, 0usize);
-    for _ in 0..QUERIES {
-        let query = queries.vector(DIMENSIONS);
-
-        let want: Vec<NodeId> = exact
-            .search(&query, K, None)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|n| n.id)
-            .collect();
-        assert_eq!(
-            want,
-            scored(&vectors, &query, K),
-            "the Flat oracle is not exact, so it cannot judge the graph"
+        let exact = flat(&vectors).await;
+        let mut index = Hnsw::new(
+            Counting::new(MemoryNodeStore::new()),
+            Metric::Cosine,
+            Params::new(DEFAULT_M),
+            GRAPH_SEED,
         );
+        for (i, vector) in vectors.iter().enumerate() {
+            index.insert(NodeId(i as u64), vector).await.unwrap();
+        }
 
-        index.store().take_reads();
-        let got = index.search_with_ef(&query, K, EF).await.unwrap();
-        reads += index.store().take_reads();
-        hit += got.iter().filter(|n| want.contains(&n.id)).count();
-        total += want.len();
-    }
+        let mut queries = Corpus::new(QUERY_SEED);
+        let (mut hit, mut total, mut reads) = (0usize, 0usize, 0usize);
+        for _ in 0..QUERIES {
+            let query = queries.vector(DIMENSIONS);
 
-    let recall = hit as f64 / total as f64;
-    let read_fraction = reads as f64 / QUERIES as f64 / CORPUS as f64;
-    println!(
+            let want: Vec<NodeId> = exact
+                .search(&query, K, None)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|n| n.id)
+                .collect();
+            assert_eq!(
+                want,
+                scored(&vectors, &query, K),
+                "the Flat oracle is not exact, so it cannot judge the graph"
+            );
+
+            index.store().take_reads();
+            let got = index.search_with_ef(&query, K, EF).await.unwrap();
+            reads += index.store().take_reads();
+            hit += got.iter().filter(|n| want.contains(&n.id)).count();
+            total += want.len();
+        }
+
+        let recall = hit as f64 / total as f64;
+        let read_fraction = reads as f64 / QUERIES as f64 / CORPUS as f64;
+        println!(
         "recall@{K} = {recall:.4} ({hit}/{total}) reading {:.1}% of {CORPUS} vectors per query, \
          {DIMENSIONS} dimensions, m={DEFAULT_M} ef_construction={DEFAULT_EF_CONSTRUCTION} \
          ef_search={EF}, seeds corpus={CORPUS_SEED:#x} graph={GRAPH_SEED:#x} query={QUERY_SEED:#x}",
         100.0 * read_fraction
     );
-    assert!(
-        recall > BROKEN_BELOW,
-        "recall {recall:.4} is below the broken-graph floor {BROKEN_BELOW}"
-    );
-    assert!(
-        read_fraction < NOT_APPROXIMATING_ABOVE,
-        "the search read {:.1}% of the corpus, so it is a scan and its recall means nothing",
-        100.0 * read_fraction
-    );
+        assert!(
+            recall > BROKEN_BELOW,
+            "recall {recall:.4} is below the broken-graph floor {BROKEN_BELOW}"
+        );
+        assert!(
+            read_fraction < NOT_APPROXIMATING_ABOVE,
+            "the search read {:.1}% of the corpus, so it is a scan and its recall means nothing",
+            100.0 * read_fraction
+        );
+    })
+    .unwrap()
 }
 
 /// Every kind exercised here must be usable through the trait alone, with no
 /// knowledge of which one is behind it. A trait one type implements is a
 /// guess; this is what makes it an abstraction.
-#[tokio::test]
-async fn every_exercised_kind_satisfies_the_engine_trait() {
-    async fn exercise<E: VectorIndexEngine>(
-        engine: &mut E,
-        vectors: &[Vec<f32>],
-        kind: EngineKind,
-    ) {
-        assert_eq!(engine.kind(), kind);
-        for (i, vector) in vectors.iter().enumerate() {
-            engine.insert(NodeId(i as u64), vector).await.unwrap();
-        }
+#[test]
+fn every_exercised_kind_satisfies_the_engine_trait() {
+    workers::block_on(async {
+        async fn exercise<E: VectorIndexEngine>(
+            engine: &mut E,
+            vectors: &[Vec<f32>],
+            kind: EngineKind,
+        ) {
+            assert_eq!(engine.kind(), kind);
+            for (i, vector) in vectors.iter().enumerate() {
+                engine.insert(NodeId(i as u64), vector).await.unwrap();
+            }
 
-        let hits = engine.search(&vectors[0], 5, None).await.unwrap();
-        assert_eq!(
-            hits.first().map(|h| h.id),
-            Some(NodeId(0)),
-            "{kind:?}: a stored vector must retrieve itself"
-        );
-        for pair in hits.windows(2) {
-            assert!(pair[0].distance <= pair[1].distance, "{kind:?}: unordered");
-        }
+            let hits = engine.search(&vectors[0], 5, None).await.unwrap();
+            assert_eq!(
+                hits.first().map(|h| h.id),
+                Some(NodeId(0)),
+                "{kind:?}: a stored vector must retrieve itself"
+            );
+            for pair in hits.windows(2) {
+                assert!(pair[0].distance <= pair[1].distance, "{kind:?}: unordered");
+            }
 
-        assert!(engine.delete(NodeId(0)).await.unwrap(), "{kind:?}: existed");
-        assert!(!engine.delete(NodeId(0)).await.unwrap(), "{kind:?}: no-op");
-        let hits = engine.search(&vectors[0], 5, None).await.unwrap();
-        assert!(
-            hits.iter().all(|h| h.id != NodeId(0)),
-            "{kind:?}: a deleted node was returned"
-        );
+            assert!(engine.delete(NodeId(0)).await.unwrap(), "{kind:?}: existed");
+            assert!(!engine.delete(NodeId(0)).await.unwrap(), "{kind:?}: no-op");
+            let hits = engine.search(&vectors[0], 5, None).await.unwrap();
+            assert!(
+                hits.iter().all(|h| h.id != NodeId(0)),
+                "{kind:?}: a deleted node was returned"
+            );
 
-        assert!(engine
-            .search(&vectors[1], 0, None)
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(engine.search(&vectors[1], 5, Some(64)).await.unwrap().len() > 1);
-
-        // Filtering is part of the contract, so every kind answers it, and the
-        // defaulted `search` must agree with an all-admitting `search_where`.
-        let filtered = engine
-            .search_where(&vectors[1], 5, None, &|id: NodeId| !id.0.is_multiple_of(2))
-            .await
-            .unwrap();
-        assert!(
-            filtered.iter().all(|h| !h.id.0.is_multiple_of(2)),
-            "{kind:?}: a rejected node was returned"
-        );
-        assert_eq!(
-            engine.search(&vectors[1], 5, None).await.unwrap(),
-            engine
-                .search_where(&vectors[1], 5, None, &AdmitAll)
+            assert!(engine
+                .search(&vectors[1], 0, None)
                 .await
-                .unwrap(),
-            "{kind:?}: the defaulted search disagrees with an all-admitting one"
-        );
-    }
+                .unwrap()
+                .is_empty());
+            assert!(engine.search(&vectors[1], 5, Some(64)).await.unwrap().len() > 1);
 
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(200, 16);
+            // Filtering is part of the contract, so every kind answers it, and the
+            // defaulted `search` must agree with an all-admitting `search_where`.
+            let filtered = engine
+                .search_where(&vectors[1], 5, None, &|id: NodeId| !id.0.is_multiple_of(2))
+                .await
+                .unwrap();
+            assert!(
+                filtered.iter().all(|h| !h.id.0.is_multiple_of(2)),
+                "{kind:?}: a rejected node was returned"
+            );
+            assert_eq!(
+                engine.search(&vectors[1], 5, None).await.unwrap(),
+                engine
+                    .search_where(&vectors[1], 5, None, &AdmitAll)
+                    .await
+                    .unwrap(),
+                "{kind:?}: the defaulted search disagrees with an all-admitting one"
+            );
+        }
 
-    exercise(
-        &mut Hnsw::new(
-            MemoryNodeStore::new(),
-            Metric::Cosine,
-            Params::new(DEFAULT_M),
-            GRAPH_SEED,
-        ),
-        &vectors,
-        EngineKind::Hnsw,
-    )
-    .await;
-    exercise(
-        &mut Flat::new(MemoryNodeStore::new(), Metric::Cosine),
-        &vectors,
-        EngineKind::Flat,
-    )
-    .await;
-    // Below the train threshold, so this exercises the staging path: an
-    // IvfFlat that never builds must behave exactly like Flat, which is the
-    // same contract IvfPq and Ssg's own staging paths carry.
-    exercise(
-        &mut IvfFlat::try_new(
-            MemoryNodeStore::new(),
-            Metric::Cosine,
-            IvfFlatParams::default(),
-            GRAPH_SEED,
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(200, 16);
+
+        exercise(
+            &mut Hnsw::new(
+                MemoryNodeStore::new(),
+                Metric::Cosine,
+                Params::new(DEFAULT_M),
+                GRAPH_SEED,
+            ),
+            &vectors,
+            EngineKind::Hnsw,
         )
-        .expect("cosine partitions soundly"),
-        &vectors,
-        EngineKind::IvfFlat,
-    )
-    .await;
+        .await;
+        exercise(
+            &mut Flat::new(MemoryNodeStore::new(), Metric::Cosine),
+            &vectors,
+            EngineKind::Flat,
+        )
+        .await;
+        // Below the train threshold, so this exercises the staging path: an
+        // IvfFlat that never builds must behave exactly like Flat, which is the
+        // same contract IvfPq and Ssg's own staging paths carry.
+        exercise(
+            &mut IvfFlat::try_new(
+                MemoryNodeStore::new(),
+                Metric::Cosine,
+                IvfFlatParams::default(),
+                GRAPH_SEED,
+            )
+            .expect("cosine partitions soundly"),
+            &vectors,
+            EngineKind::IvfFlat,
+        )
+        .await;
+    })
+    .unwrap()
 }
 
 /// A query arriving as `f64`, which is what JSON and GraphQL deliver, must rank
 /// identically to the same query as `f32`. The engine narrows to the stored
 /// width once; nothing about the caller's width may change the answer.
-#[tokio::test]
-async fn the_query_width_does_not_change_the_answer() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(300, 16);
+#[test]
+fn the_query_width_does_not_change_the_answer() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(300, 16);
 
-    // Built from f64 input, which is what a document field carries.
-    let wide: Vec<Vec<f64>> = vectors
-        .iter()
-        .map(|v| v.iter().map(|x| *x as f64).collect())
-        .collect();
-    let mut from_wide = graph(GRAPH_SEED);
-    for (i, vector) in wide.iter().enumerate() {
-        from_wide.insert(NodeId(i as u64), vector).await.unwrap();
-    }
-    let from_narrow = build(&vectors, GRAPH_SEED).await;
+        // Built from f64 input, which is what a document field carries.
+        let wide: Vec<Vec<f64>> = vectors
+            .iter()
+            .map(|v| v.iter().map(|x| *x as f64).collect())
+            .collect();
+        let mut from_wide = graph(GRAPH_SEED);
+        for (i, vector) in wide.iter().enumerate() {
+            from_wide.insert(NodeId(i as u64), vector).await.unwrap();
+        }
+        let from_narrow = build(&vectors, GRAPH_SEED).await;
 
-    let mut queries = Corpus::new(QUERY_SEED);
-    for _ in 0..25 {
-        let narrow = queries.vector(16);
-        let widened: Vec<f64> = narrow.iter().map(|x| *x as f64).collect();
-        assert_eq!(
-            from_wide.search_with_ef(&widened, 10, 64).await.unwrap(),
-            from_narrow.search_with_ef(&narrow, 10, 64).await.unwrap(),
-            "an f64 round trip through the index changed the ranking"
-        );
-        assert_eq!(
-            from_narrow.search_with_ef(&widened, 10, 64).await.unwrap(),
-            from_narrow.search_with_ef(&narrow, 10, 64).await.unwrap(),
-            "an f64 query ranked differently from the same f32 query"
-        );
-    }
+        let mut queries = Corpus::new(QUERY_SEED);
+        for _ in 0..25 {
+            let narrow = queries.vector(16);
+            let widened: Vec<f64> = narrow.iter().map(|x| *x as f64).collect();
+            assert_eq!(
+                from_wide.search_with_ef(&widened, 10, 64).await.unwrap(),
+                from_narrow.search_with_ef(&narrow, 10, 64).await.unwrap(),
+                "an f64 round trip through the index changed the ranking"
+            );
+            assert_eq!(
+                from_narrow.search_with_ef(&widened, 10, 64).await.unwrap(),
+                from_narrow.search_with_ef(&narrow, 10, 64).await.unwrap(),
+                "an f64 query ranked differently from the same f32 query"
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// A search hit carries an `f64` distance no matter what the query was made of.
 /// An integer query against a stored corpus still separates by irrational
 /// angles, and the hit must be able to say so.
-#[tokio::test]
-async fn search_hits_carry_a_floating_point_distance_for_an_integer_query() {
-    let mut index = graph(GRAPH_SEED);
-    for (id, vector) in [
-        (1u64, [1.0f32, 0.0, 0.0]),
-        (2, [1.0, 1.0, 0.0]),
-        (3, [0.0, 1.0, 0.0]),
-    ] {
-        index.insert(NodeId(id), &vector).await.unwrap();
-    }
+#[test]
+fn search_hits_carry_a_floating_point_distance_for_an_integer_query() {
+    workers::block_on(async {
+        let mut index = graph(GRAPH_SEED);
+        for (id, vector) in [
+            (1u64, [1.0f32, 0.0, 0.0]),
+            (2, [1.0, 1.0, 0.0]),
+            (3, [0.0, 1.0, 0.0]),
+        ] {
+            index.insert(NodeId(id), &vector).await.unwrap();
+        }
 
-    // The same query as i32, i64 and f32: one direction, three widths.
-    let hits_i32 = index.search_with_ef(&[1i32, 0, 0], 3, 64).await.unwrap();
-    let hits_i64 = index.search_with_ef(&[1i64, 0, 0], 3, 64).await.unwrap();
-    let hits_f32 = index
-        .search_with_ef(&[1.0f32, 0.0, 0.0], 3, 64)
-        .await
-        .unwrap();
-    assert_eq!(hits_i32, hits_i64, "the integer widths must agree");
-    assert_eq!(
-        hits_i32, hits_f32,
-        "an integer query must match its float twin"
-    );
+        // The same query as i32, i64 and f32: one direction, three widths.
+        let hits_i32 = index.search_with_ef(&[1i32, 0, 0], 3, 64).await.unwrap();
+        let hits_i64 = index.search_with_ef(&[1i64, 0, 0], 3, 64).await.unwrap();
+        let hits_f32 = index
+            .search_with_ef(&[1.0f32, 0.0, 0.0], 3, 64)
+            .await
+            .unwrap();
+        assert_eq!(hits_i32, hits_i64, "the integer widths must agree");
+        assert_eq!(
+            hits_i32, hits_f32,
+            "an integer query must match its float twin"
+        );
 
-    assert_eq!(hits_i32.first().map(|h| h.id), Some(NodeId(1)));
-    assert!(
-        hits_i32[0].distance.abs() < 1e-6,
-        "the identical direction is distance 0, got {}",
-        hits_i32[0].distance
-    );
+        assert_eq!(hits_i32.first().map(|h| h.id), Some(NodeId(1)));
+        assert!(
+            hits_i32[0].distance.abs() < 1e-6,
+            "the identical direction is distance 0, got {}",
+            hits_i32[0].distance
+        );
 
-    // Node 2 sits at 45 degrees: a distance no integer type could express.
-    let at_45 = hits_i32
-        .iter()
-        .find(|h| h.id == NodeId(2))
-        .expect("node 2 is reachable");
-    let want = 1.0 - std::f64::consts::FRAC_1_SQRT_2;
-    assert!(
-        (at_45.distance - want).abs() < 1e-6,
-        "expected {want}, got {}",
-        at_45.distance
-    );
+        // Node 2 sits at 45 degrees: a distance no integer type could express.
+        let at_45 = hits_i32
+            .iter()
+            .find(|h| h.id == NodeId(2))
+            .expect("node 2 is reachable");
+        let want = 1.0 - std::f64::consts::FRAC_1_SQRT_2;
+        assert!(
+            (at_45.distance - want).abs() < 1e-6,
+            "expected {want}, got {}",
+            at_45.distance
+        );
+    })
+    .unwrap()
 }
 
 /// The exact kind must agree with a direct scan on every query, or it is not an
 /// oracle.
-#[tokio::test]
-async fn the_flat_kind_is_exact() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(400, 16);
-    let exact = flat(&vectors).await;
+#[test]
+fn the_flat_kind_is_exact() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(400, 16);
+        let exact = flat(&vectors).await;
 
-    let mut queries = Corpus::new(QUERY_SEED);
-    for _ in 0..25 {
-        let query = queries.vector(16);
-        let got: Vec<NodeId> = exact
-            .search(&query, 10, None)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|n| n.id)
-            .collect();
-        assert_eq!(got, scored(&vectors, &query, 10));
-    }
+        let mut queries = Corpus::new(QUERY_SEED);
+        for _ in 0..25 {
+            let query = queries.vector(16);
+            let got: Vec<NodeId> = exact
+                .search(&query, 10, None)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|n| n.id)
+                .collect();
+            assert_eq!(got, scored(&vectors, &query, 10));
+        }
+    })
+    .unwrap()
 }
 
 /// A wider `ef_search` explores more of layer 0, so it cannot find less.
-#[tokio::test]
-async fn a_wider_search_does_not_lose_hits() {
-    const K: usize = 10;
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(500, 16);
-    let index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn a_wider_search_does_not_lose_hits() {
+    workers::block_on(async {
+        const K: usize = 10;
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(500, 16);
+        let index = build(&vectors, GRAPH_SEED).await;
 
-    let mut queries = Corpus::new(QUERY_SEED);
-    let (mut narrow_hits, mut wide_hits, mut total) = (0usize, 0usize, 0usize);
-    for _ in 0..50 {
-        let query = queries.vector(16);
-        let want = scored(&vectors, &query, K);
-        let narrow = index.search_with_ef(&query, K, K).await.unwrap();
-        let wide = index.search_with_ef(&query, K, 256).await.unwrap();
-        narrow_hits += narrow.iter().filter(|n| want.contains(&n.id)).count();
-        wide_hits += wide.iter().filter(|n| want.contains(&n.id)).count();
-        total += want.len();
-    }
-    println!(
-        "recall@{K}: ef_search={K} -> {:.4}, ef_search=256 -> {:.4}",
-        narrow_hits as f64 / total as f64,
-        wide_hits as f64 / total as f64
-    );
-    assert!(
-        wide_hits >= narrow_hits,
-        "a wider search found fewer true neighbors: {wide_hits} < {narrow_hits}"
-    );
+        let mut queries = Corpus::new(QUERY_SEED);
+        let (mut narrow_hits, mut wide_hits, mut total) = (0usize, 0usize, 0usize);
+        for _ in 0..50 {
+            let query = queries.vector(16);
+            let want = scored(&vectors, &query, K);
+            let narrow = index.search_with_ef(&query, K, K).await.unwrap();
+            let wide = index.search_with_ef(&query, K, 256).await.unwrap();
+            narrow_hits += narrow.iter().filter(|n| want.contains(&n.id)).count();
+            wide_hits += wide.iter().filter(|n| want.contains(&n.id)).count();
+            total += want.len();
+        }
+        println!(
+            "recall@{K}: ef_search={K} -> {:.4}, ef_search=256 -> {:.4}",
+            narrow_hits as f64 / total as f64,
+            wide_hits as f64 / total as f64
+        );
+        assert!(
+            wide_hits >= narrow_hits,
+            "a wider search found fewer true neighbors: {wide_hits} < {narrow_hits}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn tombstoned_nodes_are_never_returned_but_still_route() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(300, 16);
-    let mut index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn tombstoned_nodes_are_never_returned_but_still_route() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(300, 16);
+        let mut index = build(&vectors, GRAPH_SEED).await;
 
-    let deleted: Vec<NodeId> = (0..300).step_by(3).map(|i| NodeId(i as u64)).collect();
-    for &id in &deleted {
-        assert!(
-            index.delete(id).await.unwrap(),
-            "{id:?} should have existed"
-        );
-        assert!(
-            !index.delete(id).await.unwrap(),
-            "deleting twice is a no-op"
-        );
-    }
+        let deleted: Vec<NodeId> = (0..300).step_by(3).map(|i| NodeId(i as u64)).collect();
+        for &id in &deleted {
+            assert!(
+                index.delete(id).await.unwrap(),
+                "{id:?} should have existed"
+            );
+            assert!(
+                !index.delete(id).await.unwrap(),
+                "deleting twice is a no-op"
+            );
+        }
 
-    // Every live vector must still be reachable, which is only true if the walk
-    // continues through the tombstones rather than stopping at them.
-    let mut unreachable = Vec::new();
-    for (i, vector) in vectors.iter().enumerate() {
-        let id = NodeId(i as u64);
-        if deleted.contains(&id) {
-            continue;
+        // Every live vector must still be reachable, which is only true if the walk
+        // continues through the tombstones rather than stopping at them.
+        let mut unreachable = Vec::new();
+        for (i, vector) in vectors.iter().enumerate() {
+            let id = NodeId(i as u64);
+            if deleted.contains(&id) {
+                continue;
+            }
+            let hits = index
+                .search_with_ef(vector, 5, DEFAULT_EF_SEARCH)
+                .await
+                .unwrap();
+            assert!(
+                hits.iter().all(|h| !deleted.contains(&h.id)),
+                "a tombstone was returned for {id:?}"
+            );
+            if !hits.iter().any(|h| h.id == id) {
+                unreachable.push(id);
+            }
         }
-        let hits = index
-            .search_with_ef(vector, 5, DEFAULT_EF_SEARCH)
-            .await
-            .unwrap();
         assert!(
-            hits.iter().all(|h| !deleted.contains(&h.id)),
-            "a tombstone was returned for {id:?}"
+            unreachable.is_empty(),
+            "{} live vectors became unreachable after deleting a third of the graph: {:?}",
+            unreachable.len(),
+            &unreachable[..unreachable.len().min(5)]
         );
-        if !hits.iter().any(|h| h.id == id) {
-            unreachable.push(id);
-        }
-    }
-    assert!(
-        unreachable.is_empty(),
-        "{} live vectors became unreachable after deleting a third of the graph: {:?}",
-        unreachable.len(),
-        &unreachable[..unreachable.len().min(5)]
-    );
+    })
+    .unwrap()
 }
 
 /// Deleting everything leaves a graph whose every reachable node is a
 /// tombstone. The next insert has nothing live to link to, so it must become
 /// the entry point or it would be invisible to every later search.
-#[tokio::test]
-async fn an_insert_into_a_fully_tombstoned_graph_is_findable() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(50, 8);
-    let mut index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn an_insert_into_a_fully_tombstoned_graph_is_findable() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(50, 8);
+        let mut index = build(&vectors, GRAPH_SEED).await;
 
-    for i in 0..vectors.len() {
-        index.delete(NodeId(i as u64)).await.unwrap();
-    }
-    assert!(
-        index
-            .search_with_ef(&vectors[0], 10, DEFAULT_EF_SEARCH)
+        for i in 0..vectors.len() {
+            index.delete(NodeId(i as u64)).await.unwrap();
+        }
+        assert!(
+            index
+                .search_with_ef(&vectors[0], 10, DEFAULT_EF_SEARCH)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a fully tombstoned graph has no live hits"
+        );
+
+        let fresh = corpus.vector(8);
+        let fresh_id = NodeId(999);
+        index.insert(fresh_id, &fresh).await.unwrap();
+
+        let hits = index
+            .search_with_ef(&fresh, 1, DEFAULT_EF_SEARCH)
             .await
-            .unwrap()
-            .is_empty(),
-        "a fully tombstoned graph has no live hits"
-    );
-
-    let fresh = corpus.vector(8);
-    let fresh_id = NodeId(999);
-    index.insert(fresh_id, &fresh).await.unwrap();
-
-    let hits = index
-        .search_with_ef(&fresh, 1, DEFAULT_EF_SEARCH)
-        .await
-        .unwrap();
-    assert_eq!(
-        hits.first().map(|h| h.id),
-        Some(fresh_id),
-        "the only live node must be findable"
-    );
+            .unwrap();
+        assert_eq!(
+            hits.first().map(|h| h.id),
+            Some(fresh_id),
+            "the only live node must be findable"
+        );
+    })
+    .unwrap()
 }
 
 /// Node heights are the only thing the seed controls, so they are what proves
@@ -606,8 +670,9 @@ async fn heights(index: &Hnsw<MemoryNodeStore>) -> Vec<(NodeId, usize)> {
     out
 }
 
-#[tokio::test]
-async fn the_same_seed_builds_the_same_graph() {
+#[test]
+fn the_same_seed_builds_the_same_graph() {
+    workers::block_on(async {
     let mut corpus = Corpus::new(CORPUS_SEED);
     let vectors = corpus.vectors(200, 16);
 
@@ -640,154 +705,171 @@ async fn the_same_seed_builds_the_same_graph() {
             "the same seed must give the same results"
         );
     }
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn reinserting_an_id_replaces_its_vector() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(100, 8);
-    let mut index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn reinserting_an_id_replaces_its_vector() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(100, 8);
+        let mut index = build(&vectors, GRAPH_SEED).await;
 
-    let replacement = corpus.vector(8);
-    index.insert(NodeId(7), &replacement).await.unwrap();
+        let replacement = corpus.vector(8);
+        index.insert(NodeId(7), &replacement).await.unwrap();
 
-    let hits = index
-        .search_with_ef(&replacement, 1, DEFAULT_EF_SEARCH)
-        .await
-        .unwrap();
-    assert_eq!(hits.first().map(|h| h.id), Some(NodeId(7)));
+        let hits = index
+            .search_with_ef(&replacement, 1, DEFAULT_EF_SEARCH)
+            .await
+            .unwrap();
+        assert_eq!(hits.first().map(|h| h.id), Some(NodeId(7)));
 
-    let node = index
-        .store()
-        .get_node(NodeId(7))
-        .await
-        .unwrap()
-        .expect("node 7 exists");
-    // Stored normalized, so compare directions rather than components.
-    assert!(
-        Metric::Cosine.distance(&node.vector, &replacement) < 1e-6,
-        "the stored vector is not the replacement"
-    );
+        let node = index
+            .store()
+            .get_node(NodeId(7))
+            .await
+            .unwrap()
+            .expect("node 7 exists");
+        // Stored normalized, so compare directions rather than components.
+        assert!(
+            Metric::Cosine.distance(&node.vector, &replacement) < 1e-6,
+            "the stored vector is not the replacement"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn updating_the_only_upper_layer_node_preserves_lower_layer_routes() {
-    let params = Params::new(4);
-    let sampler = LevelSampler::new(GRAPH_SEED);
-    let lower = (0..1000)
-        .find(|id| sampler.level(*id, params.ml) == 0)
-        .unwrap();
-    let upper = (0..1000)
-        .find(|id| sampler.level(*id, params.ml) > 0)
-        .unwrap();
-    let mut index = Hnsw::new(
-        MemoryNodeStore::new(),
-        Metric::Euclidean,
-        params,
-        GRAPH_SEED,
-    );
-    index.insert(NodeId(lower), &[0.0, 1.0]).await.unwrap();
-    index.insert(NodeId(upper), &[1.0, 1.0]).await.unwrap();
-    index.insert(NodeId(upper), &[2.0, 1.0]).await.unwrap();
-    let hits = index.search_with_ef(&[0.0, 1.0], 2, 4).await.unwrap();
-    assert_eq!(hits.len(), 2);
-    assert_eq!(hits[0].id, NodeId(lower));
+#[test]
+fn updating_the_only_upper_layer_node_preserves_lower_layer_routes() {
+    workers::block_on(async {
+        let params = Params::new(4);
+        let sampler = LevelSampler::new(GRAPH_SEED);
+        let lower = (0..1000)
+            .find(|id| sampler.level(*id, params.ml) == 0)
+            .unwrap();
+        let upper = (0..1000)
+            .find(|id| sampler.level(*id, params.ml) > 0)
+            .unwrap();
+        let mut index = Hnsw::new(
+            MemoryNodeStore::new(),
+            Metric::Euclidean,
+            params,
+            GRAPH_SEED,
+        );
+        index.insert(NodeId(lower), &[0.0, 1.0]).await.unwrap();
+        index.insert(NodeId(upper), &[1.0, 1.0]).await.unwrap();
+        index.insert(NodeId(upper), &[2.0, 1.0]).await.unwrap();
+        let hits = index.search_with_ef(&[0.0, 1.0], 2, 4).await.unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, NodeId(lower));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn repeated_updates_keep_distinct_neighbors_and_entry_connectivity() {
-    let mut index = Hnsw::new(
-        MemoryNodeStore::new(),
-        Metric::Euclidean,
-        Params::new(4),
-        GRAPH_SEED,
-    );
-    for id in 0..8 {
-        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
-    }
-    let entry = index.store().get_meta().await.unwrap().unwrap().entry_point;
-    for _ in 0..3 {
-        for id in [NodeId(3), entry] {
-            index.insert(id, &[id.0 as f32, 1.0]).await.unwrap();
-            let hits = index.search_with_ef(&[1.0, 1.0], 8, 32).await.unwrap();
-            assert_eq!(hits.len(), 8, "updating {id:?} disconnected the graph");
-            index
-                .store()
-                .iterate_nodes(|node| {
-                    for links in &node.layers {
-                        assert!(!links.contains(&node.id), "self-link at {:?}", node.id);
-                        let unique: std::collections::BTreeSet<_> = links.iter().collect();
-                        assert_eq!(
-                            unique.len(),
-                            links.len(),
-                            "duplicate links at {:?}",
-                            node.id
-                        );
-                    }
-                    Ok(())
-                })
-                .await
-                .unwrap();
+#[test]
+fn repeated_updates_keep_distinct_neighbors_and_entry_connectivity() {
+    workers::block_on(async {
+        let mut index = Hnsw::new(
+            MemoryNodeStore::new(),
+            Metric::Euclidean,
+            Params::new(4),
+            GRAPH_SEED,
+        );
+        for id in 0..8 {
+            index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
         }
-    }
+        let entry = index.store().get_meta().await.unwrap().unwrap().entry_point;
+        for _ in 0..3 {
+            for id in [NodeId(3), entry] {
+                index.insert(id, &[id.0 as f32, 1.0]).await.unwrap();
+                let hits = index.search_with_ef(&[1.0, 1.0], 8, 32).await.unwrap();
+                assert_eq!(hits.len(), 8, "updating {id:?} disconnected the graph");
+                index
+                    .store()
+                    .iterate_nodes(|node| {
+                        for links in &node.layers {
+                            assert!(!links.contains(&node.id), "self-link at {:?}", node.id);
+                            let unique: std::collections::BTreeSet<_> = links.iter().collect();
+                            assert_eq!(
+                                unique.len(),
+                                links.len(),
+                                "duplicate links at {:?}",
+                                node.id
+                            );
+                        }
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+    })
+    .unwrap()
 }
 
 /// A meta pointing at a node that is not stored is corruption. Continuing would
 /// quietly build a second component that no search can reach, so it fails loud.
-#[tokio::test]
-async fn a_dangling_entry_point_fails_the_insert() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(10, 8);
-    let mut index = build(&vectors, GRAPH_SEED).await;
+#[test]
+fn a_dangling_entry_point_fails_the_insert() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(10, 8);
+        let mut index = build(&vectors, GRAPH_SEED).await;
 
-    index
-        .store_mut()
-        .put_meta(Meta {
-            entry_point: NodeId(4242),
-            top_layer: 0,
-            live: 0,
-            waste: 0,
-            rebuilds: 0,
-        })
-        .await
-        .unwrap();
+        index
+            .store_mut()
+            .put_meta(Meta {
+                entry_point: NodeId(4242),
+                top_layer: 0,
+                live: 0,
+                waste: 0,
+                rebuilds: 0,
+            })
+            .await
+            .unwrap();
 
-    let err = index.insert(NodeId(11), &vectors[0]).await.unwrap_err();
-    assert!(
-        matches!(err, Error::VectorEntryPointNotFound { entry_point: 4242 }),
-        "expected a dangling-entry-point error, got {err:?}"
-    );
+        let err = index.insert(NodeId(11), &vectors[0]).await.unwrap_err();
+        assert!(
+            matches!(err, Error::VectorEntryPointNotFound { entry_point: 4242 }),
+            "expected a dangling-entry-point error, got {err:?}"
+        );
 
-    // Search is the read path and must degrade rather than fail: an unreadable
-    // entry point means nothing is findable, not that the query is invalid.
-    assert!(index
-        .search_with_ef(&vectors[0], 5, DEFAULT_EF_SEARCH)
-        .await
-        .unwrap()
-        .is_empty());
+        // Search is the read path and must degrade rather than fail: an unreadable
+        // entry point means nothing is findable, not that the query is invalid.
+        assert!(index
+            .search_with_ef(&vectors[0], 5, DEFAULT_EF_SEARCH)
+            .await
+            .unwrap()
+            .is_empty());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn iterate_nodes_skips_tombstones() {
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let vectors = corpus.vectors(40, 8);
-    let mut index = build(&vectors, GRAPH_SEED).await;
-    for i in (0..40).step_by(4) {
-        index.delete(NodeId(i as u64)).await.unwrap();
-    }
+#[test]
+fn iterate_nodes_skips_tombstones() {
+    workers::block_on(async {
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let vectors = corpus.vectors(40, 8);
+        let mut index = build(&vectors, GRAPH_SEED).await;
+        for i in (0..40).step_by(4) {
+            index.delete(NodeId(i as u64)).await.unwrap();
+        }
 
-    let mut seen = Vec::new();
-    index
-        .store()
-        .iterate_nodes(|node| {
-            seen.push(node.id);
-            Ok(())
-        })
-        .await
-        .unwrap();
+        let mut seen = Vec::new();
+        index
+            .store()
+            .iterate_nodes(|node| {
+                seen.push(node.id);
+                Ok(())
+            })
+            .await
+            .unwrap();
 
-    assert_eq!(seen.len(), 30, "10 of 40 were tombstoned");
-    assert!(seen.iter().all(|id| id.0 % 4 != 0));
+        assert_eq!(seen.len(), 30, "10 of 40 were tombstoned");
+        assert!(seen.iter().all(|id| id.0 % 4 != 0));
+    })
+    .unwrap()
 }
 
 /// A node's height is drawn from an unbounded distribution, but the sampler
@@ -869,123 +951,132 @@ fn out_of_range_parameters_are_refused() {
 /// A graph written before self-link-free inserts is owed one healing
 /// rebuild: the sweep's trigger fires on it, and the rebuild purges every
 /// stale self-link in a single pass (#1468).
-#[tokio::test]
-async fn rebuild_purges_stale_self_links_from_an_older_graph() {
-    let store = MemoryNodeStore::new();
-    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
-    for id in 0..8 {
-        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
-    }
-    // Forge what the pre-fix code left behind: a node pointing at itself.
-    let mut node = index
-        .store()
-        .get_node(NodeId(3))
-        .await
-        .unwrap()
-        .expect("inserted");
-    node.layers[0].push(NodeId(3));
-    index.store_mut().put_node(node).await.unwrap();
+#[test]
+fn rebuild_purges_stale_self_links_from_an_older_graph() {
+    workers::block_on(async {
+        let store = MemoryNodeStore::new();
+        let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+        for id in 0..8 {
+            index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+        }
+        // Forge what the pre-fix code left behind: a node pointing at itself.
+        let mut node = index
+            .store()
+            .get_node(NodeId(3))
+            .await
+            .unwrap()
+            .expect("inserted");
+        node.layers[0].push(NodeId(3));
+        index.store_mut().put_node(node).await.unwrap();
 
-    // The meta records the graph as never rebuilt, so the trigger fires.
-    let meta = index.store().get_meta().await.unwrap().unwrap();
-    index
-        .store_mut()
-        .put_meta(Meta {
-            rebuilds: 0,
-            ..meta
-        })
-        .await
-        .unwrap();
-    assert!(index.should_rebuild().await.unwrap());
+        // The meta records the graph as never rebuilt, so the trigger fires.
+        let meta = index.store().get_meta().await.unwrap().unwrap();
+        index
+            .store_mut()
+            .put_meta(Meta {
+                rebuilds: 0,
+                ..meta
+            })
+            .await
+            .unwrap();
+        assert!(index.should_rebuild().await.unwrap());
 
-    index.rebuild().await.unwrap();
+        index.rebuild().await.unwrap();
 
-    let graph = index.store();
-    for id in 0..8 {
-        let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
-        assert!(
-            !node.layers.iter().any(|layer| layer.contains(&node.id)),
-            "node {id} still carries a self-link after the rebuild"
-        );
-    }
-    let meta = graph.get_meta().await.unwrap().unwrap();
-    assert_eq!(meta.live, 8, "the rebuild recounts the live corpus");
-    assert_eq!(meta.waste, 0);
-    assert!(meta.rebuilds > 0, "the rebuilt graph reads as built");
-    assert!(!index.should_rebuild().await.unwrap());
+        let graph = index.store();
+        for id in 0..8 {
+            let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
+            assert!(
+                !node.layers.iter().any(|layer| layer.contains(&node.id)),
+                "node {id} still carries a self-link after the rebuild"
+            );
+        }
+        let meta = graph.get_meta().await.unwrap().unwrap();
+        assert_eq!(meta.live, 8, "the rebuild recounts the live corpus");
+        assert_eq!(meta.waste, 0);
+        assert!(meta.rebuilds > 0, "the rebuilt graph reads as built");
+        assert!(!index.should_rebuild().await.unwrap());
 
-    // The healed graph still answers: every node stays reachable.
-    for id in 0..8u64 {
-        let hits = index.search_with_ef(&[id as f32, 1.0], 1, 8).await.unwrap();
-        assert_eq!(hits.first().map(|hit| hit.id), Some(NodeId(id)));
-    }
+        // The healed graph still answers: every node stays reachable.
+        for id in 0..8u64 {
+            let hits = index.search_with_ef(&[id as f32, 1.0], 1, 8).await.unwrap();
+            assert_eq!(hits.first().map(|hit| hit.id), Some(NodeId(id)));
+        }
+    })
+    .unwrap()
 }
 
 /// A rebuild drops links to tombstoned nodes and reclaims their records: the
 /// waste they charged to search is gone in one pass.
-#[tokio::test]
-async fn rebuild_drops_tombstoned_nodes_and_links() {
-    let store = MemoryNodeStore::new();
-    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
-    for id in 0..8 {
-        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
-    }
-    index.delete(NodeId(2)).await.unwrap();
-    index.delete(NodeId(5)).await.unwrap();
+#[test]
+fn rebuild_drops_tombstoned_nodes_and_links() {
+    workers::block_on(async {
+        let store = MemoryNodeStore::new();
+        let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+        for id in 0..8 {
+            index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+        }
+        index.delete(NodeId(2)).await.unwrap();
+        index.delete(NodeId(5)).await.unwrap();
 
-    let meta = index.store().get_meta().await.unwrap().unwrap();
-    assert_eq!(meta.live, 6);
-    assert_eq!(meta.waste, 2);
+        let meta = index.store().get_meta().await.unwrap().unwrap();
+        assert_eq!(meta.live, 6);
+        assert_eq!(meta.waste, 2);
 
-    index.rebuild().await.unwrap();
+        index.rebuild().await.unwrap();
 
-    let graph = index.store();
-    assert!(
-        graph.get_node(NodeId(2)).await.unwrap().is_none(),
-        "a tombstoned record is reclaimed by the rebuild"
-    );
-    for id in [0u64, 1, 3, 4, 6, 7] {
-        let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
+        let graph = index.store();
         assert!(
-            !node.layers.iter().any(|layer| layer.contains(&NodeId(2))),
-            "a live node still links the tombstoned id"
+            graph.get_node(NodeId(2)).await.unwrap().is_none(),
+            "a tombstoned record is reclaimed by the rebuild"
         );
-    }
-    let hits = index.search_with_ef(&[2.0, 1.0], 6, 8).await.unwrap();
-    assert!(hits
-        .iter()
-        .all(|hit| hit.id != NodeId(2) && hit.id != NodeId(5)));
+        for id in [0u64, 1, 3, 4, 6, 7] {
+            let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
+            assert!(
+                !node.layers.iter().any(|layer| layer.contains(&NodeId(2))),
+                "a live node still links the tombstoned id"
+            );
+        }
+        let hits = index.search_with_ef(&[2.0, 1.0], 6, 8).await.unwrap();
+        assert!(hits
+            .iter()
+            .all(|hit| hit.id != NodeId(2) && hit.id != NodeId(5)));
+    })
+    .unwrap()
 }
 
 /// A fresh graph is owed nothing: inserts stamp it as built, and waste below
 /// the trigger does not call for a rebuild.
-#[tokio::test]
-async fn fresh_graphs_and_light_waste_do_not_trigger_a_rebuild() {
-    let store = MemoryNodeStore::new();
-    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
-    for id in 0..8 {
-        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
-    }
-    assert!(
-        !index.should_rebuild().await.unwrap(),
-        "a graph created by self-link-free inserts is owed no healing rebuild"
-    );
+#[test]
+fn fresh_graphs_and_light_waste_do_not_trigger_a_rebuild() {
+    workers::block_on(async {
+        let store = MemoryNodeStore::new();
+        let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+        for id in 0..8 {
+            index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+        }
+        assert!(
+            !index.should_rebuild().await.unwrap(),
+            "a graph created by self-link-free inserts is owed no healing rebuild"
+        );
 
-    index.delete(NodeId(1)).await.unwrap();
-    assert!(
-        !index.should_rebuild().await.unwrap(),
-        "waste below the minimum does not pay for a whole reinsert"
-    );
+        index.delete(NodeId(1)).await.unwrap();
+        assert!(
+            !index.should_rebuild().await.unwrap(),
+            "waste below the minimum does not pay for a whole reinsert"
+        );
 
-    for id in 100..200 {
-        index
-            .insert(NodeId(id), &[f32::from(id as u16), 1.0])
-            .await
-            .unwrap();
-    }
-    index.delete(NodeId(101)).await.unwrap();
-    assert!(
-        !index.should_rebuild().await.unwrap(),
-        "waste far below a quarter of the live corpus does not trigger"
-    );
+        for id in 100..200 {
+            index
+                .insert(NodeId(id), &[f32::from(id as u16), 1.0])
+                .await
+                .unwrap();
+        }
+        index.delete(NodeId(101)).await.unwrap();
+        assert!(
+            !index.should_rebuild().await.unwrap(),
+            "waste far below a quarter of the live corpus does not trigger"
+        );
+    })
+    .unwrap()
 }

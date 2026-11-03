@@ -135,10 +135,12 @@ fn look(path: &Path, engine: &Options) -> Result<Option<Db>> {
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(Error::Io(format!(
-                "failed to read the store folder '{}': {error}",
-                path.display()
-            )))
+            return Err(Error::Io(
+                crate::corekv::IoFailure::from(error).with_context(format!(
+                    "failed to read the store folder '{}'",
+                    path.display()
+                )),
+            ))
         }
     }
     match Db::open_read_only(path, engine.clone()) {

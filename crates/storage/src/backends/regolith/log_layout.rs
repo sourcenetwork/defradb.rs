@@ -92,6 +92,19 @@ mod tests {
         assert_ne!(entry(&log, 0), entry(&log, 1));
     }
 
+    /// `AppendLog::entry_key`, which readers use, names the key the engine
+    /// writes.
+    #[test]
+    fn readers_build_the_entry_key_the_engine_writes() {
+        let log = crate::corekv::AppendLog::new(
+            b"s/arrival/7/head".to_vec(),
+            b"s/arrival/7/row/".to_vec(),
+        );
+        for position in [0, 1, 42, u64::MAX] {
+            assert_eq!(log.entry_key(position), entry(log.keys(), position));
+        }
+    }
+
     /// The key is appended to `out`, which may arrive with spare capacity.
     #[test]
     fn an_entry_key_only_extends_its_buffer() {

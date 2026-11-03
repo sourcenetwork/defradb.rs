@@ -575,8 +575,9 @@ pub struct VectorIndexDescription {
     pub algorithm: VectorAlgorithm,
     #[serde(rename = "Metric", default)]
     pub metric: DistanceMetric,
-    /// Length of the vectors indexed. May be `0` on an embedding field, where
-    /// the model fixes the length.
+    /// Length of the vectors indexed. A new index must set it; `0` survives
+    /// only in definitions stored before that rule, where the first vector
+    /// inserted fixes the length.
     #[serde(rename = "Dimensions", default)]
     pub dimensions: u32,
     /// Present when `algorithm` is HNSW.
@@ -802,6 +803,33 @@ impl VectorIndexDescription {
             ssg: matches!(algorithm, VectorAlgorithm::Ssg).then(SsgParams::default),
             diskann: matches!(algorithm, VectorAlgorithm::DiskAnn).then(DiskAnnParams::default),
         }
+    }
+
+    /// Why an index named `index_name` with this description cannot be
+    /// created, empty when it can.
+    ///
+    /// The schema and the index API both call this, so an index the SDL
+    /// refuses cannot be created through the CLI or HTTP instead.
+    pub fn creation_errors(&self, index_name: &str) -> Vec<String> {
+        let mut errs = Vec::new();
+        // Go required this from sourcenetwork/defradb#5188, which dropped
+        // inferring the length from an `@embedding` on the same field. A
+        // zero-dimension index cannot check a query vector's length, so a
+        // wrong-length query would silently be scored on its shared leading
+        // elements.
+        if self.dimensions == 0 {
+            errs.push(format!(
+                "index '{index_name}' must set dimensions greater than zero"
+            ));
+        }
+        if !self.algorithm.supports_metric(self.metric) {
+            errs.push(format!(
+                "index '{index_name}' cannot rank by {}: the {} algorithm does not order it",
+                self.metric.as_str(),
+                self.algorithm.as_str()
+            ));
+        }
+        errs
     }
 }
 

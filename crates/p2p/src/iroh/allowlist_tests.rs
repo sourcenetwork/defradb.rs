@@ -11,17 +11,17 @@ use bytes::Bytes;
 use iroh::SecretKey;
 use n0_future::task::JoinHandle;
 use n0_future::time::{timeout, Instant};
-use tokio::sync::mpsc::Receiver;
 
 use super::endpoint_config::AdmissionAuthority;
 use super::{
     spawn_endpoint, IrohAllowlistConfig, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport,
 };
 use crate::message::PushLogBroadcast;
+use crate::sync::DispatchReceiver;
 use crate::topics::DefraTopic;
 use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
-type Events = Receiver<TransportEvent<iroh::endpoint::SendStream>>;
+type Events = DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>;
 
 fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpointConfig {
     IrohEndpointConfig {
@@ -32,7 +32,6 @@ fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpoint
         bind_port: None,
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         max_concurrent_multipath_paths: None,
-        gossip_heal: Default::default(),
         allowlist,
     }
 }

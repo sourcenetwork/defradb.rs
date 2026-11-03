@@ -27,10 +27,20 @@ fn test_schema() -> CollectionVersion {
         "v1",
         "col-test",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
-            FieldDescription::new("4", "score", FieldKind::float64()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "4",
+                "score",
+                FieldKind::float64(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -46,8 +56,7 @@ proptest! {
     fn prop_bulk_index_count_matches_documents(
         doc_count in 1usize..20,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -75,8 +84,8 @@ proptest! {
             // Create documents
             let mut docs = Vec::new();
             for i in 0..doc_count {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(format!("user_{}", i)));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(format!("user_{}", i))).unwrap();
                 docs.push((next_test_doc_short_id(), doc));
             }
 
@@ -89,7 +98,8 @@ proptest! {
             // Property: indexed count should match document count
             assert_eq!(result.indexed, doc_count);
             assert_eq!(result.skipped, 0);
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -104,8 +114,7 @@ proptest! {
     fn prop_create_then_delete_removes_from_index(
         name in "[a-zA-Z]{3,10}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -130,8 +139,8 @@ proptest! {
                 .unwrap();
 
             // Create document
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String(name.clone()));
+            let mut doc = Document::new(schema.clone());
+            doc.set("name", NormalValue::String(name.clone())).unwrap();
             let doc_short_id = next_test_doc_short_id();
 
             manager
@@ -161,7 +170,8 @@ proptest! {
                 .unwrap();
             let after = iter.collect_all().await.unwrap();
             assert!(after.is_empty(), "Index should be empty after delete");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -180,8 +190,7 @@ proptest! {
         // Skip if names are the same (no update needed)
         prop_assume!(old_name != new_name);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -206,8 +215,8 @@ proptest! {
                 .unwrap();
 
             // Create document with old name
-            let mut old_doc = Document::new();
-            old_doc.set("name", NormalValue::String(old_name.clone()));
+            let mut old_doc = Document::new(schema.clone());
+            old_doc.set("name", NormalValue::String(old_name.clone())).unwrap();
             let old_doc_short_id = next_test_doc_short_id();
 
             manager
@@ -216,8 +225,8 @@ proptest! {
                 .unwrap();
 
             // Update to new name
-            let mut new_doc = Document::new();
-            new_doc.set("name", NormalValue::String(new_name.clone()));
+            let mut new_doc = Document::new(schema.clone());
+            new_doc.set("name", NormalValue::String(new_name.clone())).unwrap();
 
             manager
                 .on_document_update(&datastore, &old_doc, &new_doc, old_doc_short_id, &schema)
@@ -240,7 +249,8 @@ proptest! {
                 .unwrap();
             let new_results = iter.collect_all().await.unwrap();
             assert_eq!(new_results.len(), 1, "New value should be in index");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -256,8 +266,7 @@ proptest! {
         name in "[a-zA-Z]{3,10}",
         count in 2usize..10,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -284,10 +293,10 @@ proptest! {
 
             // Create multiple documents with same name but different IDs
             for i in 0..count {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(name.clone()));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(name.clone())).unwrap();
                 // Add unique field to ensure different doc_ids
-                doc.set("age", NormalValue::Int(i as i64));
+                doc.set("age", NormalValue::Int(i as i64)).unwrap();
                 let doc_short_id = next_test_doc_short_id();
 
                 manager
@@ -304,7 +313,8 @@ proptest! {
                 .unwrap();
             let results = iter.collect_all().await.unwrap();
             assert_eq!(results.len(), count, "All documents should be in index");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -319,8 +329,7 @@ proptest! {
     fn prop_unique_index_rejects_duplicates(
         name in "[a-zA-Z]{3,10}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -346,9 +355,9 @@ proptest! {
                 .unwrap();
 
             // First document should succeed
-            let mut doc1 = Document::new();
-            doc1.set("name", NormalValue::String(name.clone()));
-            doc1.set("age", NormalValue::Int(1)); // Unique field for different ID
+            let mut doc1 = Document::new(schema.clone());
+            doc1.set("name", NormalValue::String(name.clone())).unwrap();
+            doc1.set("age", NormalValue::Int(1)).unwrap(); // Unique field for different ID
             let doc1_short_id = next_test_doc_short_id();
 
             let result1 = manager
@@ -357,16 +366,17 @@ proptest! {
             assert!(result1.is_ok(), "First document should succeed");
 
             // Second document with same name value should fail (unique constraint)
-            let mut doc2 = Document::new();
-            doc2.set("name", NormalValue::String(name.clone()));
-            doc2.set("age", NormalValue::Int(2)); // Different age for different ID
+            let mut doc2 = Document::new(schema.clone());
+            doc2.set("name", NormalValue::String(name.clone())).unwrap();
+            doc2.set("age", NormalValue::Int(2)).unwrap(); // Different age for different ID
             let doc2_short_id = next_test_doc_short_id();
 
             let result2 = manager
                 .on_document_create(&datastore, &doc2, doc2_short_id, &schema)
                 .await;
             assert!(result2.is_err(), "Duplicate should be rejected");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -382,8 +392,7 @@ proptest! {
         creates in proptest::collection::vec("[a-z]{3,8}", 1..10),
         deletes in 0usize..5,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -410,9 +419,9 @@ proptest! {
             // Create all documents
             let mut docs = Vec::new();
             for (i, name) in creates.iter().enumerate() {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(name.clone()));
-                doc.set("age", NormalValue::Int(i as i64));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(name.clone())).unwrap();
+                doc.set("age", NormalValue::Int(i as i64)).unwrap();
                 let doc_short_id = next_test_doc_short_id();
 
                 manager
@@ -443,7 +452,8 @@ proptest! {
                 expected_count,
                 "Index entry count should match creates - deletes"
             );
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -458,8 +468,7 @@ proptest! {
     fn prop_empty_fields_rejected(
         name in "[a-zA-Z_]{3,15}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -474,7 +483,8 @@ proptest! {
 
             // Property: Empty fields should always be rejected
             assert!(result.is_err(), "Empty fields should be rejected");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -489,8 +499,7 @@ proptest! {
     fn prop_duplicate_index_names_rejected(
         name in "[a-zA-Z_]{3,15}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -514,6 +523,7 @@ proptest! {
                 .create_index(&datastore, "users", name, fields, false, &[])
                 .await;
             assert!(result2.is_err(), "Duplicate name should be rejected");
-        });
+        })
+        .unwrap();
     }
 }

@@ -254,8 +254,8 @@ impl TransformStore for WasmTransformStore {
         let compiled_modules = self.compile_modules(&config.lenses)?;
         info!(
             transform_id = %id,
-            source_version = %config.source_schema_version_id,
-            dest_version = %config.destination_schema_version_id,
+            source_version = %config.source_collection_version_id,
+            dest_version = %config.destination_collection_version_id,
             lenses_count = config.lenses.len(),
             "Transform added to WASM store"
         );
@@ -279,11 +279,11 @@ impl TransformStore for WasmTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>> {
         let result = self
             .configs
             .iter()
-            .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
+            .map(|(id, config)| (id.to_string(), config.lenses.clone()))
             .collect();
         Ok(result)
     }

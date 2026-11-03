@@ -64,37 +64,40 @@ const CASES: &[(u64, usize, usize, usize, u32, usize)] = &[
     (0x0007, 800, 16, 20, 3, 15),
 ];
 
-#[tokio::test]
-async fn nprobe_equal_to_nlist_matches_flat_exactly() {
-    for &(seed, count, dimensions, clusters, nlist, k) in CASES {
-        let mut corpus = crate::support::Corpus::new(seed);
-        let vectors = corpus.clustered(count, dimensions, clusters, 0.15);
+#[test]
+fn nprobe_equal_to_nlist_matches_flat_exactly() {
+    workers::block_on(async {
+        for &(seed, count, dimensions, clusters, nlist, k) in CASES {
+            let mut corpus = crate::support::Corpus::new(seed);
+            let vectors = corpus.clustered(count, dimensions, clusters, 0.15);
 
-        let index = built(nlist, seed ^ 0xF1A7, &vectors).await;
-        let flat = flat_of(&vectors).await;
+            let index = built(nlist, seed ^ 0xF1A7, &vectors).await;
+            let flat = flat_of(&vectors).await;
 
-        let mut queries = crate::support::Corpus::new(seed ^ 0xC0FF_EE00);
-        for q in 0..25 {
-            let query = queries.vector(dimensions);
-            let from_ivf = index.search(query.as_slice(), k, None).await.unwrap();
-            let from_flat = flat.search(query.as_slice(), k, None).await.unwrap();
-            assert_eq!(
-                from_ivf, from_flat,
-                "seed={seed:#x} count={count} dims={dimensions} clusters={clusters} \
+            let mut queries = crate::support::Corpus::new(seed ^ 0xC0FF_EE00);
+            for q in 0..25 {
+                let query = queries.vector(dimensions);
+                let from_ivf = index.search(query.as_slice(), k, None).await.unwrap();
+                let from_flat = flat.search(query.as_slice(), k, None).await.unwrap();
+                assert_eq!(
+                    from_ivf, from_flat,
+                    "seed={seed:#x} count={count} dims={dimensions} clusters={clusters} \
                  nlist={nlist} query={q}: ids, distances or order diverged from Flat"
-            );
+                );
 
-            // And a corpus vector itself, so a tie against its own bucket-mate
-            // is exercised, not only a random unseen query.
-            let self_query = &vectors[q % vectors.len()];
-            let from_ivf = index.search(self_query.as_slice(), k, None).await.unwrap();
-            let from_flat = flat.search(self_query.as_slice(), k, None).await.unwrap();
-            assert_eq!(
-                from_ivf, from_flat,
-                "seed={seed:#x} corpus-vector query {q}: ids, distances or order diverged"
-            );
+                // And a corpus vector itself, so a tie against its own bucket-mate
+                // is exercised, not only a random unseen query.
+                let self_query = &vectors[q % vectors.len()];
+                let from_ivf = index.search(self_query.as_slice(), k, None).await.unwrap();
+                let from_flat = flat.search(self_query.as_slice(), k, None).await.unwrap();
+                assert_eq!(
+                    from_ivf, from_flat,
+                    "seed={seed:#x} corpus-vector query {q}: ids, distances or order diverged"
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }
 
 /// A deleted document must never come back, and every document IVF_FLAT does
@@ -104,37 +107,41 @@ async fn nprobe_equal_to_nlist_matches_flat_exactly() {
 /// `ivfflat_engine::a_selective_filter_can_return_fewer_than_k_when_the_probed_lists_run_out`
 /// for the same "fewer than k survives" shape under a filter instead of a
 /// delete.
-#[tokio::test]
-async fn deletes_never_resurrect_and_every_survivor_matches_flat() {
-    for &(seed, count, dimensions, clusters, nlist, k) in CASES {
-        let mut corpus = crate::support::Corpus::new(seed ^ 0x5EED);
-        let vectors = corpus.clustered(count, dimensions, clusters, 0.15);
+#[test]
+fn deletes_never_resurrect_and_every_survivor_matches_flat() {
+    workers::block_on(async {
+        for &(seed, count, dimensions, clusters, nlist, k) in CASES {
+            let mut corpus = crate::support::Corpus::new(seed ^ 0x5EED);
+            let vectors = corpus.clustered(count, dimensions, clusters, 0.15);
 
-        let mut index = built(nlist, seed ^ 0xF1A7, &vectors).await;
-        let mut flat = flat_of(&vectors).await;
+            let mut index = built(nlist, seed ^ 0xF1A7, &vectors).await;
+            let mut flat = flat_of(&vectors).await;
 
-        let deleted: rapidhash::RapidHashSet<u64> = (1..=vectors.len() as u64).step_by(3).collect();
-        for &id in &deleted {
-            index.delete(NodeId(id)).await.unwrap();
-            flat.delete(NodeId(id)).await.unwrap();
-        }
+            let deleted: rapidhash::RapidHashSet<u64> =
+                (1..=vectors.len() as u64).step_by(3).collect();
+            for &id in &deleted {
+                index.delete(NodeId(id)).await.unwrap();
+                flat.delete(NodeId(id)).await.unwrap();
+            }
 
-        let mut queries = crate::support::Corpus::new(seed ^ 0xBEEF);
-        for _ in 0..10 {
-            let query = queries.vector(dimensions);
-            let from_ivf = index.search(query.as_slice(), k, None).await.unwrap();
-            let from_flat = flat.search(query.as_slice(), k, None).await.unwrap();
+            let mut queries = crate::support::Corpus::new(seed ^ 0xBEEF);
+            for _ in 0..10 {
+                let query = queries.vector(dimensions);
+                let from_ivf = index.search(query.as_slice(), k, None).await.unwrap();
+                let from_flat = flat.search(query.as_slice(), k, None).await.unwrap();
 
-            assert!(from_ivf.len() <= k, "seed={seed:#x}: returned more than k");
-            assert!(
-                from_ivf.iter().all(|hit| !deleted.contains(&hit.id.0)),
-                "seed={seed:#x}: a deleted document was returned: {from_ivf:?}"
-            );
-            assert!(
-                from_ivf.iter().all(|hit| from_flat.contains(hit)),
-                "seed={seed:#x}: IVF_FLAT returned a hit Flat would not: \
+                assert!(from_ivf.len() <= k, "seed={seed:#x}: returned more than k");
+                assert!(
+                    from_ivf.iter().all(|hit| !deleted.contains(&hit.id.0)),
+                    "seed={seed:#x}: a deleted document was returned: {from_ivf:?}"
+                );
+                assert!(
+                    from_ivf.iter().all(|hit| from_flat.contains(hit)),
+                    "seed={seed:#x}: IVF_FLAT returned a hit Flat would not: \
                  ivf={from_ivf:?} flat={from_flat:?}"
-            );
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }

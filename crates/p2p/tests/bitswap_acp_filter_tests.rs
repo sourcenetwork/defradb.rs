@@ -22,7 +22,7 @@ const COLLECTION_POSTS: &str = "bafyposts";
 fn make_data_block(collection_id: &str) -> (cid::Cid, Vec<u8>) {
     let payload = CompositeDeltaPayload {
         priority: 1,
-        schema_version_id: collection_id.to_string(),
+        collection_version_id: collection_id.to_string(),
         status: 1,
     };
     let delta = CrdtDelta::Composite(payload);
@@ -68,7 +68,7 @@ impl p2p::bitswap::BlockClassifier for SyntheticBlockClassifier {
         let Ok(block) = DefraBlock::from_dag_cbor(data) else {
             return p2p::bitswap::BlockClass::Deny;
         };
-        let Some(collection_id) = block.delta.schema_version_id() else {
+        let Some(collection_id) = block.delta.collection_version_id() else {
             return p2p::bitswap::BlockClass::Deny;
         };
         // Deltas carry no identity (Go #4838): a genesis composite's docID

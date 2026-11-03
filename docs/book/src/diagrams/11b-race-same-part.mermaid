@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant W1 as worker 1: set state to claimed if pending
+    participant W2 as worker 2: set state to claimed if pending
+    participant R as regolith
+
+    W1->>R: get_parts(d, state): pending
+    W2->>R: get_parts(d, state): pending
+    W1->>R: merge(d, state claimed by 1)
+    W2->>R: merge(d, state claimed by 2)
+    W1->>R: commit
+    R-->>W1: committed: worker 1 wins the claim
+    W2->>R: commit
+    Note over R: a newer operand touches state, a part worker 2 read
+    R-->>W2: Conflict: mine ReadParts, theirs Merge
+    W2->>R: transact re-runs with the reason
+    W2->>R: get_parts(d, state): claimed
+    Note over W2: business logic: the filter no longer matches, report not claimed

@@ -27,7 +27,7 @@ impl HttpClient {
     /// Discard/rollback a transaction.
     ///
     /// DELETE /api/v0/tx/{id}
-    pub async fn tx_rollback(&self, txn_id: &str) -> Result<()> {
+    pub async fn tx_discard(&self, txn_id: &str) -> Result<()> {
         let url = format!("{}/api/v0/tx/{}", self.base_url, txn_id);
         self.request_void("DELETE", &url, None).await
     }

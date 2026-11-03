@@ -38,36 +38,6 @@ async fn parameterized_routes_use_their_registered_permissions() {
             RoutePermission::IdentityOnly,
         ),
         (
-            "/api/v0/tx/7/lens",
-            Method::POST,
-            "/api/v0/tx/{id}/lens",
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/tx/7/collections",
-            Method::GET,
-            "/api/v0/tx/{id}/collections",
-            RoutePermission::Required(NodePermission::CollectionGet),
-        ),
-        (
-            "/api/v0/tx/7/schema",
-            Method::POST,
-            "/api/v0/tx/{id}/schema",
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/collections/by-id/abc",
-            Method::GET,
-            "/api/v0/collections/by-id/{id}",
-            RoutePermission::Required(NodePermission::CollectionGet),
-        ),
-        (
-            "/api/v0/collections/by-version/v1",
-            Method::GET,
-            "/api/v0/collections/by-version/{id}",
-            RoutePermission::Required(NodePermission::CollectionGet),
-        ),
-        (
             "/api/v0/collections/Users",
             Method::GET,
             "/api/v0/collections/{name}",

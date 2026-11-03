@@ -8,7 +8,7 @@ use acp::{RelationTuple, Relationship, Subject};
 use cid::Cid;
 use datastore::NamespaceView;
 use defra_core::{Block, CrdtDelta};
-use document::{DocID, Document};
+use document::DocID;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::doc_id_index::encode_doc_short_id;
 use storage::keys::{
@@ -132,8 +132,12 @@ async fn collect_legacy_documents(
                 .get(&legacy_deleted_key(collection.collection_id(), old_doc_id))
                 .await
                 .map_err(Error::Storage)?;
-            Document::from_storage_cbor(&pair.value)
-                .map_err(|error| Error::document_at_key(&pair.key, error))?;
+            crdt::stored::document_from_storage(
+                &pair.value,
+                collection.schema_arc(),
+                collection.crdts(),
+            )
+            .map_err(|error| Error::document_at_key(&pair.key, error))?;
 
             result.push(LegacyDocument {
                 collection: collection.clone(),

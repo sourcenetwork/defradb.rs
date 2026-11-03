@@ -3,7 +3,7 @@
 
 use integration_test::DefraClient;
 
-pub fn add_schema(node: &DefraClient) {
+pub fn add_collection(node: &DefraClient) {
     node.schema_add(
         r#"
         type Book {

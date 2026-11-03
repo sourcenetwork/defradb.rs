@@ -205,3 +205,61 @@ fn a_code_is_far_smaller_than_the_vector() {
     assert_eq!(code_bytes, 96);
     assert_eq!(vector_bytes / code_bytes, 32);
 }
+
+/// A stored code has to equal a re-encode of its vector, so an encode must pick
+/// exactly the centroid `nearest` picks, near-ties included, at every subspace
+/// width, prepared or not, and for codebooks smaller than 256 or not a
+/// multiple of the lanes.
+#[test]
+fn encode_picks_the_centroid_nearest_picks() {
+    for (dimensions, m, count) in [
+        (16, 16, 600),
+        (32, 8, 600),
+        (96, 12, 600),
+        (48, 3, 600),
+        (64, 4, 600),
+        (60, 4, 100),
+        (24, 3, 37),
+    ] {
+        let flat = sample(count, dimensions, dimensions as u64);
+        let pq = ProductQuantizer::train(&KMeans::new(9), &flat, dimensions, m)
+            .expect("a divisible width trains");
+        let dsub = dimensions / m;
+        let mut code = vec![0u8; m];
+        let mut probes: Vec<Vec<f32>> = sample(300, dimensions, 77)
+            .chunks(dimensions)
+            .map(<[f32]>::to_vec)
+            .collect();
+        let midpoints = (0..m).map(|j| {
+            let book = &pq.books()[j];
+            let (a, b) = (book.get(0), book.get(book.k - 1));
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (x + y) / 2.0)
+                .collect::<Vec<f32>>()
+        });
+        probes.push(midpoints.flatten().collect());
+        probes.push(
+            pq.books()
+                .iter()
+                .flat_map(|book| book.get(book.k / 2).to_vec())
+                .collect(),
+        );
+        for prepared in [false, true] {
+            if prepared {
+                pq.prepare_encode();
+            }
+            for probe in &probes {
+                pq.encode(probe, &mut code);
+                for (j, book) in pq.books().iter().enumerate() {
+                    let (want, _) = book.nearest(&probe[j * dsub..(j + 1) * dsub]);
+                    assert_eq!(
+                        code[j] as usize, want,
+                        "dims {dimensions}, m {m}, k {}, subspace {j}, prepared {prepared}",
+                        book.k
+                    );
+                }
+            }
+        }
+    }
+}

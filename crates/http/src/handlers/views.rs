@@ -31,7 +31,7 @@ pub struct ViewNamesRequest {
 
 /// Add a view.
 ///
-/// POST /api/v1/view (Go-compatible), POST /api/v1/views
+/// POST /api/v1/view
 ///
 /// Creates a new Defra View from a GQL query and SDL schema.
 ///
@@ -78,7 +78,7 @@ fn view_names_from_body(body: &Bytes) -> Result<Option<Vec<String>>, HttpError> 
 
 /// Refresh materialized view caches.
 ///
-/// POST /api/v1/view/refresh (Go-compatible), POST /api/v1/views/refresh
+/// POST /api/v1/view/refresh
 ///
 /// Go's client sends no body and selects with query parameters, so the body is
 /// optional here. Its `Names` and the query's `name` are both "restrict to

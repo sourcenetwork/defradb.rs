@@ -7,7 +7,7 @@ use crate::bitswap::BlockClass;
 use crate::error::Result;
 use crate::message::CarFetchRequest;
 use crate::sync::car::{
-    collect_dag_blocks_from_roots, collect_exact_blocks, decode_car, decode_car_oversized,
+    collect_dag_blocks_within, collect_exact_blocks, decode_car, decode_car_oversized,
     encode_car_response, CarCollectOutcome,
 };
 use crate::sync::coordinator::SyncCoordinator;
@@ -22,7 +22,7 @@ pub(crate) enum CarIngestDisposition {
     /// A root or shared descendant already has a storage owner. Wake this
     /// fetch with a non-success terminal result so its sole paced retry/provider
     /// rotation can re-offer the response after the owner completes.
-    Busy,
+    StorageContended,
 }
 
 fn sample_cids(cids: &[Cid]) -> Vec<String> {
@@ -65,14 +65,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             root_cid = %request.root_cid,
             peer_id = %peer_id,
             recursive = request.recursive,
+            max_depth = ?request.max_depth,
             requested_count = request.wanted_cids.len(),
             has_token = token.is_some(),
             "CAR handler: collecting blocks"
         );
         let response_roots = request.response_roots();
         let collected = if request.recursive {
-            collect_dag_blocks_from_roots(self.manager.blockstore().as_ref(), &response_roots)
-                .await?
+            collect_dag_blocks_within(
+                self.manager.blockstore().as_ref(),
+                &response_roots,
+                request.max_depth,
+            )
+            .await?
         } else {
             collect_exact_blocks(self.manager.blockstore().as_ref(), &request.wanted_cids).await?
         };
@@ -216,17 +221,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .has_restart_safe_root_authority(peer_id, root_cid)
                 .await;
         let granted_cids = if rooted_grant {
-            match crate::sync::car_authorization::requested_descendants(
-                self.manager.blockstore().as_ref(),
-                *root_cid,
-                blocks
-                    .blocks
-                    .iter()
-                    .map(|(cid, _)| *cid)
-                    .chain(blocks.oversized_blocks.iter().map(|(cid, _)| *cid))
-                    .collect(),
-            )
-            .await
+            match self
+                .rooted_authorization
+                .walk(
+                    self.manager.blockstore().as_ref(),
+                    *root_cid,
+                    blocks
+                        .blocks
+                        .iter()
+                        .map(|(cid, _)| *cid)
+                        .chain(blocks.oversized_blocks.iter().map(|(cid, _)| *cid))
+                        .collect(),
+                )
+                .await
             {
                 Ok(cids) => Some(cids),
                 Err(error) => {
@@ -352,14 +359,23 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Re-derive the authority installed before a head hint after the sender
     /// has restarted or its in-memory grant cache has expired.
     ///
-    /// The DB-backed classifier binds the requested root to its collection and
-    /// document IDs. The authenticated CAR requester is checked against the
+    /// Explicit selections commit exact peer/root authority until revocation.
+    /// Otherwise the DB-backed classifier binds the root to its collection and
+    /// document IDs, and the authenticated CAR requester is checked against the
     /// same durable replicator/ACP policies as Go's Bitswap serving boundary.
     /// Filter predicates select which roots are announced; they are not a
     /// block-read security boundary. Consequently the exact requested root
-    /// reconstructs the rooted CAR capability without CID-valued sender
-    /// delivery state or an eventually observed gossip-neighbor event.
+    /// reconstructs replication authority without an eventually observed
+    /// gossip-neighbor event. Selected grants are separate from retry state.
     async fn has_restart_safe_root_authority(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
+        if self
+            .runtime
+            .selective_car_access
+            .persisted_root_allowed(peer_id, root_cid)
+            .await
+        {
+            return true;
+        }
         let Some(meta) = self.root_authorization_meta(root_cid).await else {
             return false;
         };
@@ -512,6 +528,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
+        // The receive gate judges the document on the fetched CAR before any
+        // of it is imported; a refusal discharges the root as a terminal skip.
+        if !self.gate_fetched(&root_cid, &blocks).await {
+            return Ok(CarIngestDisposition::Completed);
+        }
+
         // Share the same CID ownership boundary as PushLog processing and
         // merge. Go holds its root sync owner across CAR ingest and merge;
         // Rust additionally owns every contained CID because overlapping DAGs
@@ -536,7 +558,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     same_root,
                     "Coalescing CAR response behind the current storage owner"
                 );
-                return Ok(CarIngestDisposition::Busy);
+                return Ok(CarIngestDisposition::StorageContended);
             }
         };
         let block_refs: Vec<(&Cid, &[u8])> = blocks.iter().map(|(c, d)| (c, d.as_ref())).collect();

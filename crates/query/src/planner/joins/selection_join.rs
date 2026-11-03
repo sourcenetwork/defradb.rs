@@ -56,13 +56,10 @@ impl Planner {
 
         // Verify it's a relation field
         if !relation_field.kind.is_relation() {
-            return Err(QueryError::execution(format!(
-                "field '{}' on collection '{}' is not a relation (type: {}). \
-                         Only relation fields can have nested selections.",
+            return Err(QueryError::sub_selection_on_leaf(
                 relation_field_name,
-                parent_collection.name,
-                relation_field.kind.graphql_type_name()
-            )));
+                relation_field.kind.graphql_type_name(),
+            ));
         }
 
         let target_collection = self.resolve_relation_target_collection(
@@ -98,8 +95,13 @@ impl Planner {
             relation_field_name,
         );
 
+        let relation_paths = select
+            .filter
+            .as_ref()
+            .map(|f| self.relation_filter_paths(f, parent_collection))
+            .unwrap_or_default();
         let multi_level_paths_for_relation =
-            child_mapping::multi_level_paths_for_relation(select, relation_field_name);
+            child_mapping::multi_level_paths_for_relation(relation_paths, relation_field_name);
         child_mapping::enrich_child_scan_mapping_from_multi_level_paths(
             &mut child_scan_mapping,
             &multi_level_paths_for_relation,
@@ -108,15 +110,24 @@ impl Planner {
         // Get the relation field index in the parent mapping.
         // First try by render_key (for aliased fields), then fall back to name lookup.
         // The fallback handles relation fields inside _group which are added without render_keys.
-        let relation_field_index = mapping
-            .try_find_index_from_render_key(output_name)
-            .or_else(|| mapping.first_index_of_name(relation_field_name))
-            .ok_or_else(|| {
-                QueryError::internal(format!(
-                    "relation field '{}' (output name '{}') not in mapping",
-                    relation_field_name, output_name
-                ))
-            })?;
+        // A _group relation the group level also renders gets a slot of its own: each join
+        // stores the relation rendered with its own selection, so a shared slot would
+        // render the group-level relation with the _group selection.
+        let group_level_index = mapping.try_find_index_from_render_key(output_name);
+        let relation_field_index = if group_index.is_some() && group_level_index.is_some() {
+            let index = mapping.next_index();
+            mapping.add(index, relation_field_name);
+            index
+        } else {
+            group_level_index
+                .or_else(|| mapping.first_index_of_name(relation_field_name))
+                .ok_or_else(|| {
+                    QueryError::internal(format!(
+                        "relation field '{}' (output name '{}') not in mapping",
+                        relation_field_name, output_name
+                    ))
+                })?
+        };
 
         // If this relation field is inside _group, update the _group child mapping
         // to use the correct index for rendering. TypeJoinMany stores the relation

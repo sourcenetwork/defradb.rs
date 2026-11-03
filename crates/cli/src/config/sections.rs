@@ -5,7 +5,10 @@ use std::net::SocketAddr;
 use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT};
 use serde::{Deserialize, Serialize};
 
-use query::{DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH};
+use query::{
+    DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
+    DEFAULT_MAX_QUERY_WIDTH,
+};
 use storage::backends::DurabilityMode;
 
 use super::iroh_relay_server::IrohRelayServerConfig;
@@ -16,6 +19,7 @@ use crate::error::{Error, Result};
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogConfig {
     pub level: LogLevel,
     pub output: LogOutput,
@@ -43,6 +47,7 @@ impl Default for LogConfig {
 
 /// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApiConfig {
     pub address: String,
     #[serde(default)]
@@ -84,6 +89,10 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
+    /// Max fragments one spread chain nests, from 1 to what a query thread's
+    /// stack holds (checked at startup). Default: 32.
+    #[serde(default = "default_query_max_fragment_nesting")]
+    pub query_max_fragment_nesting: usize,
     /// Cache the built introspection schema for the committed collection
     /// set, instead of rebuilding it per query. Default: true.
     #[serde(default = "default_introspection_cache")]
@@ -126,6 +135,10 @@ fn default_query_max_filter_depth() -> usize {
     DEFAULT_MAX_FILTER_DEPTH
 }
 
+fn default_query_max_fragment_nesting() -> usize {
+    DEFAULT_MAX_FRAGMENT_NESTING
+}
+
 fn default_introspection_cache() -> bool {
     true
 }
@@ -148,6 +161,7 @@ impl Default for ApiConfig {
             query_max_depth: default_query_max_depth(),
             query_max_width: default_query_max_width(),
             query_max_filter_depth: default_query_max_filter_depth(),
+            query_max_fragment_nesting: default_query_max_fragment_nesting(),
             introspection_cache: default_introspection_cache(),
             #[cfg(feature = "postgres")]
             pg_address: String::new(),
@@ -168,6 +182,13 @@ impl ApiConfig {
             return Err(Error::IncompleteTlsConfig);
         }
 
+        query::QueryLimits {
+            max_fragment_nesting: self.query_max_fragment_nesting,
+            ..query::QueryLimits::default()
+        }
+        .check_fragment_nesting()
+        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+
         if self.transaction_idle_timeout > 0 && self.transaction_cleanup_interval == 0 {
             return Err(Error::InvalidConfig(
                 "api.transaction_cleanup_interval must be > 0 when transaction_idle_timeout is enabled"
@@ -186,6 +207,7 @@ impl ApiConfig {
 
 /// Embedding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmbeddingConfig {
     #[serde(default)]
     pub url: String,
@@ -211,6 +233,7 @@ impl Default for EmbeddingConfig {
 
 /// Datastore configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DatastoreConfig {
     pub store: DatastoreType,
     pub path: String,
@@ -240,7 +263,7 @@ pub struct DatastoreConfig {
     /// - `eventual`: defer fsync to OS for higher write throughput
     #[serde(default)]
     pub durability: DurabilityMode,
-    /// Maximum DAG traversal depth for merge operations.
+    /// DAG traversal depth limit; longer document histories resume in bounded turns.
     #[serde(default = "default_max_merge_depth")]
     pub max_merge_depth: usize,
     /// Enable engine file encryption at rest for the storage backend.
@@ -276,8 +299,20 @@ impl Default for DatastoreConfig {
     }
 }
 
+/// The hex network secret, kept out of logs.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NetworkSecretHex(pub String);
+
+impl std::fmt::Debug for NetworkSecretHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NetworkSecretHex([REDACTED])")
+    }
+}
+
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NetConfig {
     pub p2p_disabled: bool,
     pub p2p_addresses: Vec<String>,
@@ -311,6 +346,18 @@ pub struct NetConfig {
     /// Max established connections per peer. Default: 4.
     #[serde(default = "default_max_connections_per_peer")]
     pub max_connections_per_peer: u32,
+    /// libp2p's whole memory budget in MiB, in place of half of system
+    /// memory, which inside a container is the host's. Default: unset.
+    #[serde(default)]
+    pub resource_memory_mib: Option<u64>,
+    /// libp2p's file descriptor budget, used with a memory budget; 512 when
+    /// unset.
+    #[serde(default)]
+    pub resource_file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset.
+    /// Default: unset, no cap.
+    #[serde(default)]
+    pub max_streams_per_peer: Option<usize>,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -355,6 +402,25 @@ pub struct NetConfig {
     /// default; custom values must be at least 9.
     #[serde(default)]
     pub iroh_max_concurrent_multipath_paths: Option<u32>,
+    /// 32 bytes of hex shared by the nodes of one network. It blinds the
+    /// collection ids this node advertises in its service record, so only
+    /// nodes with the secret can tell which collections it holds. Unset
+    /// advertises only `iroh_public_collections`.
+    #[serde(default)]
+    pub iroh_network_secret: Option<NetworkSecretHex>,
+    /// Collections advertised by their plain id, readable by any node.
+    #[serde(default)]
+    pub iroh_public_collections: Vec<String>,
+    /// How this node holds the collections it advertises: `replica`
+    /// (the default), `archive` or `reader`.
+    #[serde(default)]
+    pub iroh_service_role: Option<String>,
+    /// Advertise that this node accepts replicators.
+    #[serde(default)]
+    pub iroh_replicator: bool,
+    /// Extra service names to advertise, for applications built on defra.
+    #[serde(default)]
+    pub iroh_custom_services: Vec<String>,
     /// Per-peer rate limit burst capacity (max tokens in bucket). Default: 500.
     #[serde(default = "default_rate_limit_burst")]
     pub p2p_rate_limit_burst: u32,
@@ -453,6 +519,9 @@ impl Default for NetConfig {
             connection_manager_high_water: default_connection_manager_high_water(),
             connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
             max_connections_per_peer: default_max_connections_per_peer(),
+            resource_memory_mib: None,
+            resource_file_descriptors: None,
+            max_streams_per_peer: None,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,
@@ -465,6 +534,11 @@ impl Default for NetConfig {
             iroh_allowed_peers: Vec::new(),
             iroh_relay_server: None,
             iroh_max_concurrent_multipath_paths: None,
+            iroh_network_secret: None,
+            iroh_public_collections: Vec::new(),
+            iroh_service_role: None,
+            iroh_replicator: false,
+            iroh_custom_services: Vec::new(),
             p2p_rate_limit_burst: default_rate_limit_burst(),
             p2p_rate_limit_rate: default_rate_limit_rate(),
             p2p_max_doc_sync_request_doc_ids: default_max_doc_sync_request_doc_ids(),
@@ -499,6 +573,31 @@ impl NetConfig {
             relay_server.validate()?;
         }
 
+        if let Some(secret) = &self.iroh_network_secret {
+            if secret.0.len() != 64 || !secret.0.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(Error::InvalidConfig(
+                    "net.iroh_network_secret must be 64 hex characters (32 bytes)".into(),
+                ));
+            }
+        }
+        if let Some(role) = &self.iroh_service_role {
+            if !matches!(role.as_str(), "replica" | "archive" | "reader") {
+                return Err(Error::InvalidConfig(format!(
+                    "net.iroh_service_role must be replica, archive or reader, not {role}"
+                )));
+            }
+        }
+        // Peers refuse a record carrying a longer name.
+        if let Some(name) = self
+            .iroh_custom_services
+            .iter()
+            .find(|name| name.len() > 128)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "net.iroh_custom_services name over 128 bytes: {name}"
+            )));
+        }
+
         // Multiaddr validation only applies to libp2p transport
         if self.transport == TransportType::Libp2p {
             for addr_str in &self.p2p_addresses {
@@ -514,6 +613,7 @@ impl NetConfig {
 
 /// Keyring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyringConfig {
     pub backend: KeyringBackend,
     pub path: String,
@@ -538,6 +638,7 @@ impl Default for KeyringConfig {
 /// - Node Access Control (NAC): Controls access to node-level operations
 /// - Document Access Control (DAC): Controls access to individual documents
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AcpConfig {
     /// Enable Node Access Control (NAC).
     ///
@@ -591,6 +692,11 @@ pub struct AcpConfig {
     #[cfg(feature = "vera")]
     #[serde(default)]
     pub vera_deployment_id: Option<u64>,
+
+    /// Account the client names as the token's authorized account when it
+    /// talks to a node using remote document ACP (Go: `--remote-dac-address`).
+    #[serde(default)]
+    pub remote_address: String,
 
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
@@ -650,6 +756,7 @@ impl Default for AcpConfig {
             vera_consensus_key: String::new(),
             #[cfg(feature = "vera")]
             vera_deployment_id: None,
+            remote_address: String::new(),
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),

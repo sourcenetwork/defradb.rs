@@ -44,24 +44,31 @@ mod access;
 mod accessors;
 mod authorizer;
 mod broadcast;
+mod closure_depth;
 mod constructor;
 pub(crate) mod dag_context;
 pub(crate) mod dag_fetcher;
 pub(crate) mod dag_retry;
 mod event_handler;
+mod fetch_failures;
+mod fetch_logs;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
+mod peer_details;
+pub(crate) mod provider_health;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_client;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_services;
 mod push_worker;
+mod receive_gate;
 mod replicators;
 mod result_types;
 mod selective_car_access;
 mod subscriptions;
 
+pub use peer_details::{PeerDetails, PendingFetch, QuarantinedRoot};
 pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
@@ -160,6 +167,10 @@ pub struct SyncStatus {
     /// Current/high-water occupancy and terminal overload counters for the
     /// one shared inbound request scheduler.
     pub request_dispatch: crate::sync::DispatchSnapshot,
+    /// Inbound byte budget use per class; empty for transports without one.
+    pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
+    /// Per-peer measurements of our CAR fetches; empty for transports without them.
+    pub peer_fetches: Vec<crate::transport::PeerFetchStats>,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -172,6 +183,12 @@ pub struct SyncStatus {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    /// Providers ranked behind a healthy peer for poor measured fetch health,
+    /// summed over roots.
+    pub provider_demotions_total: u64,
+    /// Providers ranked behind a healthy peer for a recent fast failure,
+    /// summed over roots.
+    pub provider_cooldown_skips_total: u64,
     pub pending_dag_resolved: u64,
     /// Push-originated missing DAGs durably registered before a success ack.
     pub pending_dag_registered: u64,
@@ -189,6 +206,12 @@ pub struct SyncStatus {
     /// Useful CAR responses coalesced behind an existing local storage owner.
     /// These release the fetch lease without consuming provider-failure attempts.
     pub pending_dag_fetch_deferred_contention: u64,
+    /// Fetches deferred to the per-root clock because providers answered busy.
+    pub pending_dag_fetch_deferred_busy: u64,
+    /// Rooted CAR replies received from a provider that shed the request.
+    pub car_busy_responses: u64,
+    /// Rotations past a provider that answered busy, without stall budget.
+    pub provider_busy_rotations: u64,
     /// Roots whose bounded fetch exhausted all attempts/providers.
     pub pending_dag_fetch_exhausted: u64,
     /// Durable pending-DAG obligations discharged by terminal merge/mark.
@@ -201,6 +224,8 @@ pub struct SyncStatus {
     pub pending_dag_terminal_quarantined: u64,
     /// Current gauge of quarantined pending-DAG roots (#1128).
     pub quarantined_pending_dags: usize,
+    /// One line per tracked peer: when it was last seen and last synced.
+    pub peers: Vec<crate::sync::peer_state::PeerSummary>,
 }
 
 struct SyncShutdownState {
@@ -239,6 +264,7 @@ enum PendingDagFetchTask {
     Scheduled,
     Claimed,
     Running(TrackedAbort),
+    Merging(std::sync::Weak<()>),
 }
 
 impl PendingDagFetchTask {
@@ -246,6 +272,7 @@ impl PendingDagFetchTask {
         match self {
             Self::Scheduled | Self::Claimed => true,
             Self::Running(task) => !task.is_finished(),
+            Self::Merging(owner) => owner.strong_count() != 0,
         }
     }
 }
@@ -264,6 +291,27 @@ pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
     per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
     peer_limit: usize,
+    /// Roots a reply-driven fetch is running for, with the trust it merges under.
+    roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    provider_health: Arc<provider_health::ProviderHealth>,
+}
+
+/// A root and the collections its fetch merges as an explicit replicator.
+/// A fetch merges with its replier's trust, so a reply waits only behind a
+/// fetch that carries the same trust.
+type RootKey = (cid::Cid, Vec<String>);
+
+/// Held while one fetch of a root runs; dropping it lets the next reply fetch.
+/// Model: proofs/tla/RootSingleFlight.tla.
+pub(crate) struct RootClaim {
+    roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    key: RootKey,
+}
+
+impl Drop for RootClaim {
+    fn drop(&mut self) {
+        self.roots.remove(&self.key);
+    }
 }
 
 pub(crate) struct DagFetchPermits {
@@ -280,7 +328,36 @@ impl DagFetchLimiter {
                 rapidhash::fast::RandomState::default(),
             )),
             peer_limit: global_limit.saturating_sub(1).max(1),
+            roots: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            provider_health: Arc::default(),
         }
+    }
+
+    pub(crate) fn provider_health(&self) -> &provider_health::ProviderHealth {
+        &self.provider_health
+    }
+
+    /// Claims `root` for one fetch trusted as an explicit replicator of
+    /// `trusted_collections`, or `None` while another fetch with that trust
+    /// holds it. That fetch already tries every connected peer, so a reply
+    /// that finds the claim held has nothing to add.
+    pub(crate) fn claim_root(
+        &self,
+        root: cid::Cid,
+        mut trusted_collections: Vec<String>,
+    ) -> Option<RootClaim> {
+        trusted_collections.sort_unstable();
+        trusted_collections.dedup();
+        let key = (root, trusted_collections);
+        self.roots
+            .insert_if_absent(key.clone(), ())
+            .is_none()
+            .then(|| RootClaim {
+                roots: Arc::clone(&self.roots),
+                key,
+            })
     }
 
     pub(crate) async fn acquire(&self, source_peer: &PeerId) -> Option<DagFetchPermits> {
@@ -389,8 +466,10 @@ impl SyncShutdownHandle {
             let shutdown = self.clone();
             // The drain owns the only sender, so cancellation or panic closes
             // the channel instead of leaving other shutdown callers parked.
+            // It runs on the coordinator's network edge: the caller may be a
+            // plain thread with no runtime.
             let sender = self.inner.shutdown_complete_tx.pop();
-            n0_future::task::spawn(async move {
+            self.network().spawn(async move {
                 shutdown
                     .drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT)
                     .await;
@@ -547,6 +626,30 @@ impl SyncShutdownHandle {
         });
     }
 
+    fn claim_pending_dag_merge(&self, root_cid: Cid) -> Option<Arc<()>> {
+        if !self
+            .inner
+            .pending_dag_fetch_tasks
+            .peek(|tasks| matches!(tasks.get(&root_cid), Some(PendingDagFetchTask::Scheduled)))
+        {
+            return None;
+        }
+        let owner = Arc::new(());
+        let mut claimed = false;
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = current.clone();
+            claimed = matches!(next.get(&root_cid), Some(PendingDagFetchTask::Scheduled));
+            if claimed {
+                next.insert(
+                    root_cid,
+                    PendingDagFetchTask::Merging(Arc::downgrade(&owner)),
+                );
+            }
+            next
+        });
+        claimed.then_some(owner)
+    }
+
     fn available_pending_dag_fetch_slots(&self) -> usize {
         self.inner
             .pending_dag_fetch_task_limit
@@ -620,7 +723,7 @@ impl SyncShutdownHandle {
         let reservations = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
             tasks
                 .values()
-                .filter(|task| !matches!(task, PendingDagFetchTask::Running(_)))
+                .filter(|task| task.is_live() && !matches!(task, PendingDagFetchTask::Running(_)))
                 .count()
         });
         self.inner.background_tasks.len() + reservations
@@ -793,6 +896,10 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
     /// Late-bound ACP resolver/gate shared by Bitswap and CAR serve paths.
     pub(super) serve_acp: Arc<crate::bitswap::LateBoundServeAcp>,
 
+    /// Resumable progress for rooted CAR authorization walks that exhausted a
+    /// budget, so a retried request continues the traversal (#1727).
+    pub(super) rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress,
+
     /// Optional document ACP used for local ACP relationship snapshot replay.
     pub(super) document_acp: regolith::sync::OnceCell<Arc<dyn DocumentACP>>,
 
@@ -809,12 +916,13 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Drain one transport event stream through the shared bounded scheduler.
-    pub async fn run_event_dispatcher<E, Handler, HandlerFuture>(
+    pub async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
         &self,
-        events: tokio::sync::mpsc::Receiver<E>,
+        events: Source,
         handler: Handler,
     ) where
         E: crate::sync::DispatchEvent + defra_core::thread_bounds::MaybeSend + 'static,
+        Source: crate::sync::DispatchSource<E>,
         Handler: Fn(E, crate::sync::DispatchAdmission) -> HandlerFuture
             + Clone
             + defra_core::thread_bounds::MaybeSend
@@ -846,6 +954,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_rejected_total,
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
         let push_backlog = self.runtime.push_backlog.snapshot().await;
+        let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
+        let peer_fetches = self.transport().fetch_stats().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -864,6 +974,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             pending_resync_in_flight: self.manager.pending_resync_in_flight(),
             retained_background_tasks: self.runtime.shutdown.retained_task_count(),
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
+            inbound_budget,
+            peer_fetches,
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
@@ -873,6 +985,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             car_served_cids: diagnostics.car_served_cids,
             car_filtered_cids: diagnostics.car_filtered_cids,
             provider_rotations: diagnostics.provider_rotations,
+            provider_demotions_total: diagnostics.provider_demotions,
+            provider_cooldown_skips_total: diagnostics.provider_cooldown_skips,
             pending_dag_resolved: diagnostics.pending_dag_resolved,
             pending_dag_registered: diagnostics.pending_dag_registered,
             pending_dag_expired: diagnostics.pending_dag_expired,
@@ -885,11 +999,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .pending_dag_fetch_deferred_unavailable,
             pending_dag_fetch_deferred_contention: diagnostics
                 .pending_dag_fetch_deferred_contention,
+            pending_dag_fetch_deferred_busy: diagnostics.pending_dag_fetch_deferred_busy,
+            car_busy_responses: diagnostics.car_busy_responses,
+            provider_busy_rotations: diagnostics.provider_busy_rotations,
             pending_dag_fetch_exhausted: diagnostics.pending_dag_fetch_exhausted,
             pending_dag_terminal_merged: diagnostics.pending_dag_terminal_merged,
             next_pending_retry_in_ms: self.manager.next_pending_retry_in_ms(),
             pending_dag_terminal_quarantined: diagnostics.pending_dag_terminal_quarantined,
             quarantined_pending_dags: self.manager.quarantined_pending_count(),
+            peers: self.access.peer_state.summaries(),
         }
     }
 
@@ -1013,6 +1131,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         dag: &PendingDag,
         event_permit: tokio::sync::mpsc::Permit<'_, crate::sync::SyncEvent>,
     ) {
+        if dag.merge_continuation {
+            event_permit.send(crate::sync::SyncEvent::DagReady {
+                root_cid,
+                doc_id: dag.doc_id.clone(),
+                collection_id: dag.collection_id.clone(),
+                creator: dag.creator.clone(),
+                sender_peer: dag.source_peer.clone(),
+                is_explicit_replicator: dag.is_explicit_replicator,
+                explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
+            });
+            return;
+        }
         let missing: Vec<_> = dag.missing.iter().copied().collect();
         let mut providers = self.manager.get_providers_for_cids(&missing);
         if let Some(source_peer) = dag.source_peer.clone() {
@@ -1215,6 +1345,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .release_pending_dag_fetch_reservation(root_cid);
     }
 
+    /// The weak registry entry keeps a continuation bounded while queued or
+    /// merging. Dropping the owner releases it even if the merge is cancelled.
+    /// Nested single-event handlers cannot take ownership twice.
+    pub(crate) fn pending_dag_merge_guard(&self, root_cid: Cid) -> Option<Arc<()>> {
+        self.runtime.shutdown.claim_pending_dag_merge(root_cid)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_dag_work_count(&self) -> usize {
+        self.runtime.shutdown.pending_dag_fetch_count()
+    }
+
     #[cfg(test)]
     pub(crate) fn pending_dag_count(&self) -> usize {
         self.manager.pending_dag_count()
@@ -1240,6 +1382,54 @@ mod dag_fetch_limiter_tests {
     use super::DagFetchLimiter;
     use crate::transport::PeerId;
     use std::time::Duration;
+
+    #[test]
+    fn a_root_is_claimed_by_one_fetch_until_it_ends() {
+        let limiter = DagFetchLimiter::new(4);
+        let root = cid::Cid::default();
+        let other = cid::Cid::new_v1(0x71, cid::multihash::Multihash::default());
+
+        let claim = limiter.claim_root(root, Vec::new()).expect("first claim");
+        assert!(
+            limiter.claim_root(root, Vec::new()).is_none(),
+            "a second reply must not fetch"
+        );
+        assert!(
+            limiter.claim_root(other, Vec::new()).is_some(),
+            "other roots are independent"
+        );
+
+        drop(claim);
+        assert!(
+            limiter.claim_root(root, Vec::new()).is_some(),
+            "the next reply fetches once the first fetch ends, failed or not"
+        );
+    }
+
+    #[test]
+    fn a_trusted_reply_never_waits_behind_a_fetch_without_its_trust() {
+        let limiter = DagFetchLimiter::new(4);
+        let root = cid::Cid::default();
+        let trusted = || vec!["users".to_string(), "posts".to_string()];
+
+        let _plain = limiter.claim_root(root, Vec::new()).expect("plain claim");
+        let replicator = limiter
+            .claim_root(root, trusted())
+            .expect("a replicator's reply must fetch under its own trust");
+        assert!(
+            limiter
+                .claim_root(root, vec!["posts".into(), "users".into()])
+                .is_none(),
+            "a reply with the same trust waits behind the running fetch"
+        );
+        assert!(
+            limiter.claim_root(root, vec!["users".into()]).is_some(),
+            "a reply trusted for other collections fetches under that trust"
+        );
+
+        drop(replicator);
+        assert!(limiter.claim_root(root, trusted()).is_some());
+    }
 
     #[tokio::test]
     async fn single_peer_cannot_hold_every_global_permit() {

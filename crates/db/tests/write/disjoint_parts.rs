@@ -98,8 +98,9 @@ async fn assert_ann(node: &Node, age: i64, email: &str) {
     );
 }
 
-#[tokio::test]
-async fn filtered_updates_of_disjoint_fields_both_commit() {
+#[test]
+fn filtered_updates_of_disjoint_fields_both_commit() {
+    workers::block_on(async {
     let node = Node::new(USERS).await;
     node.create(ANN).await;
     node.both_commit(
@@ -108,22 +109,28 @@ async fn filtered_updates_of_disjoint_fields_both_commit() {
     )
     .await;
     assert_ann(&node, 31, "ann@new").await;
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn updates_of_every_document_with_disjoint_fields_both_commit() {
-    let node = Node::new(USERS).await;
-    node.create(ANN).await;
-    node.both_commit(
-        r#"mutation { update_Users(input: {age: 31}) { _docID } }"#,
-        r#"mutation { update_Users(input: {email: "ann@new"}) { _docID } }"#,
-    )
-    .await;
-    assert_ann(&node, 31, "ann@new").await;
+#[test]
+fn updates_of_every_document_with_disjoint_fields_both_commit() {
+    workers::block_on(async {
+        let node = Node::new(USERS).await;
+        node.create(ANN).await;
+        node.both_commit(
+            r#"mutation { update_Users(input: {age: 31}) { _docID } }"#,
+            r#"mutation { update_Users(input: {email: "ann@new"}) { _docID } }"#,
+        )
+        .await;
+        assert_ann(&node, 31, "ann@new").await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn updates_returning_other_fields_both_commit() {
+#[test]
+fn updates_returning_other_fields_both_commit() {
+    workers::block_on(async {
     let node = Node::new(USERS).await;
     let id = node.create(ANN).await;
     node.both_commit(
@@ -132,31 +139,37 @@ async fn updates_returning_other_fields_both_commit() {
     )
     .await;
     assert_ann(&node, 31, "ann@new").await;
+})
+    .unwrap()
 }
 
 /// Two writes of one field are one winner by design: projection never lets
 /// both commit.
-#[tokio::test]
-async fn updates_of_the_same_field_still_conflict() {
-    let node = Node::new(USERS).await;
-    let id = node.create(ANN).await;
-    let outcome = node
-        .commit_both(
-            &format!(
-                r#"mutation {{ update_Users(docID: "{id}", input: {{age: 31}}) {{ _docID }} }}"#
-            ),
-            &format!(
-                r#"mutation {{ update_Users(docID: "{id}", input: {{age: 32}}) {{ _docID }} }}"#
-            ),
-        )
-        .await;
-    assert!(outcome.is_err(), "two writes of one field both committed");
-    assert_ann(&node, 31, "ann@old").await;
+#[test]
+fn updates_of_the_same_field_still_conflict() {
+    workers::block_on(async {
+        let node = Node::new(USERS).await;
+        let id = node.create(ANN).await;
+        let outcome = node
+            .commit_both(
+                &format!(
+                    r#"mutation {{ update_Users(docID: "{id}", input: {{age: 31}}) {{ _docID }} }}"#
+                ),
+                &format!(
+                    r#"mutation {{ update_Users(docID: "{id}", input: {{age: 32}}) {{ _docID }} }}"#
+                ),
+            )
+            .await;
+        assert!(outcome.is_err(), "two writes of one field both committed");
+        assert_ann(&node, 31, "ann@old").await;
+    })
+    .unwrap()
 }
 
 /// A filter's fields are decided on: a concurrent change of one conflicts.
-#[tokio::test]
-async fn an_update_conflicts_with_a_change_of_the_field_its_filter_compares() {
+#[test]
+fn an_update_conflicts_with_a_change_of_the_field_its_filter_compares() {
+    workers::block_on(async {
     let node = Node::new(USERS).await;
     node.create(ANN).await;
     let outcome = node
@@ -169,10 +182,13 @@ async fn an_update_conflicts_with_a_change_of_the_field_its_filter_compares() {
         outcome.is_err(),
         "an update whose filter matched a renamed document committed"
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn updates_of_a_migrated_collection_both_commit() {
+#[test]
+fn updates_of_a_migrated_collection_both_commit() {
+    workers::block_on(async {
     let node = Node::new(USERS).await;
     let migration = lens::LensConfig::new(
         "ignored-source",
@@ -195,6 +211,8 @@ async fn updates_of_a_migrated_collection_both_commit() {
     )
     .await;
     assert_ann(&node, 31, "ann@new").await;
+})
+    .unwrap()
 }
 
 const METRIC: &str = "type Metric { label: String  note: String  ts: DateTime  value: Int }";
@@ -215,8 +233,9 @@ type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
 
 /// A raw downsample source is checked only when its time or measure changes,
 /// so updates of its other fields decide on nothing else.
-#[tokio::test]
-async fn updates_of_a_downsample_source_both_commit() {
+#[test]
+fn updates_of_a_downsample_source_both_commit() {
+    workers::block_on(async {
     let node = Node::new(METRIC).await;
     let known: rapidhash::RapidHashSet<String> =
         node.db.list_collections().unwrap().into_iter().collect();
@@ -250,12 +269,15 @@ async fn updates_of_a_downsample_source_both_commit() {
         metrics["Metric"],
         serde_json::json!([{ "label": "gpu", "note": "b" }])
     );
+})
+    .unwrap()
 }
 
 const COUNTED: &str = "type Counted { label: String  hits: Int @crdt(type: pncounter) }";
 
-#[tokio::test]
-async fn counter_updates_returning_the_counter_both_commit() {
+#[test]
+fn counter_updates_returning_the_counter_both_commit() {
+    workers::block_on(async {
     let node = Node::new(COUNTED).await;
     let id = node
         .create(r#"mutation { add_Counted(input: {label: "a", hits: 0}) { _docID } }"#)
@@ -277,4 +299,6 @@ async fn counter_updates_returning_the_counter_both_commit() {
         counted["Counted"],
         serde_json::json!([{ "label": "b", "hits": 7 }])
     );
+})
+    .unwrap()
 }

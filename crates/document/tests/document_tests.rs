@@ -1,10 +1,12 @@
 //! Integration tests for Document type
 
+mod common;
+
 use document::{Document, NormalValue, SDN_NAMESPACE_V0};
 
 #[test]
 fn test_new_document() {
-    let doc = Document::new();
+    let doc = common::doc(&[]);
     assert!(doc.id().is_none());
     assert!(doc.is_empty());
     assert!(doc.is_dirty());
@@ -12,10 +14,10 @@ fn test_new_document() {
 
 #[test]
 fn test_set_and_get() {
-    let mut doc = Document::new();
-    doc.set("name", "Alice");
-    doc.set("age", 30i64);
-    doc.set("active", true);
+    let mut doc = common::doc(&["active", "age", "name"]);
+    doc.set("name", "Alice").unwrap();
+    doc.set("age", 30i64).unwrap();
+    doc.set("active", true).unwrap();
 
     assert_eq!(doc.get("name").and_then(|v| v.as_str()), Some("Alice"));
     assert_eq!(doc.get("age").and_then(|v| v.as_int()), Some(30));
@@ -26,7 +28,7 @@ fn test_set_and_get() {
 #[test]
 fn test_from_json() {
     let json = r#"{"name": "Bob", "age": 25, "active": true}"#;
-    let doc = Document::from_json_str(json).unwrap();
+    let doc = common::from_json(json).unwrap();
 
     assert_eq!(doc.get("name").and_then(|v| v.as_str()), Some("Bob"));
     assert_eq!(doc.get("age").and_then(|v| v.as_int()), Some(25));
@@ -44,16 +46,16 @@ fn test_from_json_with_doc_id() {
     let doc_id_str = document::DocID::new_v0(genesis_cid).to_string();
 
     let json = format!(r#"{{"_docID": "{}", "name": "Test2"}}"#, doc_id_str);
-    let doc = Document::from_json_str(&json).unwrap();
+    let doc = common::from_json(&json).unwrap();
 
     assert_eq!(doc.id().unwrap().to_string(), doc_id_str);
 }
 
 #[test]
 fn test_to_map() {
-    let mut doc = Document::new();
-    doc.set("name", "Charlie");
-    doc.set("count", 42i64);
+    let mut doc = common::doc(&["count", "name"]);
+    doc.set("name", "Charlie").unwrap();
+    doc.set("count", 42i64).unwrap();
 
     let map = doc.to_map().unwrap();
     assert_eq!(
@@ -65,9 +67,9 @@ fn test_to_map() {
 
 #[test]
 fn test_to_map_non_finite_float_error() {
-    let mut doc = Document::new();
-    doc.set("name", "test");
-    doc.set("value", f64::NAN);
+    let mut doc = common::doc(&["name", "value"]);
+    doc.set("name", "test").unwrap();
+    doc.set("value", f64::NAN).unwrap();
 
     let result = doc.to_map();
     assert!(result.is_err());
@@ -75,8 +77,8 @@ fn test_to_map_non_finite_float_error() {
 
 #[test]
 fn test_to_map_infinity_error() {
-    let mut doc = Document::new();
-    doc.set("value", f64::INFINITY);
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", f64::INFINITY).unwrap();
 
     let result = doc.to_map();
     assert!(result.is_err());
@@ -84,24 +86,24 @@ fn test_to_map_infinity_error() {
 
 #[test]
 fn test_dirty_tracking() {
-    let mut doc = Document::new();
+    let mut doc = common::doc(&["field"]);
     assert!(doc.is_dirty());
 
     doc.clean();
     assert!(!doc.is_dirty());
 
-    doc.set("field", "value");
+    doc.set("field", "value").unwrap();
     assert!(doc.is_dirty());
 }
 
 #[test]
 fn test_dirty_fields() {
-    let mut doc = Document::new();
-    doc.set("field1", "value1");
-    doc.set("field2", "value2");
+    let mut doc = common::doc(&["field1", "field2"]);
+    doc.set("field1", "value1").unwrap();
+    doc.set("field2", "value2").unwrap();
     doc.clean();
 
-    doc.set("field1", "new_value");
+    doc.set("field1", "new_value").unwrap();
 
     let dirty: Vec<_> = doc.dirty_fields().collect();
     assert_eq!(dirty.len(), 1);
@@ -110,8 +112,8 @@ fn test_dirty_fields() {
 
 #[test]
 fn test_remove_field() {
-    let mut doc = Document::new();
-    doc.set("name", "Alice");
+    let mut doc = common::doc(&["name"]);
+    doc.set("name", "Alice").unwrap();
     assert!(doc.has_field("name"));
 
     doc.remove("name");
@@ -120,11 +122,11 @@ fn test_remove_field() {
 
 #[test]
 fn test_len_and_is_empty() {
-    let mut doc = Document::new();
+    let mut doc = common::doc(&["field"]);
     assert!(doc.is_empty());
     assert_eq!(doc.len(), 0);
 
-    doc.set("field", "value");
+    doc.set("field", "value").unwrap();
     assert!(!doc.is_empty());
     assert_eq!(doc.len(), 1);
 }
@@ -133,20 +135,20 @@ fn test_len_and_is_empty() {
 fn test_cbor_field_order_independence() {
     // Documents with same content but different field insertion order
     // produce identical canonical CBOR
-    let mut doc1 = Document::new();
-    doc1.set("a", "first");
-    doc1.set("b", "second");
-    doc1.set("c", "third");
+    let mut doc1 = common::doc(&["a", "b", "c"]);
+    doc1.set("a", "first").unwrap();
+    doc1.set("b", "second").unwrap();
+    doc1.set("c", "third").unwrap();
 
-    let mut doc2 = Document::new();
-    doc2.set("c", "third"); // Different insertion order
-    doc2.set("a", "first");
-    doc2.set("b", "second");
+    let mut doc2 = common::doc(&["a", "b", "c"]);
+    doc2.set("c", "third").unwrap(); // Different insertion order
+    doc2.set("a", "first").unwrap();
+    doc2.set("b", "second").unwrap();
 
-    let mut doc3 = Document::new();
-    doc3.set("b", "second"); // Another order
-    doc3.set("c", "third");
-    doc3.set("a", "first");
+    let mut doc3 = common::doc(&["a", "b", "c"]);
+    doc3.set("b", "second").unwrap(); // Another order
+    doc3.set("c", "third").unwrap();
+    doc3.set("a", "first").unwrap();
 
     // Canonical CBOR encoding is insertion-order independent — this keeps
     // genesis composite CIDs (and therefore DocIDs) deterministic.
@@ -156,9 +158,9 @@ fn test_cbor_field_order_independence() {
 
 #[test]
 fn test_cbor_encoding() {
-    let mut doc = Document::new();
-    doc.set("name", "Test");
-    doc.set("count", 42i64);
+    let mut doc = common::doc(&["count", "name"]);
+    doc.set("name", "Test").unwrap();
+    doc.set("count", 42i64).unwrap();
 
     let cbor = doc.to_cbor().unwrap();
     assert!(!cbor.is_empty());
@@ -173,14 +175,14 @@ fn test_cbor_encoding() {
 
 #[test]
 fn test_cbor_roundtrip() {
-    let mut doc = Document::new();
-    doc.set("name", "Alice");
-    doc.set("age", 30i64);
-    doc.set("active", true);
-    doc.set("score", 95.5);
+    let mut doc = common::doc(&["active", "age", "name", "score"]);
+    doc.set("name", "Alice").unwrap();
+    doc.set("age", 30i64).unwrap();
+    doc.set("active", true).unwrap();
+    doc.set("score", 95.5).unwrap();
 
     let cbor = doc.to_cbor().unwrap();
-    let decoded = Document::from_cbor(&cbor).unwrap();
+    let decoded = common::from_cbor(&cbor).unwrap();
 
     assert_eq!(
         doc.get("name").and_then(|v| v.as_str()),
@@ -205,9 +207,9 @@ fn test_cbor_roundtrip() {
 
 #[test]
 fn test_cbor_roundtrip_empty_doc() {
-    let doc = Document::new();
+    let doc = common::doc(&[]);
     let cbor = doc.to_cbor().unwrap();
-    let decoded = Document::from_cbor(&cbor).unwrap();
+    let decoded = common::from_cbor(&cbor).unwrap();
 
     assert!(decoded.is_empty());
     assert!(!decoded.is_dirty());
@@ -215,16 +217,19 @@ fn test_cbor_roundtrip_empty_doc() {
 
 #[test]
 fn test_cbor_roundtrip_arrays() {
-    let mut doc = Document::new();
-    doc.set("ints", NormalValue::IntArray(vec![1, 2, 3]));
+    let mut doc = common::doc(&["bools", "ints", "strings"]);
+    doc.set("ints", NormalValue::IntArray(vec![1, 2, 3]))
+        .unwrap();
     doc.set(
         "strings",
         NormalValue::StringArray(vec!["a".into(), "b".into()]),
-    );
-    doc.set("bools", NormalValue::BoolArray(vec![true, false]));
+    )
+    .unwrap();
+    doc.set("bools", NormalValue::BoolArray(vec![true, false]))
+        .unwrap();
 
     let cbor = doc.to_cbor().unwrap();
-    let decoded = Document::from_cbor(&cbor).unwrap();
+    let decoded = common::from_cbor(&cbor).unwrap();
 
     assert!(decoded.get("ints").unwrap().is_array());
     assert!(decoded.get("strings").unwrap().is_array());
@@ -233,21 +238,21 @@ fn test_cbor_roundtrip_arrays() {
 
 #[test]
 fn test_from_cbor_invalid_bytes() {
-    let result = Document::from_cbor(&[0xff, 0xfe, 0xfd]);
+    let result = common::from_cbor(&[0xff, 0xfe, 0xfd]);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_from_cbor_not_a_map() {
     // CBOR integer instead of map
-    let result = Document::from_cbor(&[0x18, 0x2a]); // Integer 42
+    let result = common::from_cbor(&[0x18, 0x2a]); // Integer 42
     assert!(result.is_err());
 }
 
 #[test]
 fn test_cbor_roundtrip_go_simple_doc() {
     // Decode Go's CBOR and verify we can read it
-    let decoded = Document::from_cbor(&[
+    let decoded = common::from_cbor(&[
         0xa2, 0x63, 0x41, 0x67, 0x65, 0x18, 0x1a, 0x64, 0x4e, 0x61, 0x6d, 0x65, 0x64, 0x4a, 0x6f,
         0x68, 0x6e,
     ])
@@ -260,7 +265,7 @@ fn test_cbor_roundtrip_go_simple_doc() {
 #[test]
 fn test_array_fields() {
     let json = r#"{"tags": ["a", "b", "c"], "numbers": [1, 2, 3]}"#;
-    let doc = Document::from_json_str(json).unwrap();
+    let doc = common::from_json(json).unwrap();
 
     let tags = doc.get("tags");
     assert!(tags.is_some());
@@ -308,9 +313,9 @@ fn test_sdn_namespace_matches_go() {
 #[test]
 fn test_cbor_matches_go_simple_doc() {
     // Go test case: {"Name": "John", "Age": 26}
-    let mut doc = Document::new();
-    doc.set("Name", "John");
-    doc.set("Age", 26i64);
+    let mut doc = common::doc(&["Age", "Name"]);
+    doc.set("Name", "John").unwrap();
+    doc.set("Age", 26i64).unwrap();
 
     let cbor = doc.to_cbor().unwrap();
     assert_eq!(
@@ -323,8 +328,8 @@ fn test_cbor_matches_go_simple_doc() {
 #[test]
 fn test_cbor_matches_go_string_doc() {
     // Go test case: {"Name": "Alice"}
-    let mut doc = Document::new();
-    doc.set("Name", "Alice");
+    let mut doc = common::doc(&["Name"]);
+    doc.set("Name", "Alice").unwrap();
 
     let cbor = doc.to_cbor().unwrap();
     assert_eq!(
@@ -337,8 +342,8 @@ fn test_cbor_matches_go_string_doc() {
 #[test]
 fn test_cbor_matches_go_bool_doc() {
     // Go test case: {"Active": true}
-    let mut doc = Document::new();
-    doc.set("Active", true);
+    let mut doc = common::doc(&["Active"]);
+    doc.set("Active", true).unwrap();
 
     let cbor = doc.to_cbor().unwrap();
     assert_eq!(
@@ -351,7 +356,7 @@ fn test_cbor_matches_go_bool_doc() {
 #[test]
 fn test_cbor_matches_go_empty_doc() {
     // Go test case: {}
-    let doc = Document::new();
+    let doc = common::doc(&[]);
 
     let cbor = doc.to_cbor().unwrap();
     assert_eq!(
@@ -365,10 +370,10 @@ fn test_cbor_matches_go_empty_doc() {
 fn test_canonical_cbor_key_ordering() {
     // Verify canonical CBOR ordering: shorter keys first, then lexicographic
     // Keys: "z" (1 char), "aa" (2 chars), "ab" (2 chars)
-    let mut doc = Document::new();
-    doc.set("ab", 3i64);
-    doc.set("z", 1i64);
-    doc.set("aa", 2i64);
+    let mut doc = common::doc(&["aa", "ab", "z"]);
+    doc.set("ab", 3i64).unwrap();
+    doc.set("z", 1i64).unwrap();
+    doc.set("aa", 2i64).unwrap();
 
     let cbor = doc.to_cbor().unwrap();
 
@@ -396,7 +401,10 @@ fn test_doc_id_string_format() {
     let genesis_cid: cid::Cid = "bafyreie7rtdexuf47f633477mfieshkeh5rwnjeommkgqrzl22n6g4bfmm"
         .parse()
         .unwrap();
-    let doc = Document::with_id(document::DocID::new_v0(genesis_cid));
+    let doc = Document::with_id(
+        document::DocID::new_v0(genesis_cid),
+        common::collection(&[]),
+    );
 
     let doc_id_str = doc.id().unwrap().to_string();
     assert!(
@@ -444,7 +452,7 @@ fn test_cbor_encoding_matches_go_nested_json() {
 
     // Create the same document in Rust
     let json = r#"{"name": "John", "custom": {"tree": "maple", "age": 250}}"#;
-    let doc = Document::from_json_str(json).expect("should parse");
+    let doc = common::from_json(json).expect("should parse");
 
     let cbor_bytes = doc.to_cbor().expect("should encode");
 
@@ -463,7 +471,7 @@ fn get_mut_does_not_dirty_on_field_miss() {
     // modifying the document. Match Go's document.go, which only sets
     // the dirty flag inside doc.set() after a value is written.
     let json = r#"{"name": "Alice"}"#;
-    let mut doc = Document::from_json_str(json).expect("should parse");
+    let mut doc = common::from_json(json).expect("should parse");
     doc.clean(); // start from a fully-clean state
 
     // Probe a field that doesn't exist.
@@ -481,4 +489,80 @@ fn get_mut_does_not_dirty_on_field_miss() {
         doc.is_dirty(),
         "mutating an existing field via get_mut must mark the document dirty"
     );
+}
+
+#[test]
+fn set_unknown_field_errors() {
+    let mut doc = common::doc(&["name"]);
+    let err = doc.set("missing", "x").unwrap_err();
+    assert!(matches!(err, document::Error::FieldNotExist(ref name) if name == "missing"));
+    assert!(err.to_string().contains("does not exist"));
+    assert!(doc.is_empty());
+}
+
+#[test]
+fn set_takes_the_crdt_type_from_the_definition() {
+    use schema::{CType, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
+
+    let collection = CollectionBuilder::new("Counters", "bafycounters")
+        .field(FieldDescription::new(
+            "0",
+            "name",
+            FieldKind::Scalar(ScalarKind::NillableString),
+            CType::LwwRegister,
+        ))
+        .field(FieldDescription::new(
+            "1",
+            "views",
+            FieldKind::Scalar(ScalarKind::NillableInt),
+            CType::PnCounter,
+        ))
+        .build();
+    let mut doc = Document::new(collection);
+    doc.set("views", 1i64).unwrap();
+    doc.set("name", "a").unwrap();
+
+    assert_eq!(doc.crdt_type("views"), Some(CType::PnCounter));
+    assert_eq!(
+        doc.get_field_value("views").unwrap().crdt_type(),
+        CType::PnCounter
+    );
+    assert_eq!(
+        doc.get_field_value("name").unwrap().crdt_type(),
+        CType::LwwRegister
+    );
+    assert_eq!(doc.crdt_type("missing"), None);
+}
+
+#[test]
+fn set_refuses_a_relation_from_its_secondary_side() {
+    use schema::{CType, CollectionBuilder, FieldDescription, FieldKind};
+
+    let collection = CollectionBuilder::new("Author", "bafyauthor")
+        .field(FieldDescription::new(
+            "0",
+            "books",
+            FieldKind::relation("Book", true),
+            CType::None,
+        ))
+        .build();
+    let mut doc = Document::new(collection);
+    let err = doc.set("books", NormalValue::Null).unwrap_err();
+    assert!(
+        matches!(err, document::Error::CannotSetRelationFromSecondarySide(ref name) if name == "books")
+    );
+    assert!(doc.is_empty());
+}
+
+#[test]
+fn setting_a_field_drops_its_pending_op() {
+    let mut doc = common::doc(&["hits"]);
+    doc.edit("hits", document::FieldOp::Increment(NormalValue::Int(3)))
+        .unwrap();
+    assert!(doc.pending_op("hits").is_some());
+
+    doc.edit("hits", document::FieldOp::Set(NormalValue::Int(10)))
+        .unwrap();
+    assert!(doc.pending_op("hits").is_none());
+    assert_eq!(doc.get("hits"), Some(&NormalValue::Int(10)));
 }

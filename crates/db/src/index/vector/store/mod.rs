@@ -10,6 +10,8 @@ pub mod memory;
 pub use kv::KvNodeStore;
 pub use memory::MemoryNodeStore;
 
+use std::ops::ControlFlow;
+
 use bytes::Bytes;
 use defra_core::thread_bounds::{MaybeSend, MaybeSendSync};
 
@@ -119,4 +121,34 @@ pub trait VectorNodeStore: MaybeSendSync {
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend;
+
+    /// The newest committed position of this build's pending log in the
+    /// transaction's snapshot; 0 before the first append.
+    async fn pending_log_head(&self) -> Result<u64>;
+
+    /// Adds `entry` to the pending log, at the position its commit takes.
+    async fn append_pending_log(&mut self, entry: &[u8]) -> Result<()>;
+
+    /// The entries this transaction appended and has not committed, oldest
+    /// first. No log read shows them, since they take a position only at
+    /// commit.
+    async fn own_pending_log(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    /// The entry at `position`; `None` once truncated.
+    async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>>;
+
+    /// Visits every entry still held, oldest first, with its position, until
+    /// `visit` breaks.
+    async fn iterate_pending_log<F>(&self, visit: F) -> Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> Result<ControlFlow<()>> + MaybeSend;
+
+    /// Drops every entry from `from` through `through`, which a merge has
+    /// absorbed. The head stays, so positions keep counting.
+    async fn truncate_pending_log(&mut self, from: u64, through: u64) -> Result<()>;
+
+    /// The oldest entry still held, `None` when every entry was truncated.
+    async fn pending_log_tail(&self) -> Result<Option<u64>>;
 }

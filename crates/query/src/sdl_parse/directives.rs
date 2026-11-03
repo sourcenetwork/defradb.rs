@@ -36,7 +36,7 @@ pub const KNOWN_TYPE_DIRECTIVES: &[&str] = &[
 pub fn known_directive_arguments(directive_name: &str) -> &'static [&'static str] {
     match directive_name {
         "primary" => &[],
-        "crdt" => &["type"],
+        "crdt" => &["type", "custom"],
         "index" => &[
             "name",
             "kind",

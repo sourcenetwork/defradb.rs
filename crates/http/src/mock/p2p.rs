@@ -95,6 +95,18 @@ impl P2POperations for MockP2POperations {
         Ok(self.peers.load_clone())
     }
 
+    async fn peer_details(
+        &self,
+        peer_id: &crate::router::TransportPeerId,
+    ) -> P2PResult<serde_json::Value> {
+        let connected = self
+            .peers
+            .load_clone()
+            .iter()
+            .any(|peer| peer == peer_id.as_str());
+        Ok(serde_json::json!({ "peer_id": peer_id.as_str(), "connected": connected }))
+    }
+
     async fn connect_peer(&self, addr: &str) -> P2PResult<()> {
         // Extract a mock peer ID from the address
         let peer_id = if addr.contains("/p2p/") {
@@ -315,5 +327,20 @@ impl P2POperations for FailingMockP2POperations {
 
     async fn sync_collection_versions(&self, _version_ids: Vec<String>) -> P2PResult<()> {
         Err(P2PError::Internal(self.error.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MockP2POperations;
+    use crate::router::{P2PError, P2POperations, TransportPeerId};
+
+    #[tokio::test]
+    async fn default_identity_resolution_fails_closed() {
+        let peer = TransportPeerId::new("peer-id").unwrap();
+        assert!(matches!(
+            MockP2POperations::new().resolve_peer_identity(&peer).await,
+            Err(P2PError::Unsupported(_))
+        ));
     }
 }

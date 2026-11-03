@@ -41,7 +41,7 @@ pub(crate) fn json_to_normal_value_for_index_field(
         .map(|field| &field.kind)
     {
         Some(FieldKind::Scalar(kind)) => match kind.base_kind() {
-            ScalarKind::Json | ScalarKind::None => json_to_normal_value(value),
+            ScalarKind::NillableJson | ScalarKind::None => json_to_normal_value(value),
             _ => document::encoding::json_to_normal_value_for_kind(value, kind),
         },
         _ => {
@@ -122,11 +122,13 @@ pub(super) fn wrap_values_for_json_path(
 fn normalize_value_for_field(value: NormalValue, field_kind: &FieldKind) -> NormalValue {
     match (&value, field_kind.as_scalar().map(ScalarKind::base_kind)) {
         // Float64 → Float32 when schema says Float32
-        (NormalValue::Float64(f), Some(ScalarKind::Float32)) => NormalValue::Float32(*f as f32),
+        (NormalValue::Float64(f), Some(ScalarKind::NillableFloat32)) => {
+            NormalValue::Float32(*f as f32)
+        }
         // Int → Float32 when schema says Float32
-        (NormalValue::Int(i), Some(ScalarKind::Float32)) => NormalValue::Float32(*i as f32),
+        (NormalValue::Int(i), Some(ScalarKind::NillableFloat32)) => NormalValue::Float32(*i as f32),
         // Int → Float64 when schema says Float64
-        (NormalValue::Int(i), Some(ScalarKind::Float64)) => NormalValue::Float64(*i as f64),
+        (NormalValue::Int(i), Some(ScalarKind::NillableFloat64)) => NormalValue::Float64(*i as f64),
         // RFC3339 string → Time when the field, or its array's elements, is
         // DateTime; a String field indexes the string itself, whatever it
         // looks like
@@ -142,7 +144,7 @@ fn indexes_datetime(field_kind: &FieldKind) -> bool {
         .as_scalar()
         .or_else(|| field_kind.as_scalar_array().map(|kind| kind.element_kind()))
         .map(ScalarKind::base_kind)
-        == Some(ScalarKind::DateTime)
+        == Some(ScalarKind::NillableDateTime)
 }
 
 /// Normalize a NormalValue for a named index field using collection field metadata.

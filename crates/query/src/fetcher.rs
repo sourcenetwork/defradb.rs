@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use document::Document;
+use document::{CommitRow, Document};
 use identity::Did;
 use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::MaybeSendSync;
@@ -78,6 +78,7 @@ pub struct IndexScanResult {
     doc_ids: Vec<String>,
     /// Raw number of index entries fetched (before deduplication)
     raw_fetches: u64,
+    doc_short_ids: Option<Vec<u64>>,
 }
 
 impl IndexScanResult {
@@ -87,6 +88,7 @@ impl IndexScanResult {
         Self {
             doc_ids,
             raw_fetches,
+            doc_short_ids: None,
         }
     }
 
@@ -97,7 +99,22 @@ impl IndexScanResult {
         Self {
             doc_ids,
             raw_fetches,
+            doc_short_ids: None,
         }
+    }
+
+    pub fn with_doc_short_ids(mut self, ids: Vec<u64>) -> Result<Self> {
+        if ids.len() != self.doc_ids.len() {
+            return Err(crate::error::QueryError::execution(
+                "index physical IDs do not match public IDs",
+            ));
+        }
+        self.doc_short_ids = Some(ids);
+        Ok(self)
+    }
+
+    pub fn doc_short_ids(&self) -> Option<&[u64]> {
+        self.doc_short_ids.as_deref()
     }
 
     /// Get the deduplicated document IDs.
@@ -127,6 +144,15 @@ pub trait DocFetcher: MaybeSendSync {
         _identity: &identity::Did,
         _permission: acp::nac::NodePermission,
     ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// An authorization provider actually bound to this fetcher's transaction.
+    /// A capability flag or an unbound provider cannot certify a row snapshot.
+    async fn transaction_acp(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+    ) -> Result<Option<std::sync::Arc<dyn acp::DocumentACP>>> {
         Ok(None)
     }
 
@@ -168,6 +194,17 @@ pub trait DocFetcher: MaybeSendSync {
     ) -> Result<Vec<(Document, bool)>> {
         let docs = self.get_all(collection_name).await?;
         Ok(docs.into_iter().map(|d| (d, false)).collect())
+    }
+
+    /// Stream ordered index candidates when supported. None retains the eager
+    /// path for scan types that require global deduplication or tie ordering.
+    async fn stream_index_scan(
+        &self,
+        _collection_name: &str,
+        _params: &IndexScanParams,
+        _show_deleted: bool,
+    ) -> Result<Option<Box<dyn DocStream>>> {
+        Ok(None)
     }
 
     /// Stream named documents by short id, without scanning the collection.
@@ -267,6 +304,15 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// The conflicts of a Json field of one document: for each path, the
+    /// concurrent edits its winner beat.
+    async fn get_json_conflicts(&self, options: &JsonConflictOptions) -> Result<Vec<JsonConflict>> {
+        let _ = options;
+        Err(crate::error::QueryError::execution(
+            "json conflict queries are unsupported",
+        ))
+    }
+
     /// Fetch commits from the _commits system collection.
     ///
     /// This method fetches commit history from the headstore and blockstore.
@@ -281,7 +327,7 @@ pub trait DocFetcher: MaybeSendSync {
     ///
     /// Commit documents with fields: cid, height, fieldName, docID, delta,
     /// collectionVersionId, links, heads, signature.
-    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<CommitRow>> {
         let _ = options;
         Err(crate::error::QueryError::execution(
             "_commits queries are not supported by this fetcher".to_string(),
@@ -410,9 +456,10 @@ pub trait DocFetcher: MaybeSendSync {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&Did>,
     ) -> Result<Document> {
-        let _ = (cid, expected_doc_id, caller_identity);
+        let _ = (cid, expected_doc_id, collection, caller_identity);
         Err(crate::error::QueryError::execution(
             "CID-based time-travel queries are not supported by this fetcher".to_string(),
         ))
@@ -424,23 +471,23 @@ pub trait DocFetcher: MaybeSendSync {
     /// For collection-level CIDs (branchable collections), returns all
     /// documents visible at that collection state.
     ///
-    /// `collection_short_id` is the queried collection: documents belonging to
+    /// `collection` is the queried collection: documents belonging to
     /// another collection are excluded, so a foreign collection's commit CID
     /// yields an empty result (Go parity).
     ///
     /// Defaulted to an error rather than to a delegation to
     /// [`get_document_at_cid`](Self::get_document_at_cid): that method takes no
-    /// collection, so delegating would return a document the caller then
+    /// scoping, so delegating would return a document the caller then
     /// ACP-checks against the wrong collection. A fetcher supporting CID-based
     /// queries must scope them itself.
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&Did>,
     ) -> Result<Vec<Document>> {
-        let _ = (collection_short_id, cid, expected_doc_id, caller_identity);
+        let _ = (collection, cid, expected_doc_id, caller_identity);
         Err(crate::error::QueryError::execution(
             "CID-based time-travel queries are not supported by this fetcher".to_string(),
         ))
@@ -556,23 +603,54 @@ mod tests {
             &self,
             _cid: &str,
             _expected_doc_id: Option<&str>,
+            _collection: &std::sync::Arc<schema::CollectionVersion>,
             _caller_identity: Option<&Did>,
         ) -> Result<Document> {
-            Ok(Document::new())
+            Ok(crate::test_utils::test_doc(&[]))
         }
     }
 
     /// The defaulted collection-scoped fetch cannot honour `collection_short_id`,
     /// so it must refuse rather than hand back a document the query runner would
     /// then ACP-check against the wrong collection.
-    #[tokio::test]
-    async fn defaulted_documents_at_cid_does_not_return_unscoped_documents() {
-        let result = SingleDocOnlyFetcher
-            .get_documents_at_cid(1, "bafy", None, None)
-            .await;
+    #[test]
+    fn defaulted_documents_at_cid_does_not_return_unscoped_documents() {
+        workers::block_on(async {
+            let result = SingleDocOnlyFetcher
+                .get_documents_at_cid(
+                    &std::sync::Arc::new(crate::test_utils::test_collection(&[])),
+                    "bafy",
+                    None,
+                    None,
+                )
+                .await;
 
-        assert!(result.is_err(), "expected refusal, got {result:?}");
+            assert!(result.is_err(), "expected refusal, got {result:?}");
+        })
+        .unwrap()
     }
+}
+
+/// Which Json field of which document `_jsonConflicts` reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonConflictOptions {
+    pub collection: String,
+    pub doc_id: String,
+    pub field: String,
+}
+
+/// One edit that lost a race at a path of a Json field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonConflict {
+    /// The path, as its keys; empty for the field itself.
+    pub path: Vec<String>,
+    /// The block that made the edit, when this node can name it.
+    pub cid: Option<String>,
+    /// The block's priority, as `_commits` reports it.
+    pub height: u64,
+    /// What the edit wrote: a value, `{}` for a map, nothing for a delete.
+    pub value: Option<serde_json::Value>,
+    pub deleted: bool,
 }
 
 /// Node-local first materialization order, never a cross-replica creation clock.

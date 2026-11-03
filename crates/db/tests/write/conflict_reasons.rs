@@ -51,6 +51,10 @@ impl storage::corekv::private::Sealed for PausingStore {}
 
 #[async_trait]
 impl Store for PausingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -132,7 +136,11 @@ impl Fixture {
         WF: std::future::Future<Output = WT>,
     {
         self.gate.armed.store(true, Ordering::SeqCst);
-        let paused = tokio::spawn(paused(self.mutator()));
+        let paused = paused(self.mutator());
+        let paused = workers::spawn(Some(crate::common::worker_io::pool()), "test", move || {
+            paused
+        })
+        .unwrap();
         self.gate.paused.wait().await;
         let won = winner(self.mutator()).await;
         self.gate.release.set();
@@ -151,9 +159,14 @@ fn patch_collection() -> CollectionVersion {
         "v1",
         "col-patch",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::int()),
-            FieldDescription::new("3", "right", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -165,7 +178,10 @@ fn fields(names: &[&str]) -> RapidHashSet<String> {
 async fn create(fixture: &Fixture, json: &str) -> Document {
     let created = fixture
         .mutator()
-        .create("Patch", Document::from_json_str(json).unwrap())
+        .create(
+            "Patch",
+            Document::from_json_str(json, patch_collection()).unwrap(),
+        )
         .await
         .unwrap();
     fixture
@@ -184,150 +200,167 @@ fn lost_once(reasons: &[Option<TransactionConflict>]) -> TransactionConflict {
     reasons[1].expect("the re-run is handed the reason it lost")
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_delete_that_loses_to_a_delete_is_a_no_op() {
-    let fixture = Fixture::new(patch_collection()).await;
-    let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
-    let id = doc.id().unwrap().clone();
+#[test]
+fn a_delete_that_loses_to_a_delete_is_a_no_op() {
+    workers::block_on(async {
+        let fixture = Fixture::new(patch_collection()).await;
+        let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
+        let id = doc.id().unwrap().clone();
 
-    let paused_id = id.clone();
-    let (loser, winner) = fixture
-        .race(
-            |mutator| async move { mutator.delete("Patch", &paused_id).await },
-            |mutator| async move { mutator.delete("Patch", &id).await },
-        )
-        .await;
+        let paused_id = id.clone();
+        let (loser, winner) = fixture
+            .race(
+                |mutator| async move { mutator.delete("Patch", &paused_id).await },
+                |mutator| async move { mutator.delete("Patch", &id).await },
+            )
+            .await;
 
-    assert!(winner.unwrap().existed);
-    assert!(!loser.unwrap().existed, "the document was already deleted");
-    lost_once(&fixture.reasons());
+        assert!(winner.unwrap().existed);
+        assert!(!loser.unwrap().existed, "the document was already deleted");
+        lost_once(&fixture.reasons());
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_update_that_loses_to_a_delete_reports_not_found() {
-    let fixture = Fixture::new(patch_collection()).await;
-    let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
-    let id = doc.id().unwrap().clone();
+#[test]
+fn an_update_that_loses_to_a_delete_reports_not_found() {
+    workers::block_on(async {
+        let fixture = Fixture::new(patch_collection()).await;
+        let doc = create(&fixture, r#"{"left": 1, "right": 1}"#).await;
+        let id = doc.id().unwrap().clone();
 
-    let mut patched = doc.clone();
-    patched.set("left", NormalValue::Int(2));
-    let (loser, winner) = fixture
-        .race(
-            |mutator| async move { mutator.update("Patch", patched, fields(&["left"])).await },
-            |mutator| async move { mutator.delete("Patch", &id).await },
-        )
-        .await;
+        let mut patched = doc.clone();
+        patched.set("left", NormalValue::Int(2)).unwrap();
+        let (loser, winner) = fixture
+            .race(
+                |mutator| async move { mutator.update("Patch", patched, fields(&["left"])).await },
+                |mutator| async move { mutator.delete("Patch", &id).await },
+            )
+            .await;
 
-    assert!(winner.unwrap().existed);
-    let error = loser.expect_err("the document was deleted before the update committed");
-    assert!(
-        matches!(error, query::error::QueryError::DocumentNotFound(_)),
-        "{error:?}"
-    );
-    lost_once(&fixture.reasons());
+        assert!(winner.unwrap().existed);
+        let error = loser.expect_err("the document was deleted before the update committed");
+        assert!(
+            matches!(error, query::error::QueryError::DocumentNotFound(_)),
+            "{error:?}"
+        );
+        lost_once(&fixture.reasons());
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_update_of_a_field_another_update_changed_writes_again_on_top_of_it() {
-    let fixture = Fixture::new(patch_collection()).await;
-    let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
-    let id = doc.id().unwrap().clone();
+#[test]
+fn an_update_of_a_field_another_update_changed_writes_again_on_top_of_it() {
+    workers::block_on(async {
+        let fixture = Fixture::new(patch_collection()).await;
+        let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
+        let id = doc.id().unwrap().clone();
 
-    let mut first = doc.clone();
-    first.set("left", NormalValue::Int(1));
-    let mut second = doc.clone();
-    second.set("left", NormalValue::Int(2));
-    let (loser, winner) = fixture
-        .race(
-            |mutator| async move { mutator.update("Patch", first, fields(&["left"])).await },
-            |mutator| async move { mutator.update("Patch", second, fields(&["left"])).await },
-        )
-        .await;
+        let mut first = doc.clone();
+        first.set("left", NormalValue::Int(1)).unwrap();
+        let mut second = doc.clone();
+        second.set("left", NormalValue::Int(2)).unwrap();
+        let (loser, winner) = fixture
+            .race(
+                |mutator| async move { mutator.update("Patch", first, fields(&["left"])).await },
+                |mutator| async move { mutator.update("Patch", second, fields(&["left"])).await },
+            )
+            .await;
 
-    winner.unwrap();
-    loser.expect("the update that lost runs again on the winner's value and commits");
-    let stored = fixture
-        .mutator()
-        .get_for_update("Patch", &id)
-        .await
-        .unwrap()
-        .unwrap();
-    // The re-run committed last, on top of the winner.
-    assert_eq!(stored.get("left"), Some(&NormalValue::Int(1)));
-    assert_eq!(stored.get("right"), Some(&NormalValue::Int(0)));
-    lost_once(&fixture.reasons());
+        winner.unwrap();
+        loser.expect("the update that lost runs again on the winner's value and commits");
+        let stored = fixture
+            .mutator()
+            .get_for_update("Patch", &id)
+            .await
+            .unwrap()
+            .unwrap();
+        // The re-run committed last, on top of the winner.
+        assert_eq!(stored.get("left"), Some(&NormalValue::Int(1)));
+        assert_eq!(stored.get("right"), Some(&NormalValue::Int(0)));
+        lost_once(&fixture.reasons());
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
-    let mut collection = patch_collection();
-    collection.indexes = vec![IndexDescription {
-        name: "unique_left".to_string(),
-        id: 1,
-        fields: vec![IndexedFieldDescription {
-            name: "left".to_string(),
-            descending: false,
-        }],
-        unique: true,
-        kind: None,
-        auto_generated: false,
-    }];
-    let fixture = Fixture::new(collection).await;
+#[test]
+fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
+    workers::block_on(async {
+        let mut collection = patch_collection();
+        collection.indexes = vec![IndexDescription {
+            name: "unique_left".to_string(),
+            id: 1,
+            fields: vec![IndexedFieldDescription {
+                name: "left".to_string(),
+                descending: false,
+            }],
+            unique: true,
+            kind: None,
+            auto_generated: false,
+        }];
+        let fixture = Fixture::new(collection.clone()).await;
+        let (first, second) = (collection.clone(), collection);
 
-    let (loser, winner) = fixture
-        .race(
-            |mutator| async move {
-                let doc = Document::from_json_str(r#"{"left": 7, "right": 1}"#).unwrap();
-                mutator.create("Patch", doc).await
-            },
-            |mutator| async move {
-                let doc = Document::from_json_str(r#"{"left": 7, "right": 2}"#).unwrap();
-                mutator.create("Patch", doc).await
-            },
-        )
-        .await;
+        let (loser, winner) = fixture
+            .race(
+                |mutator| async move {
+                    let doc = Document::from_json_str(r#"{"left": 7, "right": 1}"#, first).unwrap();
+                    mutator.create("Patch", doc).await
+                },
+                |mutator| async move {
+                    let doc =
+                        Document::from_json_str(r#"{"left": 7, "right": 2}"#, second).unwrap();
+                    mutator.create("Patch", doc).await
+                },
+            )
+            .await;
 
-    winner.unwrap();
-    let error = loser.expect_err("the unique value was taken before this create committed");
-    assert!(
-        error
-            .to_string()
-            .contains(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE),
-        "{error}"
-    );
-    lost_once(&fixture.reasons());
+        winner.unwrap();
+        let error = loser.expect_err("the unique value was taken before this create committed");
+        assert!(
+            error
+                .to_string()
+                .contains(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE),
+            "{error}"
+        );
+        lost_once(&fixture.reasons());
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_compare_and_set_that_loses_reports_the_conflict_with_its_reason() {
-    let fixture = Fixture::new(patch_collection()).await;
-    let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
+#[test]
+fn a_compare_and_set_that_loses_reports_the_conflict_with_its_reason() {
+    workers::block_on(async {
+        let fixture = Fixture::new(patch_collection()).await;
+        let doc = create(&fixture, r#"{"left": 0, "right": 0}"#).await;
 
-    let expected = doc.clone();
-    let mut compared = doc.clone();
-    compared.set("right", NormalValue::Int(1));
-    let mut other = doc.clone();
-    other.set("left", NormalValue::Int(1));
-    let (loser, winner) = fixture
-        .race(
-            |mutator| async move {
-                mutator
-                    .update_if_unchanged("Patch", expected, compared, fields(&["right"]))
-                    .await
-            },
-            |mutator| async move { mutator.update("Patch", other, fields(&["left"])).await },
-        )
-        .await;
+        let expected = doc.clone();
+        let mut compared = doc.clone();
+        compared.set("right", NormalValue::Int(1)).unwrap();
+        let mut other = doc.clone();
+        other.set("left", NormalValue::Int(1)).unwrap();
+        let (loser, winner) = fixture
+            .race(
+                |mutator| async move {
+                    mutator
+                        .update_if_unchanged("Patch", expected, compared, fields(&["right"]))
+                        .await
+                },
+                |mutator| async move { mutator.update("Patch", other, fields(&["left"])).await },
+            )
+            .await;
 
-    winner.unwrap();
-    let error = loser.expect_err("the document changed after the compared read");
-    let query::error::QueryError::TransactionConflict(message) = error else {
-        panic!("a lost compare-and-set is a conflict, got {error:?}");
-    };
-    assert!(
-        message.ends_with("transaction conflict. Please retry"),
-        "{message}"
-    );
-    assert!(message.contains("lost to a newer"), "{message}");
-    lost_once(&fixture.reasons());
+        winner.unwrap();
+        let error = loser.expect_err("the document changed after the compared read");
+        let query::error::QueryError::TransactionConflict(message) = error else {
+            panic!("a lost compare-and-set is a conflict, got {error:?}");
+        };
+        assert!(
+            message.ends_with("transaction conflict. Please retry"),
+            "{message}"
+        );
+        assert!(message.contains("lost to a newer"), "{message}");
+        lost_once(&fixture.reasons());
+    })
+    .unwrap()
 }

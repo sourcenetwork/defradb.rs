@@ -31,6 +31,10 @@ impl<S: Store> crate::corekv::private::Sealed for Datastore<S> {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store> Store for Datastore<S> {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.store.allocate(key, count).await
     }
@@ -311,6 +315,18 @@ impl Writer for DatastoreTxn {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         self.txn.append_shared(log, entry, once_key).await
+    }
+
+    async fn truncate_log_shared(
+        &self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log_shared(log, positions).await
+    }
+
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {

@@ -158,8 +158,8 @@ impl<S: Store> crate::database::DB<S> {
         let blockstore = txn.blockstore()?;
 
         // Store each field definition block
-        // IMPORTANT: Go uses priority=1 for ALL fields during AddSchema (not incrementing).
-        // This was verified by comparing actual Go AddSchema output with manual CID generation.
+        // IMPORTANT: Go uses priority=1 for ALL fields during AddCollection (not incrementing).
+        // This was verified by comparing actual Go AddCollection output with manual CID generation.
         // Only fields with non-empty FieldID are stored (secondary relations are excluded).
         // Fields must be sorted: _docID first, then alphabetically by name (matches Go).
         let mut sorted_fields: Vec<&schema::FieldDescription> =
@@ -256,13 +256,13 @@ impl<S: Store> crate::database::DB<S> {
         if let Ok(cid) = cid::Cid::try_from(version_id.as_str()) {
             let schema_heads = std::sync::Arc::clone(&self.schema_heads);
             let head_name = name.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 schema_heads.insert(head_name.clone(), (vec![cid], 1));
             })))?;
         }
 
         // Add to transaction's cache
-        txn.cache_collection(Collection::new(schema.clone()));
+        txn.cache_collection(Collection::new(schema.clone(), txn.crdts().clone()));
         txn.mark_collection_created(collection_id.clone());
 
         tracing::info!(
@@ -359,7 +359,7 @@ impl<S: Store> crate::database::DB<S> {
         let collection =
             Collection::load_index_actions(finalized_schema.clone(), &txn.systemstore()?).await?;
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put(collection.clone());
@@ -534,7 +534,7 @@ impl<S: Store> crate::database::DB<S> {
                 .push(Collection::load_index_actions(schema.clone(), &txn.systemstore()?).await?);
         }
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 for collection in &collections {
@@ -555,22 +555,25 @@ impl<S: Store> crate::database::DB<S> {
 #[cfg(test)]
 mod tests {
 
-    #[tokio::test]
-    async fn schema_head_is_not_published_when_collection_transaction_is_discarded() {
-        let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let schema = query::parse_sdl("type HeadPublicationProbe { value: String }")
-            .unwrap()
-            .remove(0);
+    #[test]
+    fn schema_head_is_not_published_when_collection_transaction_is_discarded() {
+        workers::block_on(async {
+            let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let schema = query::parse_sdl("type HeadPublicationProbe { value: String }")
+                .unwrap()
+                .remove(0);
 
-        let mut txn = db.new_txn(false).await.unwrap();
-        db.create_collection_with_txn(&mut txn, schema.clone())
-            .await
-            .unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
-        txn.discard().unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
+            let mut txn = db.new_txn(false).await.unwrap();
+            db.create_collection_with_txn(&mut txn, schema.clone())
+                .await
+                .unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
+            txn.discard().unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
 
-        db.create_collection(schema).await.unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_some());
+            db.create_collection(schema).await.unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_some());
+        })
+        .unwrap()
     }
 }

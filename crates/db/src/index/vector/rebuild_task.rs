@@ -20,7 +20,7 @@ const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl<S: Store + 'static> DB<S> {
     /// Starts the vector index rebuild job on the database's pool: a sweep
-    /// now, then one every [`SWEEP_INTERVAL`] on its worker's deadline queue,
+    /// now, then one every `SWEEP_INTERVAL` on its worker's deadline queue,
     /// until it is aborted or its worker stops.
     ///
     /// HNSW maintenance is lazy by design: updates keep the graph reachable

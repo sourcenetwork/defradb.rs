@@ -73,7 +73,8 @@ pub(crate) async fn set_embedding_with(
     let mut generated = Vec::with_capacity(fields.len());
     for (field, vector) in fields.into_iter().zip(vectors) {
         let vector = vector.map_err(crate::remote_inputs::embedding_error)?;
-        doc.set(&field, NormalValue::Float64Array(vector.to_vec()));
+        doc.set(&field, NormalValue::Float64Array(vector.to_vec()))
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         generated.push(field);
     }
     Ok(generated)
@@ -220,7 +221,8 @@ pub(crate) fn set_embedding_from_inputs(
         let vector: Vec<f64> = serde_json::from_slice(&response).map_err(|error| {
             query::error::QueryError::execution(format!("invalid prepared embedding: {error}"))
         })?;
-        doc.set(&embedding.field_name, NormalValue::Float64Array(vector));
+        doc.set(&embedding.field_name, NormalValue::Float64Array(vector))
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         generated.push(embedding.field_name.clone());
     }
     match first_miss {
@@ -277,6 +279,7 @@ pub(crate) async fn resolve_prepared_embedding_request(request: &[u8]) -> Result
         &request.model,
         &request.api_key,
         &request.text,
+        EMBEDDING_TIMEOUT,
     )
     .await
     .map_err(|error| error.to_string())?;
@@ -334,6 +337,7 @@ pub async fn embed_text_with_provider(
         &input.model,
         &input.api_key,
         &input.text,
+        embedding_config.timeout.unwrap_or(EMBEDDING_TIMEOUT),
     )
     .await
     .map_err(Error::from)
@@ -443,8 +447,8 @@ pub(crate) fn normalized_embedding_url(url: &str) -> &str {
     url.trim().trim_end_matches('/')
 }
 
-/// How long one embedding request may take, on every target.
-const EMBEDDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long one embedding request may take unless the config sets another.
+pub(crate) const EMBEDDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Why an embedding request failed, and whether sending it again may
 /// succeed: a timeout, a transport error, 429 or 5xx.
@@ -486,8 +490,9 @@ async fn call_embedding(
     model: &str,
     api_key: &str,
     text: &str,
+    timeout: std::time::Duration,
 ) -> Result<Vec<f64>, EmbeddingCallError> {
-    call_embeddings(provider, url, model, api_key, &[text])
+    call_embeddings(provider, url, model, api_key, &[text], timeout)
         .await?
         .pop()
         .unwrap_or_else(|| {
@@ -509,6 +514,7 @@ pub(crate) async fn call_embeddings(
     model: &str,
     api_key: &str,
     texts: &[&str],
+    timeout: std::time::Duration,
 ) -> Result<Vec<Result<Vec<f64>, EmbeddingCallError>>, EmbeddingCallError> {
     let endpoint = format!("{}/embeddings", normalized_embedding_url(url));
     match provider {
@@ -519,7 +525,7 @@ pub(crate) async fn call_embeddings(
             };
             let bearer = (!api_key.is_empty()).then_some(api_key);
             let body = serde_json::json!({ "model": model, "input": input });
-            let result = post_embedding_request(&endpoint, &body, bearer).await?;
+            let result = post_embedding_request(&endpoint, &body, bearer, timeout).await?;
             Ok(openai_vectors(&result, texts.len()))
         }
         "ollama" => {
@@ -529,7 +535,7 @@ pub(crate) async fn call_embeddings(
                     futures::future::join_all(
                         chunk
                             .iter()
-                            .map(|text| ollama_embedding(&endpoint, model, text)),
+                            .map(|text| ollama_embedding(&endpoint, model, text, timeout)),
                     )
                     .await,
                 );
@@ -547,21 +553,23 @@ async fn ollama_embedding(
     endpoint: &str,
     model: &str,
     text: &str,
+    timeout: std::time::Duration,
 ) -> Result<Vec<f64>, EmbeddingCallError> {
     let body = serde_json::json!({ "model": model, "prompt": text });
-    let result = post_embedding_request(endpoint, &body, None).await?;
+    let result = post_embedding_request(endpoint, &body, None, timeout).await?;
     let mut vector = vector_at(&result, "/embedding")?;
     normalize_embedding(&mut vector)
         .map_err(|error| EmbeddingCallError::final_error(error.to_string()))?;
     Ok(vector)
 }
 
-/// One embedding request, bounded by [`EMBEDDING_TIMEOUT`]: the JSON answer,
+/// One embedding request, bounded by `timeout`: the JSON answer,
 /// or why there is none.
 async fn post_embedding_request(
     endpoint: &str,
     body: &serde_json::Value,
     bearer: Option<&str>,
+    timeout: std::time::Duration,
 ) -> Result<serde_json::Value, EmbeddingCallError> {
     let mut request = embedding_client().post(endpoint);
     if let Some(api_key) = bearer {
@@ -583,10 +591,10 @@ async fn post_embedding_request(
         }
         resp.json::<serde_json::Value>().await.map_err(transport)
     };
-    n0_future::time::timeout(EMBEDDING_TIMEOUT, exchange)
+    n0_future::time::timeout(timeout, exchange)
         .await
         .map_err(|_| EmbeddingCallError {
-            message: format!("embedding provider gave no answer within {EMBEDDING_TIMEOUT:?}"),
+            message: format!("embedding provider gave no answer within {timeout:?}"),
             retryable: true,
         })?
 }
@@ -674,38 +682,37 @@ pub fn parse_embedding_vector(embedding: &[serde_json::Value]) -> Result<Vec<f64
 }
 
 #[cfg(test)]
+#[path = "../../tests/common/http.rs"]
+mod test_http;
+
+#[cfg(test)]
 mod prepared_input_tests {
     use super::*;
-    use axum::{routing::post, Json, Router};
-    use serde_json::{json, Value};
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[tokio::test]
-    async fn retries_reuse_exact_embedding_response_and_changed_source_fetches_again() {
-        let provider_calls = std::sync::Arc::new(AtomicUsize::new(0));
-        let call_count = std::sync::Arc::clone(&provider_calls);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        // Served in this task beside the test, which ends first.
-        let server = async move {
-            axum::serve(
-                listener,
-                Router::new().route(
-                    "/embeddings",
-                    post(move |Json(_request): Json<Value>| {
-                        let calls = std::sync::Arc::clone(&call_count);
-                        async move {
-                            calls.fetch_add(1, Ordering::SeqCst);
-                            Json(json!({"data": [{"embedding": [1.0, 2.0]}]}))
-                        }
-                    }),
-                ),
-            )
-            .await
-            .unwrap();
-        };
+    use super::test_http::HttpServer;
 
-        let test = async {
+    /// The request goes out on the network runtime, as it does from a node.
+    async fn on_edge(request: &[u8]) -> Vec<u8> {
+        let request = request.to_vec();
+        edge::testing::edge()
+            .spawn(async move { resolve_prepared_embedding_request(&request).await })
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn retries_reuse_exact_embedding_response_and_changed_source_fetches_again() {
+        workers::block_on(async {
+            let provider_calls = std::sync::Arc::new(AtomicUsize::new(0));
+            let call_count = std::sync::Arc::clone(&provider_calls);
+            let server = HttpServer::start(&["/embeddings"], move |_| {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                json!({"data": [{"embedding": [1.0, 2.0]}]})
+            });
+
             let description = VectorEmbeddingDescription {
                 field_name: "vector".to_string(),
                 fields: vec!["text".to_string()],
@@ -715,36 +722,29 @@ mod prepared_input_tests {
                 url: String::new(),
             };
             let config = EmbeddingClientConfig::new()
-                .with_url(format!("http://{address}"))
+                .with_url(server.url())
                 .with_model("test-model");
             let memo = query::prepared::PreparedInputMemo::default();
-            let mut doc = Document::new();
-            doc.set("text", "source A");
+            let mut doc = Document::new(crate::common::schema::open_collection(&["text"]));
+            doc.set("text", "source A").unwrap();
             let first = prepared_embedding_request(&description, &doc, &config).unwrap();
 
             for _ in 0..2 {
                 if memo.get(&first).is_none() {
-                    let bytes = resolve_prepared_embedding_request(first.exact_request())
-                        .await
-                        .unwrap();
+                    let bytes = on_edge(first.exact_request()).await;
                     memo.insert(first.clone(), bytes);
                 }
             }
             assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
 
-            doc.set("text", "source B");
+            doc.set("text", "source B").unwrap();
             let changed = prepared_embedding_request(&description, &doc, &config).unwrap();
             assert!(memo.get(&changed).is_none());
-            let bytes = resolve_prepared_embedding_request(changed.exact_request())
-                .await
-                .unwrap();
+            let bytes = on_edge(changed.exact_request()).await;
             memo.insert(changed, bytes);
             assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
-        };
-        tokio::select! {
-            () = server => unreachable!("the embedding server stopped"),
-            () = test => {}
-        }
+        })
+        .unwrap()
     }
 }
 

@@ -26,7 +26,9 @@ impl PeerStateTracker {
     pub fn peer_connected(&self, peer_id: &str) {
         let info = self.peer_entry(peer_id);
         info.connected.store(true, Ordering::Relaxed);
-        info.last_seen.store(self.now(), Ordering::Relaxed);
+        info.connect_count.fetch_add(1, Ordering::Relaxed);
+        let now = self.touch(&info);
+        info.last_connected_at_ms.store(now, Ordering::Relaxed);
         self.enforce_global_limits();
     }
 
@@ -34,7 +36,9 @@ impl PeerStateTracker {
     pub fn peer_disconnected(&self, peer_id: &str) {
         if let Some(info) = self.peers.get(peer_id) {
             info.connected.store(false, Ordering::Relaxed);
-            info.last_seen.store(self.now(), Ordering::Relaxed);
+            info.disconnect_count.fetch_add(1, Ordering::Relaxed);
+            let now = self.touch(&info);
+            info.last_disconnected_at_ms.store(now, Ordering::Relaxed);
         }
     }
 

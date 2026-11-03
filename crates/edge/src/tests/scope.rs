@@ -87,3 +87,18 @@ fn a_service_stops_when_its_handle_drops_or_its_scope_closes() {
     assert!(drained.is_complete());
     assert!(closed.load(Ordering::SeqCst));
 }
+
+#[test]
+fn a_stopped_service_has_let_go_of_what_it_held() {
+    let runtime = runtime();
+    let edge = runtime.edge().clone();
+
+    let (flag, released) = DropFlag::new();
+    let service = edge.spawn_service(async move {
+        let _flag = flag;
+        pending::<()>().await
+    });
+    assert!(service.is_running());
+    edge.block_on(service.stopped()).unwrap();
+    assert!(released.load(Ordering::SeqCst));
+}

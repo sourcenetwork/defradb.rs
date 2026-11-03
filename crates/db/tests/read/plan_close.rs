@@ -116,7 +116,7 @@ impl DocFetcher for FailingFetcher {
             .await
     }
 
-    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<document::CommitRow>> {
         self.inner.get_commits(options).await
     }
 
@@ -139,8 +139,9 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
 
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {
-            let mut doc = Document::new();
-            doc.set("name", document::NormalValue::String(format!("User{i}")));
+            let mut doc = Document::new(users_schema());
+            doc.set("name", document::NormalValue::String(format!("User{i}")))
+                .unwrap();
             doc
         })
         .collect();
@@ -152,64 +153,70 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
 }
 
 /// A query that fails partway through its scan must still close the stream.
-#[tokio::test]
-async fn stream_is_closed_when_the_query_errors_mid_plan() {
-    let db = seeded_db().await;
-    let closed = Arc::new(AtomicBool::new(false));
+#[test]
+fn stream_is_closed_when_the_query_errors_mid_plan() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        let closed = Arc::new(AtomicBool::new(false));
 
-    let runner = query::QueryRunner::with_provider(
-        FailingFetcher {
-            inner: LensedAutoCommitFetcher::new(db.clone()),
-            closed: closed.clone(),
-        },
-        db::DbCollectionProvider::new_arc(db.clone()),
-    );
+        let runner = query::QueryRunner::with_provider(
+            FailingFetcher {
+                inner: LensedAutoCommitFetcher::new(db.clone()),
+                closed: closed.clone(),
+            },
+            db::DbCollectionProvider::new_arc(db.clone()),
+        );
 
-    let response = runner
-        .execute(QueryRequest::new("query { Users { name } }".to_string()))
-        .await;
+        let response = runner
+            .execute(QueryRequest::new("query { Users { name } }".to_string()))
+            .await;
 
-    assert!(
-        !response.errors.is_empty(),
-        "the injected failure should have surfaced as a query error"
-    );
-    assert!(
-        closed.load(Ordering::SeqCst),
-        "the plan errored without closing its stream, so anything the stream \
+        assert!(
+            !response.errors.is_empty(),
+            "the injected failure should have surfaced as a query error"
+        );
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "the plan errored without closing its stream, so anything the stream \
          deferred was dropped"
-    );
+        );
+    })
+    .unwrap()
 }
 
 /// A cursor query routes through the planner (`nested.rs`), not the simple
 /// path — `select.is_cursor` is one of `needs_planner`'s conditions (see
 /// `select.rs`). `first` is set well above `FAIL_AFTER` so the CursorNode
 /// pulls past the injected failure instead of being satisfied first.
-#[tokio::test]
-async fn cursor_stream_is_closed_when_the_query_errors_mid_plan() {
-    let db = seeded_db().await;
-    let closed = Arc::new(AtomicBool::new(false));
+#[test]
+fn cursor_stream_is_closed_when_the_query_errors_mid_plan() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        let closed = Arc::new(AtomicBool::new(false));
 
-    let runner = query::QueryRunner::with_provider(
-        FailingFetcher {
-            inner: LensedAutoCommitFetcher::new(db.clone()),
-            closed: closed.clone(),
-        },
-        db::DbCollectionProvider::new_arc(db.clone()),
-    );
+        let runner = query::QueryRunner::with_provider(
+            FailingFetcher {
+                inner: LensedAutoCommitFetcher::new(db.clone()),
+                closed: closed.clone(),
+            },
+            db::DbCollectionProvider::new_arc(db.clone()),
+        );
 
-    let response = runner
-        .execute(QueryRequest::new(
-            "query { _cursor { Users(first: 10) { name } } }".to_string(),
-        ))
-        .await;
+        let response = runner
+            .execute(QueryRequest::new(
+                "query { _cursor { Users(first: 10) { name } } }".to_string(),
+            ))
+            .await;
 
-    assert!(
-        !response.errors.is_empty(),
-        "the injected failure should have surfaced as a query error"
-    );
-    assert!(
-        closed.load(Ordering::SeqCst),
-        "the plan errored without closing its stream, so anything the stream \
+        assert!(
+            !response.errors.is_empty(),
+            "the injected failure should have surfaced as a query error"
+        );
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "the plan errored without closing its stream, so anything the stream \
          deferred was dropped"
-    );
+        );
+    })
+    .unwrap()
 }

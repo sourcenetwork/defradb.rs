@@ -83,15 +83,17 @@ fn reply_slot<T: 'static>(sender: oneshot::Sender<T>) -> ReplySlot<T> {
     Arc::new(slot)
 }
 
-fn register<T: 'static>(
-    table: &ReplyTable<T>,
-    key: PendingResponseKey,
-    sender: oneshot::Sender<T>,
-) {
+fn register<T>(table: &ReplyTable<T>, key: PendingResponseKey, sender: oneshot::Sender<T>)
+where
+    T: Send + 'static,
+{
     table.insert(key, reply_slot(sender));
 }
 
-fn take<T: 'static>(table: &ReplyTable<T>, key: &PendingResponseKey) -> Option<oneshot::Sender<T>> {
+fn take<T>(table: &ReplyTable<T>, key: &PendingResponseKey) -> Option<oneshot::Sender<T>>
+where
+    T: Send + 'static,
+{
     table.remove(key).and_then(|slot| slot.pop())
 }
 

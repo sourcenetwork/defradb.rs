@@ -16,7 +16,7 @@ use storage::RegolithStore;
 #[derive(Default)]
 struct WriteGate {
     armed: AtomicBool,
-    entered: tokio::sync::Notify,
+    entered: regolith::sync::Notify,
     block_keys: Atom<Vec<Vec<u8>>>,
 }
 
@@ -29,6 +29,10 @@ impl Sealed for PauseAfterSetStore {}
 
 #[async_trait]
 impl Store for PauseAfterSetStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> StorageResult<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -173,140 +177,156 @@ impl Txn for PauseAfterSetTxn {
     }
 }
 
-#[tokio::test]
-async fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
-    let inner = RegolithStore::in_memory().unwrap();
-    let gate = Arc::new(WriteGate::default());
-    let db = Arc::new(
-        DB::new(PauseAfterSetStore {
-            inner,
-            gate: Arc::clone(&gate),
-        })
-        .unwrap(),
-    );
-    for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-        db.create_collection(schema).await.unwrap();
-    }
-    let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
-    let runner = Arc::new(query::QueryRunner::with_arc_registry_and_provider(
-        LensedAutoCommitFetcher::new(Arc::clone(&db)),
-        DbCollectionProvider::new_arc(Arc::clone(&db)),
-        Arc::clone(&registry),
-    ));
-
-    let handle = runner.begin_txn(false).await.unwrap();
-    let first = runner
-        .execute_in_txn(
-            QueryRequest::new(r#"mutation { add_Users(input: {name: "kept"}) { _docID } }"#),
-            &handle,
-        )
-        .await;
-    assert!(!first.has_errors(), "{:?}", first.errors);
-
-    gate.armed.store(true, Ordering::SeqCst);
-    let runner_for_task = Arc::clone(&runner);
-    let handle_for_task = handle.clone();
-    let mutation = tokio::spawn(async move {
-        runner_for_task
-            .execute_in_txn(
-                QueryRequest::new(
-                    r#"mutation { add_Users(input: {name: "cancelled"}) { _docID } }"#,
-                ),
-                &handle_for_task,
-            )
-            .await
-    });
-    gate.entered.notified().await;
-    mutation.abort();
-    assert!(mutation.await.unwrap_err().is_cancelled());
-
-    runner.commit_txn(&handle).await.unwrap();
-    let response = runner
-        .execute(QueryRequest::new("{ Users { name } }"))
-        .await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    assert_eq!(
-        response.data.unwrap()["Users"],
-        serde_json::json!([{ "name": "kept" }])
-    );
-}
-
-#[tokio::test]
-async fn timing_out_a_statement_rolls_back_only_that_statement_before_commit() {
-    let bus: Arc<dyn Bus> = Arc::new(ChannelBus::new());
-    let inner = RegolithStore::in_memory().unwrap();
-    let gate = Arc::new(WriteGate::default());
-    let mut db = DB::new(PauseAfterSetStore {
-        inner,
-        gate: Arc::clone(&gate),
-    })
-    .unwrap();
-    db.set_event_bus(bus.clone());
-    let db = Arc::new(db);
-    for schema in query::parse_sdl("type Users { name: String }").unwrap() {
-        db.create_collection(schema).await.unwrap();
-    }
-    let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
-    let runner = Arc::new(
-        query::QueryRunner::with_arc_registry_and_provider(
+#[test]
+fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
+    workers::block_on(async {
+        let inner = RegolithStore::in_memory().unwrap();
+        let gate = Arc::new(WriteGate::default());
+        let db = Arc::new(
+            DB::new(PauseAfterSetStore {
+                inner,
+                gate: Arc::clone(&gate),
+            })
+            .unwrap(),
+        );
+        for schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            db.create_collection(schema).await.unwrap();
+        }
+        let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
+        let runner = Arc::new(query::QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(Arc::clone(&db)),
             DbCollectionProvider::new_arc(Arc::clone(&db)),
             Arc::clone(&registry),
-        )
-        .with_query_timeout(1),
-    );
+        ));
 
-    let handle = runner.begin_txn(false).await.unwrap();
-    let mut events = bus.subscribe(&[EventName::Update]);
-    let prior = runner
-        .execute_in_txn(
-            QueryRequest::new(r#"mutation { add_Users(input: {name: "kept"}) { _docID } }"#),
-            &handle,
-        )
-        .await;
-    assert!(!prior.has_errors(), "{:?}", prior.errors);
-
-    gate.armed.store(true, Ordering::SeqCst);
-    let runner_for_task = Arc::clone(&runner);
-    let handle_for_task = handle.clone();
-    let mutation = tokio::spawn(async move {
-        runner_for_task
+        let handle = runner.begin_txn(false).await.unwrap();
+        let first = runner
             .execute_in_txn(
-                QueryRequest::new(
-                    r#"mutation { add_Users(input: {name: "timed out"}) { _docID } }"#,
-                ),
-                &handle_for_task,
+                QueryRequest::new(r#"mutation { add_Users(input: {name: "kept"}) { _docID } }"#),
+                &handle,
             )
-            .await
-    });
-    gate.entered.notified().await;
-    let timed_out = mutation.await.unwrap();
-    assert!(timed_out.has_errors(), "expected query timeout");
-    assert!(timed_out.errors[0].message.contains("timed out"));
+            .await;
+        assert!(!first.has_errors(), "{:?}", first.errors);
 
-    runner.commit_txn(&handle).await.unwrap();
-    let response = runner
-        .execute(QueryRequest::new("{ Users { name } }"))
-        .await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    assert_eq!(
-        response.data.unwrap()["Users"],
-        serde_json::json!([{ "name": "kept" }])
-    );
-    tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
-        .await
-        .expect("prior statement event remains queued")
-        .expect("event bus stays open");
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), events.recv())
-            .await
-            .is_err(),
-        "timed-out statement must not publish a buffered document event"
-    );
+        gate.armed.store(true, Ordering::SeqCst);
+        let runner_for_task = Arc::clone(&runner);
+        let handle_for_task = handle.clone();
+        let (mutation, abort) = futures::future::abortable(async move {
+            runner_for_task
+                .execute_in_txn(
+                    QueryRequest::new(
+                        r#"mutation { add_Users(input: {name: "cancelled"}) { _docID } }"#,
+                    ),
+                    &handle_for_task,
+                )
+                .await
+        });
+        let mutation = workers::spawn(Some(crate::common::worker_io::pool()), "test", move || {
+            mutation
+        })
+        .unwrap();
+        gate.entered.notified().await;
+        abort.abort();
+        assert!(mutation.await.unwrap().is_err());
+
+        runner.commit_txn(&handle).await.unwrap();
+        let response = runner
+            .execute(QueryRequest::new("{ Users { name } }"))
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.unwrap()["Users"],
+            serde_json::json!([{ "name": "kept" }])
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes() {
+#[test]
+fn timing_out_a_statement_rolls_back_only_that_statement_before_commit() {
+    workers::block_on(async {
+        let bus: Arc<dyn Bus> = Arc::new(ChannelBus::new());
+        let inner = RegolithStore::in_memory().unwrap();
+        let gate = Arc::new(WriteGate::default());
+        let mut db = DB::new(PauseAfterSetStore {
+            inner,
+            gate: Arc::clone(&gate),
+        })
+        .unwrap();
+        db.set_event_bus(bus.clone());
+        let db = Arc::new(db);
+        for schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            db.create_collection(schema).await.unwrap();
+        }
+        let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
+        let runner = Arc::new(
+            query::QueryRunner::with_arc_registry_and_provider(
+                LensedAutoCommitFetcher::new(Arc::clone(&db)),
+                DbCollectionProvider::new_arc(Arc::clone(&db)),
+                Arc::clone(&registry),
+            )
+            .with_query_timeout(1),
+        );
+
+        let handle = runner.begin_txn(false).await.unwrap();
+        let mut events = bus.subscribe(&[EventName::Update]);
+        let prior = runner
+            .execute_in_txn(
+                QueryRequest::new(r#"mutation { add_Users(input: {name: "kept"}) { _docID } }"#),
+                &handle,
+            )
+            .await;
+        assert!(!prior.has_errors(), "{:?}", prior.errors);
+
+        gate.armed.store(true, Ordering::SeqCst);
+        let runner_for_task = Arc::clone(&runner);
+        let handle_for_task = handle.clone();
+        let mutation = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                runner_for_task
+                    .execute_in_txn(
+                        QueryRequest::new(
+                            r#"mutation { add_Users(input: {name: "timed out"}) { _docID } }"#,
+                        ),
+                        &handle_for_task,
+                    )
+                    .await
+            },
+        )
+        .unwrap();
+        gate.entered.notified().await;
+        let timed_out = mutation.await.unwrap();
+        assert!(timed_out.has_errors(), "expected query timeout");
+        assert!(timed_out.errors[0].message.contains("timed out"));
+
+        runner.commit_txn(&handle).await.unwrap();
+        let response = runner
+            .execute(QueryRequest::new("{ Users { name } }"))
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.unwrap()["Users"],
+            serde_json::json!([{ "name": "kept" }])
+        );
+        workers::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .expect("prior statement event remains queued")
+            .expect("event bus stays open");
+        assert!(
+            workers::timeout(std::time::Duration::from_millis(20), events.recv())
+                .await
+                .is_err(),
+            "timed-out statement must not publish a buffered document event"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes() {
+    workers::block_on(async {
     let bus: Arc<dyn Bus> = Arc::new(ChannelBus::new());
     let inner = RegolithStore::in_memory().unwrap();
     let gate = Arc::new(WriteGate::default());
@@ -395,14 +415,16 @@ async fn failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes
         response.data.unwrap()["Users"],
         serde_json::json!([{ "email": "prior" }])
     );
-    tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+    workers::timeout(std::time::Duration::from_secs(1), events.recv())
         .await
         .expect("prior statement event remains queued")
         .expect("event bus stays open");
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), events.recv())
+        workers::timeout(std::time::Duration::from_millis(20), events.recv())
             .await
             .is_err(),
         "failed statement must not publish a buffered document event"
     );
+})
+    .unwrap()
 }

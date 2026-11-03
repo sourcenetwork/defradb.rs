@@ -1,10 +1,10 @@
-use crate::one_to_many_common::{add_author, add_book, add_schema};
+use crate::one_to_many_common::{add_author, add_book, add_collection};
 use integration_test::{DefraClient, TestCluster};
 
 /// Mirrors the Go one_to_many fixture: authors first, then books in the order
 /// listed by the Go tests, so child scan order == insertion order.
 fn setup(node: &DefraClient) {
-    add_schema(node);
+    add_collection(node);
 
     let john = add_author(node, "John Grisham", 65, true);
     let cornelia = add_author(node, "Cornelia Funke", 62, false);

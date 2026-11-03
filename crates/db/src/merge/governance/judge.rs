@@ -170,7 +170,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(Vec::new());
         };
         let Some(collection) = self
-            .block_collection(&payload.schema_version_id, None)
+            .block_collection(&payload.collection_version_id, None)
             .await?
         else {
             return Ok(Vec::new());
@@ -268,7 +268,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Err(error);
         };
         let Some(collection) = self
-            .block_collection(&payload.schema_version_id, None)
+            .block_collection(&payload.collection_version_id, None)
             .await?
         else {
             return Err(error);

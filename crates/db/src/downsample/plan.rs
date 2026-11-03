@@ -106,16 +106,16 @@ impl<S: Store> crate::database::DB<S> {
                 source.name, time_field, source.name
             )));
         }
-        require_scalar_kind(&source, &time_field, &[ScalarKind::DateTime])?;
+        require_scalar_kind(&source, &time_field, &[ScalarKind::NillableDateTime])?;
 
         require_scalar_kind(
             target,
             SERIES_FIELD,
-            &[ScalarKind::String, ScalarKind::DocID],
+            &[ScalarKind::NillableString, ScalarKind::DocID],
         )?;
-        require_scalar_kind(target, "source_height", &[ScalarKind::Int])?;
-        require_scalar_kind(target, "window_start", &[ScalarKind::DateTime])?;
-        require_scalar_kind(target, "window_end", &[ScalarKind::DateTime])?;
+        require_scalar_kind(target, "source_height", &[ScalarKind::NillableInt])?;
+        require_scalar_kind(target, "window_start", &[ScalarKind::NillableDateTime])?;
+        require_scalar_kind(target, "window_end", &[ScalarKind::NillableDateTime])?;
 
         let mut aggregate_fields = Vec::new();
         for field in supported_downsample_aggregate_fields() {
@@ -126,13 +126,13 @@ impl<S: Store> crate::database::DB<S> {
 
             match field {
                 AggregateField::Count => {
-                    require_scalar_kind(target, field_name, &[ScalarKind::Int])?;
+                    require_scalar_kind(target, field_name, &[ScalarKind::NillableInt])?;
                 }
                 AggregateField::Avg => {
                     require_scalar_kind(
                         target,
                         field_name,
-                        &[ScalarKind::Float64, ScalarKind::Float32],
+                        &[ScalarKind::NillableFloat64, ScalarKind::NillableFloat32],
                     )?;
                 }
                 AggregateField::Sum | AggregateField::Min | AggregateField::Max => {
@@ -213,15 +213,15 @@ impl<S: Store> crate::database::DB<S> {
                     target.name
                 )));
             }
-            require_scalar_kind(&source, "source_height", &[ScalarKind::Int])?;
-            require_scalar_kind(&source, "window_start", &[ScalarKind::DateTime])?;
-            require_scalar_kind(&source, "window_end", &[ScalarKind::DateTime])?;
+            require_scalar_kind(&source, "source_height", &[ScalarKind::NillableInt])?;
+            require_scalar_kind(&source, "window_start", &[ScalarKind::NillableDateTime])?;
+            require_scalar_kind(&source, "window_end", &[ScalarKind::NillableDateTime])?;
 
             if aggregate_fields
                 .iter()
                 .any(|field| matches!(field, AggregateField::Count | AggregateField::Avg))
             {
-                require_scalar_kind(&source, "count", &[ScalarKind::Int])?;
+                require_scalar_kind(&source, "count", &[ScalarKind::NillableInt])?;
             }
             if aggregate_fields
                 .iter()

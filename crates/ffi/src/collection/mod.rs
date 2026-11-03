@@ -5,7 +5,6 @@ mod add;
 mod delete;
 mod describe;
 mod patch;
-pub(crate) mod policy;
 pub(crate) mod select;
 mod set_active;
 mod truncate;

@@ -62,47 +62,51 @@ async fn merge(
 /// A replicated create, a local update of one of its fields, then the create
 /// replayed by a handler that has not seen it: the heads are what the update
 /// left, and no guard key exists.
-#[tokio::test]
-async fn a_replayed_create_after_a_local_update_stays_superseded() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    for mut schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
-        schema.version_id = "v1".to_string();
-        schema.collection_id = "col-users".to_string();
-        db.create_collection(schema).await.unwrap();
-    }
-    let blocks = Arc::new(DefraBlockstore::new(store, false));
-    let genesis = super::merge_handler_tests::build_merge_block(&blocks, "Alice", 30).await;
-    merge(&db, &blocks, &genesis).await;
-    let (created, guards) = heads(&db).await;
-    assert_eq!(created.len(), 3, "the composite and both fields");
-    assert_eq!(guards, 0);
+#[test]
+fn a_replayed_create_after_a_local_update_stays_superseded() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
+            schema.version_id = "v1".to_string();
+            schema.collection_id = "col-users".to_string();
+            db.create_collection(schema).await.unwrap();
+        }
+        let blocks = Arc::new(DefraBlockstore::new(store, false));
+        let genesis = super::merge_handler_tests::build_merge_block(&blocks, "Alice", 30).await;
+        merge(&db, &blocks, &genesis).await;
+        let (created, guards) = heads(&db).await;
+        assert_eq!(created.len(), 3, "the composite and both fields");
+        assert_eq!(guards, 0);
 
-    let mutator = db::AutoCommitMutator::new(db.clone());
-    let doc_id = document::DocID::from_string(&genesis.doc_id).unwrap();
-    let mut doc = mutator
-        .get_for_update("Users", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    doc.set("name", document::NormalValue::String("Bob".to_string()));
-    mutator
-        .update(
-            "Users",
-            doc,
-            rapidhash::RapidHashSet::from_iter(["name".to_string()]),
-        )
-        .await
-        .unwrap();
-    let (updated, guards) = heads(&db).await;
-    assert_eq!(
-        updated.len(),
-        3,
-        "the new composite, the new name, the old age"
-    );
-    assert_ne!(updated, created);
-    assert_eq!(guards, 0);
+        let mutator = db::AutoCommitMutator::new(db.clone());
+        let doc_id = document::DocID::from_string(&genesis.doc_id).unwrap();
+        let mut doc = mutator
+            .get_for_update("Users", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        doc.set("name", document::NormalValue::String("Bob".to_string()))
+            .unwrap();
+        mutator
+            .update(
+                "Users",
+                doc,
+                rapidhash::RapidHashSet::from_iter(["name".to_string()]),
+            )
+            .await
+            .unwrap();
+        let (updated, guards) = heads(&db).await;
+        assert_eq!(
+            updated.len(),
+            3,
+            "the new composite, the new name, the old age"
+        );
+        assert_ne!(updated, created);
+        assert_eq!(guards, 0);
 
-    merge(&db, &blocks, &genesis).await;
-    assert_eq!(heads(&db).await, (updated, 0));
+        merge(&db, &blocks, &genesis).await;
+        assert_eq!(heads(&db).await, (updated, 0));
+    })
+    .unwrap()
 }

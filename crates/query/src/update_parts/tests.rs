@@ -10,10 +10,21 @@ fn tally() -> CollectionVersion {
         "tally-v1",
         "col-tally",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "count", FieldKind::int()).with_crdt_type(CType::PnCounter),
-            FieldDescription::new("3", "label", FieldKind::string()),
-            FieldDescription::new("4", "note", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
+            FieldDescription::new(
+                "3",
+                "label",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("4", "note", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -30,9 +41,17 @@ fn filter(conditions: serde_json::Value) -> Filter {
 #[test]
 fn a_counter_increment_is_not_a_dependency() {
     let collection = tally();
-    assert_eq!(planned(&collection, &set(&["count"]), None), Some(set(&[])));
     assert_eq!(
-        planned(&collection, &set(&["count", "label"]), None),
+        planned(&crdt::Crdts::default(), &collection, &set(&["count"]), None),
+        Some(set(&[]))
+    );
+    assert_eq!(
+        planned(
+            &crdt::Crdts::default(),
+            &collection,
+            &set(&["count", "label"]),
+            None
+        ),
         Some(set(&["label"]))
     );
 }
@@ -44,7 +63,7 @@ fn an_indexed_counter_stays_a_dependency() {
     let collection =
         tally().with_index(IndexDescription::new("by_count").with_field("count", false));
     assert_eq!(
-        planned(&collection, &set(&["count"]), None),
+        planned(&crdt::Crdts::default(), &collection, &set(&["count"]), None),
         Some(set(&["count"]))
     );
 }
@@ -61,7 +80,7 @@ fn a_written_index_brings_its_components() {
         )
         .with_index(IndexDescription::new("by_count").with_field("count", false));
     assert_eq!(
-        planned(&collection, &set(&["label"]), None),
+        planned(&crdt::Crdts::default(), &collection, &set(&["label"]), None),
         Some(set(&["label", "note"]))
     );
 }
@@ -74,6 +93,7 @@ fn a_written_embedding_source_brings_the_embedding() {
         "5",
         "vector",
         FieldKind::float64_array(),
+        schema::CType::LwwRegister,
     ));
     collection
         .vector_embeddings
@@ -86,7 +106,7 @@ fn a_written_embedding_source_brings_the_embedding() {
             url: String::new(),
         });
     assert_eq!(
-        planned(&collection, &set(&["label"]), None),
+        planned(&crdt::Crdts::default(), &collection, &set(&["label"]), None),
         Some(set(&["label", "note", "vector"]))
     );
 }
@@ -101,7 +121,12 @@ fn a_filter_brings_the_fields_it_compares() {
         "_or": [{"note": {"_eq": "a"}}, {"label": {"_eq": "b"}}]
     }));
     assert_eq!(
-        planned(&collection, &set(&["count"]), Some(&selected)),
+        planned(
+            &crdt::Crdts::default(),
+            &collection,
+            &set(&["count"]),
+            Some(&selected)
+        ),
         Some(set(&["note", "label"]))
     );
 }
@@ -115,7 +140,12 @@ fn a_filter_past_the_document_needs_the_whole_read() {
     let unknown = filter(serde_json::json!({"missing": {"_eq": 1}}));
     for selected in [through_relation, through_alias, unknown] {
         assert_eq!(
-            planned(&collection, &set(&["label"]), Some(&selected)),
+            planned(
+                &crdt::Crdts::default(),
+                &collection,
+                &set(&["label"]),
+                Some(&selected)
+            ),
             None
         );
     }
@@ -129,7 +159,7 @@ fn a_migrated_collection_projects() {
     collection.previous_version =
         Some(CollectionSource::new("tally-v0").with_transform("migrate-tally"));
     assert_eq!(
-        planned(&collection, &set(&["label"]), None),
+        planned(&crdt::Crdts::default(), &collection, &set(&["label"]), None),
         Some(set(&["label"]))
     );
 }
@@ -140,9 +170,18 @@ fn a_migrated_collection_projects() {
 fn views_and_structural_patches_need_the_whole_read() {
     let mut view = tally();
     view.query = Some(QuerySource::new(serde_json::json!({})));
-    assert_eq!(planned(&view, &set(&["label"]), None), None);
-    assert_eq!(planned(&tally(), &set(&["missing"]), None), None);
-    assert_eq!(planned(&tally(), &set(&[]), None), None);
+    assert_eq!(
+        planned(&crdt::Crdts::default(), &view, &set(&["label"]), None),
+        None
+    );
+    assert_eq!(
+        planned(&crdt::Crdts::default(), &tally(), &set(&["missing"]), None),
+        None
+    );
+    assert_eq!(
+        planned(&crdt::Crdts::default(), &tally(), &set(&[]), None),
+        None
+    );
 }
 
 /// The write path names its increments and its maintained indexes itself.
@@ -151,12 +190,18 @@ fn written_follows_the_write_paths_increments_and_indexes() {
     let collection = tally();
     let index = IndexDescription::new("by_note").with_field("note", false);
     assert_eq!(
-        written(&collection, [&index], &set(&["count", "note"]), |name| name
-            == "count"),
+        written(
+            &crdt::Crdts::default(),
+            &collection,
+            [&index],
+            &set(&["count", "note"]),
+            |name| name == "count"
+        ),
         set(&["note"])
     );
     assert_eq!(
         written(
+            &crdt::Crdts::default(),
             &collection,
             &[] as &[IndexDescription],
             &set(&["count", "note"]),
@@ -173,11 +218,17 @@ fn a_run_after_a_lost_part_merges_the_fields_it_only_writes() {
     let collection = tally();
     let run = Run::AfterLostPart;
     assert_eq!(
-        run.planned(&collection, &set(&["label", "note", "count"]), None),
+        run.planned(
+            &crdt::Crdts::default(),
+            &collection,
+            &set(&["label", "note", "count"]),
+            None
+        ),
         Some(set(&[]))
     );
     assert_eq!(
         run.written(
+            &crdt::Crdts::default(),
             &collection,
             &[] as &[IndexDescription],
             &set(&["label", "note"]),
@@ -186,7 +237,12 @@ fn a_run_after_a_lost_part_merges_the_fields_it_only_writes() {
         set(&[])
     );
     assert_eq!(
-        Run::First.planned(&collection, &set(&["label", "note"]), None),
+        Run::First.planned(
+            &crdt::Crdts::default(),
+            &collection,
+            &set(&["label", "note"]),
+            None
+        ),
         Some(set(&["label", "note"]))
     );
 }
@@ -203,7 +259,7 @@ fn a_run_after_a_lost_part_still_decides_what_a_rule_reads() {
             .with_field("note", false),
     );
     assert_eq!(
-        run.planned(&indexed, &set(&["label"]), None),
+        run.planned(&crdt::Crdts::default(), &indexed, &set(&["label"]), None),
         Some(set(&["label", "note"]))
     );
 
@@ -212,6 +268,7 @@ fn a_run_after_a_lost_part_still_decides_what_a_rule_reads() {
         "5",
         "vector",
         FieldKind::float64_array(),
+        schema::CType::LwwRegister,
     ));
     embedded.vector_embeddings.push(VectorEmbeddingDescription {
         field_name: "vector".to_string(),
@@ -222,7 +279,7 @@ fn a_run_after_a_lost_part_still_decides_what_a_rule_reads() {
         url: String::new(),
     });
     assert_eq!(
-        run.planned(&embedded, &set(&["label"]), None),
+        run.planned(&crdt::Crdts::default(), &embedded, &set(&["label"]), None),
         Some(set(&["label", "vector"]))
     );
 
@@ -231,20 +288,35 @@ fn a_run_after_a_lost_part_still_decides_what_a_rule_reads() {
         field.immutable = field.name == "label";
     }
     assert_eq!(
-        run.planned(&immutable, &set(&["label", "note"]), None),
+        run.planned(
+            &crdt::Crdts::default(),
+            &immutable,
+            &set(&["label", "note"]),
+            None
+        ),
         Some(set(&["label"]))
     );
 
     let selected = filter(serde_json::json!({"note": {"_eq": "a"}}));
     assert_eq!(
-        run.planned(&tally(), &set(&["note"]), Some(&selected)),
+        run.planned(
+            &crdt::Crdts::default(),
+            &tally(),
+            &set(&["note"]),
+            Some(&selected)
+        ),
         Some(set(&["note"]))
     );
 
     let mut downsampled = tally();
     downsampled.downsample_source = Some(QuerySource::new(serde_json::json!({})));
     assert_eq!(
-        run.planned(&downsampled, &set(&["label", "count"]), None),
+        run.planned(
+            &crdt::Crdts::default(),
+            &downsampled,
+            &set(&["label", "count"]),
+            None
+        ),
         Some(set(&["label"]))
     );
 }
@@ -271,4 +343,26 @@ fn the_run_follows_the_reason_the_previous_attempt_lost() {
     ] {
         assert_eq!(Run::after(Some(&lost(access))), Run::First);
     }
+}
+
+/// A Text field's edits count in its old text, so a run after a lost race
+/// still decides on it, and diffs against the text that won.
+#[test]
+fn a_run_after_a_lost_part_still_decides_a_text_field() {
+    let mut collection = tally();
+    collection.fields.push(FieldDescription::new(
+        "5",
+        "body",
+        FieldKind::string(),
+        CType::Text,
+    ));
+    assert_eq!(
+        Run::AfterLostPart.planned(
+            &crdt::Crdts::default(),
+            &collection,
+            &set(&["body", "note"]),
+            None
+        ),
+        Some(set(&["body"]))
+    );
 }

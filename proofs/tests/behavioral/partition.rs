@@ -277,7 +277,7 @@ async fn convergence_partition_both_directions_merge() {
 /// priority 1; a restart then clears the in-memory `merged_composites` dedup and
 /// re-walks the create composite, whose `city=NYC` (priority 1) ties the stale
 /// datastore entry and wins the lexicographic tie-break. Fixed in
-/// `crates/db/src/merge/merge_handler/lww.rs` `seed_lww_from_existing_doc`: it
+/// `crates/db/src/merge/merge_handler/field_state.rs` `reseed_from_document`: it
 /// now re-seeds the datastore LWW from the authoritative materialized doc + head
 /// priority whenever the headstore is ahead, so the merge resolves against the
 /// true current state. Verified: rust<->rust, go<->go, and go<->rust all converge.
@@ -619,7 +619,7 @@ async fn poll_mixed_dags_full_mesh(
 /// rebuilt one from the other and dropped the node's own increment (45, not 90).
 /// The counter's only copy is now its part of the document value, and local and
 /// replicated increments are both operands on it
-/// (`crates/db/src/merge/merge_handler/counter.rs`), so both land. Verified:
+/// (`crates/db/src/merge/merge_handler/field_ops.rs`), so both land. Verified:
 /// rust<->rust, go<->go, and rust<->go all converge to 90.
 #[tokio::test]
 async fn convergence_concurrent_counter_increments_sum() {

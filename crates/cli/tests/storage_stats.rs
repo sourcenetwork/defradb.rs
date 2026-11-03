@@ -24,11 +24,13 @@ async fn storage_stats_prints_aggregates_without_creating_config_or_keys() {
         .await
         .unwrap();
     let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-    let mut doc = document::Document::new();
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
+    let mut doc = document::Document::new(users);
     doc.set(
         "name",
         document::NormalValue::String("private value".into()),
-    );
+    )
+    .unwrap();
     mutator.create("Users", doc).await.unwrap();
     mutator.take_txn().await.unwrap().commit().await.unwrap();
     drop(mutator);

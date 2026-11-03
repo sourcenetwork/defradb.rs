@@ -22,6 +22,10 @@ impl<S: Store> crate::corekv::private::Sealed for Headstore<S> {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store> Store for Headstore<S> {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.store.allocate(key, count).await
     }
@@ -59,23 +63,26 @@ mod tests {
     use cid::Cid;
     use std::str::FromStr;
 
-    #[tokio::test]
-    async fn test_headstore_basic() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let headstore = Headstore::new(store);
+    #[test]
+    fn test_headstore_basic() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let headstore = Headstore::new(store);
 
-        let cid =
-            Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap();
-        let key = HeadstoreDocKey::new(1, "field1", cid);
+            let cid = Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
+                .unwrap();
+            let key = HeadstoreDocKey::new(1, "field1", cid);
 
-        // Write
-        let mut txn = headstore.new_txn(false).await.unwrap();
-        txn.set(&key.bytes(), b"head_data").await.unwrap();
-        txn.commit().await.unwrap();
+            // Write
+            let mut txn = headstore.new_txn(false).await.unwrap();
+            txn.set(&key.bytes(), b"head_data").await.unwrap();
+            txn.commit().await.unwrap();
 
-        // Read
-        let txn = headstore.new_txn(true).await.unwrap();
-        let value = txn.get(&key.bytes()).await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"head_data")));
+            // Read
+            let txn = headstore.new_txn(true).await.unwrap();
+            let value = txn.get(&key.bytes()).await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"head_data")));
+        })
+        .unwrap()
     }
 }

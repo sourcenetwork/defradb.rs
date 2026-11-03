@@ -442,7 +442,7 @@ pub trait TransactionContext: MaybeSendSync {
     /// Check if the transaction is still active (not yet committed or rolled back).
     ///
     /// Returns `true` if the transaction can still be used for queries.
-    /// Returns `false` if the transaction has been consumed via commit/rollback.
+    /// Returns `false` if the transaction has been consumed via commit/discard.
     ///
     /// # Implementation Note
     ///
@@ -459,94 +459,105 @@ pub trait TransactionContext: MaybeSendSync {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn private_unregistered_doc_denies_overlay_and_shared_reads() {
-        use acp::read_access::{check_doc_read_access, ObjectAccessChecker};
-        let acp = NoopDocumentAcp(false);
-        let projection = AcpRegistrationProjection::detached();
-        let checker = crate::txn::OverlayChecker {
-            acp: &acp,
-            projection: Some(&projection),
-            identity: &Identity::Anonymous,
-        };
-        let absent = checker
-            .object_access("policy", "User", "doc-1")
-            .await
-            .unwrap();
-        assert!(!absent.has_access);
-        assert!(!absent.explicit);
-        assert!(
-            !check_doc_read_access(&checker, "policy", "User", "collection", false, "doc-1",)
+    #[test]
+    fn private_unregistered_doc_denies_overlay_and_shared_reads() {
+        workers::block_on(async {
+            use acp::read_access::{check_doc_read_access, ObjectAccessChecker};
+            let acp = NoopDocumentAcp(false);
+            let projection = AcpRegistrationProjection::detached();
+            let checker = crate::txn::OverlayChecker {
+                acp: &acp,
+                projection: Some(&projection),
+                identity: &Identity::Anonymous,
+            };
+            let absent = checker
+                .object_access("policy", "User", "doc-1")
                 .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn unregistered_branchable_doc_falls_back_to_collection_policy() {
-        let projection = AcpRegistrationProjection::detached();
-        let memo = crate::prepared::PreparedInputMemo::default();
-        let doc_request = crate::prepared::PreparedInputRequest::new(
-            crate::prepared::PreparedInputKind::AcpDecision,
-            serde_json::to_vec(&(
-                "anonymous",
-                "registered",
+                .unwrap();
+            assert!(!absent.has_access);
+            assert!(!absent.explicit);
+            assert!(!check_doc_read_access(
+                &checker,
                 "policy",
                 "User",
+                "collection",
+                false,
                 "doc-1",
-                None::<String>,
-            ))
-            .unwrap(),
-        );
-        assert_eq!(&*memo.insert(doc_request, b"false".as_slice()), b"false");
-        let request_bytes = serde_json::to_vec(&(
-            "anonymous",
-            "registered",
-            "policy",
-            "User",
-            "collection-1",
-            None::<String>,
-        ))
-        .unwrap();
-        let request = crate::prepared::PreparedInputRequest::new(
-            crate::prepared::PreparedInputKind::AcpDecision,
-            request_bytes,
-        );
-        memo.insert(request, std::sync::Arc::<[u8]>::from(b"true".as_slice()));
-        let permission_request = crate::prepared::PreparedInputRequest::new(
-            crate::prepared::PreparedInputKind::AcpDecision,
-            serde_json::to_vec(&(
+            )
+            .await
+            .unwrap());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn unregistered_branchable_doc_falls_back_to_collection_policy() {
+        workers::block_on(async {
+            let projection = AcpRegistrationProjection::detached();
+            let memo = crate::prepared::PreparedInputMemo::default();
+            let doc_request = crate::prepared::PreparedInputRequest::new(
+                crate::prepared::PreparedInputKind::AcpDecision,
+                serde_json::to_vec(&(
+                    "anonymous",
+                    "registered",
+                    "policy",
+                    "User",
+                    "doc-1",
+                    None::<String>,
+                ))
+                .unwrap(),
+            );
+            assert_eq!(&*memo.insert(doc_request, b"false".as_slice()), b"false");
+            let request_bytes = serde_json::to_vec(&(
                 "anonymous",
-                "read",
+                "registered",
                 "policy",
                 "User",
                 "collection-1",
                 None::<String>,
             ))
-            .unwrap(),
-        );
-        memo.insert(
-            permission_request,
-            std::sync::Arc::<[u8]>::from(b"false".as_slice()),
-        );
+            .unwrap();
+            let request = crate::prepared::PreparedInputRequest::new(
+                crate::prepared::PreparedInputKind::AcpDecision,
+                request_bytes,
+            );
+            memo.insert(request, std::sync::Arc::<[u8]>::from(b"true".as_slice()));
+            let permission_request = crate::prepared::PreparedInputRequest::new(
+                crate::prepared::PreparedInputKind::AcpDecision,
+                serde_json::to_vec(&(
+                    "anonymous",
+                    "read",
+                    "policy",
+                    "User",
+                    "collection-1",
+                    None::<String>,
+                ))
+                .unwrap(),
+            );
+            memo.insert(
+                permission_request,
+                std::sync::Arc::<[u8]>::from(b"false".as_slice()),
+            );
 
-        let allowed = check_doc_read_access_with_prepared_inputs(
-            &NoopDocumentAcp(true),
-            Some(&projection),
-            &Identity::Anonymous,
-            "policy",
-            "User",
-            "collection-1",
-            true,
-            "doc-1",
-            Some(&memo),
-        )
-        .await
-        .unwrap();
-        assert!(
-            !allowed,
-            "a public unregistered object still falls back to its branchable collection"
-        );
+            let allowed = check_doc_read_access_with_prepared_inputs(
+                &NoopDocumentAcp(true),
+                Some(&projection),
+                &Identity::Anonymous,
+                "policy",
+                "User",
+                "collection-1",
+                true,
+                "doc-1",
+                Some(&memo),
+            )
+            .await
+            .unwrap();
+            assert!(
+                !allowed,
+                "a public unregistered object still falls back to its branchable collection"
+            );
+        })
+        .unwrap()
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]

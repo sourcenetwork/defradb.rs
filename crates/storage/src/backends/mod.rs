@@ -11,7 +11,7 @@ pub mod regolith;
 // Public rather than `cfg(test)`: the suite is the backend contract, and an
 // integration test links the library without its test cfg, through the
 // `test-suite` feature. Gated off wasm because it drives concurrent
-// transactions from tokio tasks.
+// transactions from worker tasks.
 #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "test-suite")))]
 pub mod test_suite;
 

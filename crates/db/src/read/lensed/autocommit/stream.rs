@@ -73,6 +73,10 @@ impl<S: Store + 'static> DocStream for LensedAutoCommitDocStream<S> {
         Ok(Some((processed.document, is_deleted)))
     }
 
+    fn index_fetches(&self) -> u64 {
+        self.source.index_fetches()
+    }
+
     /// Close the inner stream and release its read snapshot.
     async fn close(&mut self) -> query::error::Result<()> {
         self.source.close().await
@@ -182,5 +186,49 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             has_migrations,
             preloaded_history,
         )))
+    }
+}
+
+impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
+    pub(super) async fn stream_index_scan_impl(
+        &self,
+        collection_name: &str,
+        params: &query::planner::index_selection::IndexScanParams,
+        show_deleted: bool,
+    ) -> query::error::Result<Option<Box<dyn DocStream>>> {
+        use crate::read::index_stream::IndexDocStream;
+        if !IndexDocStream::supports(params) {
+            return Ok(None);
+        }
+        let collection = self
+            .db
+            .get_collection(collection_name)
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
+        let (_, has_migrations, preloaded_history) =
+            self.load_migration_context(&collection).await?;
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let inner = IndexDocStream::open(
+            collection.clone(),
+            txn.datastore()
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            txn.systemstore()
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            params,
+            show_deleted,
+        )
+        .await?;
+        Ok(Some(Box::new(LensedAutoCommitDocStream::new(
+            Box::new(inner),
+            Some(txn),
+            self.clone_for_stream(),
+            collection,
+            has_migrations,
+            preloaded_history,
+        ))))
     }
 }

@@ -123,25 +123,27 @@ pub struct IndexManager {
 }
 
 impl IndexManager {
-    fn validate_unique_value_sets(
+    /// The first of a unique index's `value_sets` that repeats an earlier
+    /// one, which the document cannot index twice. Nil values never repeat.
+    fn duplicate_value_set<'v>(
         index: &IndexType,
-        value_sets: &[Vec<document::NormalValue>],
-    ) -> Result<()> {
+        value_sets: &'v [Vec<document::NormalValue>],
+    ) -> Option<&'v [document::NormalValue]> {
         if !matches!(index, IndexType::Unique(_)) {
-            return Ok(());
+            return None;
         }
+        value_sets
+            .iter()
+            .enumerate()
+            .find(|(position, values)| {
+                !values.iter().any(document::NormalValue::is_nil)
+                    && value_sets[..*position].contains(values)
+            })
+            .map(|(_, values)| values.as_slice())
+    }
 
-        for (position, values) in value_sets.iter().enumerate() {
-            if values.iter().any(document::NormalValue::is_nil) {
-                continue;
-            }
-            if value_sets[..position].contains(values) {
-                return Err(Error::Storage(
-                    storage::corekv::Error::UniqueConstraintViolation,
-                ));
-            }
-        }
-        Ok(())
+    fn unique_violation() -> Error {
+        Error::Storage(storage::corekv::Error::UniqueConstraintViolation)
     }
 
     /// Create a new empty IndexManager.
@@ -151,6 +153,20 @@ impl IndexManager {
             collection_id: String::new(),
             indexes: RapidHashMap::new(),
         }
+    }
+
+    /// Lets this manager's DiskANN indexes share their quantizers through
+    /// `caches`, so a write does not rebuild one per transaction.
+    pub fn with_vector_caches(
+        mut self,
+        caches: &crate::index::vector::engine::diskann::CodeCaches,
+    ) -> Self {
+        for index in self.indexes.values_mut() {
+            if let IndexType::Vector(vector) = index {
+                vector.share_quantizer(caches);
+            }
+        }
+        self
     }
 
     /// Load indexes from a collection schema.
@@ -339,6 +355,13 @@ impl IndexManager {
             ));
         }
 
+        if let IndexKind::Vector(vector) = &kind {
+            let errs = vector.creation_errors(&name);
+            if !errs.is_empty() {
+                return Err(Error::Other(errs.join("; ")));
+            }
+        }
+
         for field in &fields {
             if let Some(schema_field) = schema_fields.iter().find(|f| f.name == field.name) {
                 if schema_field.crdt_type.is_counter() {
@@ -408,15 +431,7 @@ impl IndexManager {
     /// to index creation within a collection, either through transaction isolation or
     /// external synchronization.
     async fn next_index_id(&self, datastore: &NamespaceView) -> Result<u32> {
-        let seq_key = IndexIDSequenceKey::new(format!("{}", self.collection_short_id));
-        let key_bytes = seq_key.bytes();
-
-        let counter = match datastore.get(&key_bytes).await.map_err(Error::Storage)? {
-            Some(bytes) if bytes.len() == 4 => {
-                u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-            }
-            _ => 0,
-        };
+        let counter = index_id_floor(datastore, self.collection_short_id).await?;
         // The schema is the authority on which ids exist: a counter advanced
         // through another store, or lost, must never hand out an id an index
         // already owns.
@@ -429,7 +444,10 @@ impl IndexManager {
 
         let next_id = counter.max(highest) + 1;
         datastore
-            .set(&key_bytes, &next_id.to_be_bytes())
+            .set(
+                &IndexIDSequenceKey::new(self.collection_short_id.to_string()).bytes(),
+                &next_id.to_be_bytes(),
+            )
             .await
             .map_err(Error::Storage)?;
 
@@ -634,13 +652,20 @@ impl IndexManager {
 
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
-            Self::validate_unique_value_sets(index, &value_sets)?;
+            if let Some(values) = Self::duplicate_value_set(index, &value_sets) {
+                return Err(Self::naming_the_writer(
+                    Self::unique_violation(),
+                    doc,
+                    index,
+                    values,
+                ));
+            }
             for values in &value_sets {
                 // Local creates stay strict but self-heal stale unique entries
                 // pointing at a deleted or missing document (#1111/#700).
                 self.save_healing_stale_unique(&mut mutable_datastore, index, doc_short_id, values)
                     .await
-                    .map_err(Error::Storage)?;
+                    .map_err(|e| Self::naming_the_writer(Error::Storage(e), doc, index, values))?;
             }
         }
 
@@ -669,7 +694,14 @@ impl IndexManager {
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
 
             if old_value_sets != new_value_sets {
-                Self::validate_unique_value_sets(index, &new_value_sets)?;
+                if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {
+                    return Err(Self::naming_the_updater(
+                        Self::unique_violation(),
+                        new_doc,
+                        index,
+                        values,
+                    ));
+                }
                 for old_values in &old_value_sets {
                     index
                         .delete(&mut mutable_datastore, doc_short_id, old_values)
@@ -684,7 +716,9 @@ impl IndexManager {
                         new_values,
                     )
                     .await
-                    .map_err(Error::Storage)?;
+                    .map_err(|e| {
+                        Self::naming_the_updater(Error::Storage(e), new_doc, index, new_values)
+                    })?;
                 }
             }
         }
@@ -720,7 +754,14 @@ impl IndexManager {
             if old_value_sets == new_value_sets {
                 continue;
             }
-            Self::validate_unique_value_sets(index, &new_value_sets)?;
+            if let Some(values) = Self::duplicate_value_set(index, &new_value_sets) {
+                return Err(Self::naming_the_updater(
+                    Self::unique_violation(),
+                    new_doc,
+                    index,
+                    values,
+                ));
+            }
             for old_values in &old_value_sets {
                 index
                     .delete(&mut mutable_datastore, doc_short_id, old_values)
@@ -735,7 +776,9 @@ impl IndexManager {
                     new_values,
                 )
                 .await
-                .map_err(Error::Storage)?;
+                .map_err(|e| {
+                    Self::naming_the_updater(Error::Storage(e), new_doc, index, new_values)
+                })?;
             }
         }
         Ok(())
@@ -775,4 +818,43 @@ impl IndexManager {
     pub fn index_count(&self) -> usize {
         self.indexes.len()
     }
+}
+
+/// The highest index id the collection with `collection_short_id` has ever
+/// handed out or retired: a new index id is always above it.
+pub(crate) async fn index_id_floor(
+    datastore: &NamespaceView,
+    collection_short_id: u32,
+) -> Result<u32> {
+    let key = IndexIDSequenceKey::new(collection_short_id.to_string());
+    Ok(
+        match datastore.get(&key.bytes()).await.map_err(Error::Storage)? {
+            Some(bytes) if bytes.len() == 4 => {
+                u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            }
+            _ => 0,
+        },
+    )
+}
+
+/// Keep `index_id` from ever being handed out again on the collection with
+/// `collection_short_id`. A dropped index's entries are deleted after its
+/// drop commits, and an entry key names only the collection and the index
+/// id, so a new index with the same id would lose its entries to that
+/// deletion.
+pub(crate) async fn retire_index_id(
+    datastore: &NamespaceView,
+    collection_short_id: u32,
+    index_id: u32,
+) -> Result<()> {
+    if index_id_floor(datastore, collection_short_id).await? >= index_id {
+        return Ok(());
+    }
+    datastore
+        .set(
+            &IndexIDSequenceKey::new(collection_short_id.to_string()).bytes(),
+            &index_id.to_be_bytes(),
+        )
+        .await
+        .map_err(Error::Storage)
 }

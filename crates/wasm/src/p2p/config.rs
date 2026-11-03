@@ -14,6 +14,7 @@ use crate::error::{Result, WasmError};
 const ENDPOINT_KEY_DOMAIN: &[u8] = b"defradb-wasm-iroh-endpoint";
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct P2PConfig {
     /// Relays to reach peers through. Empty uses iroh's default relays.
     #[serde(default)]

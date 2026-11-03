@@ -161,7 +161,7 @@ impl<S: Store> crate::database::DB<S> {
             Collection::load_index_actions(target_schema.clone(), &txn.systemstore()?).await?;
         let cache = std::sync::Arc::clone(&self.collections);
         let registered_name = name.clone();
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put_named(registered_name.as_str(), collection.clone());
@@ -206,7 +206,7 @@ impl<S: Store> crate::database::DB<S> {
         Ok(all_versions
             .into_iter()
             .find(|v| v.version_id == version_id)
-            .map(Collection::new))
+            .map(|schema| Collection::new(schema, self.crdts().clone())))
     }
 
     /// Get the active collection versions, from the in-memory cache.
@@ -406,7 +406,7 @@ impl<S: Store> crate::database::DB<S> {
         if target_schema.is_active {
             let cache = std::sync::Arc::clone(&self.collections);
             let name_for_cache = name.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 cache.rcu(|old| {
                     let mut cache = old.clone();
                     cache.remove(&name_for_cache);
@@ -419,6 +419,8 @@ impl<S: Store> crate::database::DB<S> {
         // 5. Remove from in-memory cache if active (ordered callback above).
         if is_deleting_last_local_version {
             self.forbid_collection_id(&collection_id)?;
+            self.vector_codes
+                .evict_collection(target_schema.resolved_root_id());
         }
 
         tracing::info!(
@@ -607,29 +609,33 @@ impl<S: Store> crate::database::DB<S> {
 
 #[cfg(test)]
 mod tests {
-    #[tokio::test]
-    async fn validated_collection_version_scan_detects_phantom_create() {
-        let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let mut initial = query::parse_sdl("type ExistingSchemaProbe { value: String }").unwrap();
-        db.create_collection(initial.remove(0)).await.unwrap();
+    #[test]
+    fn validated_collection_version_scan_detects_phantom_create() {
+        workers::block_on(async {
+            let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let mut initial =
+                query::parse_sdl("type ExistingSchemaProbe { value: String }").unwrap();
+            db.create_collection(initial.remove(0)).await.unwrap();
 
-        let mut schema_txn = db.new_txn(false).await.unwrap();
-        db.get_all_collection_versions_with_txn(&mut schema_txn)
-            .await
-            .unwrap();
-        let mut staged = query::parse_sdl("type StagedSchemaProbe { value: String }").unwrap();
-        db.create_collection_with_txn(&mut schema_txn, staged.remove(0))
-            .await
-            .unwrap();
+            let mut schema_txn = db.new_txn(false).await.unwrap();
+            db.get_all_collection_versions_with_txn(&mut schema_txn)
+                .await
+                .unwrap();
+            let mut staged = query::parse_sdl("type StagedSchemaProbe { value: String }").unwrap();
+            db.create_collection_with_txn(&mut schema_txn, staged.remove(0))
+                .await
+                .unwrap();
 
-        let mut concurrent =
-            query::parse_sdl("type ConcurrentSchemaProbe { value: String }").unwrap();
-        db.create_collection(concurrent.remove(0)).await.unwrap();
+            let mut concurrent =
+                query::parse_sdl("type ConcurrentSchemaProbe { value: String }").unwrap();
+            db.create_collection(concurrent.remove(0)).await.unwrap();
 
-        let result = schema_txn.commit().await;
-        assert!(
-            result.as_ref().is_err_and(|error| error.is_txn_conflict()),
-            "expected stale collection scan to conflict, got {result:?}"
-        );
+            let result = schema_txn.commit().await;
+            assert!(
+                result.as_ref().is_err_and(|error| error.is_txn_conflict()),
+                "expected stale collection scan to conflict, got {result:?}"
+            );
+        })
+        .unwrap()
     }
 }

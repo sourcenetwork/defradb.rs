@@ -2,7 +2,7 @@ use std::ffi::{c_char, c_int};
 
 use acp::nac::NodePermission;
 
-use super::run::{doc_ids, DocumentCall};
+use super::run::DocumentCall;
 use crate::target::go_string;
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
@@ -44,20 +44,14 @@ pub unsafe extern "C" fn defra_document_add(
                 doc => vec![doc],
             };
             let name = call.collection().await?.name;
-            let mutation = if encrypt || !encrypt_fields.is_empty() {
-                query::rest::gql::build_encrypted_create_many_mutation(
-                    &name,
-                    &docs,
-                    encrypt,
-                    &encrypt_fields,
-                )
-            } else {
-                query::rest::gql::build_create_many_mutation(&name, &docs)
-            }
-            .map_err(|e| e.to_string())?;
-            let data = call.run(mutation).await?;
-            serde_json::to_string(&doc_ids(&data, &format!("add_{}", name)))
-                .map_err(|e| e.to_string())
+            let options = query::documents::AddOptions {
+                encrypt_doc: encrypt,
+                encrypted_fields: encrypt_fields,
+            };
+            let ids = query::documents::add(|m| call.respond(m), &name, &docs, &options)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string(&ids).map_err(|e| e.to_string())
         })
     }
 }

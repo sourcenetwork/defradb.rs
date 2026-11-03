@@ -170,6 +170,21 @@ fn the_sync_status_needs_p2p() {
 }
 
 #[test]
+fn peer_details_answer_for_a_peer_and_refuse_a_bad_id() {
+    let node = p2p_node();
+    let peer = "12D3KooWD3eckifWpRn9wQpMG9R9hX3sD158z7EqHWmweQAJU5SA";
+    let peer_id = cstr(peer);
+    let details = ok_json(unsafe { defra_mobile_peer_details(node, peer_id.as_ptr(), 0) });
+    assert_eq!(details["peer_id"], peer, "{details}");
+    assert_eq!(details["connected"], false, "{details}");
+    assert!(details.get("heads_pushed").is_some(), "{details}");
+
+    let invalid = cstr("/ip4/127.0.0.1");
+    err(unsafe { defra_mobile_peer_details(node, invalid.as_ptr(), 0) });
+    close(node);
+}
+
+#[test]
 fn a_network_change_is_accepted_with_p2p_and_refused_without() {
     let node = p2p_node();
     ok(defra_mobile_notify_network_change(node, 0));

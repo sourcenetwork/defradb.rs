@@ -6,6 +6,10 @@
 #[path = "../../../tests/unit/car_serving.rs"]
 mod car_serving;
 
+#[path = "../../../tests/unit/selected_car_authority.rs"]
+#[cfg(not(target_arch = "wasm32"))]
+mod selected_car_authority;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -400,6 +404,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         authorizer,
         classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
         serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress::new(),
         document_acp: regolith::sync::OnceCell::new(),
         #[cfg(feature = "kms")]
         kms_transport: regolith::sync::OnceCell::new(),
@@ -1047,7 +1052,7 @@ fn cid_for(data: &[u8]) -> Cid {
 fn pushlog_request(collection_id: &str) -> PushLogRequest {
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1069,7 +1074,7 @@ fn pushlog_request(collection_id: &str) -> PushLogRequest {
 fn collection_commit_request(collection_id: &str) -> PushLogRequest {
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Collection(defra_core::CollectionDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
         }),
         vec![],
@@ -1375,7 +1380,7 @@ async fn doc_sync_filters_heads_outside_replicator_collection() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection_b".to_string(),
+            collection_version_id: "collection_b".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1442,7 +1447,7 @@ async fn car_fetch_controlled_mode_filters_unauthorized_data_block() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection_b".to_string(),
+            collection_version_id: "collection_b".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -1614,7 +1619,7 @@ async fn car_put_many_conflict_is_reported_once_and_not_re_run() {
             .await
             .expect("the CAR completion should be published")
             .expect("completion sender remains alive"),
-        crate::sync::manager::FetchCompletion::Failure,
+        crate::sync::manager::FetchCompletion::Failure(crate::transport::FetchFailureCause::Error),
     );
     assert!(ingest.await.unwrap().is_err());
     assert_eq!(blockstore.put_many_attempts(), 1);
@@ -1651,7 +1656,7 @@ async fn car_fetch_allows_relayed_receiver_via_authenticated_defra_identity() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -1662,7 +1667,7 @@ async fn car_fetch_allows_relayed_receiver_via_authenticated_defra_identity() {
     blockstore.put(&field_cid, &field_data).await.unwrap();
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -1725,7 +1730,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -1737,7 +1742,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -1751,7 +1756,7 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "other".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"unrelated".to_vec(),
         }),
         vec![],
@@ -1868,7 +1873,7 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     });
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2028,7 +2033,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 13,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"starting".to_vec(),
         }),
         vec![],
@@ -2044,7 +2049,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 14,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![previous_field_cid],
@@ -2056,7 +2061,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 17,
             status: 1,
         }),
@@ -2212,7 +2217,7 @@ async fn collection_head_car_authority_is_rederived_from_transport_after_restart
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -2224,7 +2229,7 @@ async fn collection_head_car_authority_is_rederived_from_transport_after_restart
 
     let collection_head = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 2,
             status: 1,
         }),
@@ -2294,7 +2299,7 @@ async fn gossip_car_authority_is_rederived_from_acp_without_subscription_event_a
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "status".to_string(),
             priority: 1,
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             data: b"ready".to_vec(),
         }),
         vec![],
@@ -2306,7 +2311,7 @@ async fn gossip_car_authority_is_rederived_from_acp_without_subscription_event_a
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version1".to_string(),
+            collection_version_id: "version1".to_string(),
             priority: 2,
             status: 1,
         }),
@@ -2600,7 +2605,7 @@ async fn branchable_sync_reply_remerges_locally_complete_unmerged_head() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2738,7 +2743,7 @@ async fn committed_head_marker_failure_is_returned_before_queue_admission() {
 
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "collection1".to_string(),
+            collection_version_id: "collection1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -3634,7 +3639,7 @@ fn pushlog_request_with_missing_link(collection_id: &str, doc_id: &str) -> PushL
         defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
             field_name: "field".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: doc_id.as_bytes().to_vec(),
         }),
         vec![],
@@ -3644,7 +3649,7 @@ fn pushlog_request_with_missing_link(collection_id: &str, doc_id: &str) -> PushL
 
     let composite = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -4027,7 +4032,7 @@ async fn branchable_sync_rate_limited_replies_backpressure_nack() {
 }
 
 #[tokio::test]
-async fn car_fetch_rate_limited_replies_empty_response() {
+async fn car_fetch_rate_limited_replies_busy() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
@@ -4048,9 +4053,78 @@ async fn car_fetch_rate_limited_replies_empty_response() {
         result
     );
 
-    // CAR has no error reply type - an explicit empty response beats a hung stream.
-    let responses = transport.car_responses();
-    assert_eq!(responses.last().map(Vec::len), Some(0));
+    assert_busy_reply_for(&transport, cid_for(BLOCK_DATA));
+}
+
+fn assert_busy_reply_for(transport: &NoopTransport, root: Cid) {
+    let reply = transport
+        .car_responses()
+        .pop()
+        .expect("a CAR reply was sent");
+    assert!(crate::sync::car::is_car_busy(&reply));
+    assert_eq!(crate::sync::car::decode_car(&reply).unwrap().0, vec![root]);
+}
+
+#[tokio::test]
+async fn car_fetch_shed_at_capacity_replies_busy() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+
+    let result = coordinator
+        .handle_transport_event_with_admission(
+            car_fetch_event(random_peer_id(), root),
+            crate::sync::DispatchAdmission::Saturated,
+        )
+        .await;
+
+    assert!(result.is_err(), "saturated work must not be admitted");
+    assert_busy_reply_for(&coordinator.runtime.transport, root);
+}
+
+#[tokio::test]
+async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
+    use crate::sync::manager::FetchCompletion;
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let root = cid_for(BLOCK_DATA);
+    let hub = random_peer_id();
+    let manager = coordinator.manager();
+    let rooted = manager
+        .rooted_car_completion_tracker()
+        .register(root, hub.clone());
+    let query = QueryId(7);
+    let block_sync = manager.block_sync_completion_tracker().register(query);
+
+    for event in [
+        TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: hub,
+            root_cid: root,
+            car_data: crate::sync::car::encode_car_busy(&root).unwrap(),
+        },
+        TransportEvent::BitswapComplete {
+            query_id: query,
+            success: false,
+            cause: Some(crate::transport::FetchFailureCause::Refused),
+            error: Some("every provider busy".to_string()),
+            provider_busy: true,
+        },
+    ] {
+        coordinator.handle_transport_event(event).await.unwrap();
+    }
+
+    assert_eq!(rooted.await.unwrap(), FetchCompletion::ProviderBusy);
+    assert_eq!(block_sync.await.unwrap(), FetchCompletion::ProviderBusy);
+    let snapshot = manager.diagnostics().snapshot();
+    assert_eq!(snapshot.car_busy_responses, 1);
+    assert_eq!(snapshot.car_empty_responses, 0);
 }
 
 /// #1088 W5 (in-process half): 8 pushers × 6 docs fan into a hub whose pending
@@ -4281,4 +4355,217 @@ async fn sync_status_surfaces_quarantine_counters() {
     let after = coordinator.sync_status().await;
     assert_eq!(after.pending_dag_terminal_quarantined, 1);
     assert_eq!(after.quarantined_pending_dags, 1);
+}
+
+#[tokio::test]
+async fn live_connection_allows_pull_before_lifecycle_notification_without_granting_push() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let unknown = random_peer_id();
+    let (coordinator, _) =
+        create_test_coordinator(AccessMode::Controlled, replicators, Arc::clone(&peer_state));
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(vec![peer.clone()]);
+    assert!(!peer_state.is_connected(peer.as_str()));
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_ok());
+    assert!(coordinator.check_peer_is_replicator(&peer).await.is_ok());
+    assert!(coordinator
+        .check_pushlog_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+    assert!(coordinator
+        .check_access_str(unknown.as_str(), "collection1")
+        .await
+        .is_err());
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(Vec::new());
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+}
+
+/// A receive gate that refuses every document it is asked about.
+struct RefuseAll;
+
+#[async_trait::async_trait]
+impl crate::sync::receive_gate::ReceiveGate for RefuseAll {
+    async fn allows(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+        _head: &[u8],
+        _blocks: &dyn crate::sync::receive_gate::GateBlocks,
+    ) -> bool {
+        false
+    }
+}
+
+/// A one-field document: its composite head and the field block it links.
+fn gated_document() -> ((Cid, Vec<u8>), (Cid, Vec<u8>)) {
+    use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+    let field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "blockNumber".to_string(),
+            priority: 1,
+            collection_version_id: "v1".to_string(),
+            data: vec![0x18, 100],
+        }),
+        vec![],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    let head = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "v1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("blockNumber", field_cid)],
+    );
+    (
+        (head.generate_cid().unwrap(), head.to_dag_cbor().unwrap()),
+        (field_cid, field.to_dag_cbor().unwrap()),
+    )
+}
+
+/// A push the gate refuses on arrival stores nothing and asks for nothing.
+#[tokio::test]
+async fn a_push_the_gate_refuses_on_arrival_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let ((head_cid, head), _) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+
+    assert!(!coordinator.gate_arrival(&broadcast).await);
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+}
+
+/// A CAR fetched for a root the gate then refuses is not imported, and the
+/// root is discharged so it is not fetched again.
+#[tokio::test]
+async fn a_fetched_car_the_gate_refuses_is_not_imported() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    let ((head_cid, head), (field_cid, field)) = gated_document();
+    let broadcast = PushLogBroadcast::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head.clone()),
+    );
+    // Kept on arrival (no gate yet): the head is stored and its field block
+    // is to be fetched.
+    coordinator
+        .manager()
+        .process_pushlog(&broadcast, Some("peer-1"), false, None)
+        .await
+        .unwrap();
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_some());
+
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let car = crate::sync::car::encode_car(
+        &[head_cid],
+        &[(&head_cid, head.as_slice()), (&field_cid, field.as_slice())],
+    )
+    .unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::CarFetchResponse {
+            query_id: None,
+            peer_id: random_peer_id(),
+            root_cid: head_cid,
+            car_data: car,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !coordinator
+            .manager()
+            .blockstore()
+            .has(&field_cid)
+            .await
+            .unwrap(),
+        "nothing of the refused CAR was imported"
+    );
+    assert!(coordinator
+        .manager()
+        .pending_dag_snapshot(&head_cid)
+        .is_none());
+    assert!(coordinator
+        .manager()
+        .blockstore()
+        .is_merged(&head_cid)
+        .await
+        .unwrap());
+}
+
+/// A replicator's direct push meets the receive gate too: refused, it is
+/// skipped and nothing of it is stored.
+#[tokio::test]
+async fn a_two_stream_push_the_gate_refuses_stores_nothing() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_receive_gate(Arc::new(RefuseAll));
+    let ((head_cid, head), _) = gated_document();
+    let request = PushLogRequest::new(
+        "doc".to_string(),
+        bytes::Bytes::from(head_cid.to_bytes()),
+        "col-log".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(head),
+    );
+    let _ = coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: random_peer_id(),
+            request,
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await;
+    assert!(!coordinator
+        .manager()
+        .blockstore()
+        .has(&head_cid)
+        .await
+        .unwrap());
 }

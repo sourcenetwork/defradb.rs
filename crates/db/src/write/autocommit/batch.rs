@@ -9,17 +9,18 @@ use rapidhash::RapidHashSet;
 use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 
-use super::helpers::{
-    ensure_collection_is_active, register_block_doc_id_mappings, register_created_doc,
-    write_branchable_collection_block, write_local_create, write_local_update,
-};
-use crate::block::builder::DocStorageIdentity;
-use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
+use super::helpers::{ensure_collection_is_active, write_branchable_collection_block};
+use crate::block::builder::write_delete_block_with_inputs;
+use crate::block::builder::DocRef;
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::database::DB;
 use crate::event::emission::register_update_event_callback;
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
+use crate::write::create as pipeline;
+use crate::write::prepare::prepared_identity;
+use crate::write::update as update_pipeline;
+use crate::write::WriteStores;
 use datastore::BasicTxn;
 use defra_core::RequestContext;
 
@@ -30,6 +31,9 @@ pub struct BatchMutator<S: Store + 'static> {
     acp_registration_projection: Arc<query::txn::AcpRegistrationProjection>,
     /// The run of its request this mutator's attempt is.
     update_run: query::update_parts::Run,
+    /// Creates this attempt has made: the ordinal that names a create.s
+    /// short ID in the memo.
+    creates: std::sync::atomic::AtomicU64,
 }
 
 impl<S: Store + 'static> BatchMutator<S> {
@@ -48,6 +52,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             txn: Held::none(),
             acp_registration_projection: query::txn::AcpRegistrationProjection::detached_shared(),
             update_run: query::update_parts::Run::First,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -63,6 +68,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             prepared_inputs,
             acp_registration_projection,
             update_run: query::update_parts::Run::First,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -230,7 +236,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         result
     }
 
-    async fn rollback(&self) -> query::error::Result<()> {
+    async fn discard(&self) -> query::error::Result<()> {
         let txn = self.take_txn().await?;
         let result = txn
             .discard()
@@ -254,7 +260,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
             let io = retry
                 .begin_attempt_io()
                 .map_err(storage::corekv::RetryAttemptError::Storage)?;
-            let basic_txn = BasicTxn::from_retry_attempt_io(io, 0);
+            let basic_txn = BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
             let txn: LentTxn<S> = Arc::new(self.db.new_db_txn(basic_txn));
             let acp_registration_projection = txn.acp_registration_projection();
             let fetcher = Arc::new(
@@ -272,6 +278,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
                 prepared_inputs: self.prepared_inputs.clone(),
                 acp_registration_projection,
                 update_run: query::update_parts::Run::after(retry.previous_conflict().as_ref()),
+                creates: std::sync::atomic::AtomicU64::new(0),
             });
             let mutator: Arc<dyn DocMutator> = batch.clone();
             let fetcher_dyn: Arc<dyn query::fetcher::DocFetcher> = fetcher.clone();
@@ -307,6 +314,10 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for BatchMutator<S> {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn supports_projected_updates(&self) -> bool {
         true
     }
@@ -366,128 +377,72 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
-
-        let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
-        crate::search::embedding::set_embedding_from_inputs(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            true,
-            &RapidHashSet::default(),
-            &embedding_config,
-            &prepared_inputs,
-        )?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
-
-        self.db
-            .validate_downsample_write(&datastore, &systemstore, &collection, &doc, None)
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let short_id = collection.resolved_root_id();
-        let enc_config = context.encryption();
-        let sign_config = context.signing();
-
-        let identity = match crate::write::prepare::prepared_identity(&doc) {
-            Some(identity) => identity,
-            None => DocStorageIdentity::new(
-                short_id,
-                self.db
-                    .next_doc_short_id()
-                    .await
-                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
-            ),
+        let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
+        pipeline::embed(&self.db, &collection, &mut doc, Some(&prepared_inputs)).await?;
+        // With a memo the batch runs as engine-retried attempts: the short ID
+        // is kept in the memo and keys are asked of it, so nothing remote runs
+        // inside an attempt and a retry finds the keys it already has. A batch
+        // over a lent transaction has no memo and no retry: it mints directly.
+        let identity = match (&self.prepared_inputs, prepared_identity(&doc)) {
+            (_, Some(identity)) => identity,
+            (Some(memo), None) => {
+                let ordinal = self
+                    .creates
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let identity =
+                    pipeline::memo_identity(&self.db, &collection, memo, ordinal).await?;
+                pipeline::seed_identity(&self.db, &mut doc, identity);
+                identity
+            }
+            (None, None) => {
+                let identity = pipeline::identity(&self.db, &collection, &doc).await?;
+                pipeline::prepare_keys(&self.db, &mut doc, identity, context).await?;
+                identity
+            }
         };
-        let doc_short_id = identity.doc_short_id;
-        {
+        let computed = pipeline::compute(
+            &collection,
+            &doc,
+            identity,
+            context,
+            self.prepared_inputs.as_ref(),
+        )?;
+
+        let created = {
             let (blockstore, headstore) = self.block_and_head_stores().await?;
-            crate::write::prepare::prepare_keys_with_stores(
+            pipeline::persist(
                 &self.db,
-                &mut doc,
-                identity,
-                None,
-                enc_config,
-                Some((&blockstore, &headstore)),
-                None,
-            )
-            .await?;
-        }
-
-        let (doc_id, doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks_with_inputs(
-                &blockstore,
-                &headstore,
-                &doc,
-                collection.schema(),
-                identity,
-                None,
-                enc_config,
-                sign_config,
-                context.batch_session(),
-                self.db.kms().as_ref(),
-                self.prepared_inputs.as_ref(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                error.into_query_error_in(&format!(
-                    "failed to write document blocks for create on collection {collection_name}"
-                ))
-            })?;
-
-            let doc_id = register_created_doc(
-                self.db.document_acp(),
-                context.creator(),
-                &systemstore,
-                &datastore,
-                &collection,
-                doc_short_id,
-                &block_result,
-            )
-            .await?;
-            self.register_created_doc_with_acp(context, &collection, doc_id.to_string())
-                .await?;
-            doc.set_id(doc_id.clone());
-
-            write_local_create(&datastore, &collection, &doc, doc_short_id, &index_manager).await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
+                &WriteStores {
+                    datastore: &datastore,
+                    systemstore: &systemstore,
+                    blockstore: &blockstore,
+                    headstore: &headstore,
+                },
                 collection_name,
                 &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                doc_short_id,
+                &index_manager,
+                &doc,
+                &computed,
                 context,
                 self.prepared_inputs.as_ref(),
             )
-            .await?;
-
-            (doc_id, block_result.cid, block_result.block, col_block_data)
+            .await?
         };
-
+        self.register_created_doc_with_acp(context, &collection, created.doc_id.to_string())
+            .await?;
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
-            doc_id.to_string(),
-            doc_cid,
-            doc_block.clone(),
-            col_block_data.clone(),
+            created.doc_id.to_string(),
+            created.cid,
+            created.block.clone(),
+            created.collection_block.clone(),
         )
         .await?;
-
-        doc.clear_write_preparation();
-        let mut result = CreateResult::with_commit(doc_id, doc, doc_cid, doc_block);
-        if let Some((col_cid, col_bytes)) = col_block_data {
-            result.broadcast_cid = Some(col_cid);
-            result.broadcast_block = Some(col_bytes);
-        }
-        Ok(result)
+        Ok(created.into_result())
     }
 
     async fn update(
@@ -527,7 +482,6 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
         let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
 
         let doc_id = doc
@@ -565,96 +519,62 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             return Ok(UpdateResult::new(doc, 0));
         }
 
-        self.db
-            .validate_downsample_write(
-                &datastore,
-                &systemstore,
-                &collection,
-                &doc,
-                Some(&modified_fields),
-            )
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
-        write_local_update(
-            &datastore,
-            &collection,
-            &mut doc,
+        let (blockstore, headstore) = self.block_and_head_stores().await?;
+        let stores = WriteStores {
+            datastore: &datastore,
+            systemstore: &systemstore,
+            blockstore: &blockstore,
+            headstore: &headstore,
+        };
+        let doc_id_text = canonical_doc_id.to_string();
+        let target = update_pipeline::Target {
+            collection_name,
+            collection: &collection,
             doc_short_id,
+            doc_id: &doc_id_text,
+        };
+        let heads = super::helpers::load_update_heads(&datastore, doc_short_id).await?;
+        update_pipeline::write_local(
+            &self.db,
+            &stores,
+            &target,
+            &mut doc,
             &index_manager,
             &mut modified_fields,
             &heads,
             self.update_run,
-            &embedding_config,
             &prepared_inputs,
         )
         .await?;
-
-        let short_id = collection.resolved_root_id();
-        let enc_config = context.encryption();
-        let sign_config = context.signing();
-
-        {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
+        // With a memo the builder asks it for the keys, so they are minted
+        // between attempts; only a batch over a lent transaction mints here.
+        if self.prepared_inputs.is_none() {
             crate::write::prepare::prepare_keys_with_stores(
                 &self.db,
                 &mut doc,
-                DocStorageIdentity::new(short_id, doc_short_id),
+                DocRef::new(collection.resolved_root_id(), doc_short_id),
                 Some(&modified_fields),
-                enc_config,
+                context.encryption(),
                 Some((&blockstore, &headstore)),
                 None,
             )
             .await?;
         }
-
-        let (doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks_with_inputs(
-                &blockstore,
-                &headstore,
-                &doc,
-                collection.schema(),
-                DocStorageIdentity::new(short_id, doc_short_id),
-                Some(&modified_fields),
-                enc_config,
-                sign_config,
-                context.batch_session(),
-                self.db.kms().as_ref(),
-                self.prepared_inputs.as_ref(),
-                Some(heads),
-            )
-            .await
-            .map_err(|error| {
-                error.into_query_error_in(&format!(
-                    "failed to write document blocks for update on collection {collection_name}"
-                ))
-            })?;
-
-            register_block_doc_id_mappings(
-                &systemstore,
-                &block_result,
-                &canonical_doc_id.to_string(),
-            )
-            .await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
-                collection_name,
-                &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                doc_short_id,
-                context,
-                self.prepared_inputs.as_ref(),
-            )
-            .await?;
-
-            (block_result.cid, block_result.block, col_block_data)
-        };
+        let update_pipeline::Updated {
+            cid: doc_cid,
+            block: doc_block,
+            collection_block: col_block_data,
+        } = update_pipeline::write_blocks(
+            &self.db,
+            &stores,
+            &target,
+            &doc,
+            &modified_fields,
+            heads,
+            context,
+            self.prepared_inputs.as_ref(),
+        )
+        .await?;
 
         if let Some(doc_id) = doc.id() {
             self.register_update_callback(
@@ -733,7 +653,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         )
         .await?;
 
-        let schema_version_id = collection.version_id();
+        let collection_version_id = collection.version_id();
         let sign_config = context.signing();
 
         let (doc_cid, doc_block, col_block_data) = {
@@ -744,7 +664,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 &headstore,
                 &canonical_doc_id.to_string(),
                 doc_short_id,
-                schema_version_id,
+                collection_version_id,
                 sign_config,
                 context.batch_session(),
                 self.prepared_inputs.as_ref(),
@@ -835,5 +755,18 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(|e| {
                 query::error::QueryError::execution(format!("get_for_update error: {}", e))
             })
+    }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        let (collection, datastore, systemstore) =
+            get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
+        collection
+            .is_deleted_by_doc_id(&datastore, &systemstore, doc_id)
+            .await
+            .map_err(|e| query::error::QueryError::execution(format!("is_deleted error: {}", e)))
     }
 }

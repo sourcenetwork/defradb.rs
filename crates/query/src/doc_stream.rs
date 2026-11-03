@@ -21,6 +21,11 @@ pub trait DocStream: MaybeSend {
     /// returning `Ok(None)`.
     async fn next(&mut self) -> Result<Option<(Document, bool)>>;
 
+    /// Number of index entries consumed by this stream, before filtering.
+    fn index_fetches(&self) -> u64 {
+        0
+    }
+
     /// Finish with the stream, whether or not it was exhausted.
     ///
     /// A consumer that stops pulling early (a satisfied `LimitNode` above a
@@ -63,57 +68,66 @@ mod tests {
     use super::*;
     use document::Document;
 
-    #[tokio::test]
-    async fn vec_stream_yields_all_pairs_in_order_then_none() {
-        let pairs = vec![
-            (Document::new(), false),
-            (Document::new(), true),
-            (Document::new(), false),
-        ];
-        let mut stream = VecStream::new(pairs);
+    #[test]
+    fn vec_stream_yields_all_pairs_in_order_then_none() {
+        workers::block_on(async {
+            let pairs = vec![
+                (crate::test_utils::test_doc(&[]), false),
+                (crate::test_utils::test_doc(&[]), true),
+                (crate::test_utils::test_doc(&[]), false),
+            ];
+            let mut stream = VecStream::new(pairs);
 
-        assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(false));
-        assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(true));
-        assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(false));
-        assert!(stream.next().await.unwrap().is_none());
-        assert!(stream.next().await.unwrap().is_none());
+            assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(false));
+            assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(true));
+            assert_eq!(stream.next().await.unwrap().map(|(_, d)| d), Some(false));
+            assert!(stream.next().await.unwrap().is_none());
+            assert!(stream.next().await.unwrap().is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn vec_stream_empty_yields_none_immediately() {
-        let mut stream = VecStream::new(Vec::new());
-        assert!(stream.next().await.unwrap().is_none());
+    #[test]
+    fn vec_stream_empty_yields_none_immediately() {
+        workers::block_on(async {
+            let mut stream = VecStream::new(Vec::new());
+            assert!(stream.next().await.unwrap().is_none());
+        })
+        .unwrap()
     }
 
     /// A stream that is not `Sync` (it counts its pulls in a `Cell`) is still
     /// a `DocStream`, and its box can move to another thread: one task owns
     /// a stream, so nothing needs a lock to make it `Sync`.
-    #[tokio::test]
-    async fn a_stream_owned_by_one_task_need_not_be_sync() {
-        struct Counting {
-            pulls: std::cell::Cell<usize>,
-        }
-
-        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-        impl DocStream for Counting {
-            async fn next(&mut self) -> Result<Option<(Document, bool)>> {
-                self.pulls.set(self.pulls.get() + 1);
-                Ok(None)
+    #[test]
+    fn a_stream_owned_by_one_task_need_not_be_sync() {
+        workers::block_on(async {
+            struct Counting {
+                pulls: std::cell::Cell<usize>,
             }
-        }
 
-        fn moves_between_threads<T>(_: &T)
-        where
-            T: Send,
-        {
-        }
+            #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+            #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+            impl DocStream for Counting {
+                async fn next(&mut self) -> Result<Option<(Document, bool)>> {
+                    self.pulls.set(self.pulls.get() + 1);
+                    Ok(None)
+                }
+            }
 
-        let mut stream: Box<dyn DocStream> = Box::new(Counting {
-            pulls: std::cell::Cell::new(0),
-        });
-        moves_between_threads(&stream);
-        assert!(stream.next().await.unwrap().is_none());
-        assert!(stream.next().await.unwrap().is_none());
+            fn moves_between_threads<T>(_: &T)
+            where
+                T: Send,
+            {
+            }
+
+            let mut stream: Box<dyn DocStream> = Box::new(Counting {
+                pulls: std::cell::Cell::new(0),
+            });
+            moves_between_threads(&stream);
+            assert!(stream.next().await.unwrap().is_none());
+            assert!(stream.next().await.unwrap().is_none());
+        })
+        .unwrap()
     }
 }

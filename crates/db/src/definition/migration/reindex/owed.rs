@@ -171,7 +171,7 @@ async fn publish_reindex_owed(
     let collections = Arc::clone(collections);
     let collection_id = collection_id.to_owned();
     systemstore
-        .on_commit(OnCommit::Ordered(Box::new(move || {
+        .on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             collections.rcu(|cache| {
                 let mut cache = cache.clone();
                 cache.update(&collection_id, |collection| {

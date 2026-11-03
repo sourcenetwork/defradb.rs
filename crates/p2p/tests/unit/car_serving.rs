@@ -386,7 +386,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
     let small = Cid::new_v1(0x71, Code::Sha2_256.digest(&small_data));
     let root_data = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "version".to_owned(),
+            collection_version_id: "version".to_owned(),
             priority: 1,
             status: 1,
         }),
@@ -434,7 +434,10 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert_eq!(completion.await.unwrap(), FetchCompletion::Failure);
+    assert_eq!(
+        completion.await.unwrap(),
+        FetchCompletion::Failure(crate::transport::FetchFailureCause::NoBlocks)
+    );
 
     let mut completion = coordinator
         .manager()

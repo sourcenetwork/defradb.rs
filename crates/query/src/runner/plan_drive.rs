@@ -91,54 +91,66 @@ mod tests {
     }
 
     /// The whole point: an error in the body must not skip the close.
-    #[tokio::test]
-    async fn closes_when_the_body_errored() {
-        let closes = Arc::new(AtomicUsize::new(0));
-        let mut plan = StubPlan::new(closes.clone(), false);
+    #[test]
+    fn closes_when_the_body_errored() {
+        workers::block_on(async {
+            let closes = Arc::new(AtomicUsize::new(0));
+            let mut plan = StubPlan::new(closes.clone(), false);
 
-        let outcome: Result<()> = Err(QueryError::execution("body failed"));
-        let result = close_after(&mut plan, outcome).await;
+            let outcome: Result<()> = Err(QueryError::execution("body failed"));
+            let result = close_after(&mut plan, outcome).await;
 
-        assert_eq!(closes.load(Ordering::SeqCst), 1);
-        assert!(result.is_err());
+            assert_eq!(closes.load(Ordering::SeqCst), 1);
+            assert!(result.is_err());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn closes_when_the_body_succeeded() {
-        let closes = Arc::new(AtomicUsize::new(0));
-        let mut plan = StubPlan::new(closes.clone(), false);
+    #[test]
+    fn closes_when_the_body_succeeded() {
+        workers::block_on(async {
+            let closes = Arc::new(AtomicUsize::new(0));
+            let mut plan = StubPlan::new(closes.clone(), false);
 
-        let result = close_after(&mut plan, Ok(7)).await.unwrap();
+            let result = close_after(&mut plan, Ok(7)).await.unwrap();
 
-        assert_eq!(closes.load(Ordering::SeqCst), 1);
-        assert_eq!(result, 7);
+            assert_eq!(closes.load(Ordering::SeqCst), 1);
+            assert_eq!(result, 7);
+        })
+        .unwrap()
     }
 
     /// The body error is the root cause. A teardown failure must not mask it.
-    #[tokio::test]
-    async fn body_error_wins_over_a_close_error() {
-        let closes = Arc::new(AtomicUsize::new(0));
-        let mut plan = StubPlan::new(closes.clone(), true);
+    #[test]
+    fn body_error_wins_over_a_close_error() {
+        workers::block_on(async {
+            let closes = Arc::new(AtomicUsize::new(0));
+            let mut plan = StubPlan::new(closes.clone(), true);
 
-        let outcome: Result<()> = Err(QueryError::execution("body failed"));
-        let err = close_after(&mut plan, outcome).await.unwrap_err();
+            let outcome: Result<()> = Err(QueryError::execution("body failed"));
+            let err = close_after(&mut plan, outcome).await.unwrap_err();
 
-        assert_eq!(closes.load(Ordering::SeqCst), 1);
-        assert!(
-            err.to_string().contains("body failed"),
-            "close error masked the root cause: {err}"
-        );
+            assert_eq!(closes.load(Ordering::SeqCst), 1);
+            assert!(
+                err.to_string().contains("body failed"),
+                "close error masked the root cause: {err}"
+            );
+        })
+        .unwrap()
     }
 
     /// With nothing else to report, a close failure is the failure.
-    #[tokio::test]
-    async fn close_error_surfaces_when_the_body_succeeded() {
-        let closes = Arc::new(AtomicUsize::new(0));
-        let mut plan = StubPlan::new(closes.clone(), true);
+    #[test]
+    fn close_error_surfaces_when_the_body_succeeded() {
+        workers::block_on(async {
+            let closes = Arc::new(AtomicUsize::new(0));
+            let mut plan = StubPlan::new(closes.clone(), true);
 
-        let err = close_after(&mut plan, Ok(())).await.unwrap_err();
+            let err = close_after(&mut plan, Ok(())).await.unwrap_err();
 
-        assert_eq!(closes.load(Ordering::SeqCst), 1);
-        assert!(err.to_string().contains("close failed"), "{err}");
+            assert_eq!(closes.load(Ordering::SeqCst), 1);
+            assert!(err.to_string().contains("close failed"), "{err}");
+        })
+        .unwrap()
     }
 }

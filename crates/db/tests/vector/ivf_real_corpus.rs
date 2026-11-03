@@ -85,102 +85,108 @@ async fn sweep<E: VectorIndexEngine>(label: &str, index: &E, corpus: &Corpus) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; needs IVF_CORPUS_DIR"]
-async fn ivf_real_corpus() {
-    let corpus = corpus();
-    println!(
-        "corpus {} x {DIMENSIONS}, {} queries",
-        corpus.base.len(),
-        corpus.queries.len()
-    );
+fn ivf_real_corpus() {
+    workers::block_on(async {
+        let corpus = corpus();
+        println!(
+            "corpus {} x {DIMENSIONS}, {} queries",
+            corpus.base.len(),
+            corpus.queries.len()
+        );
 
-    let mut pq = IvfPq::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfPqParams::default(),
-        7,
-    )
-    .unwrap();
-    for (i, v) in corpus.base.iter().enumerate() {
-        pq.insert(NodeId(i as u64 + 1), v).await.unwrap();
-    }
-    let started = Instant::now();
-    let report = pq.build().await.unwrap();
-    println!(
-        "ivfpq build {:.1}s nlist={} m={}",
-        started.elapsed().as_secs_f64(),
-        report.state.nlist,
-        report.state.m
-    );
-    sweep("ivfpq", &pq, &corpus).await;
-    drop(pq);
+        let mut pq = IvfPq::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfPqParams::default(),
+            7,
+        )
+        .unwrap();
+        for (i, v) in corpus.base.iter().enumerate() {
+            pq.insert(NodeId(i as u64 + 1), v).await.unwrap();
+        }
+        let started = Instant::now();
+        let report = pq.build().await.unwrap();
+        println!(
+            "ivfpq build {:.1}s nlist={} m={}",
+            started.elapsed().as_secs_f64(),
+            report.state.nlist,
+            report.state.m
+        );
+        sweep("ivfpq", &pq, &corpus).await;
+        drop(pq);
 
-    let mut flat = IvfFlat::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfFlatParams::default(),
-        7,
-    )
-    .unwrap();
-    for (i, v) in corpus.base.iter().enumerate() {
-        flat.insert(NodeId(i as u64 + 1), v).await.unwrap();
-    }
-    let started = Instant::now();
-    flat.build().await.unwrap();
-    println!("ivfflat build {:.1}s", started.elapsed().as_secs_f64());
-    sweep("ivfflat", &flat, &corpus).await;
+        let mut flat = IvfFlat::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfFlatParams::default(),
+            7,
+        )
+        .unwrap();
+        for (i, v) in corpus.base.iter().enumerate() {
+            flat.insert(NodeId(i as u64 + 1), v).await.unwrap();
+        }
+        let started = Instant::now();
+        flat.build().await.unwrap();
+        println!("ivfflat build {:.1}s", started.elapsed().as_secs_f64());
+        sweep("ivfflat", &flat, &corpus).await;
+    })
+    .unwrap()
 }
 
 /// What reranking `pool` candidates costs in node reads against regolith.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; needs IVF_CORPUS_DIR"]
-async fn rerank_read_cost() {
-    use db::index::vector::store::{KvNodeStore, VectorNodeStore};
-    use storage::corekv::{Store, Txn};
-    use storage::RegolithStore;
+fn rerank_read_cost() {
+    workers::block_on(async {
+        use db::index::vector::store::{KvNodeStore, VectorNodeStore};
+        use storage::corekv::{Store, Txn};
+        use storage::RegolithStore;
 
-    let corpus = corpus();
-    let dir = std::env::temp_dir().join(format!("rerank-cost-{}", std::process::id()));
-    for (label, store) in [
-        ("memory", RegolithStore::in_memory().unwrap()),
-        ("disk", RegolithStore::open(&dir).unwrap()),
-    ] {
-        let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
-        {
-            let mut nodes = KvNodeStore::new(&mut write, 1, 1, 0);
-            for (i, v) in corpus.base.iter().enumerate() {
-                nodes
-                    .put_node(db::index::vector::store::Node::new(
-                        NodeId(i as u64 + 1),
-                        v.clone(),
-                        0,
-                    ))
-                    .await
-                    .unwrap();
-            }
-        }
-        write.commit().await.unwrap();
-
-        let mut read: Box<dyn Txn> = store.new_txn(true).await.unwrap();
-        let nodes = KvNodeStore::new(&mut read, 1, 1, 0);
-        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
-        for pool in [10usize, 50, 100] {
-            let started = Instant::now();
-            for _ in 0..corpus.queries.len() {
-                for _ in 0..pool {
-                    seed ^= seed << 13;
-                    seed ^= seed >> 7;
-                    seed ^= seed << 17;
-                    let id = seed % corpus.base.len() as u64 + 1;
-                    nodes.get_node(NodeId(id)).await.unwrap().unwrap();
+        let corpus = corpus();
+        let dir = std::env::temp_dir().join(format!("rerank-cost-{}", std::process::id()));
+        for (label, store) in [
+            ("memory", RegolithStore::in_memory().unwrap()),
+            ("disk", RegolithStore::open(&dir).unwrap()),
+        ] {
+            let mut write: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+            {
+                let mut nodes = KvNodeStore::new(&mut write, 1, 1, 0);
+                for (i, v) in corpus.base.iter().enumerate() {
+                    nodes
+                        .put_node(db::index::vector::store::Node::new(
+                            NodeId(i as u64 + 1),
+                            v.clone(),
+                            0,
+                        ))
+                        .await
+                        .unwrap();
                 }
             }
-            println!(
-                "{label:>6} pool={pool:>3} {:.3} ms/query",
-                started.elapsed().as_secs_f64() * 1e3 / corpus.queries.len() as f64
-            );
+            write.commit().await.unwrap();
+
+            let mut read: Box<dyn Txn> = store.new_txn(true).await.unwrap();
+            let nodes = KvNodeStore::new(&mut read, 1, 1, 0);
+            let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+            for pool in [10usize, 50, 100] {
+                let started = Instant::now();
+                for _ in 0..corpus.queries.len() {
+                    for _ in 0..pool {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        let id = seed % corpus.base.len() as u64 + 1;
+                        nodes.get_node(NodeId(id)).await.unwrap().unwrap();
+                    }
+                }
+                println!(
+                    "{label:>6} pool={pool:>3} {:.3} ms/query",
+                    started.elapsed().as_secs_f64() * 1e3 / corpus.queries.len() as f64
+                );
+            }
         }
-    }
-    let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir);
+    })
+    .unwrap()
 }

@@ -7,12 +7,58 @@ use storage::index::Bound;
 use crate::mapper::{Filter, FilterOp, OrderBy};
 
 use super::conditions::{
-    can_be_ordered_by_index, can_use_index, extract_field_conditions, should_fallback_to_full_scan,
+    can_be_ordered_by_filtered_index, can_use_index, extract_field_conditions,
+    filtered_index_order_prefix, should_fallback_to_full_scan,
 };
 use super::types::{ConditionValue, IndexScanParams, IndexScanType, ScanValueFilter};
 use super::values::{
     normalize_for_index_field, wrap_value_for_json_path, wrap_values_for_json_path,
 };
+
+fn composite_range(
+    conditions: &[super::types::FieldCondition],
+    field: &schema::IndexedFieldDescription,
+    collection_fields: &[schema::FieldDescription],
+) -> Option<(Bound, Bound)> {
+    if collection_fields
+        .iter()
+        .find(|candidate| candidate.name == field.name)
+        .is_some_and(|candidate| {
+            candidate.kind.is_array()
+                || candidate
+                    .kind
+                    .as_scalar()
+                    .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
+        })
+    {
+        return None;
+    }
+    let mut lower = Bound::Unbounded;
+    let mut upper = Bound::Unbounded;
+    let mut found = false;
+    for condition in conditions.iter().filter(|condition| {
+        condition.field_name == field.name
+            && condition.array_op.is_none()
+            && condition.json_path.is_none()
+    }) {
+        let ConditionValue::Single(value) = &condition.value else {
+            continue;
+        };
+        let value = normalize_for_index_field(value.clone(), &field.name, collection_fields);
+        match condition.op {
+            FilterOp::Gt => lower = Bound::Exclusive(value),
+            FilterOp::Gte => lower = Bound::Inclusive(value),
+            FilterOp::Lt => upper = Bound::Exclusive(value),
+            FilterOp::Lte => upper = Bound::Inclusive(value),
+            _ => continue,
+        }
+        found = true;
+    }
+    if field.descending {
+        std::mem::swap(&mut lower, &mut upper);
+    }
+    found.then_some((lower, upper))
+}
 
 /// Convert a filter to index scan parameters.
 ///
@@ -59,7 +105,7 @@ pub fn filter_to_index_scan(
         .map(|f| &f.kind);
     let first_field_is_json = first_field_kind
         .and_then(FieldKind::as_scalar)
-        .is_some_and(|kind| kind.base_kind() == ScalarKind::Json);
+        .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson);
 
     // Find conditions on the first index field
     // For JSON fields, ensure top-level conditions get an empty json_path
@@ -179,8 +225,8 @@ pub fn filter_to_index_scan(
 
     // Determine if we need to reverse the scan based on ordering
     let reverse = order_by
-        .map(|o| can_be_ordered_by_index(o, index))
-        .map(|(can_order, needs_reverse)| can_order && needs_reverse)
+        .map(|o| filtered_index_order_prefix(o, index, filter))
+        .map(|(prefix, needs_reverse)| prefix > 0 && needs_reverse)
         .unwrap_or(false);
 
     // For descending indexes, range bounds must be swapped because the encoding
@@ -273,6 +319,19 @@ pub fn filter_to_index_scan(
             let mut values = vec![wrapped_value];
             values.extend(subsequent_eq_values);
             IndexScanType::ExactMatch { values }
+        } else if let Some((lower, upper)) = index
+            .fields
+            .get(1 + subsequent_eq_values.len())
+            .and_then(|field| composite_range(&conditions, field, collection_fields))
+        {
+            let mut prefix_values = vec![wrapped_value];
+            prefix_values.extend(subsequent_eq_values);
+            IndexScanType::RangeScan {
+                prefix_values,
+                lower,
+                upper,
+                reverse,
+            }
         } else if is_composite && !subsequent_eq_values.is_empty() {
             // Multiple consecutive fields matched but not all - use PrefixScan with all eq values
             let mut values = vec![wrapped_value];
@@ -293,7 +352,13 @@ pub fn filter_to_index_scan(
             }
         }
     } else if has_in {
-        let wrapped_values = wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        let mut wrapped_values =
+            wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
+        // The lookups run in the index's key order, as a range scan would,
+        // and backward when the scan is: the planner relies on the index for
+        // the requested order, so `_in: [55, 25]` must not come back as written.
+        // Sorting after the JSON wrap orders them by the keys the index stores.
+        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
@@ -427,7 +492,7 @@ pub fn filter_to_index_scan(
     // Only pass limit/offset if the index provides ordering
     // (otherwise the limit needs to be applied after sorting)
     let index_provides_ordering = order_by
-        .map(|o| can_be_ordered_by_index(o, index).0)
+        .map(|o| can_be_ordered_by_filtered_index(o, index, filter).0)
         .unwrap_or(false);
 
     Some(IndexScanParams {
@@ -520,4 +585,28 @@ pub fn or_filter_to_index_scan(
     }
 
     None
+}
+
+/// `values` in the order the index holds their keys (`descending` when its
+/// first field is), backward when the scan runs backward, each once. A value
+/// that does not encode keeps its place after those that do.
+fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
+    let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
+        .drain(..)
+        .map(|value| {
+            let key = storage::field_value::encode_field_value(Vec::new(), &value, descending).ok();
+            (key, value)
+        })
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    keyed.dedup_by(|(a, _), (b, _)| a.is_some() && a == b);
+    if reverse {
+        keyed.reverse();
+    }
+    values.extend(keyed.into_iter().map(|(_, value)| value));
 }

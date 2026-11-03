@@ -6,6 +6,7 @@ pub struct EmbeddingClientConfig {
     pub url: String,
     pub model: String,
     pub api_key: String,
+    pub timeout: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for EmbeddingClientConfig {
@@ -35,6 +36,12 @@ impl EmbeddingClientConfig {
 
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = api_key.into();
+        self
+    }
+
+    /// How long one query-embedding request may take; unset, 30 seconds.
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 }

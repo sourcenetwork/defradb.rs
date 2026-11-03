@@ -40,3 +40,43 @@ pub fn shared_runtime() -> &'static Runtime {
 pub fn owned_runtime() -> Runtime {
     Runtime::new().expect("a tokio runtime")
 }
+
+/// The positive count the environment variable `name` holds, else `default`.
+pub fn positive(name: &str, default: usize) -> usize {
+    let value = std::env::var(name).map_or(default, |s| s.parse().expect(name));
+    assert!(value > 0, "{name} must be positive");
+    value
+}
+
+/// The positive comma-separated counts `name` holds, else `default`'s.
+pub fn counts(name: &str, default: &str) -> Vec<usize> {
+    let counts: Vec<usize> = std::env::var(name)
+        .unwrap_or_else(|_| default.into())
+        .split(',')
+        .map(|value| value.parse().expect(name))
+        .collect();
+    assert!(
+        counts.iter().all(|count| *count > 0),
+        "{name} must be positive"
+    );
+    counts
+}
+
+/// What `git args` prints, trimmed.
+pub fn git(args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The load guard a baseline run names in `DEFRA_BASELINE_LOAD_GUARD`.
+pub fn load_guard() -> defra_perf::run_meta::LoadGuard {
+    defra_perf::run_meta::load_guard(
+        std::env::var_os("DEFRA_BASELINE_LOAD_GUARD")
+            .as_deref()
+            .map(std::path::Path::new),
+    )
+}

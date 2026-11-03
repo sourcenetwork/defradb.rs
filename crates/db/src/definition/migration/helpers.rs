@@ -110,7 +110,7 @@ pub fn lens_doc_to_document(
     original_doc: &Document,
     collection: &Collection,
 ) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection.schema_arc());
 
     if let Some(id) = original_doc.id() {
         doc.set_id(id.clone());
@@ -121,8 +121,8 @@ pub fn lens_doc_to_document(
             continue;
         }
         if let Some(value) = lens_doc.remove(&field.name) {
-            doc.set(
-                &field.name,
+            doc.set_unchecked(
+                field.name.clone(),
                 json_to_native_value(&value, &field.name, collection.schema()),
             );
         } else if original_doc.get(&field.name).is_some() {
@@ -130,11 +130,11 @@ pub fn lens_doc_to_document(
             // explicit nil assignment. Rust omits nils from CBOR storage, but
             // retaining Null in the returned in-memory document preserves the
             // same clear semantics for the query that performed the migration.
-            doc.set(&field.name, document::NormalValue::Null);
+            doc.set_unchecked(field.name.clone(), document::NormalValue::Null);
         }
     }
 
-    doc.set_schema_version_id(collection.version_id());
+    doc.set_collection_version_id(collection.version_id());
     doc
 }
 
@@ -161,7 +161,7 @@ pub(crate) async fn migrate_to_active(
     lens_store: &Arc<dyn TransformStore>,
 ) -> Result<ToActive> {
     let target = collection.version_id();
-    let Some(version) = doc.schema_version_id() else {
+    let Some(version) = doc.collection_version_id() else {
         return Ok(ToActive::Identity);
     };
     if version == target {
@@ -227,6 +227,25 @@ pub(crate) async fn cache_migrated_document(
     {
         return Ok(false);
     }
+    if has_block_state_field(collection) {
+        if let Some(bytes) = datastore
+            .get(&collection.doc_key(doc_short_id))
+            .await
+            .map_err(Error::Storage)?
+        {
+            if changes_block_state(
+                collection,
+                &crdt::stored::document_from_storage(
+                    &bytes,
+                    collection.schema_arc(),
+                    collection.crdts(),
+                )?,
+                doc,
+            ) {
+                return Ok(false);
+            }
+        }
+    }
 
     collection
         .put_document_value(datastore, doc_short_id, doc, false, None)
@@ -234,6 +253,30 @@ pub(crate) async fn cache_migrated_document(
     collection.store_version(datastore, doc_short_id).await?;
 
     Ok(true)
+}
+
+/// The fields whose stored state is a function of their blocks: tagged
+/// (Json) and causal (Text) fields.
+fn block_state_fields(collection: &Collection) -> impl Iterator<Item = &schema::FieldDescription> {
+    collection.schema().fields.iter().filter(|field| {
+        collection
+            .crdts()
+            .field(field.crdt_type)
+            .is_some_and(|crdt| crdt.tagged().is_some() || crdt.causal().is_some())
+    })
+}
+
+fn has_block_state_field(collection: &Collection) -> bool {
+    block_state_fields(collection).next().is_some()
+}
+
+/// Whether `migrated` reads a tagged or causal field differently from
+/// `stored`. Such a state only changes through blocks every peer merges (a
+/// peer's Text edit counts its positions in the text its blocks make), so the
+/// write-back leaves such a document at its old version: reads keep running
+/// the lens, and the next write carries the change in its block.
+fn changes_block_state(collection: &Collection, stored: &Document, migrated: &Document) -> bool {
+    block_state_fields(collection).any(|field| stored.get(&field.name) != migrated.get(&field.name))
 }
 
 /// Persist a lazily migrated document and update its secondary indexes in the
@@ -271,8 +314,15 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     let Some(old_data) = datastore.get(&key).await.map_err(Error::Storage)? else {
         return Ok(false);
     };
-    let mut old_doc = Document::from_storage_cbor(&old_data)?;
+    let mut old_doc = crdt::stored::document_from_storage(
+        &old_data,
+        collection.schema_arc(),
+        collection.crdts(),
+    )?;
     old_doc.set_id(doc_id.clone());
+    if changes_block_state(collection, &old_doc, doc) {
+        return Ok(false);
+    }
 
     collection
         .put_document_value(datastore, doc_short_id, doc, false, None)
@@ -292,35 +342,5 @@ pub(crate) async fn cache_migrated_document_with_indexes(
             .await?;
     }
 
-    Ok(true)
-}
-
-/// Advance only a document's stored schema version.
-pub(crate) async fn cache_document_version(
-    datastore: &NamespaceView,
-    systemstore: &NamespaceView,
-    collection: &Collection,
-    doc: &Document,
-) -> Result<bool> {
-    let Some(doc_id) = doc.id() else {
-        return Ok(false);
-    };
-    let Some(doc_short_id) = collection.resolve_doc_short_id(systemstore, doc_id).await? else {
-        return Ok(false);
-    };
-
-    collection
-        .validate_write_definition(datastore, true)
-        .await?;
-    if collection
-        .load_version(datastore, doc_short_id)
-        .await?
-        .as_deref()
-        == Some(collection.version_id())
-    {
-        return Ok(false);
-    }
-
-    collection.store_version(datastore, doc_short_id).await?;
     Ok(true)
 }

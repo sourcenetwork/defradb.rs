@@ -151,12 +151,12 @@ where
     }
 
     /// Rolls the transaction back, after every request queued before this.
-    pub(crate) fn rollback(mut self) -> Result<()> {
+    pub(crate) fn discard(mut self) -> Result<()> {
         self.take()?.force_discard()
     }
 
     fn turn_error(error: Error) -> TransactionError {
-        TransactionError::execution(error.to_string())
+        crate::error::transaction_error(error)
     }
 }
 
@@ -207,7 +207,7 @@ impl<S> Drop for OwnedTxn<S>
 where
     S: Store + 'static,
 {
-    /// A transaction that ends without a commit or a rollback is discarded,
+    /// A transaction that ends without a commit or a discard is discarded,
     /// always.
     fn drop(&mut self) {
         let txn = match std::mem::replace(&mut self.txn, Lending::Gone) {

@@ -7,7 +7,7 @@ use iroh::endpoint::Connection;
 use iroh::EndpointId;
 use kovan::Atom;
 
-use crate::transport::PeerId;
+use crate::transport::{PeerConnectionInfo, PeerId};
 
 /// Parse a transport `PeerId` string into an iroh `EndpointId`.
 pub fn parse_endpoint_id(peer_id: &PeerId) -> crate::error::Result<EndpointId> {
@@ -109,6 +109,44 @@ impl PeerMap {
         self.connections.get(id).and_then(|info| info.remote_addr)
     }
 
+    /// The selected path and traffic totals of a connected peer.
+    pub fn connection(&self, id: &EndpointId) -> Option<PeerConnectionInfo> {
+        let info = self.connections.get(id)?;
+        let live: Vec<&Connection> = info
+            .handles
+            .iter()
+            .filter(|conn| conn.close_reason().is_none())
+            .collect();
+        let selected = live.iter().find_map(|conn| {
+            let paths = conn.paths();
+            let path = paths.iter().find(|path| path.is_selected())?;
+            Some((path.is_relay(), path.remote_addr().to_string(), path.rtt()))
+        });
+        let (bytes_sent, bytes_received) = live.iter().fold((0u64, 0u64), |(tx, rx), conn| {
+            let stats = conn.stats();
+            (
+                tx.saturating_add(stats.udp_tx.bytes),
+                rx.saturating_add(stats.udp_rx.bytes),
+            )
+        });
+        Some(PeerConnectionInfo {
+            path: match selected {
+                Some((true, _, _)) => "relay",
+                _ => "direct",
+            },
+            remote_address: selected
+                .as_ref()
+                .map(|(_, addr, _)| addr.clone())
+                .or_else(|| info.remote_addr.map(|addr| addr.to_string())),
+            open_connections: info.active_connections,
+            rtt_micros: selected.map(|(_, _, rtt)| rtt.as_micros() as u64),
+            bytes_sent: Some(bytes_sent),
+            bytes_received: Some(bytes_received),
+            dialed_by_us: None,
+            connected_for_secs: None,
+        })
+    }
+
     pub fn connected_peers(&self) -> Vec<PeerId> {
         self.connections
             .keys()
@@ -121,11 +159,6 @@ impl PeerMap {
             .values()
             .filter_map(|info| info.remote_addr.map(|a: SocketAddr| a.to_string()))
             .collect()
-    }
-
-    /// Return all connected endpoint IDs.
-    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
-        self.connections.keys().copied().collect()
     }
 }
 
@@ -172,15 +205,15 @@ impl SharedPeerMap {
         self.0.peek(|map| map.remote_addr(id))
     }
 
+    pub fn connection(&self, id: &EndpointId) -> Option<PeerConnectionInfo> {
+        self.0.peek(|map| map.connection(id))
+    }
+
     pub fn connected_peers(&self) -> Vec<PeerId> {
         self.0.peek(PeerMap::connected_peers)
     }
 
     pub fn peer_addresses(&self) -> Vec<String> {
         self.0.peek(PeerMap::peer_addresses)
-    }
-
-    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
-        self.0.peek(PeerMap::endpoint_ids)
     }
 }

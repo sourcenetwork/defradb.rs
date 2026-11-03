@@ -103,7 +103,7 @@ pub trait ZanzibarStore: MaybeSendSync {
     ) -> Result<()>;
 }
 
-/// Owns commit/rollback for a standalone authorization operation. Dropping the
+/// Owns commit/discard for a standalone authorization operation. Dropping the
 /// scope without committing must discard every staged change.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

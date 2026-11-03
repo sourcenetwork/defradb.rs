@@ -77,7 +77,7 @@ pub(crate) fn immutable_block(
     let names = fields.keys().cloned().collect();
     let delta = CrdtDelta::Immutable(ImmutableDeltaPayload {
         priority: 1,
-        schema_version_id: schema.version_id.clone(),
+        collection_version_id: schema.version_id.clone(),
         fields,
     });
     let mut block = Block::new(delta, vec![], vec![]);

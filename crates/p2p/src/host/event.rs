@@ -8,6 +8,9 @@ use crate::QueryId;
 
 use super::ResponseChannel;
 
+/// The channel the P2P host emits its [`HostEvent`]s on.
+pub type HostEventReceiver = tokio::sync::mpsc::Receiver<HostEvent>;
+
 /// Events emitted by the P2P host.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -71,6 +74,8 @@ pub enum HostEvent {
     BitswapComplete {
         query_id: QueryId,
         success: bool,
+        /// Why a failed sync failed; `None` on success.
+        cause: Option<crate::transport::FetchFailureCause>,
         error: Option<String>,
     },
 

@@ -214,9 +214,11 @@ impl fmt::Display for ReplayPushSendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Persistence(error) => write!(f, "replay admission state: {error}"),
-            Self::Backpressure { .. } => {
-                f.write_str("receiver backpressure; deferred to persisted retry")
-            }
+            Self::Backpressure { retry_after } => write!(
+                f,
+                "receiver backpressure; retry after {} ms",
+                retry_after.as_millis()
+            ),
             Self::SemaphoreClosed => f.write_str("replay send semaphore closed"),
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())

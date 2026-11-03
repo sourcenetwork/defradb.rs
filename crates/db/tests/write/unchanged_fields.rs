@@ -21,9 +21,24 @@ fn status_collection() -> CollectionVersion {
         "v1",
         "col-status",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "state", FieldKind::string()),
-            FieldDescription::new("3", "detail", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "state",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "detail",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -50,155 +65,180 @@ async fn setup() -> (Arc<DB<RegolithStore>>, document::DocID) {
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create(
             "Status",
-            Document::from_json_str(r#"{"state": "idle", "detail": "boot"}"#).unwrap(),
+            Document::from_json_str(
+                r#"{"state": "idle", "detail": "boot"}"#,
+                status_collection(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap();
     (db, created.doc_id)
 }
 
-#[tokio::test]
-async fn autocommit_update_with_current_values_writes_nothing() {
-    let (db, doc_id) = setup().await;
-    let auto = AutoCommitMutator::new(Arc::clone(&db));
-    let before = block_count(&db).await;
+#[test]
+fn autocommit_update_with_current_values_writes_nothing() {
+    workers::block_on(async {
+        let (db, doc_id) = setup().await;
+        let auto = AutoCommitMutator::new(Arc::clone(&db));
+        let before = block_count(&db).await;
 
-    let doc = auto
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    let result = auto
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
+        let doc = auto
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = auto
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
 
-    assert_eq!(result.fields_modified, 0);
-    assert!(result.commit_cid.is_none());
-    assert_eq!(block_count(&db).await, before);
+        assert_eq!(result.fields_modified, 0);
+        assert!(result.commit_cid.is_none());
+        assert_eq!(block_count(&db).await, before);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn autocommit_update_writes_only_the_changed_field() {
-    let (db, doc_id) = setup().await;
-    let auto = AutoCommitMutator::new(Arc::clone(&db));
-    let before = block_count(&db).await;
+#[test]
+fn autocommit_update_writes_only_the_changed_field() {
+    workers::block_on(async {
+        let (db, doc_id) = setup().await;
+        let auto = AutoCommitMutator::new(Arc::clone(&db));
+        let before = block_count(&db).await;
 
-    let mut doc = auto
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    doc.set("state", NormalValue::String("busy".to_string()));
-    let result = auto
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
+        let mut doc = auto
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        doc.set("state", NormalValue::String("busy".to_string()))
+            .unwrap();
+        let result = auto
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
 
-    assert!(result.commit_cid.is_some());
-    // One field block for `state` and one composite.
-    assert_eq!(block_count(&db).await, before + 2);
-    assert_eq!(
-        result.document.get("detail"),
-        Some(&NormalValue::String("boot".to_string()))
-    );
+        assert!(result.commit_cid.is_some());
+        // One field block for `state` and one composite.
+        assert_eq!(block_count(&db).await, before + 2);
+        assert_eq!(
+            result.document.get("detail"),
+            Some(&NormalValue::String("boot".to_string()))
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn transaction_update_with_current_values_writes_nothing() {
-    let (db, doc_id) = setup().await;
-    let before = block_count(&db).await;
+#[test]
+fn transaction_update_with_current_values_writes_nothing() {
+    workers::block_on(async {
+        let (db, doc_id) = setup().await;
+        let before = block_count(&db).await;
 
-    let mutator = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
-    let doc = mutator
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    let result = mutator
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
-    mutator.take_txn().await.unwrap().commit().await.unwrap();
+        let mutator = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
+        let doc = mutator
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = mutator
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
+        mutator.take_txn().await.unwrap().commit().await.unwrap();
 
-    assert_eq!(result.fields_modified, 0);
-    assert_eq!(block_count(&db).await, before);
+        assert_eq!(result.fields_modified, 0);
+        assert_eq!(block_count(&db).await, before);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn transaction_update_writes_only_the_changed_field() {
-    let (db, doc_id) = setup().await;
-    let before = block_count(&db).await;
+#[test]
+fn transaction_update_writes_only_the_changed_field() {
+    workers::block_on(async {
+        let (db, doc_id) = setup().await;
+        let before = block_count(&db).await;
 
-    let mutator = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
-    let mut doc = mutator
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    doc.set("state", NormalValue::String("busy".to_string()));
-    let result = mutator
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
-    mutator.take_txn().await.unwrap().commit().await.unwrap();
+        let mutator = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
+        let mut doc = mutator
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        doc.set("state", NormalValue::String("busy".to_string()))
+            .unwrap();
+        let result = mutator
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
+        mutator.take_txn().await.unwrap().commit().await.unwrap();
 
-    assert_eq!(result.fields_modified, 1);
-    assert_eq!(block_count(&db).await, before + 2);
+        assert_eq!(result.fields_modified, 1);
+        assert_eq!(block_count(&db).await, before + 2);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_update_with_current_values_writes_nothing() {
-    use db::write::autocommit::batch::BatchMutator;
-    use query::mutator::MutationBatchController;
+#[test]
+fn batch_update_with_current_values_writes_nothing() {
+    workers::block_on(async {
+        use db::write::autocommit::batch::BatchMutator;
+        use query::mutator::MutationBatchController;
 
-    let (db, doc_id) = setup().await;
-    let before = block_count(&db).await;
-    let mutator =
-        BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
-    let mut doc = mutator
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    doc.set_write_preparation(Arc::new(document::WritePreparation::new(1, 1)));
-    let result = mutator
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
-    mutator.commit().await.unwrap();
+        let (db, doc_id) = setup().await;
+        let before = block_count(&db).await;
+        let mutator =
+            BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
+        let mut doc = mutator
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        doc.set_write_preparation(Arc::new(document::WritePreparation::new(1, 1)));
+        let result = mutator
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
+        mutator.commit().await.unwrap();
 
-    assert_eq!(result.fields_modified, 0);
-    assert!(result.commit_cid.is_none());
-    assert!(result.document.write_preparation().is_none());
-    assert_eq!(block_count(&db).await, before);
+        assert_eq!(result.fields_modified, 0);
+        assert!(result.commit_cid.is_none());
+        assert!(result.document.write_preparation().is_none());
+        assert_eq!(block_count(&db).await, before);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_update_writes_only_the_changed_field() {
-    use db::write::autocommit::batch::BatchMutator;
-    use query::mutator::MutationBatchController;
+#[test]
+fn batch_update_writes_only_the_changed_field() {
+    workers::block_on(async {
+        use db::write::autocommit::batch::BatchMutator;
+        use query::mutator::MutationBatchController;
 
-    let (db, doc_id) = setup().await;
-    let before = block_count(&db).await;
-    let mutator =
-        BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
-    let mut doc = mutator
-        .get_for_update("Status", &doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    doc.set("state", NormalValue::String("busy".into()));
-    let result = mutator
-        .update("Status", doc, fields(&["state", "detail"]))
-        .await
-        .unwrap();
-    mutator.commit().await.unwrap();
+        let (db, doc_id) = setup().await;
+        let before = block_count(&db).await;
+        let mutator =
+            BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
+        let mut doc = mutator
+            .get_for_update("Status", &doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        doc.set("state", NormalValue::String("busy".into()))
+            .unwrap();
+        let result = mutator
+            .update("Status", doc, fields(&["state", "detail"]))
+            .await
+            .unwrap();
+        mutator.commit().await.unwrap();
 
-    assert_eq!(result.fields_modified, 1);
-    assert_eq!(block_count(&db).await, before + 2);
-    assert_eq!(
-        result.document.get("detail"),
-        Some(&NormalValue::String("boot".into()))
-    );
+        assert_eq!(result.fields_modified, 1);
+        assert_eq!(block_count(&db).await, before + 2);
+        assert_eq!(
+            result.document.get("detail"),
+            Some(&NormalValue::String("boot".into()))
+        );
+    })
+    .unwrap()
 }

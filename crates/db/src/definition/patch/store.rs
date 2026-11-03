@@ -96,7 +96,12 @@ impl<S: Store> crate::database::DB<S> {
                 .map(|idx| idx.id)
                 .max()
                 .unwrap_or(0);
-            let mut next_index_id = schema_max_index_id;
+            let retired = crate::index::manager::index_id_floor(
+                &txn.datastore()?,
+                new_schema.resolved_root_id(),
+            )
+            .await?;
+            let mut next_index_id = schema_max_index_id.max(retired);
 
             let mut indexes_to_add = Vec::new();
             for field in &new_schema.fields {
@@ -295,8 +300,8 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let committed_migration = if let Some(mut config) = migration {
-            config.source_schema_version_id = old_version_id.to_string();
-            config.destination_schema_version_id = new_version_id.clone();
+            config.source_collection_version_id = old_version_id.to_string();
+            config.destination_collection_version_id = new_version_id.clone();
 
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
             let transform_id = txn_lens_store.add(config.clone()).await?;
@@ -506,7 +511,7 @@ impl<S: Store> crate::database::DB<S> {
         if let Ok(new_cid) = cid::Cid::try_from(new_version_id.as_str()) {
             let schema_heads = std::sync::Arc::clone(&self.schema_heads);
             let head_name = actual_name.to_string();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 schema_heads.insert(head_name.clone(), (vec![new_cid], collection_priority));
             })))?;
         }
@@ -519,7 +524,7 @@ impl<S: Store> crate::database::DB<S> {
         } else {
             None
         };
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             collections.rcu(|old| {
                 let mut cache = old.clone();
                 if let Some(collection) = &cached_collection {
@@ -575,17 +580,7 @@ impl<S: Store> crate::database::DB<S> {
         });
 
         for (coll_name, other_schema) in &candidates {
-            let mut needs_update = false;
-            let mut updated_schema = other_schema.clone();
-
-            let max_index_id = updated_schema
-                .indexes
-                .iter()
-                .map(|idx| idx.id)
-                .max()
-                .unwrap_or(0);
-            let mut next_id = max_index_id;
-
+            let mut one_to_one = Vec::new();
             for field in &other_schema.fields {
                 if !field.kind.is_relation() || field.kind.is_array() || !field.is_primary {
                     continue;
@@ -606,12 +601,33 @@ impl<S: Store> crate::database::DB<S> {
                 // Find the matching field on just_patched
                 let matching_field =
                     just_patched.field_by_relation(rel_name, &other_schema.name, &field.name);
-                let is_one_to_one = matching_field.map(|f| !f.kind.is_array()).unwrap_or(false);
-                if !is_one_to_one {
-                    continue;
+                if matching_field.is_some_and(|f| !f.kind.is_array()) {
+                    one_to_one.push(field.name.as_str());
                 }
+            }
+            if one_to_one.is_empty() {
+                continue;
+            }
+
+            let mut needs_update = false;
+            let mut updated_schema = other_schema.clone();
+            let txn = self.new_txn(false).await?;
+            let max_index_id = updated_schema
+                .indexes
+                .iter()
+                .map(|idx| idx.id)
+                .max()
+                .unwrap_or(0);
+            let retired = crate::index::manager::index_id_floor(
+                &txn.datastore()?,
+                updated_schema.resolved_root_id(),
+            )
+            .await?;
+            let mut next_id = max_index_id.max(retired);
+
+            for field_name in one_to_one {
                 // Check if unique index already exists
-                match updated_schema.ensure_one_to_one_unique_index(&field.name, &mut || {
+                match updated_schema.ensure_one_to_one_unique_index(field_name, &mut || {
                     next_id += 1;
                     next_id
                 }) {
@@ -626,7 +642,6 @@ impl<S: Store> crate::database::DB<S> {
 
             if needs_update {
                 // Store updated schema with new indexes
-                let txn = self.new_txn(false).await?;
                 let key = CollectionKey::new(&updated_schema.version_id);
                 let data = serde_json::to_vec(&updated_schema).map_err(|e| {
                     Error::collection_schema_json(
@@ -649,7 +664,7 @@ impl<S: Store> crate::database::DB<S> {
                         .await?;
                 let collections = std::sync::Arc::clone(&self.collections);
                 let registered_name = coll_name.to_string();
-                txn.on_commit(OnCommit::Ordered(Box::new(move || {
+                txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
                         cache.put_named(&registered_name, cached_collection.clone());

@@ -107,7 +107,7 @@ impl Node {
 
         // Build the KMS pubsub transport and install it on the coordinator so
         // raw gossip on the encryption topic is routed to it (mirrors
-        // crates/embedded/src/node_p2p.rs::setup_libp2p).
+        // crates/defra-node/src/libp2p_runtime.rs::setup_libp2p).
         let kms_transport = p2p::kms::PubsubKeyTransport::new(
             p2p::Libp2pTransport::new(handle.clone()),
             Arc::new(p2p::HandlePeerIdentityResolver::new(handle.clone())),
@@ -207,6 +207,11 @@ impl Node {
                 .await;
         });
 
+        // A replication filter also judges pushes before their blocks are
+        // fetched; the merge keeps its own check.
+        if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+            coordinator.set_receive_gate(Arc::new(gate));
+        }
         // Receiver's re-arm loop (#1116 stage 2): dispatches due pending
         // roots at a tight cadence. Sibling of the resync sweep above.
         let coordinator_for_retry_clock = coordinator.clone();
@@ -327,12 +332,16 @@ impl Node {
                         }
                         return;
                     }
-                    p2p::TransportEvent::SEQueryRequest { peer_id, request } => {
+                    p2p::TransportEvent::SEQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         db::merge::se::serve::handle_query_request(
                             se_store.as_ref(),
                             &se_transport_serve,
                             peer_id,
-                            request,
+                            request, token,
                         )
                         .await;
                         return;
@@ -341,13 +350,17 @@ impl Node {
                         se_correlator_for_events.deliver(reply);
                         return;
                     }
-                    p2p::TransportEvent::ManageRequest { peer_id, request } => {
+                    p2p::TransportEvent::ManageRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         if let Some(hooks) = manage_hooks_for_events.get() {
                             defra_p2p_adapter::manage::serve::serve_manage_request(
                                 hooks,
                                 &se_transport_serve,
                                 &peer_id,
-                                request,
+                                request, token,
                             )
                             .await;
                         } else {
@@ -355,13 +368,17 @@ impl Node {
                         }
                         return;
                     }
-                    p2p::TransportEvent::ManageQueryRequest { peer_id, request } => {
+                    p2p::TransportEvent::ManageQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         if let Some(hooks) = manage_hooks_for_events.get() {
                             defra_p2p_adapter::manage::serve::serve_manage_query_request(
                                 hooks,
                                 &se_transport_serve,
                                 &peer_id,
-                                request,
+                                request, token,
                             )
                             .await;
                         } else {
@@ -489,11 +506,11 @@ impl Node {
 
         info!("P2P sync coordinator initialized");
 
-        let manage_controller: Arc<dyn defra_http::router::P2POperations> = Arc::new(adapter);
+        let manage_controller: Arc<dyn defra_p2p_adapter::P2POperations> = Arc::new(adapter);
 
         // Outbound management requester over the same libp2p transport, sharing
         // the requester-side manage correlators (Task 7a).
-        let manage_requester: Arc<dyn defra_http::router::ManageRequester> =
+        let manage_requester: Arc<dyn defra_p2p_adapter::ManageRequester> =
             Arc::new(defra_p2p_adapter::manage::client::ManageClient::new(
                 p2p::Libp2pTransport::new(handle.clone()),
                 manage_correlator.clone(),

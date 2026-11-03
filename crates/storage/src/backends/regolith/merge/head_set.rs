@@ -391,6 +391,23 @@ pub struct Set {
 }
 
 impl Set {
+    /// Apply an operand to an already decoded snapshot, using the same
+    /// transitions as the engine fold. This updates a read cache, not storage.
+    pub fn apply(&mut self, write: &Write) {
+        for (name, func) in &write.entries {
+            let position = self.names.binary_search_by(|(held, _)| held.cmp(name));
+            let previous = position.map(|at| self.names[at].1).unwrap_or(State::Absent);
+            match (position, func.apply(previous)) {
+                (Ok(at), State::Absent) => {
+                    self.names.remove(at);
+                }
+                (Err(_), State::Absent) => {}
+                (Ok(at), state) => self.names[at].1 = state,
+                (Err(at), state) => self.names.insert(at, (name.clone(), state)),
+            }
+        }
+    }
+
     /// The set a stored value holds, or `None` when the bytes are not one.
     pub fn read(bytes: &[u8]) -> Option<Self> {
         let (HEAD_SET_STATE, body) = decode(bytes)? else {

@@ -23,7 +23,7 @@ TLA+ does not prove byte/value merge algebra.
 | Restart creates fresh DAG sync state; `clear` wipes `syncing`, `synced`, and `synced_order`. | `crates/p2p/src/sync/dag_sync/sync.rs:32`, `crates/p2p/src/sync/dag_sync/state.rs:160` |
 | PushLog stores a root as unmerged, walks all missing DAG links, emits merge only when complete, otherwise registers a pending DAG. | `crates/p2p/src/sync/manager/process/pushlog.rs:248`, `pushlog.rs:269`, `pushlog.rs:292`, `pushlog.rs:363` |
 | Missing-link discovery walks the full reachable DAG and short-circuits already merged subtrees. | `crates/p2p/src/sync/manager/links.rs:56`, `links.rs:78` |
-| Fetch tries CAR first, then selective block batches, and emits `DagReady` only when no missing links remain. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs:56`, `dag_fetcher.rs:99`, `dag_fetcher.rs:164` |
+| Fetch tries CAR first, then selective block batches, and emits `DagReady` only when no missing links remain. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs:450` (`fetch_dag_attempt`), `dag_fetcher.rs:483` (rooted CAR), `dag_fetcher.rs:618` (selective batches), `dag_fetcher.rs:690` (`emit_dag_ready`) |
 | Pending DAG entries have TTL/capacity limits, so convergence requires eventual reannouncement/head rediscovery if pending state is dropped. | `crates/p2p/src/sync/manager/pending.rs:11`, `pending.rs:17`, `crates/p2p/src/sync/manager/process/pending_dag.rs:311` |
 | DocSync/BranchableSync discover current heads from providers after reconnect. | `crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs:152`, `branchable_sync.rs:62`, `crates/db/src/merge/head_provider.rs:38`, `head_provider.rs:194` |
 | Composite merge recursively merges parent heads before the current block; durable merged sets skip duplicate replay. | `crates/db/src/merge/merge_handler/composite.rs:140`, `crates/db/src/merge/merge_handler/mod.rs:83` |
@@ -71,16 +71,16 @@ Safety invariants:
 Lean lives under `proofs/lean/` and models local merge/apply behavior:
 
 - LWW is a join over a resolved total-order key derived from decoded priority and
-  deterministic value/tombstone tie-break (`crates/crdt/src/lww.rs:187`,
-  `lww.rs:200`, `lww.rs:218`).
+  deterministic value/tombstone tie-break (`crates/crdt/src/field/lww.rs`
+  `LwwField::merge`).
 - Int64 counter accumulation is wrapping addition, so it is commutative and
   associative, but raw counter merge is not idempotent
-  (`crates/crdt/src/counter.rs:410`, `counter.rs:447`).
+  (`crates/crdt/src/field/counter.rs` `CounterField::merge`).
 - Counter idempotency is modeled at the durable merged-CID/applied-set layer, which
   is the contract documented above the merge handler
-  (`crates/db/src/merge/merge_handler/counter.rs:422`).
-- Composite merge is componentwise over field-local state
-  (`crates/crdt/src/composite.rs:512`).
+  (`crates/db/src/merge/merge_handler/field_ops.rs` `apply_field_op_once`).
+- A document value merges componentwise over field-local state
+  (`crates/crdt/src/stored.rs` `StoredDocument::apply`).
 
 The Lean README records `#print axioms` status. No theorem uses `sorry` or custom
 axioms. Float32/Float64 counter laws are intentionally not claimed because IEEE-754

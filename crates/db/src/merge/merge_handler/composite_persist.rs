@@ -19,8 +19,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     ) -> std::result::Result<Option<MergeOutcome>, MergeError> {
         let collection = context.collection.as_ref().ok_or_else(|| {
             MergeError::MissingMetadata(format!(
-                "Collection not found for schema_version_id: {}",
-                context.payload.schema_version_id
+                "Collection not found for collection_version_id: {}",
+                context.payload.collection_version_id
             ))
         })?;
 
@@ -53,7 +53,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(None);
         }
 
-        if state.field_values.is_empty() {
+        if state.field_values.is_empty() && !state.parked_fields {
             return Ok(None);
         }
 
@@ -71,16 +71,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
             Err(error) => return Err(MergeError::Database(error)),
             Ok(None) => {
-                let mut new_doc = Document::new();
+                let mut new_doc = Document::new(collection.schema_arc());
                 new_doc.set_id(doc_id.clone());
                 (new_doc, None)
             }
         };
 
-        doc.set_schema_version_id(&context.payload.schema_version_id);
+        doc.set_collection_version_id(&context.payload.collection_version_id);
 
         for (field_name, value) in &state.field_values {
-            doc.set(field_name, value.clone());
+            doc.set_unchecked(field_name.clone(), value.clone());
+        }
+        for (field_name, op) in &state.field_ops {
+            doc.edit(field_name.clone(), op.clone())
+                .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection

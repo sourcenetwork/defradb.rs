@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use acp::nac::NodePermission;
 
-use crate::state::{FfiDatabase, FfiTransactionRegistry, NODES};
+use crate::state::{FfiDatabase, NODES};
 use crate::target::{resolve_identity, resolve_target, Target, ERR_INVALID_HANDLE};
 use crate::types::DefraResult;
 
@@ -48,17 +48,21 @@ impl Request {
         crate::helpers::get_node_database(self.node())
     }
 
-    /// The node's registry of explicit transactions.
-    pub(crate) fn txn_registry(&self) -> Result<Arc<FfiTransactionRegistry>, DefraResult> {
+    /// The node's executor, which runs a call in the transaction its context
+    /// names, or in one of its own.
+    pub(crate) fn runner(&self) -> Result<Arc<dyn query::QueryExecutor>, DefraResult> {
         NODES
-            .get(self.node(), |state| state.txn_registry.clone())
+            .get(self.node(), |state| state.query_runner.clone())
             .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE))
     }
 
     /// The context the call acts in: the caller's identity, so DB-layer node
-    /// access checks resolve the caller instead of the wildcard.
+    /// access checks resolve the caller instead of the wildcard, and the
+    /// transaction the call runs in, if any.
     pub(crate) fn context(&self) -> defra_core::RequestContext {
-        defra_core::RequestContext::default().with_identity(self.identity.clone())
+        defra_core::RequestContext::default()
+            .with_identity(self.identity.clone())
+            .with_txn(self.target.txn_id())
     }
 
     /// The caller's DID, parsed.

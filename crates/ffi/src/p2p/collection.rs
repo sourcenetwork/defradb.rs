@@ -1,6 +1,7 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
+use defra_p2p_adapter::peer;
 
 use super::{json, ok, run, timeout};
 use crate::target::{go_string, split_comma_separated};
@@ -22,7 +23,7 @@ pub unsafe extern "C" fn defra_p2p_collection_add(
     ffi_entry! {
         let collections = split_comma_separated(&go_string(collections));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pCollectionAdd, None, |ops| async move {
-            ops.add_collections(collections).await
+            peer::add_p2p_collections(&*ops, &collections).await
         }))
     }
 }
@@ -42,7 +43,7 @@ pub unsafe extern "C" fn defra_p2p_collection_delete(
     ffi_entry! {
         let collections = split_comma_separated(&go_string(collections));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pCollectionDelete, None, |ops| async move {
-            ops.remove_collections(collections).await
+            peer::delete_p2p_collections(&*ops, &collections).await
         }))
     }
 }
@@ -52,7 +53,7 @@ pub unsafe extern "C" fn defra_p2p_collection_delete(
 pub extern "C" fn defra_p2p_collection_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pCollectionList, None, |ops| async move {
-            ops.get_collections().await
+            peer::list_p2p_collections(&*ops).await
         }))
     }
 }

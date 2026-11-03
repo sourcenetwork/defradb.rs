@@ -45,12 +45,18 @@ fn field_names(count: usize) -> Vec<String> {
 }
 
 fn collection_version(field_count: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for (index, name) in field_names(field_count).iter().enumerate() {
         fields.push(FieldDescription::new(
             (index + 2).to_string(),
             name,
             FieldKind::string(),
+            schema::CType::LwwRegister,
         ));
     }
     CollectionVersion::new(COLLECTION, SCHEMA_VERSION_ID, COLLECTION_ID, fields)
@@ -59,9 +65,10 @@ fn collection_version(field_count: usize) -> CollectionVersion {
 /// A document whose every field is distinct per `seq`, so two documents in one
 /// run never collide on a content-addressed id.
 fn document(field_count: usize, seq: usize) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection_version(field_count));
     for name in field_names(field_count) {
-        doc.set(&name, NormalValue::String(format!("{name}-{seq}")));
+        doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
+            .unwrap();
     }
     doc
 }
@@ -262,11 +269,13 @@ fn update(c: &mut Criterion) {
                             // One field touched, which is the common shape: a
                             // write that rewrote every field would measure a
                             // create.
-                            let mut doc = Document::with_id(doc_id.clone());
+                            let mut doc =
+                                Document::with_id(doc_id.clone(), collection_version(fields));
                             doc.set(
                                 "field_0",
                                 NormalValue::String(format!("updated-{}", next_seq())),
-                            );
+                            )
+                            .unwrap();
                             let modified: RapidHashSet<String> =
                                 ["field_0".to_string()].into_iter().collect();
                             black_box(

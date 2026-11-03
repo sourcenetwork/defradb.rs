@@ -22,8 +22,18 @@ async fn assert_hint_prevents_resend(path: PushPath) {
             "version-users",
             "collection-users",
             vec![
-                schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                schema::FieldDescription::new("2", "name", schema::FieldKind::string()),
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "name",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         )
         .as_branchable(),
@@ -33,7 +43,11 @@ async fn assert_hint_prevents_resend(path: PushPath) {
     let created = db::AutoCommitMutator::new(db.clone())
         .create(
             "Users",
-            document::Document::from_json_str(r#"{"name":"Alice"}"#).unwrap(),
+            document::Document::from_json_str(
+                r#"{"name":"Alice"}"#,
+                db.get_collection("Users").unwrap().unwrap().schema_arc(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap();

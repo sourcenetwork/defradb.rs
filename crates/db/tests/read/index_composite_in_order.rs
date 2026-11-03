@@ -34,10 +34,20 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-products",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "category", FieldKind::string()),
-            FieldDescription::new("3", "rank", FieldKind::int()),
-            FieldDescription::new("4", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "category",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "rank", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
     version.indexes = vec![IndexDescription {
@@ -71,10 +81,12 @@ async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
     let mutator = DbDocMutator::new(db.clone(), txn);
     let mut seeded = Vec::new();
     for (name, rank) in SEED {
-        let mut doc = Document::new();
-        doc.set("category", NormalValue::String(CATEGORY.to_string()));
-        doc.set("rank", NormalValue::Int(rank));
-        doc.set("name", NormalValue::String(name.to_string()));
+        let mut doc = Document::new(schema());
+        doc.set("category", NormalValue::String(CATEGORY.to_string()))
+            .unwrap();
+        doc.set("rank", NormalValue::Int(rank)).unwrap();
+        doc.set("name", NormalValue::String(name.to_string()))
+            .unwrap();
         let created = mutator
             .create(COLLECTION, doc)
             .await
@@ -99,45 +111,48 @@ fn index_order(seeded: &[(i64, String)]) -> Vec<String> {
     ordered.into_iter().map(|(_, id)| id).collect()
 }
 
-#[tokio::test]
-async fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
-    let (db, seeded) = populated().await;
+#[test]
+fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
+    workers::block_on(async {
+        let (db, seeded) = populated().await;
 
-    let expected = index_order(&seeded);
-    let doc_id_only: Vec<String> = {
-        let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
-        ids.sort();
-        ids
-    };
-    assert_ne!(
-        expected, doc_id_only,
-        "the seed must distinguish index order from a flat DocID sort, \
+        let expected = index_order(&seeded);
+        let doc_id_only: Vec<String> = {
+            let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_ne!(
+            expected, doc_id_only,
+            "the seed must distinguish index order from a flat DocID sort, \
          otherwise this test cannot fail"
-    );
+        );
 
-    let txn = db.new_txn(true).await.unwrap();
-    let got = DbDocFetcher::new(txn)
-        .get_by_index_scan(
-            COLLECTION,
-            &IndexScanParams {
-                index_name: INDEX.to_string(),
-                scan_type: IndexScanType::InScan {
-                    values: vec![NormalValue::String(CATEGORY.to_string())],
-                    suffix_values: vec![],
+        let txn = db.new_txn(true).await.unwrap();
+        let got = DbDocFetcher::new(txn)
+            .get_by_index_scan(
+                COLLECTION,
+                &IndexScanParams {
+                    index_name: INDEX.to_string(),
+                    scan_type: IndexScanType::InScan {
+                        values: vec![NormalValue::String(CATEGORY.to_string())],
+                        suffix_values: vec![],
+                    },
+                    limit: None,
+                    offset: 0,
+                    value_filter: None,
+                    cursor_seek: None,
                 },
-                limit: None,
-                offset: 0,
-                value_filter: None,
-                cursor_seek: None,
-            },
-        )
-        .await
-        .expect("the prefix scan must run")
-        .into_doc_ids();
+            )
+            .await
+            .expect("the prefix scan must run")
+            .into_doc_ids();
 
-    assert_eq!(
-        got, expected,
-        "a partial `_in` must return index order (rank, then DocID), not a \
+        assert_eq!(
+            got, expected,
+            "a partial `_in` must return index order (rank, then DocID), not a \
          DocID sort spanning distinct ranks"
-    );
+        );
+    })
+    .unwrap()
 }

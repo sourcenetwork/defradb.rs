@@ -12,7 +12,7 @@ pub async fn write_collection_block(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     collection_short_id: u32,
-    schema_version_id: &str,
+    collection_version_id: &str,
     doc_composite_cid: Cid,
     signing_config: Option<&SigningConfig>,
 ) -> Result<(Cid, Bytes), String> {
@@ -20,7 +20,7 @@ pub async fn write_collection_block(
         blockstore,
         headstore,
         collection_short_id,
-        schema_version_id,
+        collection_version_id,
         doc_composite_cid,
         signing_config,
         None,
@@ -35,7 +35,7 @@ pub(crate) async fn write_collection_block_with_inputs(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     collection_short_id: u32,
-    schema_version_id: &str,
+    collection_version_id: &str,
     doc_composite_cid: Cid,
     signing_config: Option<&SigningConfig>,
     batch_session: Option<&str>,
@@ -51,7 +51,7 @@ pub(crate) async fn write_collection_block_with_inputs(
 
     // Create the Collection delta payload
     let collection_payload = CollectionDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority,
     };
 

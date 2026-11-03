@@ -20,17 +20,20 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled — 27 families (bounded model claims)
+### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
+| Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
 | Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
-| KMS key distribution | TLA+ | kms, db-merge |
+| KMS key distribution | TLA+ / Lean | kms, db, db-merge |
 | Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
 | Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
 | ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
@@ -43,12 +46,51 @@ section is the **diff**: what is proven vs. the accepted gap.
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
 | Order-preserving key encoding | Lean | storage |
+| DiskANN resident code table | Lean | db-index |
+| DiskANN walk cutoff | Lean | db-index (vector) |
+| PQ distance four sums | Lean | db-index (vector) |
+| Query fragment nesting bound | Lean | query |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
+| DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
+| DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
+| RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
+| DiskANN back-edges in place | Lean | db-index (vector) |
 | Retry input and marker fencing | TLA+ | db, query, storage |
 | Collection schema-version OCC | TLA+ | db |
+| Schema publication completion | TLA+ / Lean | storage, db |
+| Peer connection observation | TLA+ / Lean | p2p |
+| HTTP router composition | TLA+ / Lean | http, defra-node |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
+| Engine ticker export | TLA+ & Lean | telemetry, storage |
+| Worker pool CPU ledger | TLA+ & Lean | workers |
+| Worker default pool | TLA+ & Lean | workers |
+| Node shutdown order | TLA+ | defra-node, embedded, edge, acp |
+| Inbound stream admission | TLA+, Lean | p2p |
+| Vector index link maintenance | TLA+ | storage, db-index |
+| Peer fetch stats | Lean | p2p |
+| DAG fetch provider ranking | TLA+, Lean | p2p |
+| Gossip connection ownership | TLA+, Lean | p2p |
+| Iroh service records | TLA+, Lean | p2p |
+| Iroh solicited replies | TLA+ | p2p |
+| Reply-driven DAG fetch | TLA+ | p2p |
+| Depth-cut DAG fetch | TLA+, Lean | p2p |
+| Index drop during backfill | TLA+ | db-index |
+| Purge by DocID | TLA+ | db |
+| Replication filter | TLA+ | db-merge |
+| Node startup | TLA+, Lean | embedded, storage |
+| Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
+| JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
+| Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
+| Document write pipeline | TLA+ | db, db-block-builder |
+| Add collection | TLA+ | db |
+| Collection truncate | TLA+ | db |
+| Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
+| Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Orphan block sweep | TLA+ & Lean | db, storage |
+| Per-peer stream cap | TLA+ | p2p |
+| Receive gate | TLA+ | p2p, db |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -103,8 +145,10 @@ to its headline invariant, source anchor, the model that proves it, and its
 binding tier (`Behavioral` / `Contract` / `Boundary`). `Boundary` marks what is
 *assumed*, never asserted (crypto, eventual connectivity, bounded-N, foreign
 substrate) — so a green run never reads as "this was proven against the
-artifact." `matrix::every_modeled_family_is_bound` fails if a model lands without
-a binding.
+artifact." The modeled families are the registry's families, so adding a model
+is one `PROPERTIES` entry and one row above;
+`matrix::readme_lists_exactly_the_modeled_families` names any family that has
+one without the other.
 
 ### Realized status — all 21 families bound
 
@@ -114,8 +158,8 @@ Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-d
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/db (merge)/.../lww.rs`
-(`seed_lww_from_existing_doc` re-seeds the datastore LWW from the authoritative
+after a restart — which is now **fixed** in `crates/db (merge)/.../field_state.rs`
+(`reseed_from_document` re-seeds the datastore LWW from the authoritative
 headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 
 | Family | Binding | Where |
@@ -141,6 +185,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
+| DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)

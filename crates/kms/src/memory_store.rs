@@ -78,83 +78,96 @@ mod tests {
     use super::*;
     use crate::types::KeyScope;
 
-    #[tokio::test]
-    async fn generate_returns_cid_key_and_block_bytes() {
-        let store = MemoryKeyStore::new();
-        let (cid, stored) = store
-            .generate(&KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            })
-            .await
-            .unwrap();
-        assert!(!stored.block_bytes.is_empty());
-        // Decoding the stored block yields the same key bytes.
-        let block = defra_core::Encryption::from_dag_cbor(&stored.block_bytes).unwrap();
-        assert_eq!(block.key, stored.key.to_vec());
-        // get returns the same record.
-        let got = store.get(&cid).await.unwrap().unwrap();
-        assert_eq!(got.key, stored.key);
-        assert_eq!(got.block_bytes, stored.block_bytes);
+    #[test]
+    fn generate_returns_cid_key_and_block_bytes() {
+        workers::block_on(async {
+            let store = MemoryKeyStore::new();
+            let (cid, stored) = store
+                .generate(&KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                })
+                .await
+                .unwrap();
+            assert!(!stored.block_bytes.is_empty());
+            // Decoding the stored block yields the same key bytes.
+            let block = defra_core::Encryption::from_dag_cbor(&stored.block_bytes).unwrap();
+            assert_eq!(block.key, stored.key.to_vec());
+            // get returns the same record.
+            let got = store.get(&cid).await.unwrap().unwrap();
+            assert_eq!(got.key, stored.key);
+            assert_eq!(got.block_bytes, stored.block_bytes);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn put_get_roundtrip() {
-        let store = MemoryKeyStore::new();
-        let block = defra_core::Encryption {
-            key: vec![0x42; 32],
-        };
-        let block_bytes = block.to_dag_cbor().unwrap();
-        let cid: EncryptionCid = defra_core::block::generate_cid_from_bytes(&block_bytes).unwrap();
-        store
-            .put(
-                cid,
-                StoredKey {
-                    key: [0x42; 32],
-                    block_bytes: block_bytes.clone(),
-                },
-            )
-            .await
-            .unwrap();
-        let got = store.get(&cid).await.unwrap().unwrap();
-        assert_eq!(got.key, [0x42; 32]);
-        assert_eq!(got.block_bytes, block_bytes);
+    #[test]
+    fn put_get_roundtrip() {
+        workers::block_on(async {
+            let store = MemoryKeyStore::new();
+            let block = defra_core::Encryption {
+                key: vec![0x42; 32],
+            };
+            let block_bytes = block.to_dag_cbor().unwrap();
+            let cid: EncryptionCid =
+                defra_core::block::generate_cid_from_bytes(&block_bytes).unwrap();
+            store
+                .put(
+                    cid,
+                    StoredKey {
+                        key: [0x42; 32],
+                        block_bytes: block_bytes.clone(),
+                    },
+                )
+                .await
+                .unwrap();
+            let got = store.get(&cid).await.unwrap().unwrap();
+            assert_eq!(got.key, [0x42; 32]);
+            assert_eq!(got.block_bytes, block_bytes);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn delete_removes_entry() {
-        let store = MemoryKeyStore::new();
-        let (cid, _) = store
-            .generate(&KeyScope::Document {
-                doc_id: "x".into(),
-                field: None,
-            })
-            .await
-            .unwrap();
-        store.delete(&cid).await.unwrap();
-        assert!(store.get(&cid).await.unwrap().is_none());
+    #[test]
+    fn delete_removes_entry() {
+        workers::block_on(async {
+            let store = MemoryKeyStore::new();
+            let (cid, _) = store
+                .generate(&KeyScope::Document {
+                    doc_id: "x".into(),
+                    field: None,
+                })
+                .await
+                .unwrap();
+            store.delete(&cid).await.unwrap();
+            assert!(store.get(&cid).await.unwrap().is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn list_returns_all_cids() {
-        let store = MemoryKeyStore::new();
-        let (c1, _) = store
-            .generate(&KeyScope::Document {
-                doc_id: "a".into(),
-                field: None,
-            })
-            .await
-            .unwrap();
-        let (c2, _) = store
-            .generate(&KeyScope::Collection {
-                collection_id: "b".into(),
-            })
-            .await
-            .unwrap();
-        let mut list = store.list().await.unwrap();
-        list.sort();
-        let mut expected = vec![c1, c2];
-        expected.sort();
-        assert_eq!(list, expected);
+    #[test]
+    fn list_returns_all_cids() {
+        workers::block_on(async {
+            let store = MemoryKeyStore::new();
+            let (c1, _) = store
+                .generate(&KeyScope::Document {
+                    doc_id: "a".into(),
+                    field: None,
+                })
+                .await
+                .unwrap();
+            let (c2, _) = store
+                .generate(&KeyScope::Collection {
+                    collection_id: "b".into(),
+                })
+                .await
+                .unwrap();
+            let mut list = store.list().await.unwrap();
+            list.sort();
+            let mut expected = vec![c1, c2];
+            expected.sort();
+            assert_eq!(list, expected);
+        })
+        .unwrap()
     }
 }

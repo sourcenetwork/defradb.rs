@@ -15,7 +15,8 @@ use schema::CollectionVersion;
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::document::{documents_to_plan_docs, DocumentMapping};
+use crate::doc_stream::DocStream;
+use crate::document::{document_to_plan_doc_with_status, documents_to_plan_docs, DocumentMapping};
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
 use crate::mapper::Filter;
@@ -42,6 +43,7 @@ pub struct IndexScanNode {
     current_doc: Doc,
     /// Documents fetched via index
     docs: Vec<Doc>,
+    stream: Option<Box<dyn DocStream>>,
     /// Current position in docs
     position: usize,
     /// Whether the node has been initialized
@@ -71,6 +73,7 @@ impl IndexScanNode {
             show_deleted: false,
             current_doc: Doc::default(),
             docs: Vec::new(),
+            stream: None,
             position: 0,
             initialized: false,
             fetcher: None,
@@ -85,6 +88,10 @@ impl IndexScanNode {
     /// When a filter has multiple conditions but only some are covered by the index,
     /// the remaining conditions become the residual filter applied after index lookup.
     pub fn with_residual_filter(mut self, filter: Filter) -> Self {
+        // The fetcher sees candidates before this filter. Only the parent
+        // LimitNode may count passing documents, including cursor pages.
+        self.index_params.limit = None;
+        self.index_params.offset = 0;
         self.residual_filter = Some(filter);
         self
     }
@@ -141,6 +148,15 @@ impl PlanNode for IndexScanNode {
         // If docs weren't provided and we have a fetcher, load documents via index
         if !self.docs_provided {
             if let Some(ref fetcher) = self.fetcher {
+                if let Some(stream) = fetcher
+                    .stream_index_scan(&self.collection.name, &self.index_params, self.show_deleted)
+                    .await?
+                {
+                    self.stream = Some(stream);
+                    self.index_fetches = 0;
+                    self.initialized = true;
+                    return Ok(());
+                }
                 // Use index scan to get document IDs
                 let scan_result = fetcher
                     .get_by_index_scan(&self.collection.name, &self.index_params)
@@ -151,7 +167,17 @@ impl PlanNode for IndexScanNode {
                 self.index_fetches = scan_result.raw_fetches();
 
                 let doc_ids = scan_result.doc_ids();
-                if !doc_ids.is_empty() {
+                if let Some(short_ids) = scan_result.doc_short_ids() {
+                    self.stream = Some(
+                        fetcher
+                            .stream_by_doc_short_ids(
+                                &self.collection.name,
+                                short_ids,
+                                self.show_deleted,
+                            )
+                            .await?,
+                    );
+                } else if !doc_ids.is_empty() {
                     // Fetch the actual documents by their IDs
                     let result = fetcher.get_by_ids(&self.collection.name, doc_ids).await?;
                     self.docs = documents_to_plan_docs(result.docs(), &self.document_mapping)?;
@@ -185,6 +211,31 @@ impl PlanNode for IndexScanNode {
 
         // Track iteration (Go counts each call to next, including final false)
         self.exec_info.iterations += 1;
+
+        if let Some(stream) = self.stream.as_mut() {
+            loop {
+                let next = stream.next().await?;
+                self.index_fetches = self.index_fetches.max(stream.index_fetches());
+                let Some((document, deleted)) = next else {
+                    break;
+                };
+                let doc =
+                    document_to_plan_doc_with_status(&document, &self.document_mapping, deleted)?;
+                self.exec_info.docs_fetched += 1;
+                self.exec_info.fields_fetched += doc.stored_field_count as u64;
+                if !self.show_deleted && doc.is_deleted() {
+                    continue;
+                }
+                if let Some(filter) = &self.residual_filter {
+                    if !filter.matches(doc.fields(), &self.document_mapping)? {
+                        continue;
+                    }
+                }
+                self.current_doc = doc;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
 
         loop {
             if self.position >= self.docs.len() {
@@ -221,6 +272,9 @@ impl PlanNode for IndexScanNode {
     }
 
     async fn close(&mut self) -> Result<()> {
+        if let Some(mut stream) = self.stream.take() {
+            stream.close().await?;
+        }
         self.docs.clear();
         self.initialized = false;
         Ok(())
@@ -257,6 +311,15 @@ impl PlanNode for IndexScanNode {
         obj.insert(
             "indexName".to_string(),
             serde_json::Value::String(self.index_params.index_name.clone()),
+        );
+
+        obj.insert(
+            "indexLimit".into(),
+            serde_json::json!(self.index_params.limit),
+        );
+        obj.insert(
+            "indexOffset".into(),
+            serde_json::json!(self.index_params.offset),
         );
 
         // Index fetch count (set during init, used by explain metrics)

@@ -21,7 +21,7 @@ fn seconds_as_nanos(seconds: u64) -> u64 {
 pub(crate) unsafe fn options_json(
     options: &NodeInitOptions,
     setup: &NodeSetup,
-    transport: &embedded::TransportConfig,
+    transport: &defra_node::TransportConfig,
 ) -> Value {
     let redacted = |present: bool| present.then_some(REDACTED);
     let redacted_text = |present: bool| if present { REDACTED } else { "" };
@@ -31,7 +31,7 @@ pub(crate) unsafe fn options_json(
 
     let (listen_addrs, peers, pubsub, relay, stream_timeout) = match transport {
         #[cfg(feature = "libp2p")]
-        embedded::TransportConfig::Libp2p(libp2p) => (
+        defra_node::TransportConfig::Libp2p(libp2p) => (
             libp2p.listen_addrs.clone(),
             libp2p.bootstrap_peers.clone(),
             libp2p.enable_pubsub,
@@ -41,13 +41,13 @@ pub(crate) unsafe fn options_json(
         _ => (Vec::new(), Vec::new(), false, false, None),
     };
     let document_acp_type = match config.document_acp {
-        embedded::DocumentAcpConfig::Local => "local",
+        defra_node::DocumentAcpConfig::Local => "local",
         #[allow(unreachable_patterns)]
         _ => "remote",
     };
 
     json!({
-        "DisableP2P": matches!(transport, embedded::TransportConfig::None),
+        "DisableP2P": matches!(transport, defra_node::TransportConfig::None),
         "DisableAPI": true,
         "Store": {
             "Store": if persistent { "regolith" } else { "memory" },
@@ -69,11 +69,10 @@ pub(crate) unsafe fn options_json(
             "Identity": redacted(options.identity_ptr != 0),
             "EnableSigning": setup.signing_enabled,
             "SearchableEncryptionKey": redacted(setup.searchable_encryption_key.is_some()),
-            "RetryIntervals": config
-                .replicator_retry_intervals
-                .clone()
-                .unwrap_or_else(|| storage::stores::RETRY_INTERVALS_SECS.to_vec())
-                .into_iter()
+            "RetryIntervals": super::transport::retry_intervals_of(transport)
+                .unwrap_or(storage::stores::RETRY_INTERVALS_SECS)
+                .iter()
+                .copied()
                 .map(seconds_as_nanos)
                 .collect::<Vec<_>>(),
             "P2PBlockSyncTimeout": stream_timeout.map(seconds_as_nanos),

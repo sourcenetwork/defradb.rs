@@ -37,6 +37,7 @@ bench = false
 [dependencies]
 # Internal crates
 query = { path = "../query" }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 identity = { path = "../identity" }
 schema = { path = "../schema" }
 acp = { path = "../acp" }

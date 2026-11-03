@@ -2,7 +2,7 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use super::select::{collection, Source};
+use super::select::collection;
 use crate::request::Request;
 use crate::target::{go_string, CollectionArgs};
 use crate::types::{CollectionOptions, DefraResult};
@@ -53,7 +53,8 @@ pub unsafe extern "C" fn defra_collection_truncate_with_filter(
             serde_json::Value::Object(conditions) => conditions,
             _ => return DefraResult::error("filter must be a JSON object"),
         };
-        truncate(node_ptr, &opts, identity_ptr, Some(conditions))
+        let filter = query::documents::Filter::from(serde_json::Value::Object(conditions));
+        truncate(node_ptr, &opts, identity_ptr, Some(filter))
     }
 }
 
@@ -64,33 +65,22 @@ unsafe fn truncate(
     node_ptr: usize,
     opts: &CollectionOptions,
     identity_ptr: usize,
-    filter: Option<serde_json::Map<String, serde_json::Value>>,
+    filter: Option<query::documents::Filter>,
 ) -> DefraResult {
     let request = try_ffi!(Request::begin(
         node_ptr,
         identity_ptr,
         NodePermission::CollectionTruncate
     ));
-    let node = try_ffi!(request.require_node("collection truncate"));
+    try_ffi!(request.require_node("collection truncate"));
     let selector = CollectionArgs::read(opts).selector();
-    let source = try_ffi!(Source::of(&request));
-    let database = try_ffi!(request.database());
+    let runner = try_ffi!(request.runner());
     let context = request.context();
-    ffi_async_ok!(node, {
-        let name = collection(&source, &context, &selector).await?.name;
-        match filter {
-            None => database.truncate_collection_as(&context, &name).await,
-            Some(conditions) => {
-                database
-                    .truncate_collection_with_filter_as(
-                        &context,
-                        &name,
-                        query::Filter::from_conditions(conditions),
-                    )
-                    .await
-            }
-        }
-        .map(drop)
-        .map_err(|e| e.to_string())
+    ffi_async_ok!(caller, {
+        let name = collection(&runner, &context, &selector).await?.name;
+        runner
+            .truncate_collection_as(&context, &name, filter.as_ref())
+            .await
+            .map_err(|e| e.to_string())
     })
 }

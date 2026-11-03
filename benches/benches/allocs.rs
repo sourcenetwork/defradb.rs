@@ -44,21 +44,28 @@ fn field_names() -> Vec<String> {
 }
 
 fn collection_version() -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for (index, name) in field_names().iter().enumerate() {
         fields.push(FieldDescription::new(
             (index + 2).to_string(),
             name,
             FieldKind::string(),
+            schema::CType::LwwRegister,
         ));
     }
     CollectionVersion::new(COLLECTION, "bafkallocs", "allocs", fields)
 }
 
 fn document(seq: usize) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection_version());
     for name in field_names() {
-        doc.set(&name, NormalValue::String(format!("{name}-{seq}")));
+        doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
+            .unwrap();
     }
     doc
 }
@@ -129,11 +136,17 @@ fn main() {
 
     let json = serde_json::to_vec(&doc.to_map().expect("the document to serialize"))
         .expect("a JSON encoding of it");
+    // Built once, as real callers share one definition: the row counts the
+    // parse, not a definition build per document.
+    let collection = Arc::new(collection_version());
     group = group.row(Row::new(
         "document from json",
         per_op(OPS, || {
             for _ in 0..OPS {
-                std::hint::black_box(Document::from_json(&json).expect("the document to parse"));
+                std::hint::black_box(
+                    Document::from_json(&json, Arc::clone(&collection))
+                        .expect("the document to parse"),
+                );
             }
         }),
     ));

@@ -5,6 +5,7 @@
 
 use defra_core::vector::dot;
 use defra_core::vector::squared_euclidean;
+use defra_core::vector::squared_euclidean_block;
 use defra_core::vector::Element;
 use defra_core::vector::Tier;
 use defra_core::vector::ALL_TIERS;
@@ -384,5 +385,74 @@ fn lane_counts_widen_monotonically() {
             tier.name()
         );
         previous = lanes;
+    }
+}
+
+/// Fractional `f32` vectors of length `n`, distinct per `seed`, so a block's
+/// sums differ and a result landing in the wrong slot shows.
+fn fractional_f32(n: usize, seed: usize) -> Vec<f32> {
+    (0..n)
+        .map(|i| ((i * 7 + seed * 13) % 23) as f32 * 0.37 - 4.1 + seed as f32 * 0.01)
+        .collect()
+}
+
+/// Widening `f32` to `f64` is exact, so a block on widened vectors must give
+/// each pair's `f32` answer bit for bit, on every tier and at every length,
+/// remainders included.
+#[test]
+fn a_block_is_bit_equal_to_each_pair() {
+    fn check<const B: usize>() {
+        for n in LENGTHS.into_iter().chain(0..=(4 * widest_lanes())) {
+            let a = fractional_f32(n, 0);
+            let others: Vec<Vec<f32>> = (1..=B).map(|seed| fractional_f32(n, seed)).collect();
+            let wide: Vec<Vec<f64>> = others
+                .iter()
+                .map(|v| v.iter().map(|&x| f64::from(x)).collect())
+                .collect();
+            let block: [&[f64]; B] = std::array::from_fn(|k| wide[k].as_slice());
+            for tier in live_tiers() {
+                let got = tier
+                    .squared_euclidean_block(&a, block)
+                    .expect("filtered to live tiers");
+                for (k, other) in others.iter().enumerate() {
+                    let want = tier
+                        .squared_euclidean(&a, other)
+                        .expect("filtered to live tiers");
+                    assert_eq!(
+                        got[k].to_bits(),
+                        want.to_bits(),
+                        "{} block of {B} len={n} slot {k}: {} vs {want}",
+                        tier.name(),
+                        got[k]
+                    );
+                }
+            }
+            let active = squared_euclidean_block(&a, block);
+            for (k, other) in others.iter().enumerate() {
+                assert_eq!(active[k].to_bits(), squared_euclidean(&a, other).to_bits());
+            }
+        }
+    }
+    check::<1>();
+    check::<4>();
+    check::<6>();
+}
+
+/// A block runs over the prefix every one of its vectors shares.
+#[test]
+fn a_block_uses_the_prefix_all_its_vectors_share() {
+    let span = 4 * widest_lanes();
+    let a = vec![1.0f32; span];
+    for n in 0..=span {
+        let long = vec![3.0f64; span];
+        let short = vec![3.0f64; n];
+        for tier in live_tiers() {
+            assert_eq!(
+                tier.squared_euclidean_block(&a, [&long, &short]),
+                Some([4.0 * n as f64; 2]),
+                "{}: {n} of {span}",
+                tier.name()
+            );
+        }
     }
 }

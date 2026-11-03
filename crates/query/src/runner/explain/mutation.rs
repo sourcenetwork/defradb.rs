@@ -99,7 +99,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         let node_kind = match mutation.mutation_type {
-            MutationType::Create => "addNode",
+            MutationType::Add => "addNode",
             MutationType::Update => "updateNode",
             MutationType::Delete => "deleteNode",
             MutationType::Upsert => "upsertNode",
@@ -121,7 +121,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Phase 1: Collect metrics BEFORE mutation (delete, update, upsert).
         // For delete: this is the only scan (single pass over original data).
         // For update/upsert: Phase 1 captures the "find + mutate" scan metrics.
-        let phase1 = if mutation.mutation_type != MutationType::Create {
+        let phase1 = if mutation.mutation_type != MutationType::Add {
             Some(
                 self.execute_select_with_metrics(&metric_select, caller_identity.clone())
                     .await?,
@@ -143,10 +143,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .await?;
 
             let mut plan: Box<dyn crate::planner::PlanNode> = match mutation.mutation_type {
-                MutationType::Create => {
+                MutationType::Add => {
                     let inputs = self.build_create_inputs(mutation, &collection)?;
                     Box::new(
-                        crate::plan::CreateNode::new(
+                        crate::plan::AddNode::new(
                             &mutation.collection_name,
                             mutator.clone(),
                             mapping.clone(),
@@ -303,7 +303,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Mutation-specific fields
         match mutation.mutation_type {
-            MutationType::Create => {
+            MutationType::Add => {
                 let (_, _, plan_execs) = phase2.as_ref().unwrap();
                 mutation_inner.insert("iterations".to_string(), serde_json::json!(*plan_execs));
             }
@@ -424,7 +424,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Get the mutation node kind name
         let node_kind = match mutation.mutation_type {
-            MutationType::Create => "addNode",
+            MutationType::Add => "addNode",
             MutationType::Update => "updateNode",
             MutationType::Delete => "deleteNode",
             MutationType::Upsert => "upsertNode",
@@ -454,7 +454,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut mutation_attrs = serde_json::Map::new();
 
         match mutation.mutation_type {
-            MutationType::Create => {
+            MutationType::Add => {
                 // input: array of input objects
                 let input_array: Vec<JsonValue> = mutation
                     .create_input
@@ -533,14 +533,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 }
             }
             MutationType::Upsert => {
-                // Go format: separate create, filter, and update fields
-                // create: map of fields for new document creation
+                // Go format: separate add, filter, and update fields
+                // add: map of fields for new document creation (Go's addInputLabel)
                 if !mutation.create_input.is_empty() {
                     let mut create_obj = serde_json::Map::new();
                     for (field_name, value) in &mutation.create_input[0] {
                         create_obj.insert(field_name.clone(), value.clone());
                     }
-                    mutation_attrs.insert("create".to_string(), JsonValue::Object(create_obj));
+                    mutation_attrs.insert("add".to_string(), JsonValue::Object(create_obj));
                 }
 
                 // filter: filter expression used to find existing documents

@@ -83,7 +83,7 @@ fn assert_doc_id_order(
     assert_eq!(got_names, vec![second_name, first_name]);
 }
 
-fn add_schema(node: &DefraClient) {
+fn add_collection(node: &DefraClient) {
     node.schema_add(
         r#"
         type User {
@@ -101,7 +101,7 @@ fn add_schema(node: &DefraClient) {
 async fn rust_equal_index_keys_are_ordered_by_doc_id() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let (first_name, first_id, second_name, second_id) = seed_reversed_cid_pair(&node);
     assert_doc_id_order(
         &node,
@@ -120,7 +120,7 @@ async fn rust_equal_index_keys_are_ordered_by_doc_id() {
 async fn rust_equal_index_keys_in_filter_are_ordered_by_doc_id() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let (first_name, first_id, second_name, second_id) = seed_reversed_cid_pair(&node);
     assert_doc_id_order(
         &node,

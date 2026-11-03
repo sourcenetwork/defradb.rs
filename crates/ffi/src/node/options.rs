@@ -5,7 +5,7 @@ use std::ffi::c_int;
 use zeroize::Zeroizing;
 
 use crate::state::IDENTITIES;
-use crate::target::{go_string, non_empty, split_comma_separated};
+use crate::target::{go_string, non_empty};
 use crate::types::NodeInitOptions;
 
 /// Maximum length for private key byte slices passed via FFI.
@@ -22,7 +22,7 @@ pub(crate) struct NodeSetup {
     pub(crate) store: StoreLocation,
     pub(crate) store_file_size: Option<u64>,
     pub(crate) store_encryption_key: Option<Zeroizing<[u8; 32]>>,
-    pub(crate) config: embedded::EmbeddedNodeConfig,
+    pub(crate) config: defra_node::NodeConfig,
     pub(crate) signing_enabled: bool,
     pub(crate) searchable_encryption_key: Option<Zeroizing<Vec<u8>>>,
     pub(crate) peer_key: Option<Zeroizing<Vec<u8>>>,
@@ -42,21 +42,23 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
     let store = match (store_type.as_str(), db_path) {
         ("memory", _) | (_, None) => StoreLocation::Memory,
         _ if options.in_memory != 0 => StoreLocation::Memory,
-        ("" | "regolith" | "badger" | "lark" | "redb" | "fjall" | "rocksdb", Some(path)) => {
-            StoreLocation::Path(path)
-        }
-        (other, Some(_)) => {
-            return Err(format!(
-                "unknown store type '{}'. Supported: regolith, memory",
-                other
-            ))
-        }
+        ("", Some(path)) => StoreLocation::Path(path),
+        (other, Some(path)) => match defra_core::parse_store_backend(other) {
+            Some(defra_core::StoreBackend::Memory) => StoreLocation::Memory,
+            Some(defra_core::StoreBackend::Regolith) => StoreLocation::Path(path),
+            None => {
+                return Err(format!(
+                    "unknown store type '{}'. Supported: regolith, memory",
+                    other
+                ))
+            }
+        },
     };
 
     let signing = match options.identity_ptr {
-        0 if options.enable_signing != 0 => embedded::SigningConfig::Enabled { key: None },
-        0 => embedded::SigningConfig::Disabled,
-        handle => embedded::SigningConfig::RegisteredIdentity {
+        0 if options.enable_signing != 0 => defra_node::NodeSigning::Enabled { key: None },
+        0 => defra_node::NodeSigning::Disabled,
+        handle => defra_node::NodeSigning::RegisteredIdentity {
             did: IDENTITIES
                 .get(handle)
                 .ok_or_else(|| "identity_ptr is not an identity handle".to_string())?
@@ -65,18 +67,12 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         },
     };
 
-    let config = embedded::EmbeddedNodeConfig {
+    let config = defra_node::NodeConfig {
         signing,
         document_acp: document_acp(options)?,
-        max_concurrent_dag_fetches: positive(options.max_concurrent_dag_fetches),
-        max_concurrent_push_tasks: positive(options.max_concurrent_push_tasks),
-        max_doc_sync_request_doc_ids: positive(options.max_doc_sync_request_doc_ids),
-        rate_limit_burst: (options.rate_limit_burst > 0).then_some(options.rate_limit_burst),
-        rate_limit_rate: (options.rate_limit_rate > 0.0).then_some(options.rate_limit_rate),
         max_txn_retries: positive_int(options.max_transaction_retries)
             .map(|retries| retries as u32),
         chunk_size: positive_int(options.chunk_size).map(|size| size as usize),
-        replicator_retry_intervals: retry_intervals(options)?,
         node_acp_enabled: options.enable_node_acp != 0,
         ..Default::default()
     };
@@ -160,9 +156,9 @@ unsafe fn reject_unsupported(options: &NodeInitOptions) -> Result<(), String> {
 /// # Safety
 ///
 /// As for [`read`].
-unsafe fn document_acp(options: &NodeInitOptions) -> Result<embedded::DocumentAcpConfig, String> {
+unsafe fn document_acp(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
     match go_string(options.document_acp_type).to_lowercase().as_str() {
-        "" | "local" => Ok(embedded::DocumentAcpConfig::Local),
+        "" | "local" => Ok(defra_node::DocumentAcpConfig::Local),
         "remote" | "vera" => vera(options),
         "none" => Err("not supported yet: document_acp_type \"none\"".to_string()),
         other => Err(format!(
@@ -173,12 +169,12 @@ unsafe fn document_acp(options: &NodeInitOptions) -> Result<embedded::DocumentAc
 }
 
 #[cfg(not(feature = "vera"))]
-unsafe fn vera(_options: &NodeInitOptions) -> Result<embedded::DocumentAcpConfig, String> {
+unsafe fn vera(_options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
     Err("this build does not include Vera ACP; rebuild with the vera feature".to_string())
 }
 
 #[cfg(feature = "vera")]
-unsafe fn vera(options: &NodeInitOptions) -> Result<embedded::DocumentAcpConfig, String> {
+unsafe fn vera(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfig, String> {
     let required = |value: Option<String>, name: &str| {
         value.ok_or_else(|| format!("{} is required for remote document ACP", name))
     };
@@ -195,40 +191,20 @@ unsafe fn vera(options: &NodeInitOptions) -> Result<embedded::DocumentAcpConfig,
         false => std::slice::from_raw_parts(options.vera_signer_key, options.vera_signer_key_len)
             .to_vec(),
     };
-    Ok(embedded::DocumentAcpConfig::Vera(embedded::VeraConfig {
-        grpc_address: required(
-            non_empty(options.remote_dac_grpc_address),
-            "remote_dac_grpc_address",
-        )?,
-        comet_rpc_address: required(
-            non_empty(options.remote_dac_comet_rpc_address),
-            "remote_dac_comet_rpc_address",
-        )?,
-        chain_id: required(non_empty(options.vera_chain_id), "vera_chain_id")?,
-        signer_key,
-    }))
-}
-
-/// `replicator_retry_intervals`, comma-separated whole seconds.
-///
-/// # Safety
-///
-/// As for [`read`].
-unsafe fn retry_intervals(options: &NodeInitOptions) -> Result<Option<Vec<u64>>, String> {
-    let intervals = split_comma_separated(&go_string(options.replicator_retry_intervals))
-        .iter()
-        .map(|interval| match interval.trim().parse::<i64>() {
-            Ok(seconds) if seconds > 0 => Ok(seconds as u64),
-            Ok(_) => {
-                Err("negative time intervals are not allowed for replicator retries".to_string())
-            }
-            Err(error) => Err(format!(
-                "invalid replicator retry interval '{}': {}",
-                interval, error
-            )),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((!intervals.is_empty()).then_some(intervals))
+    Ok(defra_node::DocumentAcpConfig::Vera(
+        defra_node::VeraConfig {
+            grpc_address: required(
+                non_empty(options.remote_dac_grpc_address),
+                "remote_dac_grpc_address",
+            )?,
+            comet_rpc_address: required(
+                non_empty(options.remote_dac_comet_rpc_address),
+                "remote_dac_comet_rpc_address",
+            )?,
+            chain_id: required(non_empty(options.vera_chain_id), "vera_chain_id")?,
+            signer_key,
+        },
+    ))
 }
 
 /// A key the caller passed as a buffer and its length, or `None` for none.
@@ -256,10 +232,6 @@ pub(crate) unsafe fn key_bytes(
     Ok(Some(Zeroizing::new(
         std::slice::from_raw_parts(ptr, len).to_vec(),
     )))
-}
-
-fn positive(value: usize) -> Option<usize> {
-    (value > 0).then_some(value)
 }
 
 fn positive_int(value: c_int) -> Option<c_int> {

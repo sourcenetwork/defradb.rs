@@ -52,19 +52,19 @@ pub enum NodePermission {
     /// Purge all NAC data (dev mode only)
     NacPurge,
 
-    /// View NAC status (used by GET /api/v0/nac/status)
+    /// View NAC status (used by GET /api/v0/acp/node/status)
     NacStatus,
 
-    /// Add NAC relation - grant permission to another identity (used by POST /api/v0/nac/admin)
+    /// Add NAC relation - grant permission to another identity (used by POST /api/v0/acp/node/relationship)
     NacRelationAdd,
 
-    /// Delete NAC relation - revoke permission from another identity (used by DELETE /api/v0/nac/admin)
+    /// Delete NAC relation - revoke permission from another identity (used by DELETE /api/v0/acp/node/relationship)
     NacRelationDelete,
 
     // =========================================================================
     // Collection Operations
     // =========================================================================
-    /// Patch/update collection schema (used by POST /api/v0/schema)
+    /// Patch/update collection schema (used by POST /api/v0/collections)
     CollectionPatch,
 
     /// Get collection information (used by GET /api/v0/collections, GET /api/v0/schema)
@@ -184,20 +184,19 @@ pub enum NodePermission {
     // =========================================================================
     // View Operations
     // =========================================================================
-    /// Refresh materialized views (used by POST /api/v0/view/refresh and
-    /// its /views/refresh alias)
+    /// Refresh materialized views (used by POST /api/v0/view/refresh)
     ViewRefresh,
 
     /// Run explicit downsample history GC (used by POST /api/v0/views/gc)
     ViewGc,
 
-    /// Add a view (used by POST /api/v0/view and its /views alias)
+    /// Add a view (used by POST /api/v0/view)
     ViewAdd,
 
     // =========================================================================
     // Migration Operations
     // =========================================================================
-    /// Set a lens migration between schema versions (used by POST /api/v0/lens/set)
+    /// Set a lens migration between schema versions (used by POST /api/v0/collections/migrations)
     MigrationSet,
 }
 

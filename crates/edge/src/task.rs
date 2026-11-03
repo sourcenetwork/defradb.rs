@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use n0_future::task::{AbortHandle, JoinHandle};
+use n0_future::task::JoinHandle;
 use n0_future::time::Instant;
 
 use crate::error::EdgeError;
@@ -78,12 +78,6 @@ impl<T> Task<T> {
             .as_ref()
             .is_none_or(|running| running.join.is_finished())
     }
-
-    pub(crate) fn abort_handle(&self) -> Option<AbortHandle> {
-        self.running
-            .as_ref()
-            .map(|running| running.join.abort_handle())
-    }
 }
 
 impl<T> Future for Task<T> {
@@ -114,35 +108,43 @@ impl<T> Future for Task<T> {
 /// accepting, when [`stop`](Self::stop) is called, or when the handle is
 /// dropped, unless it was [`detach`](Self::detach)ed.
 pub struct Service {
-    abort: Option<AbortHandle>,
+    task: Option<Task<()>>,
 }
 
 impl Service {
+    /// A service has no deadline: it runs until it is stopped.
     pub(crate) fn new(task: Task<()>) -> Self {
         Self {
-            abort: task.abort_handle(),
+            task: Some(task.within(Duration::MAX)),
         }
     }
 
     /// Stops the service.
     pub fn stop(&self) {
-        if let Some(abort) = &self.abort {
-            abort.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+
+    /// Stops the service and completes once it has ended, so whatever it
+    /// held has been let go of.
+    pub async fn stopped(mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+            let _ = task.await;
         }
     }
 
     /// Whether the service is still running. A service the runtime refused
     /// because it was shutting down never runs.
     pub fn is_running(&self) -> bool {
-        self.abort
-            .as_ref()
-            .is_some_and(|abort| !abort.is_finished())
+        self.task.as_ref().is_some_and(|task| !task.is_finished())
     }
 
     /// Lets the service run until it ends or its runtime or scope stops
     /// accepting.
     pub fn detach(mut self) {
-        self.abort = None;
+        self.task = None;
     }
 }
 

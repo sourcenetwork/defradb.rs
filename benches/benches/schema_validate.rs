@@ -26,7 +26,12 @@ const WIDTHS: [usize; 4] = [4, 16, 64, 256];
 const COUNTS: [usize; 4] = [1, 10, 100, 500];
 
 fn collection(index: usize, width: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for i in 0..width {
         fields.push(FieldDescription::new(
             (i + 2).to_string(),
@@ -36,6 +41,7 @@ fn collection(index: usize, width: usize) -> CollectionVersion {
             } else {
                 FieldKind::string()
             },
+            schema::CType::LwwRegister,
         ));
     }
     CollectionVersion::new(

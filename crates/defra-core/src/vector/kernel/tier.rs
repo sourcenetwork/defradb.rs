@@ -139,6 +139,24 @@ impl Tier {
         Some(unsafe { T::squared_euclidean_with(self, a, b) })
     }
 
+    /// [`squared_euclidean_block`](super::squared_euclidean_block) on this
+    /// specific tier.
+    ///
+    /// `None` when the running machine cannot execute the tier; see
+    /// [`Tier::dot`].
+    #[inline]
+    pub fn squared_euclidean_block<const B: usize>(
+        self,
+        a: &[f32],
+        wide: [&[f64]; B],
+    ) -> Option<[f64; B]> {
+        if !self.is_available() {
+            return None;
+        }
+        // SAFETY: availability checked immediately above.
+        Some(unsafe { super::squared_euclidean_block_with(self, a, wide) })
+    }
+
     /// The widest tier this machine can run. Detection happens once and is
     /// cached; racing threads compute the same answer, so a relaxed store is
     /// sufficient.

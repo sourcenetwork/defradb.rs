@@ -13,6 +13,15 @@ use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// What a verified block answers with.
 const VERIFIED: &str = "Block's signature verified.";
 
+/// The name the core reads `key_type` by.
+fn key_type_name(key_type: crypto::KeyType) -> &'static str {
+    match key_type {
+        crypto::KeyType::Ed25519 => "ed25519",
+        crypto::KeyType::Secp256r1 => "secp256r1",
+        _ => "secp256k1",
+    }
+}
+
 /// Verifies that block `cid` was signed by `public_key`, of type `key_type`
 /// ("secp256k1", the default for null or empty, "secp256r1" or "ed25519"),
 /// on a node or in a transaction.
@@ -40,13 +49,9 @@ pub unsafe extern "C" fn defra_block_verify(
         let cid = go_string(cid);
         let context = request.context();
         let caller_identity: acp::Identity = try_ffi!(request.did()).into();
-        let (database, registry, document_acp) = try_ffi!(NODES
+        let (database, document_acp) = try_ffi!(NODES
             .get(request.node(), |state| {
-                (
-                    state.database.clone(),
-                    state.txn_registry.clone(),
-                    state.document_acp.clone(),
-                )
+                (state.database.clone(), state.document_acp.clone())
             })
             .ok_or_else(|| DefraResult::error(ERR_INVALID_NODE_HANDLE)));
 
@@ -64,17 +69,17 @@ pub unsafe extern "C" fn defra_block_verify(
                 .await?;
                 Ok(VERIFIED.to_string())
             }),
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
+            Some(_) => {
+                let runner = try_ffi!(request.runner());
+                let key_type = key_type_name(crypto_key_type);
                 ffi_async!(caller, {
-                    registry
-                        .verify_block_signature_in_txn_as(
+                    runner
+                        .verify_block_signature_as(
                             &context,
-                            &txn_id,
                             document_acp,
                             &cid,
                             &public_key,
-                            crypto_key_type,
+                            key_type,
                             &caller_identity,
                         )
                         .await

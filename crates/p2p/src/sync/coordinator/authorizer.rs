@@ -24,7 +24,7 @@ use crate::transport::{P2PTransport, PeerId};
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(super) trait AccessAuthorizer: Send + Sync {
     /// Returns `true` when the transport has observed the peer as connected.
-    fn peer_connected(&self, peer_id_str: &str) -> bool;
+    async fn peer_connected(&self, peer_id_str: &str) -> bool;
 
     /// Returns `true` when the peer is allowed to send an any-collection
     /// sync request (DocSync/CAR fetch).
@@ -85,15 +85,25 @@ impl<T: P2PTransport> RuntimeAuthorizer<T> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<T: P2PTransport> AccessAuthorizer for RuntimeAuthorizer<T> {
-    fn peer_connected(&self, peer_id_str: &str) -> bool {
-        self.peer_state.is_connected(peer_id_str)
+    async fn peer_connected(&self, peer_id_str: &str) -> bool {
+        if self.peer_state.is_connected(peer_id_str) {
+            return true;
+        }
+        // PeerConnected processing can still be awaiting durable retry bookkeeping.
+        match self.transport.connected_peers().await {
+            Ok(peers) => peers.iter().any(|peer| peer.as_str() == peer_id_str),
+            Err(error) => {
+                tracing::debug!(%error, peer_id = peer_id_str, "Failed to read live peer connection");
+                false
+            }
+        }
     }
 
     async fn peer_authorized_for_any(&self, peer_id_str: &str) -> bool {
         if self.access_mode.is_open() {
             return true;
         }
-        if self.peer_connected(peer_id_str) {
+        if self.peer_connected(peer_id_str).await {
             return true;
         }
         if self.replicators.is_any_replicator(peer_id_str) {

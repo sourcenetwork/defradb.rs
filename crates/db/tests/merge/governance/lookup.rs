@@ -26,38 +26,41 @@ impl Node {
     }
 }
 
-#[tokio::test]
-async fn immutable_fields_reads_one_document_not_the_collection() {
-    let validator = Arc::new(ReadImmutable {
-        collection: "Grants",
-        doc_id: Atom::new(String::new()),
-        read: Atom::new(None),
-    });
-    let node = Node::with_immutable_grants(validator.clone()).await;
-    let writer = signer();
-    let grant = genesis("col-grants", "writer", &writer.did, &writer);
-    assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
-    let bystander = genesis("col-grants", "writer", "someone else", &writer);
-    assert_eq!(
-        bystander.merge(&node, &writer.did).await,
-        MergeOutcome::Merged
-    );
-    node.corrupt("Grants", &bystander.doc_id).await;
-    assert!(AutoCommitFetcher::new(node.db.clone())
-        .get_all("Grants")
-        .await
-        .is_err());
+#[test]
+fn immutable_fields_reads_one_document_not_the_collection() {
+    workers::block_on(async {
+        let validator = Arc::new(ReadImmutable {
+            collection: "Grants",
+            doc_id: Atom::new(String::new()),
+            read: Atom::new(None),
+        });
+        let node = Node::with_immutable_grants(validator.clone()).await;
+        let writer = signer();
+        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        let bystander = genesis("col-grants", "writer", "someone else", &writer);
+        assert_eq!(
+            bystander.merge(&node, &writer.did).await,
+            MergeOutcome::Merged
+        );
+        node.corrupt("Grants", &bystander.doc_id).await;
+        assert!(AutoCommitFetcher::new(node.db.clone())
+            .get_all("Grants")
+            .await
+            .is_err());
 
-    validator.doc_id.store(grant.doc_id.clone());
-    let note = genesis("col-notes", "grant", "anything", &writer);
-    assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
-    assert_eq!(
-        validator.read.load_clone().unwrap(),
-        Some(vec![(
-            "writer".to_string(),
-            NormalValue::String(writer.did.clone())
-        )])
-    );
+        validator.doc_id.store(grant.doc_id.clone());
+        let note = genesis("col-notes", "grant", "anything", &writer);
+        assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+        assert_eq!(
+            validator.read.load_clone().unwrap(),
+            Some(vec![(
+                "writer".to_string(),
+                NormalValue::String(writer.did.clone())
+            )])
+        );
+    })
+    .unwrap()
 }
 
 type Lookups = Vec<(String, Result<Vec<String>, String>)>;
@@ -141,7 +144,8 @@ impl Node {
                 .unwrap(),
         );
         let immutable = |id: &str, name: &str| {
-            let mut field = FieldDescription::new(id, name, FieldKind::string());
+            let mut field =
+                FieldDescription::new(id, name, FieldKind::string(), schema::CType::LwwRegister);
             field.immutable = true;
             field
         };
@@ -150,10 +154,20 @@ impl Node {
             "col-grants",
             "col-grants",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
                 immutable("2", "writer"),
                 immutable("3", "twin"),
-                FieldDescription::new("4", "holder", FieldKind::string()),
+                FieldDescription::new(
+                    "4",
+                    "holder",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await
@@ -163,8 +177,18 @@ impl Node {
             "col-notes",
             "col-notes",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "grant", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "grant",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await
@@ -196,134 +220,149 @@ fn grant(value: &str, holder: &str, by: &Signer) -> Genesis {
     )
 }
 
-#[tokio::test]
-async fn find_documents_through_an_index_matches_the_scan() {
-    let probe = Probe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
+#[test]
+fn find_documents_through_an_index_matches_the_scan() {
+    workers::block_on(async {
+        let probe = Probe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
 
-    // Both halves of a fork share a value; one arrives from a peer, one is
-    // written here.
-    let forked = grant("shared", "a", &peer);
-    assert_eq!(forked.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    node.create_locally(
-        "Grants",
-        r#"{"writer": "shared", "twin": "shared", "holder": "b"}"#,
-    )
-    .await;
-    // "share" is a prefix of "shared" and must not match it.
-    let lone = grant("share", "c", &peer);
-    assert_eq!(lone.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        // Both halves of a fork share a value; one arrives from a peer, one is
+        // written here.
+        let forked = grant("shared", "a", &peer);
+        assert_eq!(forked.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        node.create_locally(
+            "Grants",
+            r#"{"writer": "shared", "twin": "shared", "holder": "b"}"#,
+        )
+        .await;
+        // "share" is a prefix of "shared" and must not match it.
+        let lone = grant("share", "c", &peer);
+        assert_eq!(lone.merge(&node, &peer.did).await, MergeOutcome::Merged);
 
-    let found = probe.lookups(&node, &["shared", "share", "absent"]).await;
-    let ids = |key: &str| {
-        let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
-        ids.clone().unwrap()
-    };
-    assert_eq!(ids("writer=shared").len(), 2);
-    assert!(ids("writer=shared").contains(&forked.doc_id));
-    assert_eq!(ids("writer=share"), vec![lone.doc_id.clone()]);
-    assert!(ids("writer=absent").is_empty());
-    for value in ["shared", "share", "absent"] {
+        let found = probe.lookups(&node, &["shared", "share", "absent"]).await;
+        let ids = |key: &str| {
+            let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
+            ids.clone().unwrap()
+        };
+        assert_eq!(ids("writer=shared").len(), 2);
+        assert!(ids("writer=shared").contains(&forked.doc_id));
+        assert_eq!(ids("writer=share"), vec![lone.doc_id.clone()]);
+        assert!(ids("writer=absent").is_empty());
+        for value in ["shared", "share", "absent"] {
+            assert_eq!(
+                ids(&format!("writer={value}")),
+                ids(&format!("twin={value}"))
+            );
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn find_documents_through_an_index_finds_redriven_and_local_documents() {
+    workers::block_on(async {
+        let probe = Probe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
+        let gate = grant("gate", "open", &peer);
+        probe.gate.store(gate.cid);
+
+        let redriven = grant("shared", "gated", &peer);
         assert_eq!(
-            ids(&format!("writer={value}")),
-            ids(&format!("twin={value}"))
+            redriven.merge(&node, &peer.did).await,
+            MergeOutcome::retryable_skip("gate not held")
         );
-    }
+        assert_eq!(gate.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        assert_eq!(node.forwarded(), vec![redriven.cid]);
+        node.create_locally(
+            "Grants",
+            r#"{"writer": "shared", "twin": "shared", "holder": "local"}"#,
+        )
+        .await;
+
+        let found = probe.lookups(&node, &["shared"]).await;
+        let by_index = found[0].1.clone().unwrap();
+        assert_eq!(found[0].0, "writer=shared");
+        assert_eq!(by_index.len(), 2);
+        assert!(by_index.contains(&redriven.doc_id));
+        assert_eq!(by_index, found[1].1.clone().unwrap());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn find_documents_through_an_index_finds_redriven_and_local_documents() {
-    let probe = Probe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
-    let gate = grant("gate", "open", &peer);
-    probe.gate.store(gate.cid);
+#[test]
+fn find_documents_through_an_index_reads_only_the_matches() {
+    workers::block_on(async {
+        let probe = Probe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
+        let wanted = grant("wanted", "a", &peer);
+        assert_eq!(wanted.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        let bystander = grant("bystander", "b", &peer);
+        assert_eq!(
+            bystander.merge(&node, &peer.did).await,
+            MergeOutcome::Merged
+        );
+        node.corrupt("Grants", &bystander.doc_id).await;
 
-    let redriven = grant("shared", "gated", &peer);
-    assert_eq!(
-        redriven.merge(&node, &peer.did).await,
-        MergeOutcome::retryable_skip("gate not held")
-    );
-    assert_eq!(gate.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    assert_eq!(node.forwarded(), vec![redriven.cid]);
-    node.create_locally(
-        "Grants",
-        r#"{"writer": "shared", "twin": "shared", "holder": "local"}"#,
-    )
-    .await;
-
-    let found = probe.lookups(&node, &["shared"]).await;
-    let by_index = found[0].1.clone().unwrap();
-    assert_eq!(found[0].0, "writer=shared");
-    assert_eq!(by_index.len(), 2);
-    assert!(by_index.contains(&redriven.doc_id));
-    assert_eq!(by_index, found[1].1.clone().unwrap());
+        let found = probe.lookups(&node, &["wanted"]).await;
+        assert_eq!(found[0].1, Ok(vec![wanted.doc_id.clone()]));
+        // The unindexed twin still scans, and the scan trips on the bystander.
+        assert!(found[1].1.is_err(), "{:?}", found[1].1);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn find_documents_through_an_index_reads_only_the_matches() {
-    let probe = Probe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
-    let wanted = grant("wanted", "a", &peer);
-    assert_eq!(wanted.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    let bystander = grant("bystander", "b", &peer);
-    assert_eq!(
-        bystander.merge(&node, &peer.did).await,
-        MergeOutcome::Merged
-    );
-    node.corrupt("Grants", &bystander.doc_id).await;
+#[test]
+fn find_documents_orders_ids_the_same_on_both_paths() {
+    workers::block_on(async {
+        let probe = Probe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
+        let mut grants = vec![grant("shared", "a", &peer), grant("shared", "b", &peer)];
+        // Merge in descending id order, so short-id order is the reverse of id order.
+        grants.sort_by(|x, y| y.doc_id.cmp(&x.doc_id));
+        for g in &grants {
+            assert_eq!(g.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        }
+        let mut expected: Vec<String> = grants.iter().map(|g| g.doc_id.clone()).collect();
+        expected.sort();
 
-    let found = probe.lookups(&node, &["wanted"]).await;
-    assert_eq!(found[0].1, Ok(vec![wanted.doc_id.clone()]));
-    // The unindexed twin still scans, and the scan trips on the bystander.
-    assert!(found[1].1.is_err(), "{:?}", found[1].1);
+        let found = probe.lookups(&node, &["shared"]).await;
+        // writer is indexed, twin is scanned: both sorted by id string.
+        assert_eq!(found[0].1, Ok(expected.clone()));
+        assert_eq!(found[1].1, Ok(expected));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn find_documents_orders_ids_the_same_on_both_paths() {
-    let probe = Probe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
-    let mut grants = vec![grant("shared", "a", &peer), grant("shared", "b", &peer)];
-    // Merge in descending id order, so short-id order is the reverse of id order.
-    grants.sort_by(|x, y| y.doc_id.cmp(&x.doc_id));
-    for g in &grants {
-        assert_eq!(g.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    }
-    let mut expected: Vec<String> = grants.iter().map(|g| g.doc_id.clone()).collect();
-    expected.sort();
+#[test]
+fn find_documents_still_finds_a_deleted_document_on_both_paths() {
+    workers::block_on(async {
+        let probe = Probe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
+        let gone = grant("gone", "a", &peer);
+        assert_eq!(gone.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        let kept = grant("kept", "b", &peer);
+        assert_eq!(kept.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        node.delete_locally("Grants", &gone.doc_id).await;
+        assert_eq!(node.doc_ids("Grants").await, vec![kept.doc_id.clone()]);
 
-    let found = probe.lookups(&node, &["shared"]).await;
-    // writer is indexed, twin is scanned: both sorted by id string.
-    assert_eq!(found[0].1, Ok(expected.clone()));
-    assert_eq!(found[1].1, Ok(expected));
-}
-
-#[tokio::test]
-async fn find_documents_still_finds_a_deleted_document_on_both_paths() {
-    let probe = Probe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
-    let gone = grant("gone", "a", &peer);
-    assert_eq!(gone.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    let kept = grant("kept", "b", &peer);
-    assert_eq!(kept.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    node.delete_locally("Grants", &gone.doc_id).await;
-    assert_eq!(node.doc_ids("Grants").await, vec![kept.doc_id.clone()]);
-
-    // The delete removed the index entry; the governance read adds the
-    // deleted rows back, so the index path and the scan path agree.
-    let found = probe.lookups(&node, &["gone", "kept", "absent"]).await;
-    let ids = |key: &str| {
-        let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
-        ids.clone().unwrap()
-    };
-    assert_eq!(ids("writer=gone"), vec![gone.doc_id.clone()]);
-    assert_eq!(ids("twin=gone"), vec![gone.doc_id.clone()]);
-    assert_eq!(ids("writer=kept"), vec![kept.doc_id.clone()]);
-    assert!(ids("writer=absent").is_empty());
+        // The delete removed the index entry; the governance read adds the
+        // deleted rows back, so the index path and the scan path agree.
+        let found = probe.lookups(&node, &["gone", "kept", "absent"]).await;
+        let ids = |key: &str| {
+            let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
+            ids.clone().unwrap()
+        };
+        assert_eq!(ids("writer=gone"), vec![gone.doc_id.clone()]);
+        assert_eq!(ids("twin=gone"), vec![gone.doc_id.clone()]);
+        assert_eq!(ids("writer=kept"), vec![kept.doc_id.clone()]);
+        assert!(ids("writer=absent").is_empty());
+    })
+    .unwrap()
 }
 
 /// On a note, looks every value up on each of `fields`, all at once through
@@ -388,36 +427,39 @@ impl MergeValidator for JoinedProbe {
 /// A validator may run its reads concurrently through one view: they open one
 /// snapshot between them, fill the per-verdict index and deleted-row memos
 /// at once, and answer exactly as the same reads made one after another.
-#[tokio::test]
-async fn concurrent_lookups_through_one_view_answer_as_sequential_ones() {
-    let probe = JoinedProbe::new(&["writer", "twin"]);
-    let node = Node::with_indexed_grants(probe.clone()).await;
-    let peer = signer();
-    let forked = grant("shared", "a", &peer);
-    assert_eq!(forked.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    node.create_locally(
-        "Grants",
-        r#"{"writer": "shared", "twin": "shared", "holder": "b"}"#,
-    )
-    .await;
-    let gone = grant("gone", "c", &peer);
-    assert_eq!(gone.merge(&node, &peer.did).await, MergeOutcome::Merged);
-    node.delete_locally("Grants", &gone.doc_id).await;
+#[test]
+fn concurrent_lookups_through_one_view_answer_as_sequential_ones() {
+    workers::block_on(async {
+        let probe = JoinedProbe::new(&["writer", "twin"]);
+        let node = Node::with_indexed_grants(probe.clone()).await;
+        let peer = signer();
+        let forked = grant("shared", "a", &peer);
+        assert_eq!(forked.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        node.create_locally(
+            "Grants",
+            r#"{"writer": "shared", "twin": "shared", "holder": "b"}"#,
+        )
+        .await;
+        let gone = grant("gone", "c", &peer);
+        assert_eq!(gone.merge(&node, &peer.did).await, MergeOutcome::Merged);
+        node.delete_locally("Grants", &gone.doc_id).await;
 
-    let found = probe.lookups(&node, &["shared", "gone", "absent"]).await;
-    assert_eq!(found.len(), 6);
-    let ids = |key: &str| {
-        let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
-        ids.clone().unwrap()
-    };
-    assert_eq!(ids("writer=shared").len(), 2);
-    assert!(ids("writer=shared").contains(&forked.doc_id));
-    assert_eq!(ids("writer=gone"), vec![gone.doc_id.clone()]);
-    assert!(ids("writer=absent").is_empty());
-    for value in ["shared", "gone", "absent"] {
-        assert_eq!(
-            ids(&format!("writer={value}")),
-            ids(&format!("twin={value}"))
-        );
-    }
+        let found = probe.lookups(&node, &["shared", "gone", "absent"]).await;
+        assert_eq!(found.len(), 6);
+        let ids = |key: &str| {
+            let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
+            ids.clone().unwrap()
+        };
+        assert_eq!(ids("writer=shared").len(), 2);
+        assert!(ids("writer=shared").contains(&forked.doc_id));
+        assert_eq!(ids("writer=gone"), vec![gone.doc_id.clone()]);
+        assert!(ids("writer=absent").is_empty());
+        for value in ["shared", "gone", "absent"] {
+            assert_eq!(
+                ids(&format!("writer={value}")),
+                ids(&format!("twin={value}"))
+            );
+        }
+    })
+    .unwrap()
 }

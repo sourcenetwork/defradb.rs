@@ -163,6 +163,34 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.delete_aux(kind, key).await
     }
 
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend,
@@ -254,132 +282,145 @@ async fn measure_m(
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement, minutes long; run with --ignored --nocapture"]
-async fn recall_baseline() {
-    println!(
-        "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
-        "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
-    );
-    for dimensions in [16usize, 128] {
-        for count in [4_000usize, 20_000] {
-            let mut corpus = Corpus::new(CORPUS_SEED);
-            let uniform = corpus.vectors(count, dimensions);
-            measure(
-                &format!("uniform d={dimensions}"),
-                &uniform,
-                dimensions,
-                &[32, 64],
-            )
-            .await;
+fn recall_baseline() {
+    workers::block_on(async {
+        println!(
+            "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
+            "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
+        );
+        for dimensions in [16usize, 128] {
+            for count in [4_000usize, 20_000] {
+                let mut corpus = Corpus::new(CORPUS_SEED);
+                let uniform = corpus.vectors(count, dimensions);
+                measure(
+                    &format!("uniform d={dimensions}"),
+                    &uniform,
+                    dimensions,
+                    &[32, 64],
+                )
+                .await;
 
-            let mut corpus = Corpus::new(CORPUS_SEED);
-            let clustered = corpus.clustered(count, dimensions, 100, 0.15);
-            measure(
-                &format!("clustered d={dimensions}"),
-                &clustered,
-                dimensions,
-                &[32, 64],
-            )
-            .await;
+                let mut corpus = Corpus::new(CORPUS_SEED);
+                let clustered = corpus.clustered(count, dimensions, 100, 0.15);
+                measure(
+                    &format!("clustered d={dimensions}"),
+                    &clustered,
+                    dimensions,
+                    &[32, 64],
+                )
+                .await;
+            }
         }
-    }
+    })
+    .unwrap()
 }
 
 /// `M` is the connectivity knob. 16 is tuned for low dimensions; the published
 /// HNSW guidance is 32-48 once the data is high-dimensional, and this measures
 /// what the default costs at d=128.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_vs_m() {
-    println!(
-        "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
-        "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
-    );
-    let dimensions = 128;
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let clustered = corpus.clustered(20_000, dimensions, 100, 0.15);
-    for m in [16usize, 32, 48, 64] {
-        measure_m(
-            Metric::Cosine,
-            m,
-            &format!("clustered d=128 M={m}"),
-            &clustered,
-            dimensions,
-            &[64],
-        )
-        .await;
-    }
+fn recall_vs_m() {
+    workers::block_on(async {
+        println!(
+            "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
+            "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
+        );
+        let dimensions = 128;
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let clustered = corpus.clustered(20_000, dimensions, 100, 0.15);
+        for m in [16usize, 32, 48, 64] {
+            measure_m(
+                Metric::Cosine,
+                m,
+                &format!("clustered d=128 M={m}"),
+                &clustered,
+                dimensions,
+                &[64],
+            )
+            .await;
+        }
+    })
+    .unwrap()
 }
 
 /// Whether recall is bounded by search effort or by the graph. If it climbs
 /// towards 1.0 with `ef` the structure is sound and the rest is a knob; if it
 /// plateaus, construction is the limit.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_vs_effort() {
-    println!(
-        "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
-        "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
-    );
-    let dimensions = 128;
-    let mut corpus = Corpus::new(CORPUS_SEED);
-    let clustered = corpus.clustered(20_000, dimensions, 100, 0.15);
-    measure(
-        "clustered d=128",
-        &clustered,
-        dimensions,
-        &[64, 128, 256, 512, 1024],
-    )
-    .await;
+fn recall_vs_effort() {
+    workers::block_on(async {
+        println!(
+            "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
+            "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
+        );
+        let dimensions = 128;
+        let mut corpus = Corpus::new(CORPUS_SEED);
+        let clustered = corpus.clustered(20_000, dimensions, 100, 0.15);
+        measure(
+            "clustered d=128",
+            &clustered,
+            dimensions,
+            &[64, 128, 256, 512, 1024],
+        )
+        .await;
+    })
+    .unwrap()
 }
 
 /// Dot product is not a metric, and HNSW's greedy descent assumes one. This
 /// measures what that costs against cosine on the same corpus, scaled so
 /// magnitudes actually differ; without the spread the two are the same query.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn dot_recall() {
-    println!(
-        "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
-        "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
-    );
-    for dimensions in [16usize, 128] {
-        let mut corpus = Corpus::new(CORPUS_SEED);
-        let mut vectors = corpus.clustered(20_000, dimensions, 100, 0.15);
-        let mut scale = Corpus::new(QUERY_SEED);
-        for vector in &mut vectors {
-            let factor = 0.25 + 4.0 * scale.unit() as f32;
-            for component in vector.iter_mut() {
-                *component *= factor;
+fn dot_recall() {
+    workers::block_on(async {
+        println!(
+            "{:>26} {:>7} {:>4} {:>10} {:>9} {:>8} {:>8}",
+            "corpus", "N", "ef", "recall@10", "dist/best", "reads", "%corpus"
+        );
+        for dimensions in [16usize, 128] {
+            let mut corpus = Corpus::new(CORPUS_SEED);
+            let mut vectors = corpus.clustered(20_000, dimensions, 100, 0.15);
+            let mut scale = Corpus::new(QUERY_SEED);
+            for vector in &mut vectors {
+                let factor = 0.25 + 4.0 * scale.unit() as f32;
+                for component in vector.iter_mut() {
+                    *component *= factor;
+                }
             }
-        }
 
-        measure_with(
-            Metric::Cosine,
-            &format!("cosine d={dimensions}"),
-            &vectors,
-            dimensions,
-            &[32, 64],
-        )
-        .await;
-        measure_with(
-            Metric::NegativeDot,
-            &format!("dot d={dimensions}"),
-            &vectors,
-            dimensions,
-            &[32, 64],
-        )
-        .await;
-    }
+            measure_with(
+                Metric::Cosine,
+                &format!("cosine d={dimensions}"),
+                &vectors,
+                dimensions,
+                &[32, 64],
+            )
+            .await;
+            measure_with(
+                Metric::NegativeDot,
+                &format!("dot d={dimensions}"),
+                &vectors,
+                dimensions,
+                &[32, 64],
+            )
+            .await;
+        }
+    })
+    .unwrap()
 }
 
 /// Graph health, independent of recall. A layer-0 degree far under `m_max0`, an
 /// isolated node, or a level distribution away from `1/m` is a structural
 /// defect; low recall on near-orthogonal data is not.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn graph_shape() {
+fn graph_shape() {
+    workers::block_on(async {
     for dimensions in [16usize, 128] {
         let mut corpus = Corpus::new(CORPUS_SEED);
         let vectors = corpus.vectors(20_000, dimensions);
@@ -417,4 +458,6 @@ async fn graph_shape() {
         );
         assert_eq!(isolated, 0, "d={dimensions}: the graph has isolated nodes");
     }
+})
+    .unwrap()
 }

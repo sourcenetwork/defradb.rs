@@ -10,7 +10,7 @@ use storage::corekv::Store;
 use crate::manage::hooks::ManageHooksCell;
 
 type Events =
-    tokio::sync::mpsc::Receiver<TransportEvent<<IrohTransport as P2PTransport>::ResponseToken>>;
+    p2p::sync::DispatchReceiver<TransportEvent<<IrohTransport as P2PTransport>::ResponseToken>>;
 
 /// Dispatch every transport event. Peer lifecycle is published to the event
 /// bus and re-arms retries; searchable-encryption and management traffic is
@@ -71,12 +71,16 @@ where
                             return;
                         }
                         #[cfg(not(target_arch = "wasm32"))]
-                        TransportEvent::SEQueryRequest { peer_id, request } => {
+                        TransportEvent::SEQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                             db::merge::se::serve::handle_query_request(
                                 store.as_ref(),
                                 &transport,
                                 peer_id,
-                                request,
+                                request, token,
                             )
                             .await;
                             return;
@@ -86,11 +90,15 @@ where
                             se_correlator.deliver(reply);
                             return;
                         }
-                        TransportEvent::ManageRequest { peer_id, request } => {
+                        TransportEvent::ManageRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                             match manage_hooks.get() {
                                 Some(hooks) => {
                                     crate::manage::serve::serve_manage_request(
-                                        hooks, &transport, &peer_id, request,
+                                        hooks, &transport, &peer_id, request, token,
                                     )
                                     .await
                                 }
@@ -98,11 +106,15 @@ where
                             }
                             return;
                         }
-                        TransportEvent::ManageQueryRequest { peer_id, request } => {
+                        TransportEvent::ManageQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                             match manage_hooks.get() {
                                 Some(hooks) => {
                                     crate::manage::serve::serve_manage_query_request(
-                                        hooks, &transport, &peer_id, request,
+                                        hooks, &transport, &peer_id, request, token,
                                     )
                                     .await
                                 }

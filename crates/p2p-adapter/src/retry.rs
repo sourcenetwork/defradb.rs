@@ -381,6 +381,9 @@ pub async fn run_retry_pass<S, T>(
     S: storage::corekv::Store + 'static,
     T: P2PTransport,
 {
+    if let Err(error) = doc_pusher.recover_replicator_installs().await {
+        tracing::warn!(%error, "failed to recover interrupted replicator installs");
+    }
     let peers = match retry_peers(peerstore).await {
         Ok(peers) => peers,
         Err(error) => {
@@ -1273,7 +1276,6 @@ mod tests {
                 bind_port: None,
                 bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
                 max_concurrent_multipath_paths: None,
-                gossip_heal: Default::default(),
                 allowlist: Default::default(),
             })
             .await

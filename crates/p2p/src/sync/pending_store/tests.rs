@@ -21,6 +21,10 @@ impl storage::corekv::private::Sealed for ConflictInjectingStore {}
 
 #[async_trait]
 impl Store for ConflictInjectingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(
         &self,
         key: &[u8],

@@ -59,40 +59,49 @@ mod tests {
         cid::Cid::from_str(s).unwrap()
     }
 
-    #[tokio::test]
-    async fn wait_all_collects_results() {
-        let (results, tx) = KeyResults::new(2);
-        let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
-        let b = fake_cid("bafybeic7soaixfijgvjxfgmolzkckfsalh7c66odzgjlp6h53zjsuktcgi");
-        tx.send(Ok((a, [1u8; 32]))).await.unwrap();
-        tx.send(Ok((b, [2u8; 32]))).await.unwrap();
-        drop(tx);
-        let map = results.wait_all().await.unwrap();
-        assert_eq!(map.len(), 2);
-        assert_eq!(map[&a], [1u8; 32]);
+    #[test]
+    fn wait_all_collects_results() {
+        workers::block_on(async {
+            let (results, tx) = KeyResults::new(2);
+            let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+            let b = fake_cid("bafybeic7soaixfijgvjxfgmolzkckfsalh7c66odzgjlp6h53zjsuktcgi");
+            tx.send(Ok((a, [1u8; 32]))).await.unwrap();
+            tx.send(Ok((b, [2u8; 32]))).await.unwrap();
+            drop(tx);
+            let map = results.wait_all().await.unwrap();
+            assert_eq!(map.len(), 2);
+            assert_eq!(map[&a], [1u8; 32]);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn streaming_receiver_works() {
-        let (results, tx) = KeyResults::new(1);
-        let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
-        tx.send(Ok((a, [9u8; 32]))).await.unwrap();
-        drop(tx);
-        let mut rx = results.into_receiver();
-        let (cid, key) = rx.recv().await.unwrap().unwrap();
-        assert_eq!(cid, a);
-        assert_eq!(key, [9u8; 32]);
-        assert!(rx.recv().await.is_none());
+    #[test]
+    fn streaming_receiver_works() {
+        workers::block_on(async {
+            let (results, tx) = KeyResults::new(1);
+            let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+            tx.send(Ok((a, [9u8; 32]))).await.unwrap();
+            drop(tx);
+            let mut rx = results.into_receiver();
+            let (cid, key) = rx.recv().await.unwrap().unwrap();
+            assert_eq!(cid, a);
+            assert_eq!(key, [9u8; 32]);
+            assert!(rx.recv().await.is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn wait_all_propagates_first_error() {
-        let (results, tx) = KeyResults::new(2);
-        let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
-        tx.send(Ok((a, [1u8; 32]))).await.unwrap();
-        tx.send(Err(crate::Error::KeyUnavailable)).await.unwrap();
-        drop(tx);
-        let result = results.wait_all().await;
-        assert!(matches!(result, Err(crate::Error::KeyUnavailable)));
+    #[test]
+    fn wait_all_propagates_first_error() {
+        workers::block_on(async {
+            let (results, tx) = KeyResults::new(2);
+            let a = fake_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+            tx.send(Ok((a, [1u8; 32]))).await.unwrap();
+            tx.send(Err(crate::Error::KeyUnavailable)).await.unwrap();
+            drop(tx);
+            let result = results.wait_all().await;
+            assert!(matches!(result, Err(crate::Error::KeyUnavailable)));
+        })
+        .unwrap()
     }
 }

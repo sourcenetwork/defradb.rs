@@ -8,6 +8,7 @@
 
 mod cid;
 mod collection;
+mod crdt_name;
 mod ctype;
 mod embedding;
 mod error;
@@ -16,6 +17,7 @@ mod field_kind;
 mod index;
 mod policy;
 mod relation;
+mod selector;
 mod source;
 mod validation;
 
@@ -33,6 +35,7 @@ pub use cid::{
 pub use collection::{
     legacy_collection_short_id, CollectionBuilder, CollectionVersion, ORPHAN_COLLECTION_ID,
 };
+pub use crdt_name::CrdtName;
 pub use ctype::CType;
 pub use embedding::VectorEmbeddingDescription;
 pub use error::{Result, SchemaError};
@@ -45,6 +48,7 @@ pub use index::{
     VectorIndexDescription,
 };
 pub use policy::PolicyDescription;
+pub use selector::CollectionSelector;
 pub use source::{
     query_select_json_bytes, CollectionSetDescription, CollectionSource, QuerySource,
 };

@@ -73,7 +73,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         crate::block::heads::document::commit(headstore, context.doc_short_id, &write)
             .await
             .map_err(storage_error)?;
-        state.reads.wrote_heads();
+        state.reads.wrote_heads(context.doc_short_id, &write);
         Ok(())
     }
 }

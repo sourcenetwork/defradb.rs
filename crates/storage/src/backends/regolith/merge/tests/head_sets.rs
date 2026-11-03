@@ -13,7 +13,7 @@ use crate::RegolithStore;
 fn fold(base: Option<&[u8]>, writes: &[&Write]) -> Set {
     let operands: Vec<Vec<u8>> = writes.iter().map(|write| write.operand()).collect();
     let refs: Vec<&[u8]> = operands.iter().map(Vec::as_slice).collect();
-    let bytes = DefraMergeOperator
+    let bytes = DefraMergeOperator::default()
         .full_merge(b"set", base, &refs)
         .expect("a head set operand folds");
     Set::read(&bytes).expect("a folded head set reads back")
@@ -88,16 +88,31 @@ fn bases() -> impl Strategy<Value = Vec<u8>> {
                 write.supersede_ahead(&name);
             }
         }
-        DefraMergeOperator
+        DefraMergeOperator::default()
             .full_merge(b"set", None, &[&write.operand()])
             .unwrap()
     })
 }
 
+proptest! {
+    #[test]
+    fn decoded_head_updates_match_the_engine_fold(
+        base in bases(), writes in proptest::collection::vec(writes(), 0..32),
+    ) {
+        let mut cached = Set::read(&base).unwrap();
+        let mut applied = Vec::new();
+        for write in &writes {
+            cached.apply(write);
+            applied.push(write);
+            prop_assert_eq!(&cached, &fold(Some(&base), &applied));
+        }
+    }
+}
+
 #[test]
 fn head_set_folds_obey_the_engine_contract() {
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         bases(),
         operands(),
@@ -109,7 +124,7 @@ fn head_set_folds_obey_the_engine_contract() {
 #[test]
 fn head_set_touches_obey_the_engine_contract() {
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         operands(),
         proptest::collection::vec(0u32..4, 0..3),
@@ -123,7 +138,7 @@ fn head_set_touches_obey_the_engine_contract() {
 fn every_head_set_operand_touches_every_part() {
     let operand = adds(&[(b"a", 1)]).operand();
     for parts in [&[][..], &[1], &[1, 2]] {
-        assert!(DefraMergeOperator.touches(b"set", &operand, parts));
+        assert!(DefraMergeOperator::default().touches(b"set", &operand, parts));
     }
 }
 
@@ -224,7 +239,7 @@ fn malformed_bytes_fail_with_none() {
     let operand = block(&[b"a"], &[b"b"], (b"c", 7)).operand();
     for end in 0..operand.len() {
         assert!(
-            DefraMergeOperator
+            DefraMergeOperator::default()
                 .full_merge(b"set", None, &[&operand[..end]])
                 .is_none(),
             "an operand cut at {end}"
@@ -232,24 +247,24 @@ fn malformed_bytes_fail_with_none() {
     }
     let mut longer = operand.clone();
     longer.push(0);
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&longer])
         .is_none());
-    let value = DefraMergeOperator
+    let value = DefraMergeOperator::default()
         .full_merge(b"set", None, &[&operand])
         .unwrap();
     // A value is no operand and an operand is no value.
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&value])
         .is_none());
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", Some(&operand), &[&operand])
         .is_none());
     assert!(Set::read(&operand).is_none());
     for end in 0..value.len() {
         assert!(Set::read(&value[..end]).is_none(), "a value cut at {end}");
     }
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .partial_merge(b"set", &operand, &value)
         .is_none());
     // Names must ascend and never repeat.
@@ -259,7 +274,7 @@ fn malformed_bytes_fail_with_none() {
     }
     let body = [&[2u8][..], &duplicate].concat();
     let forged = [b"DM\x01\x08".as_slice(), &body].concat();
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&forged])
         .is_none());
 }
@@ -274,47 +289,53 @@ fn an_empty_write_has_no_operand_to_merge() {
 
 /// Two transactions that both read the set and merge into it commit: the
 /// merge is blind, and the live set is the union of what both added.
-#[tokio::test]
-async fn concurrent_writers_of_one_set_both_commit() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut seed = store.new_txn(false).await.unwrap();
-    seed.merge(b"h/hd/set", &adds(&[(b"p", 1)]).operand())
-        .await
-        .unwrap();
-    seed.commit().await.unwrap();
-    let mut first = store.new_txn(false).await.unwrap();
-    let mut second = store.new_txn(false).await.unwrap();
-    for (txn, head) in [(&mut first, b"x"), (&mut second, b"y")] {
-        let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
-        assert!(Set::read(&read).unwrap().is_live(b"p"));
-        txn.merge(b"h/hd/set", &block(&[b"p"], &[], (head, 2)).operand())
+#[test]
+fn concurrent_writers_of_one_set_both_commit() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.merge(b"h/hd/set", &adds(&[(b"p", 1)]).operand())
             .await
             .unwrap();
-    }
-    first.commit().await.unwrap();
-    second.commit().await.unwrap();
-    let read = store.new_txn(true).await.unwrap();
-    let set = Set::read(&read.get(b"h/hd/set").await.unwrap().unwrap()).unwrap();
-    assert_eq!(
-        live(&set),
-        [(b"x".to_vec(), 2), (b"y".to_vec(), 2)],
-        "both heads are live and the parent is gone"
-    );
+        seed.commit().await.unwrap();
+        let mut first = store.new_txn(false).await.unwrap();
+        let mut second = store.new_txn(false).await.unwrap();
+        for (txn, head) in [(&mut first, b"x"), (&mut second, b"y")] {
+            let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
+            assert!(Set::read(&read).unwrap().is_live(b"p"));
+            txn.merge(b"h/hd/set", &block(&[b"p"], &[], (head, 2)).operand())
+                .await
+                .unwrap();
+        }
+        first.commit().await.unwrap();
+        second.commit().await.unwrap();
+        let read = store.new_txn(true).await.unwrap();
+        let set = Set::read(&read.get(b"h/hd/set").await.unwrap().unwrap()).unwrap();
+        assert_eq!(
+            live(&set),
+            [(b"x".to_vec(), 2), (b"y".to_vec(), 2)],
+            "both heads are live and the parent is gone"
+        );
+    })
+    .unwrap()
 }
 
 /// A transaction reads its own pending merges.
-#[tokio::test]
-async fn a_transaction_reads_the_set_it_merged_into() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    txn.merge(b"h/hd/set", &adds(&[(b"a", 1)]).operand())
-        .await
-        .unwrap();
-    txn.merge(b"h/hd/set", &block(&[b"a"], &[], (b"b", 2)).operand())
-        .await
-        .unwrap();
-    let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
-    assert_eq!(live(&Set::read(&read).unwrap()), [(b"b".to_vec(), 2)]);
+#[test]
+fn a_transaction_reads_the_set_it_merged_into() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        txn.merge(b"h/hd/set", &adds(&[(b"a", 1)]).operand())
+            .await
+            .unwrap();
+        txn.merge(b"h/hd/set", &block(&[b"a"], &[], (b"b", 2)).operand())
+            .await
+            .unwrap();
+        let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
+        assert_eq!(live(&Set::read(&read).unwrap()), [(b"b".to_vec(), 2)]);
+    })
+    .unwrap()
 }
 
 /// An operand touches the part of every name it holds and of no other name;
@@ -324,12 +345,12 @@ fn an_operand_touches_the_parts_of_the_names_it_holds() {
     let operand = block(&[b"p"], &[b"q"], (b"c", 2)).operand();
     let held = [b"p".as_slice(), b"q", b"c"].map(part);
     for name in held {
-        assert!(DefraMergeOperator.touches(b"set", &operand, &[name]));
+        assert!(DefraMergeOperator::default().touches(b"set", &operand, &[name]));
     }
     let other = part(b"other");
     assert!(!held.contains(&other), "these names hash to distinct parts");
-    assert!(!DefraMergeOperator.touches(b"set", &operand, &[other]));
-    assert!(DefraMergeOperator.touches(b"set", &operand, &[7, other]));
+    assert!(!DefraMergeOperator::default().touches(b"set", &operand, &[other]));
+    assert!(DefraMergeOperator::default().touches(b"set", &operand, &[7, other]));
 }
 
 /// The law, with the parts of names: what a fold touches is what its two
@@ -340,7 +361,7 @@ fn head_set_touches_by_name_obey_the_engine_contract() {
         .map(part)
         .to_vec();
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         operands(),
         proptest::sample::subsequence(parts, 1..=3),
@@ -351,29 +372,32 @@ fn head_set_touches_by_name_obey_the_engine_contract() {
 
 /// A transaction that read one name's part commits past a merge that holds
 /// other names only, and is refused by one that holds its name.
-#[tokio::test]
-async fn a_read_of_one_names_part_meets_only_operands_that_hold_it() {
-    let theirs = [
-        (adds(&[(b"x", 1)]), false),
-        (adds(&[(b"p", 1)]), true),
-        (block(&[], &[b"p"], (b"y", 2)), true),
-    ];
-    for (write, refused) in theirs {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.merge(b"h/hd/set", &adds(&[(b"s", 1)]).operand())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
-        let mut reader = store.new_txn(false).await.unwrap();
-        reader.get_parts(b"h/hd/set", &[part(b"p")]).await.unwrap();
-        reader
-            .merge(b"h/hd/set", &block(&[], &[b"p"], (b"c", 2)).operand())
-            .await
-            .unwrap();
-        let mut writer = store.new_txn(false).await.unwrap();
-        writer.merge(b"h/hd/set", &write.operand()).await.unwrap();
-        writer.commit().await.unwrap();
-        assert_eq!(reader.commit().await.is_err(), refused, "{write:?}");
-    }
+#[test]
+fn a_read_of_one_names_part_meets_only_operands_that_hold_it() {
+    workers::block_on(async {
+        let theirs = [
+            (adds(&[(b"x", 1)]), false),
+            (adds(&[(b"p", 1)]), true),
+            (block(&[], &[b"p"], (b"y", 2)), true),
+        ];
+        for (write, refused) in theirs {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.merge(b"h/hd/set", &adds(&[(b"s", 1)]).operand())
+                .await
+                .unwrap();
+            seed.commit().await.unwrap();
+            let mut reader = store.new_txn(false).await.unwrap();
+            reader.get_parts(b"h/hd/set", &[part(b"p")]).await.unwrap();
+            reader
+                .merge(b"h/hd/set", &block(&[], &[b"p"], (b"c", 2)).operand())
+                .await
+                .unwrap();
+            let mut writer = store.new_txn(false).await.unwrap();
+            writer.merge(b"h/hd/set", &write.operand()).await.unwrap();
+            writer.commit().await.unwrap();
+            assert_eq!(reader.commit().await.is_err(), refused, "{write:?}");
+        }
+    })
+    .unwrap()
 }

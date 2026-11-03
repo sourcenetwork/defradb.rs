@@ -5,8 +5,10 @@
 //! - Avoiding redundant sends (don't send blocks peers already have)
 //! - Replication status monitoring
 
+mod history;
 mod stats;
 mod tracker;
 
+pub use history::{PeerFailure, PeerHistory, PeerSummary, SyncOutcomes, Timestamp};
 pub use stats::PeerStats;
 pub use tracker::PeerStateTracker;

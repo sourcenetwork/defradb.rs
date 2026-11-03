@@ -25,7 +25,6 @@ async fn test_config() -> IrohEndpointConfig {
         bind_port: None,
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         max_concurrent_multipath_paths: None,
-        gossip_heal: Default::default(),
         allowlist: Default::default(),
     }
 }
@@ -71,14 +70,19 @@ async fn roundtrip_emits_request_and_reply_events() {
         .await
         .expect("send request");
 
-    let received_request = loop {
+    let (received_request, token) = loop {
         let event = timeout(Duration::from_secs(5), events1.recv())
             .await
             .expect("timed out waiting for SE query request")
             .expect("iroh event channel closed");
-        if let TransportEvent::SEQueryRequest { peer_id, request } = event {
+        if let TransportEvent::SEQueryRequest {
+            peer_id,
+            request,
+            token,
+        } = event
+        {
             assert_eq!(peer_id, *transport0.local_peer_id());
-            break request;
+            break (request, token);
         }
     };
     assert_eq!(received_request.message_id, request_message_id);
@@ -94,7 +98,7 @@ async fn roundtrip_emits_request_and_reply_events() {
         QuerySEArtifactsReply::success(&request_message_id, vec!["doc1".into(), "doc2".into()]);
     sign_with_transport(&transport1, &mut reply).expect("sign reply");
     transport1
-        .send_se_query_response(transport0.local_peer_id(), reply)
+        .send_se_query_response(transport0.local_peer_id(), token, reply)
         .await
         .expect("send reply");
 

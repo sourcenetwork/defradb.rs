@@ -262,34 +262,92 @@ impl RetryTxn for RegolithRetryTxn<'_> {
 #[cfg(test)]
 mod retry_cold_io_tests {
     use super::*;
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::backends::RegolithStore;
     use crate::corekv::Store;
 
-    struct CooperativeBudgetAttempt;
-    impl crate::corekv::RetryAttemptFn for CooperativeBudgetAttempt {
+    /// Pending until the executor has polled the task that awaits the retry
+    /// again: an attempt driven by re-polling it inside one poll of that task
+    /// never sees the count move.
+    struct YieldToExecutor {
+        task_polls: Arc<AtomicUsize>,
+        seen: Option<usize>,
+        stalled: usize,
+    }
+
+    impl std::future::Future for YieldToExecutor {
+        type Output = ();
+
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            let polls = self.task_polls.load(Ordering::SeqCst);
+            if self.seen.is_some_and(|seen| seen != polls) {
+                return std::task::Poll::Ready(());
+            }
+            self.seen = Some(polls);
+            self.stalled += 1;
+            assert!(
+                self.stalled < 64,
+                "the attempt was re-polled without its task being polled"
+            );
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+
+    struct YieldingAttempt {
+        task_polls: Arc<AtomicUsize>,
+    }
+    impl crate::corekv::RetryAttemptFn for YieldingAttempt {
         fn run<'a>(
             &'a mut self,
             _retry: &'a mut dyn RetryTxn,
         ) -> crate::corekv::RetryAttemptFuture<'a> {
+            let task_polls = Arc::clone(&self.task_polls);
             Box::pin(async move {
-                // More ready operations than Tokio's per-poll budget. The
-                // engine queue must not wait for the suspended outer runtime
-                // scheduler to replenish that budget.
+                // More yields than any one poll budget. The engine queue must
+                // finish an attempt that keeps handing the thread back, one
+                // poll of its task at a time.
                 for _ in 0..1024 {
-                    tokio::task::consume_budget().await;
+                    YieldToExecutor {
+                        task_polls: Arc::clone(&task_polls),
+                        seen: None,
+                        stalled: 0,
+                    }
+                    .await;
                 }
                 Ok(Box::new(()) as RetryAttemptValue)
             })
         }
     }
 
-    #[tokio::test]
-    async fn retry_queue_does_not_depend_on_outer_tokio_cooperative_budget() {
-        let store = RegolithStore::in_memory().unwrap();
-        store
-            .transact_retry(RetryOptions::new(1), Box::new(CooperativeBudgetAttempt))
-            .await
-            .unwrap();
+    /// Off a worker, so the attempt is driven by the task that awaits it.
+    #[test]
+    fn retry_queue_completes_an_attempt_that_yields_repeatedly() {
+        let task_polls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&task_polls);
+        workers::block_on_timeout(
+            async move {
+                let store = RegolithStore::in_memory().unwrap();
+                let retry = store.transact_retry(
+                    RetryOptions::new(1),
+                    Box::new(YieldingAttempt { task_polls }),
+                );
+                let mut retry = std::pin::pin!(retry);
+                std::future::poll_fn(|cx| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    retry.as_mut().poll(cx)
+                })
+                .await
+                .unwrap();
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap()
     }
 
     struct ColdReadAttempt;
@@ -327,32 +385,34 @@ mod retry_cold_io_tests {
         }
     }
 
-    #[tokio::test]
-    async fn scoped_retry_io_reads_cold_sst_points_and_scans() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = RegolithStore::open(directory.path()).unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
-        for n in 0..24 {
-            txn.set(format!("cold/{n:02}").as_bytes(), &vec![n; 16384])
+    #[test]
+    fn scoped_retry_io_reads_cold_sst_points_and_scans() {
+        crate::backends::test_suite::on_workers(|| async {
+            let directory = tempfile::tempdir().unwrap();
+            let store = RegolithStore::open(directory.path()).unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+            for n in 0..24 {
+                txn.set(format!("cold/{n:02}").as_bytes(), &vec![n; 16384])
+                    .await
+                    .unwrap();
+            }
+            txn.commit().await.unwrap();
+            store.engine().db().flush().unwrap();
+            store.close().await.unwrap();
+            drop(store);
+            let store = RegolithStore::open(directory.path()).unwrap();
+            store
+                .transact_retry(RetryOptions::new(2), Box::new(ColdReadAttempt))
                 .await
                 .unwrap();
-        }
-        txn.commit().await.unwrap();
-        store.engine().db().flush().unwrap();
-        store.close().await.unwrap();
-        drop(store);
-        let store = RegolithStore::open(directory.path()).unwrap();
-        store
-            .transact_retry(RetryOptions::new(2), Box::new(ColdReadAttempt))
-            .await
-            .unwrap();
-        let txn = store.new_txn(true).await.unwrap();
-        assert_eq!(
-            txn.get(b"cold-result").await.unwrap().as_deref(),
-            Some(b"complete".as_slice())
-        );
-        txn.discard();
-        store.close().await.unwrap();
+            let txn = store.new_txn(true).await.unwrap();
+            assert_eq!(
+                txn.get(b"cold-result").await.unwrap().as_deref(),
+                Some(b"complete".as_slice())
+            );
+            txn.discard();
+            store.close().await.unwrap();
+        });
     }
 }
 
@@ -385,27 +445,29 @@ mod retry_read_tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_write_free_attempt_and_an_update_of_what_it_read_both_commit() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.set(b"flag", b"old").await.unwrap();
-        seed.commit().await.unwrap();
-        store
-            .transact_retry(
-                RetryOptions::new(1),
-                Box::new(ConditionalNoop {
-                    store: store.clone(),
-                }),
-            )
-            .await
-            .unwrap();
-        let read = store.new_txn(true).await.unwrap();
-        assert_eq!(
-            read.get(b"flag").await.unwrap().as_deref(),
-            Some(&b"new"[..])
-        );
-        read.discard();
+    #[test]
+    fn a_write_free_attempt_and_an_update_of_what_it_read_both_commit() {
+        crate::backends::test_suite::on_workers(|| async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.set(b"flag", b"old").await.unwrap();
+            seed.commit().await.unwrap();
+            store
+                .transact_retry(
+                    RetryOptions::new(1),
+                    Box::new(ConditionalNoop {
+                        store: store.clone(),
+                    }),
+                )
+                .await
+                .unwrap();
+            let read = store.new_txn(true).await.unwrap();
+            assert_eq!(
+                read.get(b"flag").await.unwrap().as_deref(),
+                Some(&b"new"[..])
+            );
+            read.discard();
+        });
     }
     fn counting(count: &Arc<AtomicUsize>) -> TxnCallback {
         let count = Arc::clone(count);
@@ -448,25 +510,28 @@ mod retry_read_tests {
 
     /// Each attempt ends once: the one that lost runs its abort callbacks,
     /// the one that won its commit callbacks.
-    #[tokio::test]
-    async fn an_attempt_that_loses_runs_its_abort_callbacks_and_the_winner_its_commit_ones() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.set(b"flag", b"old").await.unwrap();
-        seed.commit().await.unwrap();
-        let (committed, aborted) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let attempt = LosesOnce {
-            store: store.clone(),
-            runs: 0,
-            committed: Arc::clone(&committed),
-            aborted: Arc::clone(&aborted),
-        };
-        store
-            .transact_retry(RetryOptions::new(2), Box::new(attempt))
-            .await
-            .unwrap();
-        assert_eq!(committed.load(Ordering::SeqCst), 1);
-        assert_eq!(aborted.load(Ordering::SeqCst), 1);
+    #[test]
+    fn an_attempt_that_loses_runs_its_abort_callbacks_and_the_winner_its_commit_ones() {
+        crate::backends::test_suite::on_workers(|| async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.set(b"flag", b"old").await.unwrap();
+            seed.commit().await.unwrap();
+            let (committed, aborted) =
+                (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let attempt = LosesOnce {
+                store: store.clone(),
+                runs: 0,
+                committed: Arc::clone(&committed),
+                aborted: Arc::clone(&aborted),
+            };
+            store
+                .transact_retry(RetryOptions::new(2), Box::new(attempt))
+                .await
+                .unwrap();
+            assert_eq!(committed.load(Ordering::SeqCst), 1);
+            assert_eq!(aborted.load(Ordering::SeqCst), 1);
+        });
     }
 }
 
@@ -475,8 +540,8 @@ mod retry_order_tests {
     use super::*;
     use crate::backends::RegolithStore;
     use crate::corekv::{OnCommit, Store};
+    use regolith::sync::Notify;
     use regolith::sync::SegQueue;
-    use tokio::sync::Notify;
 
     struct OrderedAttempt {
         events: Arc<SegQueue<u8>>,
@@ -509,40 +574,43 @@ mod retry_order_tests {
         }
     }
 
-    #[tokio::test]
-    async fn regular_commit_waits_for_earlier_retry_postcommit_hook() {
-        let store = RegolithStore::in_memory().unwrap();
-        let events = Arc::new(SegQueue::new());
-        let entered = Arc::new(Notify::new());
-        let release = Arc::new(Notify::new());
-        let attempt = OrderedAttempt {
-            events: events.clone(),
-            entered: entered.clone(),
-            release: release.clone(),
-        };
-        let retry_store = store.clone();
-        let retry_task = tokio::spawn(async move {
-            retry_store
-                .transact_retry(RetryOptions::new(2), Box::new(attempt))
+    #[test]
+    fn regular_commit_waits_for_earlier_retry_postcommit_hook() {
+        crate::backends::test_suite::on_workers(|| async {
+            let store = RegolithStore::in_memory().unwrap();
+            let events = Arc::new(SegQueue::new());
+            let entered = Arc::new(Notify::new());
+            let release = Arc::new(Notify::new());
+            let attempt = OrderedAttempt {
+                events: events.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            };
+            let retry_store = store.clone();
+            let retry_task = workers::spawn(None, "test", move || async move {
+                retry_store
+                    .transact_retry(RetryOptions::new(2), Box::new(attempt))
+                    .await
+                    .unwrap();
+            })
+            .unwrap();
+            workers::timeout(std::time::Duration::from_secs(5), entered.notified())
                 .await
                 .unwrap();
+            let mut regular = store.new_txn(false).await.unwrap();
+            regular.set(b"ordered-regular", b"durable").await.unwrap();
+            let out = events.clone();
+            regular
+                .on_commit(OnCommit::Ordered(Box::new(move || out.push(2))))
+                .unwrap();
+            regular.commit().await.unwrap();
+            assert!(events.is_empty());
+            release.notify_one();
+            retry_task.await.unwrap();
+            assert_eq!(
+                std::iter::from_fn(|| events.pop()).collect::<Vec<_>>(),
+                vec![1, 2]
+            );
         });
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
-            .await
-            .unwrap();
-        let mut regular = store.new_txn(false).await.unwrap();
-        regular.set(b"ordered-regular", b"durable").await.unwrap();
-        let out = events.clone();
-        regular
-            .on_commit(OnCommit::Ordered(Box::new(move || out.push(2))))
-            .unwrap();
-        regular.commit().await.unwrap();
-        assert!(events.is_empty());
-        release.notify_one();
-        retry_task.await.unwrap();
-        assert_eq!(
-            std::iter::from_fn(|| events.pop()).collect::<Vec<_>>(),
-            vec![1, 2]
-        );
     }
 }

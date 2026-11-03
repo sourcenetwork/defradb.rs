@@ -35,501 +35,537 @@ fn to_idid(did: &Did) -> Did {
 // This Rule Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_this_rule_direct_lookup() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_this_rule_direct_lookup() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    let policy = Policy::new("policy1", "Test")
-        .with_resource(Resource::new("document").with_relation(Relation::direct("owner")));
+        let policy = Policy::new("policy1", "Test")
+            .with_resource(Resource::new("document").with_relation(Relation::direct("owner")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let did = test_did();
+        let did = test_did();
 
-    // Store owner relationship
-    let rel = Relationship::with_entity("document", "doc1", "owner", did.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Store owner relationship
+        let rel = Relationship::with_entity("document", "doc1", "owner", did.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Direct lookup works
-    assert!(engine
-        .check("policy1", "document", "doc1", "owner", &did)
-        .await
-        .unwrap());
+        // Direct lookup works
+        assert!(engine
+            .check("policy1", "document", "doc1", "owner", &did)
+            .await
+            .unwrap());
 
-    // Non-owner doesn't have access
-    let other = test_did2();
-    assert!(!engine
-        .check("policy1", "document", "doc1", "owner", &other)
-        .await
-        .unwrap());
+        // Non-owner doesn't have access
+        let other = test_did2();
+        assert!(!engine
+            .check("policy1", "document", "doc1", "owner", &other)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // ComputedUserset Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_computed_userset_owner_implies_reader() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_computed_userset_owner_implies_reader() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // Policy: reader = _this + owner
-    let policy = Policy::new("policy1", "Test").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("owner"))
-            .with_relation(Relation::computed(
-                "reader",
-                RelationExpression::union(vec![
-                    RelationExpression::this(),
-                    RelationExpression::computed_userset("owner"),
-                ]),
-            )),
-    );
+        // Policy: reader = _this + owner
+        let policy = Policy::new("policy1", "Test").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("owner"))
+                .with_relation(Relation::computed(
+                    "reader",
+                    RelationExpression::union(vec![
+                        RelationExpression::this(),
+                        RelationExpression::computed_userset("owner"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let owner = test_did();
+        let owner = test_did();
 
-    // Store owner relationship
-    let rel = Relationship::with_entity("document", "doc1", "owner", owner.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Store owner relationship
+        let rel = Relationship::with_entity("document", "doc1", "owner", owner.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Owner should have reader access (via computed userset)
-    assert!(engine
-        .check("policy1", "document", "doc1", "reader", &owner)
-        .await
-        .unwrap());
+        // Owner should have reader access (via computed userset)
+        assert!(engine
+            .check("policy1", "document", "doc1", "reader", &owner)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // TupleToUserset Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_tuple_to_userset_folder_owner_can_read_file() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_tuple_to_userset_folder_owner_can_read_file() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // Policy: file.reader = parent->owner
-    let policy = Policy::new("policy1", "Test")
-        .with_resource(
-            Resource::new("file")
-                .with_relation(Relation::direct("parent"))
-                .with_relation(Relation::computed(
-                    "reader",
-                    RelationExpression::tuple_to_userset("parent", "owner"),
-                )),
-        )
-        .with_resource(Resource::new("folder").with_relation(Relation::direct("owner")));
+        // Policy: file.reader = parent->owner
+        let policy = Policy::new("policy1", "Test")
+            .with_resource(
+                Resource::new("file")
+                    .with_relation(Relation::direct("parent"))
+                    .with_relation(Relation::computed(
+                        "reader",
+                        RelationExpression::tuple_to_userset("parent", "owner"),
+                    )),
+            )
+            .with_resource(Resource::new("folder").with_relation(Relation::direct("owner")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let folder_owner = test_did();
+        let folder_owner = test_did();
 
-    // Folder owner relationship
-    let rel = Relationship::with_entity("folder", "folder1", "owner", folder_owner.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Folder owner relationship
+        let rel = Relationship::with_entity("folder", "folder1", "owner", folder_owner.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // File has parent relation to folder (entity set subject)
-    let rel = Relationship::new(
-        "file",
-        "file1",
-        "parent",
-        Subject::entity_set("folder", "folder1", "owner"),
-    );
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // File has parent relation to folder (entity set subject)
+        let rel = Relationship::new(
+            "file",
+            "file1",
+            "parent",
+            Subject::entity_set("folder", "folder1", "owner"),
+        );
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Folder owner can read file via tuple-to-userset
-    assert!(engine
-        .check("policy1", "file", "file1", "reader", &folder_owner)
-        .await
-        .unwrap());
+        // Folder owner can read file via tuple-to-userset
+        assert!(engine
+            .check("policy1", "file", "file1", "reader", &folder_owner)
+            .await
+            .unwrap());
 
-    // Non-owner cannot read
-    let non_owner = test_did2();
-    assert!(!engine
-        .check("policy1", "file", "file1", "reader", &non_owner)
-        .await
-        .unwrap());
+        // Non-owner cannot read
+        let non_owner = test_did2();
+        assert!(!engine
+            .check("policy1", "file", "file1", "reader", &non_owner)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Union Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_union_owner_or_reader_grants_access() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_union_owner_or_reader_grants_access() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // Policy: viewer = owner + reader
-    let policy = Policy::new("policy1", "Test").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("owner"))
-            .with_relation(Relation::direct("reader"))
-            .with_relation(Relation::computed(
-                "viewer",
-                RelationExpression::union(vec![
-                    RelationExpression::computed_userset("owner"),
-                    RelationExpression::computed_userset("reader"),
-                ]),
-            )),
-    );
+        // Policy: viewer = owner + reader
+        let policy = Policy::new("policy1", "Test").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("owner"))
+                .with_relation(Relation::direct("reader"))
+                .with_relation(Relation::computed(
+                    "viewer",
+                    RelationExpression::union(vec![
+                        RelationExpression::computed_userset("owner"),
+                        RelationExpression::computed_userset("reader"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let owner = test_did();
-    let reader = test_did2();
+        let owner = test_did();
+        let reader = test_did2();
 
-    // Owner has access
-    let rel = Relationship::with_entity("document", "doc1", "owner", owner.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Owner has access
+        let rel = Relationship::with_entity("document", "doc1", "owner", owner.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Reader has access
-    let rel = Relationship::with_entity("document", "doc1", "reader", reader.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Reader has access
+        let rel = Relationship::with_entity("document", "doc1", "reader", reader.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Both can view
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &owner)
-        .await
-        .unwrap());
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &reader)
-        .await
-        .unwrap());
+        // Both can view
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &owner)
+            .await
+            .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &reader)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Intersection Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_intersection_member_and_approved_required() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_intersection_member_and_approved_required() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // Policy: editor = member & approved
-    let policy = Policy::new("policy1", "Test").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("member"))
-            .with_relation(Relation::direct("approved"))
-            .with_relation(Relation::computed(
-                "editor",
-                RelationExpression::intersection(vec![
-                    RelationExpression::computed_userset("member"),
-                    RelationExpression::computed_userset("approved"),
-                ]),
-            )),
-    );
+        // Policy: editor = member & approved
+        let policy = Policy::new("policy1", "Test").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("member"))
+                .with_relation(Relation::direct("approved"))
+                .with_relation(Relation::computed(
+                    "editor",
+                    RelationExpression::intersection(vec![
+                        RelationExpression::computed_userset("member"),
+                        RelationExpression::computed_userset("approved"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let user = test_did();
+        let user = test_did();
 
-    // User is member only - not editor
-    let rel = Relationship::with_entity("document", "doc1", "member", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // User is member only - not editor
+        let rel = Relationship::with_entity("document", "doc1", "member", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(!engine
-        .check("policy1", "document", "doc1", "editor", &user)
-        .await
-        .unwrap());
+        assert!(!engine
+            .check("policy1", "document", "doc1", "editor", &user)
+            .await
+            .unwrap());
 
-    // Add approval - now editor
-    let rel = Relationship::with_entity("document", "doc1", "approved", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Add approval - now editor
+        let rel = Relationship::with_entity("document", "doc1", "approved", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(engine
-        .check("policy1", "document", "doc1", "editor", &user)
-        .await
-        .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "editor", &user)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Difference Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_difference_member_minus_banned() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_difference_member_minus_banned() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // Policy: viewer = member - banned
-    let policy = Policy::new("policy1", "Test").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("member"))
-            .with_relation(Relation::direct("banned"))
-            .with_relation(Relation::computed(
-                "viewer",
-                RelationExpression::difference(
-                    RelationExpression::computed_userset("member"),
-                    RelationExpression::computed_userset("banned"),
-                ),
-            )),
-    );
+        // Policy: viewer = member - banned
+        let policy = Policy::new("policy1", "Test").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("member"))
+                .with_relation(Relation::direct("banned"))
+                .with_relation(Relation::computed(
+                    "viewer",
+                    RelationExpression::difference(
+                        RelationExpression::computed_userset("member"),
+                        RelationExpression::computed_userset("banned"),
+                    ),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let user = test_did();
+        let user = test_did();
 
-    // User is member - can view
-    let rel = Relationship::with_entity("document", "doc1", "member", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // User is member - can view
+        let rel = Relationship::with_entity("document", "doc1", "member", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &user)
-        .await
-        .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &user)
+            .await
+            .unwrap());
 
-    // Ban user - no longer viewer
-    let rel = Relationship::with_entity("document", "doc1", "banned", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Ban user - no longer viewer
+        let rel = Relationship::with_entity("document", "doc1", "banned", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(!engine
-        .check("policy1", "document", "doc1", "viewer", &user)
-        .await
-        .unwrap());
+        assert!(!engine
+            .check("policy1", "document", "doc1", "viewer", &user)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Wildcard Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_wildcard_public_access() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_wildcard_public_access() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    let policy = Policy::new("policy1", "Test")
-        .with_resource(Resource::new("document").with_relation(Relation::direct("viewer")));
+        let policy = Policy::new("policy1", "Test")
+            .with_resource(Resource::new("document").with_relation(Relation::direct("viewer")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    // Wildcard relationship (public access)
-    let rel = Relationship::new("document", "doc1", "viewer", Subject::Wildcard);
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Wildcard relationship (public access)
+        let rel = Relationship::new("document", "doc1", "viewer", Subject::Wildcard);
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Any user can view
-    let user1 = test_did();
-    let user2 = test_did2();
+        // Any user can view
+        let user1 = test_did();
+        let user2 = test_did2();
 
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &user1)
-        .await
-        .unwrap());
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &user2)
-        .await
-        .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &user1)
+            .await
+            .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &user2)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // ZanzibarDocumentACP Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_zanzibar_document_acp_basic() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let acp = ZanzibarDocumentACP::new(store);
+#[test]
+fn test_zanzibar_document_acp_basic() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let acp = ZanzibarDocumentACP::new(store);
 
-    let owner = test_did();
-    let owner_id = to_idid(&owner);
+        let owner = test_did();
+        let owner_id = to_idid(&owner);
 
-    // Register document
-    acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
-        .await
-        .unwrap();
+        // Register document
+        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
+            .await
+            .unwrap();
 
-    // Check registration
-    assert!(acp
-        .is_doc_registered("policy1", "documents", "doc1")
-        .await
-        .unwrap());
+        // Check registration
+        assert!(acp
+            .is_doc_registered("policy1", "documents", "doc1")
+            .await
+            .unwrap());
 
-    // Owner has all permissions
-    let identity = Identity::Authenticated(owner_id);
+        // Owner has all permissions
+        let identity = Identity::Authenticated(owner_id);
 
-    assert!(acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Read,
-            "policy1",
-            "documents",
-            "doc1",
-        )
-        .await
-        .unwrap());
-    assert!(acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Update,
-            "policy1",
-            "documents",
-            "doc1",
-        )
-        .await
-        .unwrap());
-    assert!(acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Delete,
-            "policy1",
-            "documents",
-            "doc1",
-        )
-        .await
-        .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &identity,
+                DocumentPermission::Read,
+                "policy1",
+                "documents",
+                "doc1",
+            )
+            .await
+            .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &identity,
+                DocumentPermission::Update,
+                "policy1",
+                "documents",
+                "doc1",
+            )
+            .await
+            .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &identity,
+                DocumentPermission::Delete,
+                "policy1",
+                "documents",
+                "doc1",
+            )
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_zanzibar_document_acp_sharing() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let acp = ZanzibarDocumentACP::new(store);
+#[test]
+fn test_zanzibar_document_acp_sharing() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let acp = ZanzibarDocumentACP::new(store);
 
-    let owner = test_did();
-    let reader = test_did2();
-    let owner_id = to_idid(&owner);
-    let reader_id = to_idid(&reader);
+        let owner = test_did();
+        let reader = test_did2();
+        let owner_id = to_idid(&owner);
+        let reader_id = to_idid(&reader);
 
-    // Register document (use collection1 as policy_id for simplicity)
-    acp.register_doc_object(&owner_id, "collection1", "collection1", "doc1")
+        // Register document (use collection1 as policy_id for simplicity)
+        acp.register_doc_object(&owner_id, "collection1", "collection1", "doc1")
+            .await
+            .unwrap();
+
+        // Reader cannot access yet
+        let reader_identity = Identity::Authenticated(reader_id.clone());
+        assert!(!acp
+            .check_doc_access(
+                &reader_identity,
+                DocumentPermission::Read,
+                "collection1",
+                "collection1",
+                "doc1",
+            )
+            .await
+            .unwrap());
+
+        // Owner shares with reader
+        acp.add_actor_relationship(
+            &owner_id,
+            &reader_id,
+            "collection1",
+            "collection1",
+            "doc1",
+            "reader",
+            &[],
+        )
         .await
         .unwrap();
 
-    // Reader cannot access yet
-    let reader_identity = Identity::Authenticated(reader_id.clone());
-    assert!(!acp
-        .check_doc_access(
-            &reader_identity,
-            DocumentPermission::Read,
-            "collection1",
-            "collection1",
-            "doc1",
-        )
-        .await
-        .unwrap());
+        // Reader can now read
+        assert!(acp
+            .check_doc_access(
+                &reader_identity,
+                DocumentPermission::Read,
+                "collection1",
+                "collection1",
+                "doc1",
+            )
+            .await
+            .unwrap());
 
-    // Owner shares with reader
-    acp.add_actor_relationship(
-        &owner_id,
-        &reader_id,
-        "collection1",
-        "collection1",
-        "doc1",
-        "reader",
-        &[],
-    )
-    .await
-    .unwrap();
-
-    // Reader can now read
-    assert!(acp
-        .check_doc_access(
-            &reader_identity,
-            DocumentPermission::Read,
-            "collection1",
-            "collection1",
-            "doc1",
-        )
-        .await
-        .unwrap());
-
-    // Reader still cannot update
-    assert!(!acp
-        .check_doc_access(
-            &reader_identity,
-            DocumentPermission::Update,
-            "collection1",
-            "collection1",
-            "doc1",
-        )
-        .await
-        .unwrap());
+        // Reader still cannot update
+        assert!(!acp
+            .check_doc_access(
+                &reader_identity,
+                DocumentPermission::Update,
+                "collection1",
+                "collection1",
+                "doc1",
+            )
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Backward Compatibility Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_local_document_acp_still_works() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
+#[test]
+fn test_local_document_acp_still_works() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
 
-    let owner = test_did();
-    let owner_id = to_idid(&owner);
+        let owner = test_did();
+        let owner_id = to_idid(&owner);
 
-    // Register document
-    acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
-        .await
-        .unwrap();
+        // Register document
+        acp.register_doc_object(&owner_id, "policy1", "documents", "doc1")
+            .await
+            .unwrap();
 
-    // Check registration
-    assert!(acp
-        .is_doc_registered("policy1", "documents", "doc1")
-        .await
-        .unwrap());
+        // Check registration
+        assert!(acp
+            .is_doc_registered("policy1", "documents", "doc1")
+            .await
+            .unwrap());
 
-    // Owner has all permissions
-    let identity = Identity::Authenticated(owner_id);
+        // Owner has all permissions
+        let identity = Identity::Authenticated(owner_id);
 
-    assert!(acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Read,
-            "policy1",
-            "documents",
-            "doc1",
-        )
-        .await
-        .unwrap());
-    assert!(acp
-        .check_doc_access(
-            &identity,
-            DocumentPermission::Update,
-            "policy1",
-            "documents",
-            "doc1",
-        )
-        .await
-        .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &identity,
+                DocumentPermission::Read,
+                "policy1",
+                "documents",
+                "doc1",
+            )
+            .await
+            .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &identity,
+                DocumentPermission::Update,
+                "policy1",
+                "documents",
+                "doc1",
+            )
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
 // Error Handling Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_policy_not_found_error() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let engine = PermissionEngine::new(store);
+#[test]
+fn test_policy_not_found_error() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let engine = PermissionEngine::new(store);
 
-    let did = test_did();
-    let result = engine
-        .check("nonexistent", "document", "doc1", "owner", &did)
-        .await;
+        let did = test_did();
+        let result = engine
+            .check("nonexistent", "document", "doc1", "owner", &did)
+            .await;
 
-    assert!(result.is_err());
+        assert!(result.is_err());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_relation_not_found_error() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store);
+#[test]
+fn test_relation_not_found_error() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store);
 
-    let policy = Policy::new("policy1", "Test")
-        .with_resource(Resource::new("document").with_relation(Relation::direct("owner")));
+        let policy = Policy::new("policy1", "Test")
+            .with_resource(Resource::new("document").with_relation(Relation::direct("owner")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let did = test_did();
-    let result = engine
-        .check("policy1", "document", "doc1", "nonexistent", &did)
-        .await;
+        let did = test_did();
+        let result = engine
+            .check("policy1", "document", "doc1", "nonexistent", &did)
+            .await;
 
-    assert!(result.is_err());
+        assert!(result.is_err());
+    })
+    .unwrap()
 }
 
 // =============================================================================

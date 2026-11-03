@@ -21,7 +21,7 @@ fn test_lww_delta() -> CrdtDelta {
     CrdtDelta::Lww(LwwDeltaPayload {
         field_name: "name".to_string(),
         priority: 1,
-        schema_version_id: "schema1".to_string(),
+        collection_version_id: "schema1".to_string(),
         data: b"John".to_vec(),
     })
 }
@@ -76,7 +76,7 @@ fn test_counter_delta_ipld_roundtrip() {
         field_name: "count".to_string(),
         priority: 5,
         nonce: -42,
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         data: vec![1, 2, 3],
     });
 
@@ -95,7 +95,7 @@ fn test_counter_delta_ipld_roundtrip() {
 #[test]
 fn test_composite_delta_ipld_roundtrip() {
     let delta = CrdtDelta::Composite(CompositeDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 10,
         status: 2,
     });
@@ -116,7 +116,7 @@ fn test_composite_delta_ipld_roundtrip() {
 fn test_immutable_delta_roundtrips_through_ipld_and_dag_cbor() {
     let delta = CrdtDelta::Immutable(ImmutableDeltaPayload {
         priority: 1,
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         fields: BTreeMap::from([
             ("author".to_string(), serde_bytes::ByteBuf::from(vec![1, 2])),
             ("kind".to_string(), serde_bytes::ByteBuf::from(vec![3])),
@@ -129,13 +129,13 @@ fn test_immutable_delta_roundtrips_through_ipld_and_dag_cbor() {
 
     let bytes = block.to_dag_cbor().unwrap();
     assert_eq!(Block::from_dag_cbor(&bytes).unwrap().delta, block.delta);
-    assert_eq!(block.delta.schema_version_id(), Some("v1"));
+    assert_eq!(block.delta.collection_version_id(), Some("v1"));
 }
 
 #[test]
 fn test_collection_delta_ipld_roundtrip() {
     let delta = CrdtDelta::Collection(CollectionDeltaPayload {
-        schema_version_id: "v2".to_string(),
+        collection_version_id: "v2".to_string(),
         priority: 3,
     });
 
@@ -145,7 +145,7 @@ fn test_collection_delta_ipld_roundtrip() {
 
     if let CrdtDelta::Collection(c) = &restored.delta {
         assert_eq!(c.priority, 3);
-        assert_eq!(c.schema_version_id, "v2");
+        assert_eq!(c.collection_version_id, "v2");
     } else {
         panic!("Expected Collection delta");
     }
@@ -646,7 +646,7 @@ fn test_crdt_delta_is_definition() {
     let lww = CrdtDelta::Lww(LwwDeltaPayload {
         field_name: "f".to_string(),
         priority: 1,
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         data: vec![],
     });
     assert!(!lww.is_definition());
@@ -655,7 +655,7 @@ fn test_crdt_delta_is_definition() {
         field_name: "f".to_string(),
         priority: 1,
         nonce: 0,
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         data: vec![],
     });
     assert!(!counter.is_definition());

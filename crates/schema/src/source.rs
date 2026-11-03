@@ -43,8 +43,9 @@ pub struct CollectionSource {
     #[serde(rename = "SourceCollectionID")]
     pub source_collection_id: String,
 
-    /// Optional Lens transform ID to apply between versions.
-    #[serde(rename = "Transform", default, skip_serializing_if = "Option::is_none")]
+    /// Optional Lens transform ID to apply between versions. Written as
+    /// `null` when absent, as Go's `immutable.Option` is.
+    #[serde(rename = "Transform", default)]
     pub transform: Option<String>,
 }
 
@@ -389,8 +390,7 @@ mod tests {
         let source = CollectionSource::new("bafkrei789");
         let json = serde_json::to_string(&source).unwrap();
 
-        // Transform should be omitted when None
-        assert!(!json.contains("Transform"));
+        assert!(json.contains("\"Transform\":null"));
 
         let parsed: CollectionSource = serde_json::from_str(&json).unwrap();
         assert_eq!(source, parsed);

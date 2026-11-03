@@ -1,0 +1,445 @@
+//! Generated from the conformance scenarios of tests/integration/query/commits/branchables/peer_test.go at defradb 137dc624052b.
+//! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
+
+use integration_test::actions::{
+    AddCollection, AddCollectionSubscription, AddDoc, ConnectPeers, GetCollections, NewNode,
+    Request, WaitForPeersEvents, WaitForSync,
+};
+use integration_test::m;
+use integration_test::scenario::{captures, Common, Text};
+use integration_test::test_case::TestCase;
+use serde_json::json;
+
+#[test]
+#[mantra_macros::req_test("go.query.commits.branchable.sync")]
+fn query_commits_branchables_syncs_across_peer_connection() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            NewNode {
+                network: true,
+                common: Common { node: Some("db0".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            NewNode {
+                network: true,
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: r#"
+                    type Users @branchable {
+                        name: String
+                        age: Int
+                    }
+                "#.into(),
+                common: Common { node: Some("db0".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: r#"
+                    type Users @branchable {
+                        name: String
+                        age: Int
+                    }
+                "#.into(),
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            GetCollections {
+                collection_name: Some("Users".into()),
+                filtered: true,
+                common: Common { node: Some("db0".into()), capture: captures([("collection0", "/collections/0/CollectionID")]), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
+                common: Common { node: Some("db0".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            ConnectPeers {
+                target: "db0".into(),
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            AddCollectionSubscription {
+                collections: vec!["Users".into()],
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "John", "age": 21 })),
+                common: Common { node: Some("db0".into()), retry: true, capture: captures([("doc0_0", "/docID")]), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_ids: Some(vec![Text::reference("doc0_0"), Text::reference("collection0")]),
+                common: Common { node: Some("db0".into()), capture: captures([("collectionHead0", "/cids/1"), ("head0", "/cids/0")]), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
+                expected_data: json!({}),
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collectionHead0")),
+                expected_data: json!({}),
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                                            _commits {
+                                                cid
+                                                links {
+                                                    cid
+                                                }
+                                                heads {
+                                                    cid
+                                                }
+                                            }
+                                        }
+                "#.into(),
+                expected_data: json!({
+                    "_commits": m::unordered(json!([
+                        {
+                            "cid": m::all(json!([m::same("collectionCid"), m::unique("uniqueCid-node0")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([{ "cid": m::same("compositeCid") }])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("ageCid"), m::unique("uniqueCid-node0")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("nameCid"), m::unique("uniqueCid-node0")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("compositeCid"), m::unique("uniqueCid-node0")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([
+                                { "cid": m::same("ageCid") },
+                                { "cid": m::same("nameCid") },
+                            ])),
+                        },
+                    ])),
+                }),
+                common: Common { node: Some("db0".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                                            _commits {
+                                                cid
+                                                links {
+                                                    cid
+                                                }
+                                                heads {
+                                                    cid
+                                                }
+                                            }
+                                        }
+                "#.into(),
+                expected_data: json!({
+                    "_commits": m::unordered(json!([
+                        {
+                            "cid": m::all(json!([m::same("collectionCid"), m::unique("uniqueCid-node1")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([{ "cid": m::same("compositeCid") }])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("ageCid"), m::unique("uniqueCid-node1")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("nameCid"), m::unique("uniqueCid-node1")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([])),
+                        },
+                        {
+                            "cid": m::all(json!([m::same("compositeCid"), m::unique("uniqueCid-node1")])),
+                            "heads": m::unordered(json!([])),
+                            "links": m::unordered(json!([
+                                { "cid": m::same("ageCid") },
+                                { "cid": m::same("nameCid") },
+                            ])),
+                        },
+                    ])),
+                }),
+                common: Common { node: Some("db1".into()), ..Default::default() },
+                ..Default::default()
+            }
+            .into(),
+        ],
+        without_db: true,
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.query.commits.branchable.sync")]
+fn query_commits_branchables_syncs_multiple_across_peer_connection() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            NewNode {
+                network: true,
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            NewNode {
+                network: true,
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: r#"
+                    type Users @branchable {
+                        name: String
+                        age: Int
+                    }
+                "#
+                .into(),
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: r#"
+                    type Users @branchable {
+                        name: String
+                        age: Int
+                    }
+                "#
+                .into(),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            GetCollections {
+                collection_name: Some("Users".into()),
+                filtered: true,
+                common: Common {
+                    node: Some("db0".into()),
+                    capture: captures([("collection0", "/collections/0/CollectionID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            ConnectPeers {
+                target: "db0".into(),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddCollectionSubscription {
+                collections: vec!["Users".into()],
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "John", "age": 21 })),
+                common: Common {
+                    node: Some("db0".into()),
+                    retry: true,
+                    capture: captures([("doc0_0", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_0"),
+                    Text::reference("collection0"),
+                ]),
+                common: Common {
+                    node: Some("db0".into()),
+                    capture: captures([("collectionHead0", "/cids/1"), ("head0", "/cids/0")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "Fred", "age": 25 })),
+                common: Common {
+                    node: Some("db0".into()),
+                    retry: true,
+                    capture: captures([("doc0_1", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_ids: Some(vec![
+                    Text::reference("doc0_1"),
+                    Text::reference("collection0"),
+                ]),
+                common: Common {
+                    node: Some("db0".into()),
+                    capture: captures([("collectionHead1", "/cids/1"), ("head1", "/cids/0")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head0")),
+                expected_data: json!({}),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("collection0")),
+                cid: Some(Text::reference("collectionHead1")),
+                expected_data: json!({}),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_1")),
+                cid: Some(Text::reference("head1")),
+                expected_data: json!({}),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                                            _commits {
+                                                cid
+                                                links {
+                                                    cid
+                                                }
+                                                heads {
+                                                    cid
+                                                }
+                                            }
+                                        }
+                "#
+                .into(),
+                expected_data: json!(m::branchable_create_graph("expectedGraph")),
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                                            _commits {
+                                                cid
+                                                links {
+                                                    cid
+                                                }
+                                                heads {
+                                                    cid
+                                                }
+                                            }
+                                        }
+                "#
+                .into(),
+                expected_data: json!(m::branchable_create_graph("expectedGraph")),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+        ],
+        without_db: true,
+        ..Default::default()
+    }
+    .execute();
+}

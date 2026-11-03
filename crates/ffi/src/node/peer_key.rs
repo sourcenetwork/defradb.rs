@@ -1,6 +1,6 @@
 //! A peer key the C caller supplies, served to the node as its keyring.
 
-use embedded::keyring;
+use defra_node::keyring;
 use zeroize::Zeroizing;
 
 /// A keyring holding only the caller's P2P private key, which the node reads
@@ -13,7 +13,7 @@ impl CallerPeerKey {
     }
 }
 
-impl embedded::Keyring for CallerPeerKey {
+impl defra_node::Keyring for CallerPeerKey {
     fn set(&self, name: &str, key: &[u8]) -> keyring::Result<()> {
         if name == keyring::PEER_KEY && key == self.0.as_slice() {
             Ok(())

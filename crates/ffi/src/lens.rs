@@ -31,31 +31,14 @@ pub unsafe extern "C" fn defra_lens_add(
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::LensCreate));
         let cfg = go_string(cfg);
         let context = request.context();
-        match request.target.txn_id() {
-            None => {
-                let database = try_ffi!(request.database());
-                ffi_async!(request.node(), {
-                    let config = parse_lens(&cfg)?;
-                    database
-                        .add_lens(config)
-                        .await
-                        .map(|id| id.to_string())
-                        .map_err(|e| format!("failed to add lens: {}", e))
-                })
-            }
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
-                let registry = try_ffi!(request.txn_registry());
-                ffi_async!(caller, {
-                    let config = parse_lens(&cfg)?;
-                    registry
-                        .add_lens_in_txn_as(&context, &txn_id, config)
-                        .await
-                        .map(|id| id.to_string())
-                        .map_err(|e| format!("failed to add lens: {}", e))
-                })
-            }
-        }
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            let config = parse_lens(&cfg)?;
+            runner
+                .add_lens_as(&context, config)
+                .await
+                .map_err(|e| format!("failed to add lens: {}", e))
+        })
     }
 }
 
@@ -65,32 +48,13 @@ pub extern "C" fn defra_lens_list(node_ptr: usize, identity_ptr: usize) -> Defra
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::LensList));
         let context = request.context();
-        match request.target.txn_id() {
-            None => {
-                let database = try_ffi!(request.database());
-                ffi_async!(request.node(), {
-                    let lenses = database
-                        .lens_store()
-                        .list()
-                        .await
-                        .map_err(|e| format!("failed to list lenses: {}", e))?;
-                    serde_json::to_string(&lenses)
-                        .map_err(|e| format!("failed to serialize lenses: {}", e))
-                })
-            }
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
-                let registry = try_ffi!(request.txn_registry());
-                ffi_async!(caller, {
-                    let lenses = registry
-                        .list_lenses_in_txn_as(&context, &txn_id)
-                        .await
-                        .map_err(|e| format!("failed to list lenses: {}", e))?;
-                    serde_json::to_string(&lenses)
-                        .map_err(|e| format!("failed to serialize lenses: {}", e))
-                })
-            }
-        }
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            runner
+                .list_lenses_as(&context)
+                .await
+                .map_err(|e| format!("failed to list lenses: {}", e))
+        })
     }
 }
 
@@ -114,32 +78,18 @@ pub unsafe extern "C" fn defra_lens_set(
         let context = request.context();
         let migration = move || {
             let mut config = parse_lens(&cfg)?;
-            config.source_schema_version_id = src;
-            config.destination_schema_version_id = dst;
+            config.source_collection_version_id = src;
+            config.destination_collection_version_id = dst;
             Ok::<_, String>(config)
         };
-        match request.target.txn_id() {
-            None => {
-                let database = try_ffi!(request.database());
-                ffi_async!(request.node(), {
-                    database
-                        .set_migration_as(&context, migration()?)
-                        .await
-                        .map(|id| id.to_string())
-                        .map_err(|e| format!("failed to set migration: {}", e))
-                })
-            }
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
-                let registry = try_ffi!(request.txn_registry());
-                ffi_async!(caller, {
-                    registry
-                        .set_migration_in_txn_as(&context, &txn_id, migration()?)
-                        .await
-                        .map(|id| id.to_string())
-                        .map_err(|e| format!("failed to set migration: {}", e))
-                })
-            }
-        }
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            let migration = serde_json::to_string(&migration()?)
+                .map_err(|e| format!("failed to serialize lens config: {}", e))?;
+            runner
+                .set_migration_as(&context, &migration)
+                .await
+                .map_err(|e| format!("failed to set migration: {}", e))
+        })
     }
 }

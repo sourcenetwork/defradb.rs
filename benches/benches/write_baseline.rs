@@ -8,26 +8,13 @@
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};
-use defra_perf::measure::{median, min_max};
-use std::time::Duration;
+use defra_perf::measure::{median, min_max, percentile_ms};
 
 mod common;
 #[path = "write_baseline/workload.rs"]
 mod workload;
+use common::{counts, git, positive};
 use workload::{Measurement, Scenario};
-
-fn positive(name: &str, default: usize) -> usize {
-    let value = std::env::var(name).map_or(default, |s| s.parse().expect(name));
-    assert!(value > 0, "{name} must be positive");
-    value
-}
-
-fn percentile(samples: &[Duration], percent: usize) -> f64 {
-    assert!(!samples.is_empty());
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    sorted[(sorted.len() * percent).div_ceil(100) - 1].as_secs_f64() * 1000.0
-}
 
 fn metrics(sample: &Measurement) -> Vec<(&'static str, &'static str, bool, f64)> {
     let before = sample.retries_before;
@@ -86,37 +73,26 @@ fn metrics(sample: &Measurement) -> Vec<(&'static str, &'static str, bool, f64)>
             true,
             sample.engine_exhaustions as f64,
         ),
-        ("latency p50", "ms", true, percentile(&sample.latencies, 50)),
-        ("latency p99", "ms", true, percentile(&sample.latencies, 99)),
+        (
+            "latency p50",
+            "ms",
+            true,
+            percentile_ms(&sample.latencies, 50),
+        ),
+        (
+            "latency p99",
+            "ms",
+            true,
+            percentile_ms(&sample.latencies, 99),
+        ),
     ]
 }
 
 fn main() {
-    let writers: Vec<usize> = std::env::var("DEFRA_BASELINE_WRITERS")
-        .unwrap_or_else(|_| "1,4,16,64".into())
-        .split(',')
-        .map(|value| {
-            value
-                .parse()
-                .expect("positive comma-separated writer counts")
-        })
-        .collect();
-    assert!(writers.iter().all(|count| *count > 0));
+    let writers = counts("DEFRA_BASELINE_WRITERS", "1,4,16,64");
     let operations = positive("DEFRA_BASELINE_OPERATIONS", 256);
     let repetitions = positive("DEFRA_BASELINE_REPETITIONS", 3);
-    let guard = defra_perf::run_meta::load_guard(
-        std::env::var_os("DEFRA_BASELINE_LOAD_GUARD")
-            .as_deref()
-            .map(std::path::Path::new),
-    );
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
+    let guard = common::load_guard();
     println!(
         "{}",
         serde_json::json!({

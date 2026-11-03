@@ -20,8 +20,10 @@ use storage::corekv::{Key, Store};
 
 pub mod action;
 pub(crate) mod dump;
+pub mod replication;
 pub(crate) mod spawn;
 pub mod storage_stats;
+pub(crate) mod stored_crdts;
 
 pub use storage::corekv::DEFAULT_MAX_TXN_RETRIES;
 
@@ -50,6 +52,9 @@ pub struct DbOptions {
     /// closes. `None` (a test, a one-shot tool) runs them on the process's
     /// default pool.
     pub pool: Option<workers::Pool>,
+    /// The embedder's check on replicated documents before their commits
+    /// store anything. `None` keeps every document.
+    pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -72,6 +77,7 @@ impl std::fmt::Debug for DbOptions {
                 &!self.embedding_api_key.is_empty(),
             )
             .field("pool", &self.pool)
+            .field("replication_filter", &self.replication_filter.is_some())
             .finish()
     }
 }
@@ -103,6 +109,15 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Asks `filter` whether to keep each replicated document.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.replication_filter = Some(filter);
+        self
     }
 
     /// The engine retry policy every write of this database runs under.
@@ -174,7 +189,7 @@ pub struct DB<S: Store> {
     /// In-memory collection cache (name -> Collection).
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
-    vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -214,6 +229,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: regolith::sync::OnceCell<std::sync::Arc<dyn NacManagerApi>>,
+    /// The node's DAC policies, where `@policy` directives are checked when a
+    /// collection is added. Unset, the node runs without document ACP.
+    pub(crate) dac_policies: regolith::sync::OnceCell<Arc<crate::access::dac::DacPolicies>>,
     /// Collections an app has claimed and the validator governing their
     /// replicated composites. Set once, before replication starts.
     ///
@@ -234,6 +252,7 @@ pub struct DB<S: Store> {
     /// behind. The registry provides cancellation-safe mutual exclusion for
     /// operations running in this database instance.
     pub active_actions: Arc<crate::database::action::ActionRegistry>,
+    replication_runtime: Arc<replication::ReplicationRuntime>,
 }
 
 impl<S: Store> DB<S> {
@@ -275,9 +294,11 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
+            replication_runtime: Arc::default(),
         })
     }
 
@@ -344,9 +365,11 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
+            replication_runtime: Arc::default(),
         })
     }
 
@@ -381,6 +404,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
+        self.check_stored_crdts().await?;
         self.load_collections().await?;
         self.initialize_migrations().await?;
         self.migrate_document_parts().await?;
@@ -388,6 +412,7 @@ impl<S: Store> DB<S> {
         // collections written before part IDs existed.
         self.maybe_migrate_counter_accumulators().await?;
         self.migrate_index_format().await?;
+        self.resume_index_drops().await?;
         self.resume_index_backfills().await?;
         // Reindexes owed by schema changes a crash or a failure left unsettled.
         self.settle_owed_reindexes_after_commit().await;
@@ -651,6 +676,12 @@ impl<S: Store> DB<S> {
         &self.vector_codes
     }
 
+    /// Drops this node's in-memory caches of an index, once its drop has
+    /// committed.
+    pub fn evict_index_caches(&self, collection_short_id: u32, index_id: u32) {
+        self.vector_codes.evict(collection_short_id, index_id);
+    }
+
     /// Execute a function within a transaction.
     ///
     /// If the function returns Ok, the transaction is committed.
@@ -755,6 +786,16 @@ impl<S: Store> DB<S> {
         &self.store
     }
 
+    /// Runtime identity and notifications shared by this database's transports.
+    pub fn replication_runtime(&self) -> &Arc<replication::ReplicationRuntime> {
+        &self.replication_runtime
+    }
+
+    /// The CRDT types of this database's node, as its store merges by them.
+    pub fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     /// Get the database options.
     pub fn options(&self) -> &DbOptions {
         &self.options
@@ -828,32 +869,65 @@ mod close_tests;
 mod vector_cache_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn retry_transactions_share_database_vector_code_caches() {
-        let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let ordinary = db.new_txn(true).await.unwrap();
-        let basic = BasicTxn::new(&*db.store, db.next_txn_id(), true)
-            .await
-            .unwrap();
-        let retry = db.new_db_txn(basic);
+    #[test]
+    fn retry_transactions_share_database_vector_code_caches() {
+        workers::block_on(async {
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let ordinary = db.new_txn(true).await.unwrap();
+            let basic = BasicTxn::new(&*db.store, db.next_txn_id(), true)
+                .await
+                .unwrap();
+            let retry = db.new_db_txn(basic);
 
-        let ordinary_cache = ordinary.vector_codes().get(17, 29);
-        let retry_cache = retry.vector_codes().get(17, 29);
-        assert!(Arc::ptr_eq(&ordinary_cache, &retry_cache));
+            let ordinary_cache = ordinary.vector_codes().get(17, 29);
+            let retry_cache = retry.vector_codes().get(17, 29);
+            assert!(Arc::ptr_eq(&ordinary_cache, &retry_cache));
+        })
+        .unwrap()
+    }
+
+    /// Deleting a collection drops every cache its indexes hold, and nothing
+    /// else's.
+    #[test]
+    fn deleting_a_collection_evicts_its_vector_caches() {
+        workers::block_on(async {
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let mut types = query::parse_sdl("type EvictProbe { value: String }").unwrap();
+            db.create_collection(types.remove(0)).await.unwrap();
+            let short_id = db
+                .get_collection("EvictProbe")
+                .unwrap()
+                .unwrap()
+                .schema()
+                .resolved_root_id();
+            db.vector_codes().get(short_id, 1);
+            db.vector_codes().get(short_id, 2);
+            let other = db.vector_codes().get(short_id + 1, 1);
+
+            db.delete_collection("EvictProbe").await.unwrap();
+
+            let left = db.vector_codes();
+            assert_eq!(left.len(), 1, "only the other collection's cache stays");
+            assert!(Arc::ptr_eq(&other, &left.get(short_id + 1, 1)));
+        })
+        .unwrap()
     }
 
     /// A transaction of a database is built with the database's caches, so
     /// it builds none of its own: each would allocate a lock-free map only to
     /// drop it, on every transaction.
-    #[tokio::test]
-    async fn a_database_transaction_builds_no_code_caches() {
-        use crate::index::vector::engine::diskann::CODE_CACHES_BUILT;
+    #[test]
+    fn a_database_transaction_builds_no_code_caches() {
+        workers::block_on(async {
+            use crate::index::vector::engine::diskann::CODE_CACHES_BUILT;
 
-        let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let built = CODE_CACHES_BUILT.with(std::cell::Cell::get);
-        for readonly in [true, false] {
-            db.new_txn(readonly).await.unwrap().discard().unwrap();
-        }
-        assert_eq!(CODE_CACHES_BUILT.with(std::cell::Cell::get), built);
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let built = CODE_CACHES_BUILT.with(std::cell::Cell::get);
+            for readonly in [true, false] {
+                db.new_txn(readonly).await.unwrap().discard().unwrap();
+            }
+            assert_eq!(CODE_CACHES_BUILT.with(std::cell::Cell::get), built);
+        })
+        .unwrap()
     }
 }

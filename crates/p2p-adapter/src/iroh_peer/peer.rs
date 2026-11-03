@@ -26,7 +26,7 @@ pub struct ManageChannel {
     pub hooks: ManageHooksCell,
     pub correlator: p2p::ManageCorrelator,
     pub query_correlator: p2p::ManageQueryCorrelator,
-    pub requester: Arc<dyn defra_http::ManageRequester>,
+    pub requester: Arc<dyn crate::ManageRequester>,
 }
 
 /// A running iroh peer. Stop it with [`IrohPeerShutdown::shutdown`].
@@ -46,10 +46,28 @@ pub struct IrohPeer<S: Store + 'static> {
 }
 
 impl<S: Store + 'static> IrohPeer<S> {
+    /// Binds the endpoint and starts every peer task on `config.edge`, so
+    /// the caller may be on any thread or executor.
+    pub async fn start(
+        store: Arc<S>,
+        database: Arc<db::DB<S>>,
+        event_bus: Arc<dyn events::Bus>,
+        config: IrohPeerConfig,
+    ) -> p2p::Result<Self> {
+        let edge = config.edge.clone();
+        edge.spawn(Self::assemble(store, database, event_bus, config))
+            .await
+            .map_err(|error| {
+                p2p::Error::Transport(format!(
+                    "iroh peer did not start on the network runtime: {error}"
+                ))
+            })?
+    }
+
     // Nothing here is Send on wasm32, and nothing needs to be: the browser has
     // one thread.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    pub async fn start(
+    async fn assemble(
         store: Arc<S>,
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
@@ -242,6 +260,11 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .run_pending_dag_resync(std::time::Duration::from_secs(60))
                 .await;
         });
+        // A replication filter also judges pushes before their blocks are
+        // fetched; the merge keeps its own check.
+        if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+            coordinator.set_receive_gate(Arc::new(gate));
+        }
         let retry_clock_coordinator = Arc::clone(&coordinator);
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             retry_clock_coordinator
@@ -349,6 +372,7 @@ impl<S: Store + 'static> IrohPeer<S> {
                 retry_loop_task,
                 vec![event_handler_task, replication_task],
                 failure_recorder_task,
+                edge.clone(),
             ),
             transport,
             coordinator,

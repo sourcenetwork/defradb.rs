@@ -6,7 +6,7 @@ use std::sync::Arc;
 use acp::nac::NodePermission;
 use schema::CollectionVersion;
 
-use crate::collection::select::{collection, Source};
+use crate::collection::select::collection;
 use crate::request::Request;
 use crate::state::NODES;
 use crate::target::{CollectionArgs, Target};
@@ -16,7 +16,6 @@ use crate::ERR_INVALID_NODE_HANDLE;
 /// A document call, ready to run on its node or in its transaction.
 pub(crate) struct DocumentCall {
     target: Target,
-    source: Source,
     selector: db::CollectionSelector,
     runner: Arc<dyn query::QueryExecutor>,
     identity: Option<identity::Did>,
@@ -56,12 +55,12 @@ impl DocumentCall {
         );
         let dac_bypass = crate::query::resolve_dac_bypass_for(node, request.identity.as_deref());
         let context = defra_core::RequestContext::default()
+            .with_txn(request.target.txn_id())
             .with_identity(request.identity.clone())
             .with_dac_bypass(dac_bypass)
             .with_batch_session(signing.as_ref().map(|s| s.public_key_hex.clone()))
             .with_signing(signing);
         Ok(Self {
-            source: Source::of(&request)?,
             identity: request.did()?,
             target: request.target,
             selector: args.selector(),
@@ -77,40 +76,31 @@ impl DocumentCall {
 
     /// The one collection the call's options select.
     pub(crate) async fn collection(&self) -> Result<CollectionVersion, String> {
-        collection(&self.source, &self.context, &self.selector).await
+        collection(&self.runner, &self.context, &self.selector).await
+    }
+
+    /// Runs the GraphQL document `query` on the call's node or in its
+    /// transaction: the request path the core's document writes take.
+    pub(crate) async fn respond(&self, query: String) -> query::QueryResponse {
+        let request = query::QueryRequest::new(query)
+            .with_context(self.context.clone())
+            .with_identity(self.identity.clone());
+        match self.target.txn_id() {
+            None => self.runner.execute(request).await,
+            Some(txn_id) => {
+                let handle = query::txn::TransactionHandle::new(txn_id.to_string());
+                self.runner.execute_in_txn(request, &handle).await
+            }
+        }
     }
 
     /// Runs the GraphQL document `query` and returns its `data`; a GraphQL
     /// error fails the call with its message.
     pub(crate) async fn run(&self, query: String) -> Result<serde_json::Value, String> {
-        let request = query::QueryRequest::new(query)
-            .with_context(self.context.clone())
-            .with_identity(self.identity.clone());
-        let response = match self.target.txn_id() {
-            None => self.runner.execute(request).await,
-            Some(txn_id) => {
-                let handle: query::txn::TransactionHandle = txn_id
-                    .parse()
-                    .map_err(|e| format!("invalid transaction ID: {}", e))?;
-                self.runner.execute_in_txn(request, &handle).await
-            }
-        };
+        let response = self.respond(query).await;
         if let Some(error) = response.errors.first() {
             return Err(error.message.clone());
         }
         Ok(response.data.unwrap_or_default())
     }
-}
-
-/// The document IDs a mutation's `data` lists under `field`.
-pub(crate) fn doc_ids(data: &serde_json::Value, field: &str) -> Vec<String> {
-    data.get(field)
-        .and_then(|value| value.as_array())
-        .map(|docs| {
-            docs.iter()
-                .filter_map(|doc| doc.get("_docID").and_then(|id| id.as_str()))
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
 }

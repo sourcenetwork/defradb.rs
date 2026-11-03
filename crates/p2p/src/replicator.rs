@@ -408,6 +408,12 @@ impl ReplicatorInfo {
         self.filters.contains_key(collection_id)
     }
 
+    /// The scope this replicator is pushed heads at, and so acknowledges
+    /// them at, for `collection_id`.
+    pub fn ack_scope(&self, collection_id: &str, branchable: bool) -> crate::AckScope {
+        crate::AckScope::new(self.is_filtered_for_collection(collection_id), branchable)
+    }
+
     pub fn filter_for_collection(&self, collection_id: &str) -> Option<&ReplicationFilter> {
         self.filters.get(collection_id)
     }

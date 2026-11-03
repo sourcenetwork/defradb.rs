@@ -12,18 +12,19 @@ use std::sync::Arc;
 /// # Arguments
 ///
 /// * `doc` - The document to build blocks from
-/// * `schema_version_id` - The schema version ID for CRDT deltas
+/// * `collection_version_id` - The collection version ID for CRDT deltas
 /// * `blockstore` - Blockstore to store field blocks
 ///
 /// # Returns
 ///
 /// Returns `BlockResult` containing the composite block and metadata.
 pub async fn build_blocks_from_document<B: Blockstore>(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
     blockstore: &Arc<B>,
 ) -> Result<BlockResult, String> {
-    let schema_version_id = schema.version_id.as_str();
+    let collection_version_id = schema.version_id.as_str();
     let mut field_links: Vec<DAGLink> = Vec::new();
     let mut field_cids: Vec<Cid> = Vec::new();
 
@@ -42,33 +43,20 @@ pub async fn build_blocks_from_document<B: Blockstore>(
             continue;
         }
 
-        // Encode the field value as CBOR
-        let value_bytes = encode_value_as_cbor(field_value.value())?;
-
-        // Check if this field is a Counter type
-        let is_counter = doc
-            .fields()
-            .get(field_name)
-            .map(|f| f.crdt_type().is_counter())
-            .unwrap_or(false);
-
-        // Create the appropriate delta based on CRDT type
-        let delta = if is_counter {
-            CrdtDelta::Counter(CounterDeltaPayload {
-                field_name: field_name.clone(),
-                priority: 1, // Initial priority for new documents
-                nonce: 0,    // Go uses nonce=0 for initial creation (deterministic CID)
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
-        } else {
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: field_name.clone(),
-                priority: 1, // Initial priority for new documents
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
+        let crdt = field_crdt_of(crdts, doc, field_name)?;
+        let Some(value_bytes) = crdt
+            .block_data(field_value.value(), None)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
         };
+        let delta = crdt.delta(crdt::DeltaParts {
+            field_name,
+            priority: 1, // Initial priority for new documents
+            collection_version_id,
+            nonce: 0, // Go uses nonce=0 for initial creation (deterministic CID)
+            data: value_bytes,
+        });
 
         // Create the field block
         let field_block = Block::new(delta, vec![], vec![]);
@@ -89,7 +77,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
         tracing::debug!(
             field_name = %field_name,
             cid = %field_cid,
-            is_counter = is_counter,
+            crdt = %crdt.ctype(),
             "Stored field block"
         );
 
@@ -109,7 +97,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
 
     // Create the Composite delta payload
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority: 1, // Initial priority
         status: 1,   // Active document
     };

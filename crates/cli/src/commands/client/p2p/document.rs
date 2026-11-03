@@ -4,6 +4,8 @@ use clap::{Args, Subcommand};
 
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::ClientContext;
+
+use crate::commands::client::document::write_client;
 use crate::error::Result;
 
 /// P2P document management subcommands
@@ -33,10 +35,6 @@ pub struct P2pDocumentAddArgs {
     /// Document IDs to add
     #[arg(value_name = "docIDs")]
     pub doc_ids: Vec<String>,
-
-    /// Schema ID
-    #[arg(long = "schemaID")]
-    pub schema_id: Option<String>,
 }
 
 /// Arguments for p2p document delete command
@@ -45,10 +43,6 @@ pub struct P2pDocumentDeleteArgs {
     /// Document IDs to remove
     #[arg(value_name = "docIDs")]
     pub doc_ids: Vec<String>,
-
-    /// Schema ID
-    #[arg(long = "schemaID")]
-    pub schema_id: Option<String>,
 }
 
 /// Arguments for p2p document list command
@@ -80,13 +74,8 @@ impl P2pDocumentArgs {
 
 impl P2pDocumentAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let schema_ids: Vec<String> = self.schema_id.iter().cloned().collect();
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client.p2p_document_add(&self.doc_ids, &schema_ids).await?;
+        let (client, _) = write_client(ctx)?;
+        client.add_p2p_documents(&self.doc_ids).await?;
         println!("Added document(s) to P2P sync");
         Ok(())
     }
@@ -94,15 +83,8 @@ impl P2pDocumentAddArgs {
 
 impl P2pDocumentDeleteArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let schema_ids: Vec<String> = self.schema_id.iter().cloned().collect();
-
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        client
-            .p2p_document_remove(&self.doc_ids, &schema_ids)
-            .await?;
+        let (client, _) = write_client(ctx)?;
+        client.delete_p2p_documents(&self.doc_ids).await?;
         println!("Removed document(s) from P2P sync");
         Ok(())
     }
@@ -110,11 +92,8 @@ impl P2pDocumentDeleteArgs {
 
 impl P2pDocumentListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-
-        let result = client.p2p_document_list().await?;
+        let (client, _) = write_client(ctx)?;
+        let result = client.list_p2p_documents().await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         Ok(())
     }

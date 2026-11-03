@@ -271,7 +271,7 @@ mod tests {
             Err(TransactionError::not_supported("test executor"))
         }
 
-        async fn rollback_txn(
+        async fn discard_txn(
             &self,
             _handle: &TransactionHandle,
         ) -> std::result::Result<(), TransactionError> {
@@ -406,7 +406,7 @@ mod tests {
             Err(TransactionError::not_supported("test executor"))
         }
 
-        async fn rollback_txn(
+        async fn discard_txn(
             &self,
             _handle: &TransactionHandle,
         ) -> std::result::Result<(), TransactionError> {
@@ -565,7 +565,7 @@ mod context_tests {
             Err(TransactionError::not_supported("test executor"))
         }
 
-        async fn rollback_txn(
+        async fn discard_txn(
             &self,
             _handle: &TransactionHandle,
         ) -> std::result::Result<(), TransactionError> {

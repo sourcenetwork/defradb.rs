@@ -20,13 +20,15 @@ use storage::namespace::Namespace;
 /// it back into the transaction takes `self`; only the holder of the one
 /// remaining reference gets either ([`Arc::get_mut`], [`Arc::try_unwrap`]), so
 /// a view still open at that moment is an error, never a wait. Each settles
-/// the queue first, so a savepoint's rollback takes back exactly what was
+/// the queue first, so a savepoint's discard takes back exactly what was
 /// registered after it, and so does a drop, so a transaction that ends with
 /// its last view still runs the abort callbacks registered through views.
 pub struct SharedTxn {
     /// `None` only once [`into_txn`](Self::into_txn) has taken it.
     txn: Option<Box<dyn Txn>>,
     queued: QueuedCallbacks,
+    /// The CRDT types of the node whose store the transaction runs on.
+    crdts: storage::Crdts,
 }
 
 impl SharedTxn {
@@ -94,17 +96,42 @@ impl SharedTxn {
             .await
     }
 
+    pub async fn truncate_log(
+        &self,
+        namespace: Namespace,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let log = log.prefixed(&[namespace.prefix()]);
+        self.txn()?.truncate_log_shared(&log, positions).await
+    }
+
+    pub async fn appended(
+        &self,
+        namespace: Namespace,
+        log: &storage::corekv::AppendLog,
+    ) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[namespace.prefix()]);
+        self.txn()?.appended(&log).await
+    }
+
     /// Create a new shared transaction.
     // `Txn` drops its `Send + Sync` bounds on wasm32 (see `MaybeSendSync`), so
     // there the Arc wraps a non-Send value. That is sound in the
     // single-threaded browser runtime, and the return type has to stay `Arc`
     // for native callers that share it across threads.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    pub fn new(txn: Box<dyn Txn>) -> Arc<Self> {
+    pub fn new(txn: Box<dyn Txn>, crdts: storage::Crdts) -> Arc<Self> {
         Arc::new(Self {
             queued: QueuedCallbacks::new(txn.is_readonly()),
             txn: Some(txn),
+            crdts,
         })
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &storage::Crdts {
+        &self.crdts
     }
 
     /// Get a value with namespace prefix.
@@ -249,9 +276,26 @@ impl NamespaceView {
         self.txn.append(self.namespace, log, entry, once_key).await
     }
 
+    pub async fn truncate_log(
+        &self,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log(self.namespace, log, positions).await
+    }
+
+    pub async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
+    }
+
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
         Self { txn, namespace }
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &storage::Crdts {
+        self.txn.crdts()
     }
 
     /// View a different namespace of the same transaction.
@@ -368,6 +412,18 @@ impl Writer for NamespaceView {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         self.txn.append(self.namespace, log, entry, once_key).await
+    }
+
+    async fn truncate_log_shared(
+        &self,
+        log: &storage::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.txn.truncate_log(self.namespace, log, positions).await
+    }
+
+    async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -489,96 +545,108 @@ mod tests {
     use storage::corekv::Store;
     use storage::RegolithStore;
 
-    #[tokio::test]
-    async fn test_shared_txn_namespace_isolation() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_shared_txn_namespace_isolation() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
-        // Write to datastore namespace
-        shared
-            .set(Namespace::Datastore, b"key", b"datastore_value")
-            .await
-            .unwrap();
+            // Write to datastore namespace
+            shared
+                .set(Namespace::Datastore, b"key", b"datastore_value")
+                .await
+                .unwrap();
 
-        // Write to systemstore namespace
-        shared
-            .set(Namespace::Systemstore, b"key", b"systemstore_value")
-            .await
-            .unwrap();
+            // Write to systemstore namespace
+            shared
+                .set(Namespace::Systemstore, b"key", b"systemstore_value")
+                .await
+                .unwrap();
 
-        // Read back - each should see its own value
-        assert_eq!(
-            shared.get(Namespace::Datastore, b"key").await.unwrap(),
-            Some(Bytes::from_static(b"datastore_value"))
-        );
-        assert_eq!(
-            shared.get(Namespace::Systemstore, b"key").await.unwrap(),
-            Some(Bytes::from_static(b"systemstore_value"))
-        );
+            // Read back - each should see its own value
+            assert_eq!(
+                shared.get(Namespace::Datastore, b"key").await.unwrap(),
+                Some(Bytes::from_static(b"datastore_value"))
+            );
+            assert_eq!(
+                shared.get(Namespace::Systemstore, b"key").await.unwrap(),
+                Some(Bytes::from_static(b"systemstore_value"))
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_namespace_view() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_namespace_view() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
-        let ss = NamespaceView::new(shared.clone(), Namespace::Systemstore);
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let ss = NamespaceView::new(shared.clone(), Namespace::Systemstore);
 
-        // Write through views
-        ds.set(b"key", b"datastore_value").await.unwrap();
-        ss.set(b"key", b"systemstore_value").await.unwrap();
+            // Write through views
+            ds.set(b"key", b"datastore_value").await.unwrap();
+            ss.set(b"key", b"systemstore_value").await.unwrap();
 
-        // Read back
-        assert_eq!(
-            ds.get(b"key").await.unwrap(),
-            Some(Bytes::from_static(b"datastore_value"))
-        );
-        assert_eq!(
-            ss.get(b"key").await.unwrap(),
-            Some(Bytes::from_static(b"systemstore_value"))
-        );
+            // Read back
+            assert_eq!(
+                ds.get(b"key").await.unwrap(),
+                Some(Bytes::from_static(b"datastore_value"))
+            );
+            assert_eq!(
+                ss.get(b"key").await.unwrap(),
+                Some(Bytes::from_static(b"systemstore_value"))
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_root_view_sees_prefixed() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_root_view_sees_prefixed() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
-        let root = RootView::new(shared.clone());
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let root = RootView::new(shared.clone());
 
-        // Write through datastore view
-        ds.set(b"mykey", b"value").await.unwrap();
+            // Write through datastore view
+            ds.set(b"mykey", b"value").await.unwrap();
 
-        // Root should see it with 'd' prefix
-        let value = root.get(b"dmykey").await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"value")));
+            // Root should see it with 'd' prefix
+            let value = root.get(b"dmykey").await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"value")));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_namespace_iterator() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_namespace_iterator() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
 
-        // Write multiple keys
-        ds.set(b"key1", b"value1").await.unwrap();
-        ds.set(b"key2", b"value2").await.unwrap();
-        ds.set(b"key3", b"value3").await.unwrap();
+            // Write multiple keys
+            ds.set(b"key1", b"value1").await.unwrap();
+            ds.set(b"key2", b"value2").await.unwrap();
+            ds.set(b"key3", b"value3").await.unwrap();
 
-        // Iterate
-        let mut iter = ds.iterator(IterOptions::new()).await.unwrap();
-        let mut count = 0;
-        while let Some(pair) = iter.next().await.unwrap() {
-            assert!(pair.key.starts_with(b"key"));
-            count += 1;
-        }
-        assert_eq!(count, 3);
+            // Iterate
+            let mut iter = ds.iterator(IterOptions::new()).await.unwrap();
+            let mut count = 0;
+            while let Some(pair) = iter.next().await.unwrap() {
+                assert!(pair.key.starts_with(b"key"));
+                count += 1;
+            }
+            assert_eq!(count, 3);
+        })
+        .unwrap()
     }
 }

@@ -45,140 +45,166 @@ impl ObjectAccessChecker for FakeChecker {
     }
 }
 
-#[tokio::test]
-async fn branchable_public_doc_requires_collection_read() {
-    let checker = FakeChecker::new(
-        DocAccess {
-            has_access: true,
-            explicit: false,
-        },
-        DocAccess {
-            has_access: false,
-            explicit: true,
-        },
-    );
+#[test]
+fn branchable_public_doc_requires_collection_read() {
+    workers::block_on(async {
+        let checker = FakeChecker::new(
+            DocAccess {
+                has_access: true,
+                explicit: false,
+            },
+            DocAccess {
+                has_access: false,
+                explicit: true,
+            },
+        );
 
-    let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "doc1")
-        .await
-        .unwrap();
+        let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "doc1")
+            .await
+            .unwrap();
 
-    assert!(!allowed);
-    assert_eq!(checker.calls(), vec!["doc1", "col1"]);
+        assert!(!allowed);
+        assert_eq!(checker.calls(), vec!["doc1", "col1"]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn branchable_explicit_doc_grant_wins_over_collection_denial() {
-    let checker = FakeChecker::new(
-        DocAccess {
-            has_access: true,
-            explicit: true,
-        },
-        DocAccess {
-            has_access: false,
-            explicit: true,
-        },
-    );
+#[test]
+fn branchable_explicit_doc_grant_wins_over_collection_denial() {
+    workers::block_on(async {
+        let checker = FakeChecker::new(
+            DocAccess {
+                has_access: true,
+                explicit: true,
+            },
+            DocAccess {
+                has_access: false,
+                explicit: true,
+            },
+        );
 
-    let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "doc1")
-        .await
-        .unwrap();
+        let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "doc1")
+            .await
+            .unwrap();
 
-    assert!(allowed);
-    assert_eq!(checker.calls(), vec!["doc1"]);
+        assert!(allowed);
+        assert_eq!(checker.calls(), vec!["doc1"]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn non_branchable_public_doc_does_not_check_collection() {
-    let checker = FakeChecker::new(
-        DocAccess {
-            has_access: true,
-            explicit: false,
-        },
-        DocAccess {
-            has_access: false,
-            explicit: true,
-        },
-    );
+#[test]
+fn non_branchable_public_doc_does_not_check_collection() {
+    workers::block_on(async {
+        let checker = FakeChecker::new(
+            DocAccess {
+                has_access: true,
+                explicit: false,
+            },
+            DocAccess {
+                has_access: false,
+                explicit: true,
+            },
+        );
 
-    let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", false, "doc1")
-        .await
-        .unwrap();
+        let allowed =
+            check_doc_read_access(&checker, "policy1", "resource1", "col1", false, "doc1")
+                .await
+                .unwrap();
 
-    assert!(allowed);
-    assert_eq!(checker.calls(), vec!["doc1"]);
+        assert!(allowed);
+        assert_eq!(checker.calls(), vec!["doc1"]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn branchable_collection_level_commit_checks_collection_object() {
-    let checker = FakeChecker::new(
-        DocAccess {
-            has_access: false,
-            explicit: true,
-        },
-        DocAccess {
-            has_access: true,
-            explicit: true,
-        },
-    );
+#[test]
+fn branchable_collection_level_commit_checks_collection_object() {
+    workers::block_on(async {
+        let checker = FakeChecker::new(
+            DocAccess {
+                has_access: false,
+                explicit: true,
+            },
+            DocAccess {
+                has_access: true,
+                explicit: true,
+            },
+        );
 
-    let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "")
-        .await
-        .unwrap();
+        let allowed = check_doc_read_access(&checker, "policy1", "resource1", "col1", true, "")
+            .await
+            .unwrap();
 
-    assert!(allowed);
-    assert_eq!(checker.calls(), vec!["col1"]);
+        assert!(allowed);
+        assert_eq!(checker.calls(), vec!["col1"]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn unregistered_private_document_requires_a_branchable_collection_grant() {
-    for branchable in [false, true] {
-        for collection_allowed in [false, true] {
-            let checker = FakeChecker::new(
-                DocAccess {
-                    has_access: false,
-                    explicit: false,
-                },
-                DocAccess {
-                    has_access: collection_allowed,
-                    explicit: true,
-                },
-            );
-            assert_eq!(
-                check_doc_read_access(&checker, "policy1", "resource1", "col1", branchable, "doc1")
+#[test]
+fn unregistered_private_document_requires_a_branchable_collection_grant() {
+    workers::block_on(async {
+        for branchable in [false, true] {
+            for collection_allowed in [false, true] {
+                let checker = FakeChecker::new(
+                    DocAccess {
+                        has_access: false,
+                        explicit: false,
+                    },
+                    DocAccess {
+                        has_access: collection_allowed,
+                        explicit: true,
+                    },
+                );
+                assert_eq!(
+                    check_doc_read_access(
+                        &checker,
+                        "policy1",
+                        "resource1",
+                        "col1",
+                        branchable,
+                        "doc1"
+                    )
                     .await
                     .unwrap(),
-                branchable && collection_allowed,
-            );
-            assert_eq!(
-                checker.calls(),
-                if branchable {
-                    vec!["doc1", "col1"]
-                } else {
-                    vec!["doc1"]
-                }
-            );
+                    branchable && collection_allowed,
+                );
+                assert_eq!(
+                    checker.calls(),
+                    if branchable {
+                        vec!["doc1", "col1"]
+                    } else {
+                        vec!["doc1"]
+                    }
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn local_unregistered_document_keeps_public_read_access() {
-    use acp::{DirectChecker, DocumentACP, Identity, LocalDocumentACP, MemoryAcpStore};
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    assert!(acp.unregistered_documents_are_public());
-    let checker = DirectChecker {
-        acp: &acp,
-        identity: &Identity::Anonymous,
-    };
-    let access = checker
-        .object_access("policy", "resource", "doc")
-        .await
-        .unwrap();
-    assert!(access.has_access);
-    assert!(!access.explicit);
-    assert!(
-        check_doc_read_access(&checker, "policy", "resource", "collection", false, "doc")
+#[test]
+fn local_unregistered_document_keeps_public_read_access() {
+    workers::block_on(async {
+        use acp::{DirectChecker, DocumentACP, Identity, LocalDocumentACP, MemoryAcpStore};
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        assert!(acp.unregistered_documents_are_public());
+        let checker = DirectChecker {
+            acp: &acp,
+            identity: &Identity::Anonymous,
+        };
+        let access = checker
+            .object_access("policy", "resource", "doc")
             .await
-            .unwrap()
-    );
+            .unwrap();
+        assert!(access.has_access);
+        assert!(!access.explicit);
+        assert!(
+            check_doc_read_access(&checker, "policy", "resource", "collection", false, "doc")
+                .await
+                .unwrap()
+        );
+    })
+    .unwrap()
 }

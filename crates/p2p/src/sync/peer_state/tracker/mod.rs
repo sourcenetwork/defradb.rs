@@ -5,13 +5,14 @@
 //! - Avoiding redundant sends (don't send blocks peers already have)
 //! - Replication status monitoring
 
+mod history;
 mod memory;
 mod operations;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use web_time::Instant;
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use cid::Cid;
 use kovan_map::HopscotchMap;
@@ -42,6 +43,14 @@ pub(super) struct PeerInfo {
     pub(super) subscribed_collections: HopscotchMap<String, (), RandomState>,
     /// When we last heard from this peer, in nanoseconds since the tracker's epoch
     pub(super) last_seen: AtomicU64,
+    pub(super) connect_count: AtomicU64,
+    pub(super) disconnect_count: AtomicU64,
+    /// Unix milliseconds; 0 = never
+    pub(super) last_connected_at_ms: AtomicU64,
+    /// Unix milliseconds; 0 = never
+    pub(super) last_disconnected_at_ms: AtomicU64,
+    pub(super) blocks_received: history::OutcomeCounters,
+    pub(super) heads_pushed: history::OutcomeCounters,
     /// Whether peer is currently connected
     pub(super) connected: AtomicBool,
 }
@@ -53,6 +62,12 @@ impl PeerInfo {
             cid_order: SegQueue::new(),
             subscribed_collections: HopscotchMap::with_hasher(RandomState::default()),
             last_seen: AtomicU64::new(now),
+            connect_count: AtomicU64::new(0),
+            disconnect_count: AtomicU64::new(0),
+            last_connected_at_ms: AtomicU64::new(0),
+            last_disconnected_at_ms: AtomicU64::new(0),
+            blocks_received: history::OutcomeCounters::new(),
+            heads_pushed: history::OutcomeCounters::new(),
             connected: AtomicBool::new(false),
         }
     }
@@ -107,6 +122,8 @@ pub struct PeerStateTracker {
     pub(super) peers: PeerTable,
     /// Origin of every `last_seen` timestamp
     pub(super) epoch: Instant,
+    /// Wall-clock time of `epoch`, in milliseconds since the Unix epoch
+    pub(super) epoch_unix_ms: u64,
     /// CIDs known across all peers, kept as an upper bound: a peer removed
     /// while still receiving CIDs leaves the count high, never low, and the
     /// next limit sweep recomputes it exactly.
@@ -203,6 +220,9 @@ impl PeerStateTracker {
         Self {
             peers: HopscotchMap::with_hasher(RandomState::default()),
             epoch: Instant::now(),
+            epoch_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as u64),
             total_cids: AtomicUsize::new(0),
             peer_ttl,
             max_cids_per_peer: max_cids,
@@ -213,6 +233,19 @@ impl PeerStateTracker {
 
     pub(super) fn now(&self) -> u64 {
         self.epoch.elapsed().as_nanos() as u64
+    }
+
+    /// Wall-clock milliseconds for a tracker timestamp. Derived from the
+    /// monotonic clock, so it does not follow wall-clock steps after start.
+    pub(super) fn unix_ms(&self, at: u64) -> u64 {
+        self.epoch_unix_ms + at / 1_000_000
+    }
+
+    /// Mark the peer seen now, returning now in Unix milliseconds.
+    pub(super) fn touch(&self, info: &PeerInfo) -> u64 {
+        let now = self.now();
+        info.last_seen.store(now, Ordering::Relaxed);
+        self.unix_ms(now)
     }
 
     /// The peer's entry, created on first sight.

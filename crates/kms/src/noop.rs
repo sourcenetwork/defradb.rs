@@ -49,33 +49,39 @@ impl KmsService for NoopKms {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn get_keys_returns_unavailable_for_each_cid() {
-        let kms = NoopKms;
-        let cid: EncryptionCid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
-            .parse()
-            .unwrap();
-        let results = kms
-            .get_keys(&RequestContext::anonymous(), &[cid])
-            .await
-            .unwrap();
-        let mut rx = results.into_receiver();
-        let first = rx.recv().await.unwrap();
-        assert!(matches!(first, Err(Error::KeyUnavailable)));
+    #[test]
+    fn get_keys_returns_unavailable_for_each_cid() {
+        workers::block_on(async {
+            let kms = NoopKms;
+            let cid: EncryptionCid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+                .parse()
+                .unwrap();
+            let results = kms
+                .get_keys(&RequestContext::anonymous(), &[cid])
+                .await
+                .unwrap();
+            let mut rx = results.into_receiver();
+            let first = rx.recv().await.unwrap();
+            assert!(matches!(first, Err(Error::KeyUnavailable)));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn generate_key_returns_unsupported() {
-        let kms = NoopKms;
-        let result = kms
-            .generate_key(
-                &RequestContext::anonymous(),
-                KeyScope::Document {
-                    doc_id: "x".into(),
-                    field: None,
-                },
-            )
-            .await;
-        assert!(matches!(result, Err(Error::Unsupported(_))));
+    #[test]
+    fn generate_key_returns_unsupported() {
+        workers::block_on(async {
+            let kms = NoopKms;
+            let result = kms
+                .generate_key(
+                    &RequestContext::anonymous(),
+                    KeyScope::Document {
+                        doc_id: "x".into(),
+                        field: None,
+                    },
+                )
+                .await;
+            assert!(matches!(result, Err(Error::Unsupported(_))));
+        })
+        .unwrap()
     }
 }

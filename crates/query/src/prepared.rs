@@ -464,90 +464,101 @@ mod tests {
         assert!(!mutation.updates.contains_key("actual-b"));
     }
 
-    #[tokio::test]
-    async fn a_miss_is_answered_once_and_asking_again_is_an_error() {
-        let memo = PreparedInputMemo::default();
-        let request = PreparedInputRequest::new(PreparedInputKind::Signature, b"block".as_slice());
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let resolve = || async {
-            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Arc::<[u8]>::from(b"signature".as_slice()))
-        };
+    #[test]
+    fn a_miss_is_answered_once_and_asking_again_is_an_error() {
+        workers::block_on(async {
+            let memo = PreparedInputMemo::default();
+            let request =
+                PreparedInputRequest::new(PreparedInputKind::Signature, b"block".as_slice());
+            let calls = std::sync::atomic::AtomicUsize::new(0);
+            let resolve = || async {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(Arc::<[u8]>::from(b"signature".as_slice()))
+            };
 
-        memo.answer_miss(&request, resolve).await.unwrap();
-        assert_eq!(memo.get(&request).as_deref(), Some(b"signature".as_slice()));
+            memo.answer_miss(&request, resolve).await.unwrap();
+            assert_eq!(memo.get(&request).as_deref(), Some(b"signature".as_slice()));
 
-        let error = memo.answer_miss(&request, resolve).await.unwrap_err();
-        assert!(error.to_string().contains("requested again"), "{error}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let error = memo.answer_miss(&request, resolve).await.unwrap_err();
+            assert!(error.to_string().contains("requested again"), "{error}");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn a_wave_answers_the_miss_and_every_request_the_pass_went_past() {
-        let memo = PreparedInputMemo::default();
-        let ended =
-            PreparedInputRequest::new(PreparedInputKind::Signature, b"composite".as_slice());
-        let passed = PreparedInputRequest::new(PreparedInputKind::Signature, b"field".as_slice());
-        assert!(memo.get_or_want(&passed).is_none());
-        assert!(
-            memo.get_or_want(&passed).is_none(),
-            "asked twice, wanted once"
-        );
-        let waves = std::sync::atomic::AtomicUsize::new(0);
-        memo.answer_wave(&ended, |wave| {
-            waves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async move {
-                assert_eq!(wave.len(), 2);
+    #[test]
+    fn a_wave_answers_the_miss_and_every_request_the_pass_went_past() {
+        workers::block_on(async {
+            let memo = PreparedInputMemo::default();
+            let ended =
+                PreparedInputRequest::new(PreparedInputKind::Signature, b"composite".as_slice());
+            let passed =
+                PreparedInputRequest::new(PreparedInputKind::Signature, b"field".as_slice());
+            assert!(memo.get_or_want(&passed).is_none());
+            assert!(
+                memo.get_or_want(&passed).is_none(),
+                "asked twice, wanted once"
+            );
+            let waves = std::sync::atomic::AtomicUsize::new(0);
+            memo.answer_wave(&ended, |wave| {
+                waves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    assert_eq!(wave.len(), 2);
+                    Ok(wave
+                        .iter()
+                        .map(|request| Arc::<[u8]>::from(request.exact_request()))
+                        .collect())
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(waves.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(memo.get(&ended).as_deref(), Some(b"composite".as_slice()));
+            assert_eq!(memo.get(&passed).as_deref(), Some(b"field".as_slice()));
+
+            let error = memo
+                .answer_wave(&ended, |wave| async move {
+                    Ok(wave
+                        .iter()
+                        .map(|_| Arc::<[u8]>::from(b"".as_slice()))
+                        .collect())
+                })
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("requested again"), "{error}");
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_wave_records_its_inputs_and_how_long_it_kept_the_request_suspended() {
+        workers::block_on(async {
+            let stats = input_wait_stats();
+            let (waves, inputs, suspended) = (
+                stats.waves.load(Ordering::Relaxed),
+                stats.inputs.load(Ordering::Relaxed),
+                stats.suspended_micros.count(),
+            );
+            let memo = PreparedInputMemo::default();
+            let ended = PreparedInputRequest::new(PreparedInputKind::Embedding, b"one".as_slice());
+            memo.want(PreparedInputRequest::new(
+                PreparedInputKind::Embedding,
+                b"two".as_slice(),
+            ));
+            memo.answer_wave(&ended, |wave| async move {
                 Ok(wave
                     .iter()
                     .map(|request| Arc::<[u8]>::from(request.exact_request()))
                     .collect())
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(waves.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(memo.get(&ended).as_deref(), Some(b"composite".as_slice()));
-        assert_eq!(memo.get(&passed).as_deref(), Some(b"field".as_slice()));
-
-        let error = memo
-            .answer_wave(&ended, |wave| async move {
-                Ok(wave
-                    .iter()
-                    .map(|_| Arc::<[u8]>::from(b"".as_slice()))
-                    .collect())
             })
             .await
-            .unwrap_err();
-        assert!(error.to_string().contains("requested again"), "{error}");
-    }
-
-    #[tokio::test]
-    async fn a_wave_records_its_inputs_and_how_long_it_kept_the_request_suspended() {
-        let stats = input_wait_stats();
-        let (waves, inputs, suspended) = (
-            stats.waves.load(Ordering::Relaxed),
-            stats.inputs.load(Ordering::Relaxed),
-            stats.suspended_micros.count(),
-        );
-        let memo = PreparedInputMemo::default();
-        let ended = PreparedInputRequest::new(PreparedInputKind::Embedding, b"one".as_slice());
-        memo.want(PreparedInputRequest::new(
-            PreparedInputKind::Embedding,
-            b"two".as_slice(),
-        ));
-        memo.answer_wave(&ended, |wave| async move {
-            Ok(wave
-                .iter()
-                .map(|request| Arc::<[u8]>::from(request.exact_request()))
-                .collect())
+            .unwrap();
+            // Other tests of this binary record too: the counters only grow.
+            assert!(stats.waves.load(Ordering::Relaxed) > waves);
+            assert!(stats.inputs.load(Ordering::Relaxed) >= inputs + 2);
+            assert!(stats.suspended_micros.count() > suspended);
         })
-        .await
-        .unwrap();
-        // Other tests of this binary record too: the counters only grow.
-        assert!(stats.waves.load(Ordering::Relaxed) > waves);
-        assert!(stats.inputs.load(Ordering::Relaxed) >= inputs + 2);
-        assert!(stats.suspended_micros.count() > suspended);
+        .unwrap()
     }
 
     #[test]

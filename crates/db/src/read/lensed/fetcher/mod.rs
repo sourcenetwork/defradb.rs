@@ -176,7 +176,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         self.txn = Held::none();
     }
 
-    /// Take the transaction out of the fetcher (for commit/rollback). `None`
+    /// Take the transaction out of the fetcher (for commit/discard). `None`
     /// once it was taken, or while another handle (a stream it opened) still
     /// holds it.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
@@ -225,15 +225,25 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
-    async fn scoped_acp(
+    async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,
-    ) -> query::error::Result<Arc<dyn acp::DocumentACP>> {
+    ) -> query::error::Result<Option<Arc<dyn acp::DocumentACP>>> {
         let txn = &*self.shared_txn()?;
         let view = txn
             .acpstore()
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        Ok(provider.bind_transaction(view).unwrap_or(provider))
+        Ok(provider.bind_transaction(view))
+    }
+
+    async fn scoped_acp(
+        &self,
+        provider: Arc<dyn acp::DocumentACP>,
+    ) -> query::error::Result<Arc<dyn acp::DocumentACP>> {
+        Ok(self
+            .transaction_acp(provider.clone())
+            .await?
+            .unwrap_or(provider))
     }
 
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
@@ -263,6 +273,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         show_deleted: bool,
     ) -> query::error::Result<Box<dyn query::doc_stream::DocStream>> {
         self.stream_all_with_deleted_impl(collection_name, show_deleted)
+            .await
+    }
+
+    async fn stream_index_scan(
+        &self,
+        collection_name: &str,
+        params: &query::planner::index_selection::IndexScanParams,
+        show_deleted: bool,
+    ) -> query::error::Result<Option<Box<dyn query::doc_stream::DocStream>>> {
+        self.stream_index_scan_impl(collection_name, params, show_deleted)
             .await
     }
 
@@ -314,10 +334,20 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        let txn = &*self.shared_txn()?;
+        crate::read::json_conflicts::read(txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+    }
+
     async fn get_commits(
         &self,
         options: &query::fetcher::CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         use crate::read::commits::{CommitsFetcher, CommitsQueryOptions as DbCommitsOptions};
 
         let db_options = DbCommitsOptions {
@@ -452,6 +482,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
         use crate::read::versioned::VersionedFetcher;
@@ -463,7 +494,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         )
         .with_prepared_inputs(self.prepared_inputs.clone());
         versioned_fetcher
-            .get_document_at_cid(cid, expected_doc_id)
+            .get_document_at_cid(cid, expected_doc_id, collection.clone())
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,
@@ -473,7 +504,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&identity::Did>,
@@ -487,7 +518,12 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         )
         .with_prepared_inputs(self.prepared_inputs.clone());
         versioned_fetcher
-            .get_documents_at_cid(cid, expected_doc_id, Some(collection_short_id))
+            .get_documents_at_cid(
+                cid,
+                expected_doc_id,
+                Some(collection.resolved_root_id()),
+                collection.clone(),
+            )
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,

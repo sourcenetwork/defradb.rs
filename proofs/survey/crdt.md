@@ -1,20 +1,22 @@
 # Survey: `crates/crdt/`
 
 ## Purpose
-Delta-state CRDTs for DefraDB.rs field/document conflict resolution: LWW register,
-Counter (single accumulated value, Int64 wrapping + Float32/64 IEEE-754), and
-Composite (document-level coordination of field CRDTs). Plus priority varint codec
-and the `Delta`/`ReplicatedData`/`MergeResult` traits. CRDTs are storage-less; they
-operate on a borrowed `ReaderWriter` transaction.
+Field CRDTs for DefraDB.rs field/document conflict resolution, one `FieldCrdt`
+implementation per type (`crates/crdt/src/field/`): the LWW register and the P/PN
+counters (Int64 wrapping, Float32 at `f32`, Float64). Each answers what an operation
+does, what its block carries, how its state is stored and how two states merge;
+every write, merge, storage operand and replay path dispatches through it. The local
+document value format (`stored.rs`) merges componentwise, field by field. CRDTs hold
+no storage: the merge handler and the storage merge operator own persistence.
 
 ## State machines
-- **LWW merge** (`lww.rs`): on each delta compare `(priority, value-bytes)`. Higher
-  priority wins; tie -> lexicographically greater value wins (empty/tombstone loses).
+- **LWW merge** (`lww.rs`): compare `(priority, value-bytes)`. Higher priority wins;
+  tie -> lexicographically greater value wins (empty/tombstone loses).
   Outcomes: `Applied | RejectedLowerPriority | RejectedTieBreak`.
 - **Counter merge** (`counter.rs`): unconditional addition; idempotency is delegated
-  upstream to the durable merged-CID gate (`db-merge`), not local.
-- **Composite merge** (`composite.rs`): pre-validate all fields, then apply each field
-  delta componentwise (LWW / Counter / Delete). Document status `ACTIVE(1)/DELETED(2)`.
+  upstream to the applied key and the durable merged-CID gate (`field_ops.rs`), not local.
+- **Document value merge** (`stored.rs`): apply each field part componentwise through
+  its type's merge. Document status `ACTIVE(1)/DELETED(2)` rides on the composite block.
 
 ## Candidates
 | name | kind | property | already-modeled | priority |

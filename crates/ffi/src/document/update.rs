@@ -2,8 +2,8 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use super::run::{doc_ids, DocumentCall};
-use super::{filter_value, Selection, ERR_DOCUMENT_NOT_FOUND};
+use super::run::DocumentCall;
+use super::{filter_value, Selection};
 use crate::target::go_string;
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
@@ -32,29 +32,24 @@ pub unsafe extern "C" fn defra_document_update(
         let updater = go_string(updater);
         let target = call.target().clone();
         ffi_async!(target &target, {
-            let updater: serde_json::Value = serde_json::from_str(&updater)
+            let patch: serde_json::Value = serde_json::from_str(&updater)
                 .map_err(|e| format!("invalid updater JSON: {}", e))?;
             let name = call.collection().await?.name;
-            let field = format!("update_{}", name);
+            let run = |mutation| call.respond(mutation);
             match selection {
                 Selection::Doc(doc_id) => {
-                    let mutation = query::rest::gql::build_update_mutation(&name, &doc_id, &updater)
+                    query::documents::update(run, &name, &doc_id, &patch)
+                        .await
                         .map_err(|e| e.to_string())?;
-                    let updated = doc_ids(&call.run(mutation).await?, &field);
-                    if updated.is_empty() {
-                        return Err(ERR_DOCUMENT_NOT_FOUND.to_string());
-                    }
                     Ok(String::new())
                 }
                 Selection::Filter(filter) => {
-                    let mutation = query::rest::gql::build_filtered_update_mutation(
-                        &name,
-                        &filter_value(&filter)?,
-                        &updater,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let updated = doc_ids(&call.run(mutation).await?, &field);
-                    Ok(serde_json::json!({ "Count": updated.len(), "DocIDs": updated }).to_string())
+                    let filter = query::documents::Filter::from(filter_value(&filter)?);
+                    let updated =
+                        query::documents::update_with_filter(run, &name, &filter, &updater)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    serde_json::to_string(&updated).map_err(|e| e.to_string())
                 }
             }
         })

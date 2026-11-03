@@ -20,6 +20,10 @@ mod collection_tests;
 #[path = "../../tests/unit/car_size_notices.rs"]
 mod size_notice_tests;
 
+#[cfg(test)]
+#[path = "../../tests/unit/car_depth.rs"]
+mod depth_tests;
+
 /// Maximum number of blocks allowed in a single CAR response.
 ///
 /// Prevents a malicious or faulty peer from causing the server to collect and
@@ -108,7 +112,7 @@ pub(crate) fn encode_car_response(
     let mut out = Vec::new();
 
     // Header: DAG-CBOR map {version: 1, roots: [CID]}
-    let header = encode_car_header(roots, oversized)?;
+    let header = encode_car_header(roots, oversized, false)?;
     write_varint_prefixed(&mut out, &header);
 
     // Each block: varint(len(cid_bytes + data)) + cid_bytes + data
@@ -188,6 +192,14 @@ pub fn decode_car(data: &[u8]) -> Result<CarContents> {
     Ok((roots, blocks))
 }
 
+#[cfg(test)]
+pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
+    blockstore: &B,
+    roots: &[Cid],
+) -> Result<CarCollectOutcome> {
+    collect_dag_blocks_within(blockstore, roots, None).await
+}
+
 /// Traverse DAGs from a missing frontier, collecting reachable blocks.
 ///
 /// Collection examines at most [`CAR_MAX_BLOCKS`] distinct CIDs and retains at
@@ -197,16 +209,20 @@ pub fn decode_car(data: &[u8]) -> Result<CarContents> {
 /// All roots share the same visited set and response limits, so overlapping
 /// branches are sent once and a large frontier cannot multiply the bounded
 /// CAR response size.
-pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
+///
+/// `max_depth` cuts the walk that many links below the roots; breadth-first
+/// order means a block is first reached at its shortest distance from a root.
+pub async fn collect_dag_blocks_within<B: Blockstore>(
     blockstore: &B,
     roots: &[Cid],
+    max_depth: Option<u32>,
 ) -> Result<CarCollectOutcome> {
     let mut outcome = CarCollectOutcome::default();
     let mut visited = RapidHashSet::new();
     let mut total_bytes: usize = 0;
-    let mut queue: VecDeque<Cid> = roots.iter().copied().collect();
+    let mut queue: VecDeque<(Cid, u32)> = roots.iter().map(|cid| (*cid, 0)).collect();
 
-    while let Some(cid) = queue.pop_front() {
+    while let Some((cid, depth)) = queue.pop_front() {
         if !visited.insert(cid) {
             continue;
         }
@@ -224,12 +240,16 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
         };
         total_bytes += data.len();
 
-        let refs = extract_links(&data);
+        let refs = if max_depth.is_none_or(|max| depth < max) {
+            extract_links(&data)
+        } else {
+            Vec::new()
+        };
         outcome.blocks.push((cid, data));
 
         for child_cid in refs {
             if !visited.contains(&child_cid) {
-                queue.push_back(child_cid);
+                queue.push_back((child_cid, depth + 1));
             }
         }
     }
@@ -302,7 +322,36 @@ fn extract_links(block_data: &[u8]) -> Vec<Cid> {
 // CIDs are stored as plain CBOR byte strings (no tag 42) since this
 // is an internal Rust-to-Rust protocol.
 
-fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8>> {
+/// A shed CAR request is answered with a header-only CAR carrying
+/// `"busy": true`. Older peers ignore the unknown field and decode an empty
+/// CAR, which differs from the zero-byte rejection it replaces: on libp2p an
+/// older requester sees its rooted CAR answered, where zero bytes failed to
+/// decode and timed out, so repeated sheds can lead it to treat the hub as a
+/// responsive-but-silent publisher and drop the connection.
+pub(crate) fn encode_car_busy(root: &Cid) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_varint_prefixed(&mut out, &encode_car_header(&[*root], &[], true)?);
+    Ok(out)
+}
+
+/// A CAR that carries any block is a served response, whatever its header.
+pub(crate) fn is_car_busy(data: &[u8]) -> bool {
+    use ciborium::Value;
+    match read_car_header_fields(data) {
+        Ok((fields, rest)) => {
+            rest.is_empty()
+                && fields.iter().any(|(key, value)| {
+                    matches!(key, Value::Text(name) if name == BUSY_FIELD)
+                        && matches!(value, Value::Bool(true))
+                })
+        }
+        Err(_) => false,
+    }
+}
+
+const BUSY_FIELD: &str = "busy";
+
+fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)], busy: bool) -> Result<Vec<u8>> {
     use ciborium::Value;
     let roots_val: Vec<Value> = roots
         .iter()
@@ -333,6 +382,9 @@ fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8
             ),
         ));
     }
+    if busy {
+        fields.push((Value::Text(BUSY_FIELD.into()), Value::Bool(true)));
+    }
     let header = Value::Map(fields);
 
     let mut out = Vec::new();
@@ -341,8 +393,10 @@ fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8
     Ok(out)
 }
 
-/// Optional notices from a Rust peer, not proof of a block's size or absence.
-pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+type CarHeaderFields = Vec<(ciborium::Value, ciborium::Value)>;
+
+/// The header's CBOR map fields, and the block sections that follow it.
+fn read_car_header_fields(data: &[u8]) -> Result<(CarHeaderFields, &[u8])> {
     use ciborium::Value;
     let mut cursor = data;
     let header_len = read_varint(&mut cursor)?;
@@ -350,11 +404,19 @@ pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
         .ok()
         .filter(|length| *length <= cursor.len())
         .ok_or_else(|| Error::Codec("CAR header length exceeds data".into()))?;
-    let header: Value = defra_core::cbor::from_slice(&cursor[..header_len])
+    let (header, rest) = cursor.split_at(header_len);
+    let header: Value = defra_core::cbor::from_slice(header)
         .map_err(|e| Error::Codec(format!("invalid CAR header: {e}")))?;
     let Value::Map(fields) = header else {
         return Err(Error::Codec("CAR header is not a CBOR map".into()));
     };
+    Ok((fields, rest))
+}
+
+/// Optional notices from a Rust peer, not proof of a block's size or absence.
+pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+    use ciborium::Value;
+    let (fields, _) = read_car_header_fields(data)?;
     let mut notices = fields
         .into_iter()
         .filter_map(|(key, value)| (key == Value::Text("oversized".into())).then_some(value));
@@ -496,7 +558,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "secret".to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"ciphertext".to_vec(),
             }),
             vec![],
@@ -643,7 +705,7 @@ mod tests {
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "status".to_string(),
                     priority: height,
-                    schema_version_id: "version1".to_string(),
+                    collection_version_id: "version1".to_string(),
                     data: vec![height as u8],
                 }),
                 previous_field.into_iter().collect(),
@@ -657,7 +719,7 @@ mod tests {
 
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "version1".to_string(),
+                    collection_version_id: "version1".to_string(),
                     priority: height,
                     status: 1,
                 }),

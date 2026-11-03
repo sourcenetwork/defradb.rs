@@ -17,6 +17,8 @@ use std::{
 use kovan::Atom;
 use regolith::sync::Lazy;
 
+use super::log_throttle::DagFetchLogThrottles;
+
 /// Process-global counter of gossip payload decode failures.
 ///
 /// Both the libp2p and iroh gossip paths increment this via
@@ -129,6 +131,8 @@ pub struct SyncDiagnostics {
     car_served_cids: AtomicU64,
     car_filtered_cids: AtomicU64,
     provider_rotations: AtomicU64,
+    provider_demotions: AtomicU64,
+    provider_cooldown_skips: AtomicU64,
     missing_link_retries: AtomicU64,
     pending_dag_resolved: AtomicU64,
     pending_dag_registered: AtomicU64,
@@ -142,9 +146,13 @@ pub struct SyncDiagnostics {
     pending_dag_retry_suppressed: AtomicU64,
     pending_dag_fetch_deferred_unavailable: AtomicU64,
     pending_dag_fetch_deferred_contention: AtomicU64,
+    pending_dag_fetch_deferred_busy: AtomicU64,
+    car_busy_responses: AtomicU64,
+    provider_busy_rotations: AtomicU64,
     pending_dag_fetch_exhausted: AtomicU64,
     pending_dag_terminal_merged: AtomicU64,
     pending_dag_terminal_quarantined: AtomicU64,
+    dag_fetch_logs: DagFetchLogThrottles,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -156,6 +164,8 @@ pub struct SyncDiagnosticsSnapshot {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    pub provider_demotions: u64,
+    pub provider_cooldown_skips: u64,
     pub missing_link_retries: u64,
     pub pending_dag_resolved: u64,
     pub pending_dag_registered: u64,
@@ -169,6 +179,9 @@ pub struct SyncDiagnosticsSnapshot {
     pub pending_dag_retry_suppressed: u64,
     pub pending_dag_fetch_deferred_unavailable: u64,
     pub pending_dag_fetch_deferred_contention: u64,
+    pub pending_dag_fetch_deferred_busy: u64,
+    pub car_busy_responses: u64,
+    pub provider_busy_rotations: u64,
     pub pending_dag_fetch_exhausted: u64,
     pub pending_dag_terminal_merged: u64,
     /// Pending-DAG registrations moved to quarantine after a deterministic
@@ -191,6 +204,8 @@ impl SyncDiagnostics {
             car_served_cids: self.car_served_cids.load(Ordering::Relaxed),
             car_filtered_cids: self.car_filtered_cids.load(Ordering::Relaxed),
             provider_rotations: self.provider_rotations.load(Ordering::Relaxed),
+            provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
+            provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
             missing_link_retries: self.missing_link_retries.load(Ordering::Relaxed),
             pending_dag_resolved: self.pending_dag_resolved.load(Ordering::Relaxed),
             pending_dag_registered: self.pending_dag_registered.load(Ordering::Relaxed),
@@ -210,6 +225,11 @@ impl SyncDiagnostics {
             pending_dag_fetch_deferred_contention: self
                 .pending_dag_fetch_deferred_contention
                 .load(Ordering::Relaxed),
+            pending_dag_fetch_deferred_busy: self
+                .pending_dag_fetch_deferred_busy
+                .load(Ordering::Relaxed),
+            car_busy_responses: self.car_busy_responses.load(Ordering::Relaxed),
+            provider_busy_rotations: self.provider_busy_rotations.load(Ordering::Relaxed),
             pending_dag_fetch_exhausted: self.pending_dag_fetch_exhausted.load(Ordering::Relaxed),
             pending_dag_terminal_merged: self.pending_dag_terminal_merged.load(Ordering::Relaxed),
             pending_dag_terminal_quarantined: self
@@ -248,6 +268,13 @@ impl SyncDiagnostics {
 
     pub fn record_provider_rotation(&self) {
         self.provider_rotations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_provider_ranking(&self, demoted: usize, cooling: usize) {
+        self.provider_demotions
+            .fetch_add(demoted as u64, Ordering::Relaxed);
+        self.provider_cooldown_skips
+            .fetch_add(cooling as u64, Ordering::Relaxed);
     }
 
     pub fn record_missing_link_retry(&self) {
@@ -311,6 +338,24 @@ impl SyncDiagnostics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Log-level gates for the DAG fetcher's repeated failure lines.
+    pub(crate) fn dag_fetch_logs(&self) -> &DagFetchLogThrottles {
+        &self.dag_fetch_logs
+    }
+
+    pub fn record_pending_dag_fetch_deferred_busy(&self) {
+        self.pending_dag_fetch_deferred_busy
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_car_busy_response(&self) {
+        self.car_busy_responses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_provider_busy_rotation(&self) {
+        self.provider_busy_rotations.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn record_pending_dag_fetch_exhausted(&self) {
         self.pending_dag_fetch_exhausted
             .fetch_add(1, Ordering::Relaxed);
@@ -338,6 +383,8 @@ mod tests {
         assert_eq!(snap.car_empty_responses, 0);
         assert_eq!(snap.car_no_blocks_served, 0);
         assert_eq!(snap.provider_rotations, 0);
+        assert_eq!(snap.provider_demotions, 0);
+        assert_eq!(snap.provider_cooldown_skips, 0);
         assert_eq!(snap.missing_link_retries, 0);
         assert_eq!(snap.pending_dag_resolved, 0);
         assert_eq!(snap.pending_dag_registered, 0);
@@ -363,6 +410,7 @@ mod tests {
         diag.record_car_empty_response();
         diag.record_car_no_blocks_served();
         diag.record_provider_rotation();
+        diag.record_provider_ranking(2, 1);
         diag.record_missing_link_retry();
         diag.record_pending_dag_resolved();
         diag.record_pending_dag_registered();
@@ -385,6 +433,8 @@ mod tests {
         assert_eq!(snap.car_empty_responses, 2);
         assert_eq!(snap.car_no_blocks_served, 1);
         assert_eq!(snap.provider_rotations, 1);
+        assert_eq!(snap.provider_demotions, 2);
+        assert_eq!(snap.provider_cooldown_skips, 1);
         assert_eq!(snap.missing_link_retries, 1);
         assert_eq!(snap.pending_dag_resolved, 1);
         assert_eq!(snap.pending_dag_registered, 1);

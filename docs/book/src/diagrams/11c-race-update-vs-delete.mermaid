@@ -1,0 +1,16 @@
+sequenceDiagram
+    autonumber
+    participant WU as worker U: update doc d
+    participant WD as worker D: delete doc d
+    participant R as regolith
+
+    WU->>R: get_parts(d, parts it uses, alive)
+    WD->>R: get(d) and the deletion marker
+    WD->>R: put deletion marker, delete index entries, head operand
+    WU->>R: merge(d, part operand), index updates
+    WD->>R: commit
+    R-->>WD: committed: d is deleted
+    WU->>R: commit
+    Note over R: a newer delete touched what the update read
+    R-->>WU: Conflict: mine ReadParts, theirs Delete
+    Note over WU: business logic: the document is gone, report not-found, and no index entry is re-added

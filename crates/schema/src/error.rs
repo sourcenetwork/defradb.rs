@@ -18,6 +18,9 @@ pub enum SchemaError {
         field_kind: String,
     },
 
+    #[error("invalid CRDT name {name:?}: {reason}")]
+    InvalidCrdtName { name: String, reason: &'static str },
+
     #[error("invalid relation: field {field_name} references unknown collection {collection_id}")]
     InvalidRelation {
         field_name: String,

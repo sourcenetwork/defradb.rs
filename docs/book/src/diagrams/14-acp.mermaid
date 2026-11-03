@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    participant W as defradb.rs worker: create doc d as identity i
+    participant T as regolith transaction
+    participant O as another worker: create or upsert of d as identity j
+
+    W->>T: transact begins
+    W->>T: write the document: blocks, value, indexes, append(journal)
+    W->>T: scan_validated(owner prefix of d): empty
+    W->>T: put owner tuple: i owns d
+    O->>T: in its own transaction: scan_validated(owner prefix of d): empty, put owner j
+    W->>T: commit
+    T-->>W: committed: d exists and is owned by i in the same commit, no public window
+    O->>T: commit
+    Note over T: a write landed in the owner prefix it scanned
+    T-->>O: Conflict: mine ScannedRange, theirs Put
+    O->>T: transact re-runs: owner prefix holds i
+    Note over O: business logic: AlreadyRegistered, or a no-op when the owner is the same
+    Note over W,O: a read-only query decides ACP at its own snapshot, the same snapshot as its rows

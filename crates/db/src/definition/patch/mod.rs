@@ -340,7 +340,7 @@ impl<S: Store> crate::database::DB<S> {
             let collections = std::sync::Arc::clone(&self.collections);
             let registered_name = actual_name.clone();
             let active = new_schema.is_active;
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
                     if active {
@@ -375,4 +375,43 @@ impl<S: Store> crate::database::DB<S> {
         )
         .await
     }
+}
+
+impl<S> crate::database::DB<S>
+where
+    S: Store,
+{
+    /// Go's `PatchCollection`: apply `patch` to the collection its paths
+    /// name (`/<Name>/...`) for `context`'s caller, with `migration` as the
+    /// migration to the version it adds.
+    pub async fn patch_collections_as(
+        &self,
+        context: &defra_core::RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> Result<()> {
+        let ops: serde_json::Value =
+            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
+        let name = patch_target(&ops)?;
+        self.patch_collection_with_migration_as(context, &name, patch, migration)
+            .await
+            .map(|_| ())
+    }
+}
+
+/// The collection a Go patch names: the first segment of its first path.
+fn patch_target(ops: &serde_json::Value) -> Result<String> {
+    let invalid = |why: &str| Error::InvalidPatch(why.to_owned());
+    let path = ops
+        .as_array()
+        .ok_or_else(|| invalid("patch must be a JSON array"))?
+        .first()
+        .ok_or_else(|| invalid("patch array is empty"))?
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid("first patch op missing 'path' field"))?;
+    path.split('/')
+        .find(|segment| !segment.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| invalid("patch path has no collection name"))
 }

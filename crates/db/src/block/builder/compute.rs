@@ -13,11 +13,13 @@ pub struct ComputedBlocks {
     pub head_write: storage::merge::head_set::Write,
     pub doc_short_id: u64,
     pub block_result: BlockResult,
+    /// The blocks a batch signing session collects once the write commits:
+    /// every block that starts a field's history, and the composite.
+    pub batch_signed: Vec<Cid>,
 }
 
 /// Compute all document blocks without any storage access.
 ///
-/// This is the CREATE-only path extracted from `write_document_blocks()`.
 /// For creates: priority is always 1, no headstore reads, no prev heads.
 /// The entire computation is a pure function of the inputs.
 ///
@@ -27,13 +29,15 @@ pub struct ComputedBlocks {
 /// `block_result.doc_id`; the caller persists the short-ID mappings.
 /// Accumulates all (key, value) pairs instead of writing to storage.
 pub fn compute_document_blocks(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
 ) -> Result<ComputedBlocks, String> {
     compute_document_blocks_with_inputs(
+        crdts,
         doc,
         schema,
         identity,
@@ -45,15 +49,16 @@ pub fn compute_document_blocks(
 }
 
 pub(crate) fn compute_document_blocks_with_inputs(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> Result<ComputedBlocks, BuildError> {
-    let schema_version_id = schema.version_id.as_str();
-    let doc_ref_bytes = identity.doc_ref_bytes();
+    let collection_version_id = schema.version_id.as_str();
+    let doc_ref_bytes = identity.encode();
 
     let field_count = doc
         .values()
@@ -88,14 +93,15 @@ pub(crate) fn compute_document_blocks_with_inputs(
             continue;
         }
 
-        // For counter fields during creates, use the raw delta if set
-        let cbor_value = if let Some(delta) = doc.get_counter_delta(field_name) {
-            delta
-        } else {
-            field_value.value()
+        let crdt = field_crdt_of(crdts, doc, field_name)?;
+        crdt.op(field_value.value().clone(), true)
+            .map_err(|error| error.to_string())?;
+        let Some(value_bytes) = crdt
+            .block_data(field_value.value(), doc.pending_op(field_name))
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
         };
-
-        let value_bytes = encode_value_as_cbor(cbor_value)?;
 
         // Encrypt delta and create Encryption metadata block if configured
         let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {
@@ -193,32 +199,14 @@ pub(crate) fn compute_document_blocks_with_inputs(
             encryption_cids.push(enc_cid);
         }
 
-        let is_counter = doc
-            .fields()
-            .get(field_name)
-            .map(|f| f.crdt_type().is_counter())
-            .unwrap_or(false)
-            || doc.get_counter_delta(field_name).is_some();
-
-        // For creates, heads are always empty -> nonce is always 0
-        let nonce: i64 = 0;
-
-        let delta = if is_counter {
-            CrdtDelta::Counter(CounterDeltaPayload {
-                field_name: field_name.clone(),
-                priority,
-                nonce,
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
-        } else {
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: field_name.clone(),
-                priority,
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
-        };
+        // A create's blocks take no nonce, so its first blocks are reproducible.
+        let delta = crdt.delta(crdt::DeltaParts {
+            field_name,
+            priority,
+            collection_version_id,
+            nonce: 0,
+            data: value_bytes,
+        });
 
         // No prev heads for creates
         let mut field_block = Block::new_with_options(delta, vec![], vec![], encryption_cid, None);
@@ -304,7 +292,7 @@ pub(crate) fn compute_document_blocks_with_inputs(
     }
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority,
         status: 1,
     };
@@ -344,11 +332,14 @@ pub(crate) fn compute_document_blocks_with_inputs(
         vec![],
     ));
 
+    let mut batch_signed = field_cids.clone();
+    batch_signed.push(composite_cid);
     Ok(ComputedBlocks {
         blockstore_entries,
         headstore_entries,
         head_write,
         doc_short_id: identity.doc_short_id,
+        batch_signed,
         block_result: BlockResult {
             cid: composite_cid,
             block: composite_bytes,
@@ -385,12 +376,7 @@ pub async fn insert_computed_blocks(
     collect_on_commit(
         blockstore,
         batch_session,
-        blocks
-            .block_result
-            .field_cids
-            .iter()
-            .copied()
-            .chain([blocks.block_result.cid]),
+        blocks.batch_signed.iter().copied(),
     )
     .await?;
     Ok(())

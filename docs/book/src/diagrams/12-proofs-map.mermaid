@@ -1,0 +1,84 @@
+flowchart LR
+    classDef mech fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef model fill:#fff3cd,stroke:#b8860b,color:#000
+    classDef dmech fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef dmodel fill:#f3e5f5,stroke:#7b1fa2,color:#000
+
+    subgraph RM["regolith mechanisms"]
+        M1["isolation levels, DefraLevel classes,<br/>projected and value-validated reads,<br/>write-free, read-your-own-writes"]
+        M2["commit-ordered append"]
+        M3["Db allocate"]
+        M4["commit pipeline: ring slots, helping,<br/>landing, parking, stall relief"]
+        M5["WAL recovery, manifest seal,<br/>ingest durability"]
+        M6["LSM read order, tombstone retirement"]
+        M7["stripe compaction,<br/>snapshot registry"]
+        M8["per-thread IoQueues: tickets,<br/>CacheOnly reads, claimable units"]
+        M9["regolith sync: barging with bounded<br/>bypass, upgradable read"]
+        M10["transaction callbacks,<br/>commit receipts"]
+    end
+
+    subgraph RP["regolith proofs: TLA+ and Lean (regolith/proofs)"]
+        P1["RepeatableRead.tla, RepeatableReadCommit.tla,<br/>ReadView.tla, ReadViewPublishers.tla"]
+        P2["CommitOrderedAppend.tla,<br/>CommitOrderedAppendCrash.tla"]
+        P3["Allocate.tla, ClaimSlots.tla"]
+        P4["CommitPipeline.tla, CommitPipelineBase.tla,<br/>CommitPipelineSteps.tla, Landing.tla, LandingHold.tla,<br/>Parking.tla, StallRelief.tla"]
+        P5["WalRecovery.tla, ManifestRecovery.tla, ManifestSeal.tla,<br/>IngestDurability.tla, IngestPublication.tla"]
+        P6["LsmOrder.tla, LegacyRangeRead.tla,<br/>TombstoneRetirement.tla, TombstoneLog.tla"]
+        P7["StripeCompaction.tla, CompactionGate.tla,<br/>SnapshotRegistry.tla, SnapshotWait.tla"]
+        P8["NonBlocking.tla, NowaitMiss.tla, BatchRead.tla"]
+        P9["Sync.tla, SyncRwLock.tla, SyncLatch.tla,<br/>SyncNotify.tla, SyncOnce.tla, plus loom"]
+        P10["TxnCallbacks.tla"]
+    end
+
+    subgraph DM["defradb.rs mechanisms"]
+        D1["arrival journal on append"]
+        D2["counters as merges"]
+        D3["document parts, CRDT materialization, convergence"]
+        D4["head sets, head publication"]
+        D5["ACP: registration, decisions, NAC, auth"]
+        D6["worker pool, CPU ledger, node shutdown"]
+        D7["conflict logic, statement atomicity,<br/>event order, retries, KMS"]
+        D8["indexes, txn registry, claims, schema versions"]
+        D9["p2p: replication, push, gossip, providers"]
+        D10["block integrity, identity, governance, tickers"]
+    end
+
+    subgraph DP["defradb.rs proofs: TLA+ and Lean (proofs/)"]
+        Q1["Arrivals.tla"]
+        Q2["TwoStoreCounter.tla, M1Convergence.tla"]
+        Q3["Convergence.tla, DocumentMaterialization.tla,<br/>MixedFieldMaterialization.tla"]
+        Q4["HeadSet.tla, HeadPublication.tla"]
+        Q5["Acp.tla, DeferredAcp.tla, Auth.tla, Nac.tla,<br/>RegisterDocOnce.tla"]
+        Q6["DefaultPool.tla, CpuLedger.tla, NodeShutdown.tla"]
+        Q7["TransactionDecisions.tla, VerifiedRead.tla,<br/>StatementAtomicity.tla, EventOrder.tla, Kms.tla,<br/>RetryPreparedInputs.tla, RetryMarkerGeneration.tla,<br/>RetryPushAdmission.tla, RetryRegistrationFence.tla"]
+        Q8["IndexReconciliation.tla, TxnRegistry.tla, Claim.tla,<br/>CollectionVersionOCC.tla, SchemaPublication.tla"]
+        Q9["DagReplication.tla, Replicator.tla, SyncOwnership.tla,<br/>PushBacklog.tla, PushCoalescing.tla, PushLogAdmission.tla,<br/>GossipInbox.tla, GossipOwnership.tla, ServiceRecords.tla,<br/>ProviderLookup.tla, RootSingleFlight.tla, InboundAdmission.tla"]
+        Q10["Integrity.tla, Commits.tla, Jwt.tla, Capability.tla,<br/>GovernanceContract.tla, GovernanceMerge.tla,<br/>EncryptedLwwReplay.tla, VectorLinks.tla, EngineTickers.tla"]
+    end
+
+    M1 --> P1
+    M2 --> P2
+    M3 --> P3
+    M4 --> P4
+    M5 --> P5
+    M6 --> P6
+    M7 --> P7
+    M8 --> P8
+    M9 --> P9
+    M10 --> P10
+    D1 --> Q1
+    D2 --> Q2
+    D3 --> Q3
+    D4 --> Q4
+    D5 --> Q5
+    D6 --> Q6
+    D7 --> Q7
+    D8 --> Q8
+    D9 --> Q9
+    D10 --> Q10
+    Q1 -.->|"bound to"| P2
+
+    class M1,M2,M3,M4,M5,M6,M7,M8,M9,M10 mech
+    class P1,P2,P3,P4,P5,P6,P7,P8,P9,P10 model
+    class D1,D2,D3,D4,D5,D6,D7,D8,D9,D10 dmech
+    class Q1,Q2,Q3,Q4,Q5,Q6,Q7,Q8,Q9,Q10 dmodel

@@ -15,8 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp::nac::NodePermission;
-use defra_http::router::P2PError;
-use defra_http::P2POperations;
+use defra_p2p_adapter::P2POperations;
 
 use crate::request::Request;
 use crate::state::NODES;
@@ -32,7 +31,7 @@ const ERR_DEADLINE: &str = "context deadline exceeded";
 /// Runs the P2P operation `operation` builds for node `node_ptr`, as the
 /// identity `identity_ptr` names, admitted for `permission`; with `timeout`,
 /// it fails once that passes.
-fn run<M, Fut, T>(
+fn run<M, Fut, T, E>(
     node_ptr: usize,
     identity_ptr: usize,
     permission: NodePermission,
@@ -41,7 +40,8 @@ fn run<M, Fut, T>(
 ) -> Result<T, DefraResult>
 where
     M: FnOnce(Arc<dyn P2POperations>) -> Fut,
-    Fut: Future<Output = Result<T, P2PError>>,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
 {
     let ops =
         admit(node_ptr, identity_ptr, permission)?.ok_or_else(|| DefraResult::error(ERR_NO_P2P))?;
@@ -71,14 +71,15 @@ fn admit(
 
 /// Runs the operation `operation` builds on `ops`; with `timeout`, it fails
 /// once that passes.
-fn drive<M, Fut, T>(
+fn drive<M, Fut, T, E>(
     ops: Arc<dyn P2POperations>,
     timeout: Option<Duration>,
     operation: M,
 ) -> Result<T, DefraResult>
 where
     M: FnOnce(Arc<dyn P2POperations>) -> Fut,
-    Fut: Future<Output = Result<T, P2PError>>,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
 {
     let rt = crate::helpers::get_rt()?;
     let result = crate::helpers::block_on(rt, async {
@@ -137,7 +138,8 @@ pub use document::{
     defra_p2p_document_sync,
 };
 pub use mobile::{
-    defra_mobile_notify_network_change, defra_mobile_shareable_address, defra_mobile_sync_status,
+    defra_mobile_notify_network_change, defra_mobile_peer_details, defra_mobile_shareable_address,
+    defra_mobile_sync_status,
 };
 pub use peer::{defra_p2p_connect, defra_p2p_disconnect, defra_p2p_info, defra_p2p_peer_list};
 pub use replicator::{

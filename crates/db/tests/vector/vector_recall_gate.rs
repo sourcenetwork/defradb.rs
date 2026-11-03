@@ -67,32 +67,38 @@ async fn measure(dimensions: usize, count: usize, clusters: usize, ef: usize) ->
     }
 }
 
-#[tokio::test]
-async fn clustered_low_dimension_recall_holds() {
-    let m = measure(16, 2_000, 40, 64).await;
-    println!(
-        "clustered d=16 N=2000 ef=64: recall@10={:.4} dist/best={:.4}",
-        m.recall, m.ratio
-    );
-    assert!(m.recall >= 0.98, "recall@10 fell to {:.4}", m.recall);
-    assert!(
-        m.ratio <= 1.005,
-        "returned neighbours are {:.4}x ideal",
-        m.ratio
-    );
+#[test]
+fn clustered_low_dimension_recall_holds() {
+    workers::block_on(async {
+        let m = measure(16, 2_000, 40, 64).await;
+        println!(
+            "clustered d=16 N=2000 ef=64: recall@10={:.4} dist/best={:.4}",
+            m.recall, m.ratio
+        );
+        assert!(m.recall >= 0.98, "recall@10 fell to {:.4}", m.recall);
+        assert!(
+            m.ratio <= 1.005,
+            "returned neighbours are {:.4}x ideal",
+            m.ratio
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn clustered_high_dimension_recall_holds() {
-    let m = measure(128, 2_000, 40, 64).await;
-    println!(
-        "clustered d=128 N=2000 ef=64: recall@10={:.4} dist/best={:.4}",
-        m.recall, m.ratio
-    );
-    assert!(m.recall >= 0.95, "recall@10 fell to {:.4}", m.recall);
-    assert!(
-        m.ratio <= 1.005,
-        "returned neighbours are {:.4}x ideal",
-        m.ratio
-    );
+#[test]
+fn clustered_high_dimension_recall_holds() {
+    workers::block_on(async {
+        let m = measure(128, 2_000, 40, 64).await;
+        println!(
+            "clustered d=128 N=2000 ef=64: recall@10={:.4} dist/best={:.4}",
+            m.recall, m.ratio
+        );
+        assert!(m.recall >= 0.95, "recall@10 fell to {:.4}", m.recall);
+        assert!(
+            m.ratio <= 1.005,
+            "returned neighbours are {:.4}x ideal",
+            m.ratio
+        );
+    })
+    .unwrap()
 }

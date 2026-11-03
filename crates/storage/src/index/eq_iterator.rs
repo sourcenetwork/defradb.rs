@@ -220,158 +220,174 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_exact_match_simple_single_result() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+    #[test]
+    fn test_exact_match_simple_single_result() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let desc = test_index_description(false);
-        let index = SimpleIndex::new(1, desc.clone());
+            let desc = test_index_description(false);
+            let index = SimpleIndex::new(1, desc.clone());
 
-        index
-            .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_simple(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
             .await
             .unwrap();
-        txn.commit().await.unwrap();
 
-        let txn = store.new_txn(true).await.unwrap();
-        let mut iter = ExactMatchIterator::new_simple(
-            txn.as_ref(),
-            1,
-            &desc,
-            &[NormalValue::String("alice".to_string())],
-        )
-        .await
-        .unwrap();
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.doc_short_id, 1);
 
-        let entry = iter.next().await.unwrap();
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.doc_short_id, 1);
-
-        let entry = iter.next().await.unwrap();
-        assert!(entry.is_none());
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_exact_match_simple_multiple_results() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+    #[test]
+    fn test_exact_match_simple_multiple_results() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let desc = test_index_description(false);
-        let index = SimpleIndex::new(1, desc.clone());
+            let desc = test_index_description(false);
+            let index = SimpleIndex::new(1, desc.clone());
 
-        // Same value, multiple documents
-        index
-            .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+            // Same value, multiple documents
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            index
+                .save(&mut txn, 2, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            index
+                .save(&mut txn, 3, &[NormalValue::String("bob".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_simple(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
             .await
             .unwrap();
-        index
-            .save(&mut txn, 2, &[NormalValue::String("alice".to_string())])
-            .await
-            .unwrap();
-        index
-            .save(&mut txn, 3, &[NormalValue::String("bob".to_string())])
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
 
-        let txn = store.new_txn(true).await.unwrap();
-        let mut iter = ExactMatchIterator::new_simple(
-            txn.as_ref(),
-            1,
-            &desc,
-            &[NormalValue::String("alice".to_string())],
-        )
-        .await
-        .unwrap();
-
-        let entries = iter.collect_all().await.unwrap();
-        assert_eq!(entries.len(), 2);
-        assert!(entries.iter().any(|e| e.doc_short_id == 1));
-        assert!(entries.iter().any(|e| e.doc_short_id == 2));
+            let entries = iter.collect_all().await.unwrap();
+            assert_eq!(entries.len(), 2);
+            assert!(entries.iter().any(|e| e.doc_short_id == 1));
+            assert!(entries.iter().any(|e| e.doc_short_id == 2));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_exact_match_unique_single_result() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+    #[test]
+    fn test_exact_match_unique_single_result() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let desc = test_index_description(true);
-        let index = UniqueIndex::new(1, desc.clone());
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
 
-        index
-            .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_unique(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("alice".to_string())],
+            )
             .await
             .unwrap();
-        txn.commit().await.unwrap();
 
-        let txn = store.new_txn(true).await.unwrap();
-        let mut iter = ExactMatchIterator::new_unique(
-            txn.as_ref(),
-            1,
-            &desc,
-            &[NormalValue::String("alice".to_string())],
-        )
-        .await
-        .unwrap();
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_some());
+            let entry = entry.unwrap();
+            assert_eq!(entry.doc_short_id, 1);
 
-        let entry = iter.next().await.unwrap();
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-        assert_eq!(entry.doc_short_id, 1);
-
-        let entry = iter.next().await.unwrap();
-        assert!(entry.is_none());
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_exact_match_unique_not_found() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+    #[test]
+    fn test_exact_match_unique_not_found() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let desc = test_index_description(true);
-        let index = UniqueIndex::new(1, desc.clone());
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
 
-        index
-            .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+            index
+                .save(&mut txn, 1, &[NormalValue::String("alice".to_string())])
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter = ExactMatchIterator::new_unique(
+                txn.as_ref(),
+                1,
+                &desc,
+                &[NormalValue::String("bob".to_string())],
+            )
             .await
             .unwrap();
-        txn.commit().await.unwrap();
 
-        let txn = store.new_txn(true).await.unwrap();
-        let mut iter = ExactMatchIterator::new_unique(
-            txn.as_ref(),
-            1,
-            &desc,
-            &[NormalValue::String("bob".to_string())],
-        )
-        .await
-        .unwrap();
-
-        let entry = iter.next().await.unwrap();
-        assert!(entry.is_none());
+            let entry = iter.next().await.unwrap();
+            assert!(entry.is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_exact_match_unique_null_multiple() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+    #[test]
+    fn test_exact_match_unique_null_multiple() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let desc = test_index_description(true);
-        let index = UniqueIndex::new(1, desc.clone());
+            let desc = test_index_description(true);
+            let index = UniqueIndex::new(1, desc.clone());
 
-        // Multiple documents with NULL - allowed for unique index
-        index.save(&mut txn, 1, &[NormalValue::Null]).await.unwrap();
-        index.save(&mut txn, 2, &[NormalValue::Null]).await.unwrap();
-        txn.commit().await.unwrap();
+            // Multiple documents with NULL - allowed for unique index
+            index.save(&mut txn, 1, &[NormalValue::Null]).await.unwrap();
+            index.save(&mut txn, 2, &[NormalValue::Null]).await.unwrap();
+            txn.commit().await.unwrap();
 
-        let txn = store.new_txn(true).await.unwrap();
-        let mut iter = ExactMatchIterator::new_unique(txn.as_ref(), 1, &desc, &[NormalValue::Null])
-            .await
-            .unwrap();
+            let txn = store.new_txn(true).await.unwrap();
+            let mut iter =
+                ExactMatchIterator::new_unique(txn.as_ref(), 1, &desc, &[NormalValue::Null])
+                    .await
+                    .unwrap();
 
-        let entries = iter.collect_all().await.unwrap();
-        assert_eq!(entries.len(), 2);
+            let entries = iter.collect_all().await.unwrap();
+            assert_eq!(entries.len(), 2);
+        })
+        .unwrap()
     }
 }

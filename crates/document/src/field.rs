@@ -28,36 +28,6 @@ impl Field {
         Ok(Self { name, crdt_type })
     }
 
-    /// Create a new field with LWW Register CRDT type (default).
-    ///
-    /// Returns an error if the name is empty.
-    pub fn lww(name: impl Into<String>) -> Result<Self> {
-        Self::new(name, CType::LwwRegister)
-    }
-
-    /// Create a new counter field (PnCounter).
-    ///
-    /// Returns an error if the name is empty.
-    pub fn counter(name: impl Into<String>) -> Result<Self> {
-        Self::new(name, CType::PnCounter)
-    }
-
-    /// Create a field without validation.
-    ///
-    /// This is for internal use where the field name is known to be valid.
-    pub(crate) fn new_unchecked(name: impl Into<String>, crdt_type: CType) -> Self {
-        let name = name.into();
-        debug_assert!(!name.is_empty(), "field name cannot be empty");
-        Self { name, crdt_type }
-    }
-
-    /// Create a LWW field without validation.
-    ///
-    /// This is for internal use where the field name is known to be valid.
-    pub(crate) fn lww_unchecked(name: impl Into<String>) -> Self {
-        Self::new_unchecked(name, CType::LwwRegister)
-    }
-
     /// Get the field name.
     pub fn name(&self) -> &str {
         &self.name

@@ -15,8 +15,8 @@ use n0_future::task::JoinHandle;
 use super::protocols;
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{
-    BranchableSyncReply, DocSyncReply, ManageMutateOp, ManageQueryOp, ManageQueryRequest,
-    ManageRequest, PushSEArtifactsRequest,
+    ManageMutateOp, ManageQueryOp, ManageQueryRequest, ManageReply, ManageRequest,
+    PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
 };
 use crate::transport::{P2PTransport, PeerAddr, PeerId};
 
@@ -26,6 +26,7 @@ use crate::transport::{P2PTransport, PeerAddr, PeerId};
 struct ObservedLog {
     connections: AtomicUsize,
     tags: SegQueue<Vec<u8>>,
+    tag_read: tokio::sync::Notify,
 }
 
 /// The log drained once for assertions.
@@ -55,6 +56,21 @@ struct BarePeer {
 }
 
 impl BarePeer {
+    /// Waits until `count` streams have been read, since a request returns
+    /// once it is written, before the peer reads it.
+    async fn wait_for_streams(&self, count: usize) {
+        loop {
+            let tag_read = self.observed.tag_read.notified();
+            let read = self.observed.tags.len();
+            if read >= count {
+                return;
+            }
+            n0_future::time::timeout(Duration::from_secs(5), tag_read)
+                .await
+                .unwrap_or_else(|_| panic!("bare peer read {read} of {count} streams"));
+        }
+    }
+
     fn observed(&self) -> Observed {
         let mut tags = Vec::new();
         while let Some(tag) = self.observed.tags.pop() {
@@ -103,7 +119,13 @@ async fn spawn_bare_peer() -> BarePeer {
                 n0_future::task::spawn(async move {
                     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                         match protocols::read_stream_tag(&mut recv).await {
-                            Ok(tag) => observed.tags.push(tag),
+                            // The node asks every new peer for its service
+                            // record on its own; that is not a send under test.
+                            Ok(tag) if tag == protocols::STREAM_SERVICE_RECORDS => {}
+                            Ok(tag) => {
+                                observed.tags.push(tag);
+                                observed.tag_read.notify_waiters();
+                            }
                             Err(_) => break,
                         }
                         let _ = send.finish();
@@ -121,7 +143,7 @@ async fn spawn_bare_peer() -> BarePeer {
     }
 }
 
-async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
+pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
     let secret_key = SecretKey::generate();
     let config = IrohEndpointConfig {
         secret_key: secret_key.clone(),
@@ -131,7 +153,6 @@ async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
         bind_port: None,
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         max_concurrent_multipath_paths: None,
-        gossip_heal: Default::default(),
         allowlist: Default::default(),
     };
     let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
@@ -142,20 +163,24 @@ async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
 /// on a different stream tag.
 async fn drive_six_protocols(transport: &IrohTransport, peer: &PeerId) {
     transport
-        .send_doc_sync_response(peer, DocSyncReply::success("doc-sync", Vec::new()))
-        .await
-        .expect("doc sync response");
-    transport
-        .send_branchable_sync_response(
+        .send_se_query_request(
             peer,
-            BranchableSyncReply::success("branchable", "collection1", Vec::new()),
+            QuerySEArtifactsRequest::new("collection1", Vec::new()),
         )
         .await
-        .expect("branchable sync response");
+        .expect("se query request");
     transport
-        .send_car_response(peer, vec![1, 2, 3])
+        .send_se_query_response(
+            peer,
+            None,
+            QuerySEArtifactsReply::success("se-query", Vec::new()),
+        )
         .await
-        .expect("car response");
+        .expect("se query response");
+    transport
+        .send_manage_response(peer, None, ManageReply::success("manage"))
+        .await
+        .expect("manage response");
     transport
         .send_se_artifacts(peer, PushSEArtifactsRequest::new("collection1", Vec::new()))
         .await
@@ -194,6 +219,7 @@ async fn six_protocols_share_one_connection() {
         .expect("dial bare peer");
 
     drive_six_protocols(&transport, &peer.peer_id).await;
+    peer.wait_for_streams(6).await;
 
     let observed = peer.observed();
     assert_eq!(
@@ -228,9 +254,12 @@ async fn repeated_sends_do_not_redial() {
 
     for _ in 0..5 {
         transport
-            .send_car_response(&peer.peer_id, vec![7])
+            .send_se_artifacts(
+                &peer.peer_id,
+                PushSEArtifactsRequest::new("collection1", Vec::new()),
+            )
             .await
-            .expect("car response");
+            .expect("se artifacts");
     }
 
     let observed = peer.observed();
@@ -258,9 +287,12 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
         .expect("dial bare peer");
 
     transport
-        .send_car_response(&peer.peer_id, vec![1])
+        .send_se_artifacts(
+            &peer.peer_id,
+            PushSEArtifactsRequest::new("collection1", Vec::new()),
+        )
         .await
-        .expect("car response before");
+        .expect("se artifacts before");
 
     // A CAR *request* expects bytes back; the bare peer never sends any, so this
     // stream fails on read. The connection itself stays healthy.
@@ -271,9 +303,12 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
     .await;
 
     transport
-        .send_car_response(&peer.peer_id, vec![2])
+        .send_se_artifacts(
+            &peer.peer_id,
+            PushSEArtifactsRequest::new("collection1", Vec::new()),
+        )
         .await
-        .expect("car response after");
+        .expect("se artifacts after");
 
     let observed = peer.observed();
     assert_eq!(

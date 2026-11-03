@@ -199,7 +199,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let io = retry
             .begin_attempt_io()
             .map_err(|error| crate::error::commit_query_error(error.into()))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
         let txn = self.db.new_db_txn(basic_txn);
         let collection = txn
             .load_collection_for_write_attempt(&attempt.collection_name, &attempt.collection)
@@ -244,6 +244,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     "failed to create index manager: {error}"
                 ))
             })?;
+            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
             let existed = collection
                 .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
                 .await
@@ -427,7 +428,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let io = retry
             .begin_attempt_io()
             .map_err(|error| crate::error::commit_query_error(error.into()))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
         let txn = self.db.new_db_txn(basic_txn);
         let collection = txn
             .load_collection_for_write_attempt(&attempt.collection_name, &attempt.collection)
@@ -463,6 +464,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .map_err(|e| {
                 query::error::QueryError::execution(format!("failed to create index manager: {e}"))
             })?;
+            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
             let mut results = Vec::with_capacity(attempt.doc_ids.len());
             for requested_id in &attempt.doc_ids {
                 let Some((doc_short_id, canonical_id)) = collection

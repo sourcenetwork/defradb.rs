@@ -66,6 +66,7 @@
 /// ```
 pub mod callbacks;
 pub mod errors;
+mod io_failure;
 pub mod iterator;
 pub mod retry;
 pub mod traits;
@@ -79,6 +80,7 @@ pub use callbacks::{
     TxnCallback, TxnCallbacks,
 };
 pub use errors::{Error, Result, TransactionConflict, UNIQUE_CONSTRAINT_VIOLATION_MESSAGE};
+pub use io_failure::IoFailure;
 pub use iterator::{Iterator, KvPair};
 pub use retry::policy::{engine_retry_options, DEFAULT_MAX_TXN_RETRIES};
 pub use retry::{

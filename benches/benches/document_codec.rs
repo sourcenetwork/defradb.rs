@@ -39,12 +39,26 @@ fn value_kinds() -> Vec<(&'static str, NormalValue)> {
     ]
 }
 
+fn wide_collection(width: usize) -> schema::CollectionVersion {
+    let fields = (0..width)
+        .map(|index| {
+            schema::FieldDescription::new(
+                (index + 1).to_string(),
+                format!("field_{index}"),
+                schema::FieldKind::Scalar(schema::ScalarKind::None),
+                schema::CType::LwwRegister,
+            )
+        })
+        .collect();
+    schema::CollectionVersion::new("Bench", "bafkcodec", "col-codec", fields)
+}
+
 fn wide_document(width: usize) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(wide_collection(width));
     let kinds = value_kinds();
     for index in 0..width {
         let (_, value) = &kinds[index % kinds.len()];
-        doc.set(format!("field_{index}"), value.clone());
+        doc.set(format!("field_{index}"), value.clone()).unwrap();
     }
     doc
 }
@@ -61,7 +75,10 @@ fn json_round_trip(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("from_json", width), &json, |b, json| {
             b.iter(|| {
-                black_box(Document::from_json(black_box(json)).expect("the document to parse"))
+                black_box(
+                    Document::from_json(black_box(json), wide_collection(width))
+                        .expect("the document to parse"),
+                )
             })
         });
     }

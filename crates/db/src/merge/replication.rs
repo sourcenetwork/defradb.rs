@@ -62,7 +62,20 @@ pub fn create_merge_handler<S: Store, B: Blockstore + defra_core::thread_bounds:
     db: Arc<DB<S>>,
     blockstore: Arc<B>,
 ) -> DbMergeHandler<S, B> {
-    DbMergeHandler::new(db, blockstore)
+    create_merge_handler_with_max_merge_depth(db, blockstore, crate::merge::DEFAULT_MAX_MERGE_DEPTH)
+}
+
+/// A replication delivery hands partial history back to the continuation scheduler.
+pub fn create_merge_handler_with_max_merge_depth<
+    S: Store,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync,
+>(
+    db: Arc<DB<S>>,
+    blockstore: Arc<B>,
+    max_merge_depth: usize,
+) -> DbMergeHandler<S, B> {
+    DbMergeHandler::new_with_max_merge_depth(db, blockstore, max_merge_depth)
+        .with_single_history_turn()
 }
 
 pub fn create_acp_merge_handler<
@@ -108,7 +121,7 @@ pub fn create_replication_stack_with_max_merge_depth<
     sync: Arc<SyncCoordinator<B, T>>,
     max_merge_depth: usize,
 ) -> ReplicationStack<S, B, T> {
-    let merge_handler_inner = Arc::new(DbMergeHandler::new_with_max_merge_depth(
+    let merge_handler_inner = Arc::new(create_merge_handler_with_max_merge_depth(
         db.clone(),
         blockstore,
         max_merge_depth,

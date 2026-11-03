@@ -21,128 +21,137 @@ fn test_did2() -> Did {
 // =============================================================================
 
 /// Test complex nested expression: ((a + b) - c) & d
-#[tokio::test]
-async fn test_complex_nested_expression() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_complex_nested_expression() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // final = ((group_a + group_b) - blocked) & approved
-    let policy = Policy::new("policy1", "Complex Expression").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("group_a"))
-            .with_relation(Relation::direct("group_b"))
-            .with_relation(Relation::direct("blocked"))
-            .with_relation(Relation::direct("approved"))
-            .with_relation(Relation::computed(
-                "final",
-                RelationExpression::intersection(vec![
-                    RelationExpression::difference(
-                        RelationExpression::union(vec![
-                            RelationExpression::computed_userset("group_a"),
-                            RelationExpression::computed_userset("group_b"),
-                        ]),
-                        RelationExpression::computed_userset("blocked"),
-                    ),
-                    RelationExpression::computed_userset("approved"),
-                ]),
-            )),
-    );
+        // final = ((group_a + group_b) - blocked) & approved
+        let policy = Policy::new("policy1", "Complex Expression").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("group_a"))
+                .with_relation(Relation::direct("group_b"))
+                .with_relation(Relation::direct("blocked"))
+                .with_relation(Relation::direct("approved"))
+                .with_relation(Relation::computed(
+                    "final",
+                    RelationExpression::intersection(vec![
+                        RelationExpression::difference(
+                            RelationExpression::union(vec![
+                                RelationExpression::computed_userset("group_a"),
+                                RelationExpression::computed_userset("group_b"),
+                            ]),
+                            RelationExpression::computed_userset("blocked"),
+                        ),
+                        RelationExpression::computed_userset("approved"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let user = test_did();
+        let user = test_did();
 
-    // User in group_a and approved -> should have access
-    let rel = Relationship::with_entity("document", "doc1", "group_a", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
-    let rel = Relationship::with_entity("document", "doc1", "approved", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // User in group_a and approved -> should have access
+        let rel = Relationship::with_entity("document", "doc1", "group_a", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
+        let rel = Relationship::with_entity("document", "doc1", "approved", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(engine
-        .check("policy1", "document", "doc1", "final", &user)
-        .await
-        .unwrap());
+        assert!(engine
+            .check("policy1", "document", "doc1", "final", &user)
+            .await
+            .unwrap());
 
-    // Block user -> should lose access
-    let rel = Relationship::with_entity("document", "doc1", "blocked", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Block user -> should lose access
+        let rel = Relationship::with_entity("document", "doc1", "blocked", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    assert!(!engine
-        .check("policy1", "document", "doc1", "final", &user)
-        .await
-        .unwrap());
+        assert!(!engine
+            .check("policy1", "document", "doc1", "final", &user)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 /// Test union short-circuit behavior.
-#[tokio::test]
-async fn test_union_short_circuit() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_union_short_circuit() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // viewer = fast_check + slow_check
-    // If fast_check succeeds, slow_check shouldn't matter
-    let policy = Policy::new("policy1", "Short Circuit").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("fast_check"))
-            .with_relation(Relation::direct("slow_check"))
-            .with_relation(Relation::computed(
-                "viewer",
-                RelationExpression::union(vec![
-                    RelationExpression::computed_userset("fast_check"),
-                    RelationExpression::computed_userset("slow_check"),
-                ]),
-            )),
-    );
+        // viewer = fast_check + slow_check
+        // If fast_check succeeds, slow_check shouldn't matter
+        let policy = Policy::new("policy1", "Short Circuit").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("fast_check"))
+                .with_relation(Relation::direct("slow_check"))
+                .with_relation(Relation::computed(
+                    "viewer",
+                    RelationExpression::union(vec![
+                        RelationExpression::computed_userset("fast_check"),
+                        RelationExpression::computed_userset("slow_check"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let user = test_did();
+        let user = test_did();
 
-    // Only set fast_check
-    let rel = Relationship::with_entity("document", "doc1", "fast_check", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Only set fast_check
+        let rel = Relationship::with_entity("document", "doc1", "fast_check", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Should succeed via fast_check
-    assert!(engine
-        .check("policy1", "document", "doc1", "viewer", &user)
-        .await
-        .unwrap());
+        // Should succeed via fast_check
+        assert!(engine
+            .check("policy1", "document", "doc1", "viewer", &user)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 /// Test intersection short-circuit behavior.
-#[tokio::test]
-async fn test_intersection_short_circuit() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_intersection_short_circuit() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // viewer = required1 & required2
-    // If required1 fails, required2 shouldn't matter
-    let policy = Policy::new("policy1", "Intersection Short Circuit").with_resource(
-        Resource::new("document")
-            .with_relation(Relation::direct("required1"))
-            .with_relation(Relation::direct("required2"))
-            .with_relation(Relation::computed(
-                "viewer",
-                RelationExpression::intersection(vec![
-                    RelationExpression::computed_userset("required1"),
-                    RelationExpression::computed_userset("required2"),
-                ]),
-            )),
-    );
+        // viewer = required1 & required2
+        // If required1 fails, required2 shouldn't matter
+        let policy = Policy::new("policy1", "Intersection Short Circuit").with_resource(
+            Resource::new("document")
+                .with_relation(Relation::direct("required1"))
+                .with_relation(Relation::direct("required2"))
+                .with_relation(Relation::computed(
+                    "viewer",
+                    RelationExpression::intersection(vec![
+                        RelationExpression::computed_userset("required1"),
+                        RelationExpression::computed_userset("required2"),
+                    ]),
+                )),
+        );
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let user = test_did();
+        let user = test_did();
 
-    // Only set required2 (required1 missing)
-    let rel = Relationship::with_entity("document", "doc1", "required2", user.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // Only set required2 (required1 missing)
+        let rel = Relationship::with_entity("document", "doc1", "required2", user.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Should fail because required1 is missing
-    assert!(!engine
-        .check("policy1", "document", "doc1", "viewer", &user)
-        .await
-        .unwrap());
+        // Should fail because required1 is missing
+        assert!(!engine
+            .check("policy1", "document", "doc1", "viewer", &user)
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 // =============================================================================
@@ -215,151 +224,160 @@ fn test_policy_validation_valid() {
 /// - TTU rule: file.reader = parent->owner
 /// - EntitySet subject: folder:folder1#viewer (relation=viewer, NOT owner)
 /// - Expected: Check folder1's owner relation (computed_relation), not viewer
-#[tokio::test]
-async fn test_ttu_computed_relation_differs_from_entityset() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_ttu_computed_relation_differs_from_entityset() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // file.reader = parent->owner (computed_relation = "owner")
-    // folder has both owner and viewer relations
-    let policy = Policy::new("policy1", "TTU Relation Test")
-        .with_resource(
-            Resource::new("file")
-                .with_relation(Relation::direct("parent"))
-                .with_relation(Relation::computed(
-                    "reader",
-                    RelationExpression::tuple_to_userset("parent", "owner"),
-                )),
-        )
-        .with_resource(
-            Resource::new("folder")
-                .with_relation(Relation::direct("owner"))
-                .with_relation(Relation::direct("viewer")),
+        // file.reader = parent->owner (computed_relation = "owner")
+        // folder has both owner and viewer relations
+        let policy = Policy::new("policy1", "TTU Relation Test")
+            .with_resource(
+                Resource::new("file")
+                    .with_relation(Relation::direct("parent"))
+                    .with_relation(Relation::computed(
+                        "reader",
+                        RelationExpression::tuple_to_userset("parent", "owner"),
+                    )),
+            )
+            .with_resource(
+                Resource::new("folder")
+                    .with_relation(Relation::direct("owner"))
+                    .with_relation(Relation::direct("viewer")),
+            );
+
+        engine.add_policy(&policy);
+
+        let folder_owner = test_did();
+        let folder_viewer = test_did2();
+
+        // folder1 has owner
+        let rel = Relationship::with_entity("folder", "folder1", "owner", folder_owner.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
+
+        // folder1 has viewer (different user)
+        let rel = Relationship::with_entity("folder", "folder1", "viewer", folder_viewer.clone());
+        store.store_relationship("policy1", &rel).await.unwrap();
+
+        // File has parent pointing to folder1 with relation="viewer"
+        // Note: The EntitySet has relation="viewer" but TTU says computed_relation="owner"
+        let rel = Relationship::new(
+            "file",
+            "file1",
+            "parent",
+            Subject::entity_set("folder", "folder1", "viewer"),
+        );
+        store.store_relationship("policy1", &rel).await.unwrap();
+
+        // folder_owner should be able to read (TTU checks owner relation on folder1)
+        let result = engine
+            .check("policy1", "file", "file1", "reader", &folder_owner)
+            .await
+            .unwrap();
+        assert!(
+            result,
+            "folder owner should read file (TTU uses computed_relation='owner')"
         );
 
-    engine.add_policy(&policy);
-
-    let folder_owner = test_did();
-    let folder_viewer = test_did2();
-
-    // folder1 has owner
-    let rel = Relationship::with_entity("folder", "folder1", "owner", folder_owner.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
-
-    // folder1 has viewer (different user)
-    let rel = Relationship::with_entity("folder", "folder1", "viewer", folder_viewer.clone());
-    store.store_relationship("policy1", &rel).await.unwrap();
-
-    // File has parent pointing to folder1 with relation="viewer"
-    // Note: The EntitySet has relation="viewer" but TTU says computed_relation="owner"
-    let rel = Relationship::new(
-        "file",
-        "file1",
-        "parent",
-        Subject::entity_set("folder", "folder1", "viewer"),
-    );
-    store.store_relationship("policy1", &rel).await.unwrap();
-
-    // folder_owner should be able to read (TTU checks owner relation on folder1)
-    let result = engine
-        .check("policy1", "file", "file1", "reader", &folder_owner)
-        .await
-        .unwrap();
-    assert!(
-        result,
-        "folder owner should read file (TTU uses computed_relation='owner')"
-    );
-
-    // folder_viewer should NOT be able to read (TTU checks owner, not viewer)
-    let result = engine
-        .check("policy1", "file", "file1", "reader", &folder_viewer)
-        .await
-        .unwrap();
-    assert!(
-        !result,
-        "folder viewer should NOT read file (TTU uses owner, not viewer)"
-    );
+        // folder_viewer should NOT be able to read (TTU checks owner, not viewer)
+        let result = engine
+            .check("policy1", "file", "file1", "reader", &folder_viewer)
+            .await
+            .unwrap();
+        assert!(
+            !result,
+            "folder viewer should NOT read file (TTU uses owner, not viewer)"
+        );
+    })
+    .unwrap()
 }
 
 /// Test TTU with wildcard on the tuple_relation grants access.
 /// When the tuple_relation has a wildcard subject, TTU should grant access
 /// because anyone matches the wildcard.
-#[tokio::test]
-async fn test_ttu_with_wildcard_on_tuple_relation() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_ttu_with_wildcard_on_tuple_relation() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // file.reader = parent->viewer
-    let policy = Policy::new("policy1", "TTU Wildcard Test")
-        .with_resource(
-            Resource::new("file")
-                .with_relation(Relation::direct("parent"))
-                .with_relation(Relation::computed(
-                    "reader",
-                    RelationExpression::tuple_to_userset("parent", "viewer"),
-                )),
-        )
-        .with_resource(Resource::new("folder").with_relation(Relation::direct("viewer")));
+        // file.reader = parent->viewer
+        let policy = Policy::new("policy1", "TTU Wildcard Test")
+            .with_resource(
+                Resource::new("file")
+                    .with_relation(Relation::direct("parent"))
+                    .with_relation(Relation::computed(
+                        "reader",
+                        RelationExpression::tuple_to_userset("parent", "viewer"),
+                    )),
+            )
+            .with_resource(Resource::new("folder").with_relation(Relation::direct("viewer")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let any_user = test_did();
+        let any_user = test_did();
 
-    // File has a wildcard parent (means everyone is a parent)
-    let rel = Relationship::new("file", "public_file", "parent", Subject::Wildcard);
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // File has a wildcard parent (means everyone is a parent)
+        let rel = Relationship::new("file", "public_file", "parent", Subject::Wildcard);
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Any user should be able to read (wildcard on tuple_relation)
-    let result = engine
-        .check("policy1", "file", "public_file", "reader", &any_user)
-        .await
-        .unwrap();
-    assert!(
-        result,
-        "Wildcard on tuple_relation should grant access via TTU"
-    );
+        // Any user should be able to read (wildcard on tuple_relation)
+        let result = engine
+            .check("policy1", "file", "public_file", "reader", &any_user)
+            .await
+            .unwrap();
+        assert!(
+            result,
+            "Wildcard on tuple_relation should grant access via TTU"
+        );
+    })
+    .unwrap()
 }
 
 /// Test TTU with typed wildcard on the tuple_relation grants access.
-#[tokio::test]
-async fn test_ttu_with_typed_wildcard_on_tuple_relation() {
-    let store = Arc::new(MemoryZanzibarStore::new());
-    let mut engine = PermissionEngine::new(store.clone());
+#[test]
+fn test_ttu_with_typed_wildcard_on_tuple_relation() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let mut engine = PermissionEngine::new(store.clone());
 
-    // file.reader = parent->viewer
-    let policy = Policy::new("policy1", "TTU Typed Wildcard Test")
-        .with_resource(
-            Resource::new("file")
-                .with_relation(Relation::direct("parent"))
-                .with_relation(Relation::computed(
-                    "reader",
-                    RelationExpression::tuple_to_userset("parent", "viewer"),
-                )),
-        )
-        .with_resource(Resource::new("folder").with_relation(Relation::direct("viewer")));
+        // file.reader = parent->viewer
+        let policy = Policy::new("policy1", "TTU Typed Wildcard Test")
+            .with_resource(
+                Resource::new("file")
+                    .with_relation(Relation::direct("parent"))
+                    .with_relation(Relation::computed(
+                        "reader",
+                        RelationExpression::tuple_to_userset("parent", "viewer"),
+                    )),
+            )
+            .with_resource(Resource::new("folder").with_relation(Relation::direct("viewer")));
 
-    engine.add_policy(&policy);
+        engine.add_policy(&policy);
 
-    let any_user = test_did();
+        let any_user = test_did();
 
-    // File has a typed wildcard parent (folder:*)
-    let rel = Relationship::new(
-        "file",
-        "public_file",
-        "parent",
-        Subject::typed_wildcard("folder"),
-    );
-    store.store_relationship("policy1", &rel).await.unwrap();
+        // File has a typed wildcard parent (folder:*)
+        let rel = Relationship::new(
+            "file",
+            "public_file",
+            "parent",
+            Subject::typed_wildcard("folder"),
+        );
+        store.store_relationship("policy1", &rel).await.unwrap();
 
-    // Any user should be able to read (typed wildcard on tuple_relation)
-    let result = engine
-        .check("policy1", "file", "public_file", "reader", &any_user)
-        .await
-        .unwrap();
-    assert!(
-        result,
-        "Typed wildcard on tuple_relation should grant access via TTU"
-    );
+        // Any user should be able to read (typed wildcard on tuple_relation)
+        let result = engine
+            .check("policy1", "file", "public_file", "reader", &any_user)
+            .await
+            .unwrap();
+        assert!(
+            result,
+            "Typed wildcard on tuple_relation should grant access via TTU"
+        );
+    })
+    .unwrap()
 }
 
 // =============================================================================

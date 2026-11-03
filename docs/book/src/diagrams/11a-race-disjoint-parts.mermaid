@@ -1,0 +1,16 @@
+sequenceDiagram
+    autonumber
+    participant W1 as worker 1: update title of doc d
+    participant W2 as worker 2: update status of doc d
+    participant R as regolith
+
+    W1->>R: get_parts(d, filter and title parts)
+    W2->>R: get_parts(d, filter and status parts)
+    W1->>R: merge(d, operand touching title)
+    W2->>R: merge(d, operand touching status)
+    W1->>R: commit
+    R-->>W1: committed
+    W2->>R: commit
+    Note over R: the newer operand touches title, not status: the projected read is still current
+    R-->>W2: committed
+    Note over W1,W2: both commit, the document holds both changes, no conflict and no lock

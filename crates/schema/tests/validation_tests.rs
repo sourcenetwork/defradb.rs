@@ -21,16 +21,25 @@ fn user_collection() -> CollectionVersion {
         "v1",
         "coll-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
 
 fn post_collection_with_author(is_primary: bool) -> CollectionVersion {
-    let mut author_field =
-        FieldDescription::new("1", "author", FieldKind::relation("users", false))
-            .with_relation_name("user_posts");
+    let mut author_field = FieldDescription::new(
+        "1",
+        "author",
+        FieldKind::relation("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts");
 
     if is_primary {
         author_field = author_field.as_primary();
@@ -41,15 +50,25 @@ fn post_collection_with_author(is_primary: bool) -> CollectionVersion {
         "v1",
         "coll-posts",
         vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new(
+                "0",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
             author_field,
         ],
     )
 }
 
 fn user_collection_with_posts(is_primary: bool) -> CollectionVersion {
-    let mut posts_field = FieldDescription::new("3", "posts", FieldKind::relation("posts", true))
-        .with_relation_name("user_posts");
+    let mut posts_field = FieldDescription::new(
+        "3",
+        "posts",
+        FieldKind::relation("posts", true),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts");
 
     if is_primary {
         posts_field = posts_field.as_primary();
@@ -60,8 +79,13 @@ fn user_collection_with_posts(is_primary: bool) -> CollectionVersion {
         "v1",
         "coll-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             posts_field,
         ],
     )
@@ -187,9 +211,14 @@ fn test_single_sided_relation_no_primary_check() {
 
 #[test]
 fn new_relation_can_target_an_existing_collection() {
-    let author = FieldDescription::new("3", "author", FieldKind::named("users", false))
-        .with_relation_name("user_posts")
-        .as_primary();
+    let author = FieldDescription::new(
+        "3",
+        "author",
+        FieldKind::named("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts")
+    .as_primary();
     let posts = CollectionVersion::new("posts", "v-posts", "coll-posts", vec![author]);
 
     schema::definition_validation::validate_new_collections_with_existing(
@@ -201,9 +230,14 @@ fn new_relation_can_target_an_existing_collection() {
 
 #[test]
 fn new_relation_must_target_a_known_collection() {
-    let author = FieldDescription::new("3", "author", FieldKind::named("missing", true))
-        .with_relation_name("user_posts")
-        .as_primary();
+    let author = FieldDescription::new(
+        "3",
+        "author",
+        FieldKind::named("missing", true),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts")
+    .as_primary();
     let posts = CollectionVersion::new("posts", "v-posts", "coll-posts", vec![author]);
 
     let error =
@@ -215,8 +249,13 @@ fn new_relation_must_target_a_known_collection() {
 
 #[test]
 fn secondary_relation_requires_a_primary_counterpart() {
-    let author = FieldDescription::new("3", "author", FieldKind::named("users", false))
-        .with_relation_name("user_posts");
+    let author = FieldDescription::new(
+        "3",
+        "author",
+        FieldKind::named("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts");
     let posts = CollectionVersion::new("posts", "v-posts", "coll-posts", vec![author]);
 
     let error = schema::definition_validation::validate_new_collections_with_existing(
@@ -230,13 +269,23 @@ fn secondary_relation_requires_a_primary_counterpart() {
 
 #[test]
 fn paired_relation_cannot_have_two_primary_fields() {
-    let posts_field = FieldDescription::new("3", "posts", FieldKind::named("posts", true))
-        .with_relation_name("user_posts")
-        .as_primary();
+    let posts_field = FieldDescription::new(
+        "3",
+        "posts",
+        FieldKind::named("posts", true),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts")
+    .as_primary();
     let users = CollectionVersion::new("users", "v-users", "coll-users", vec![posts_field]);
-    let author = FieldDescription::new("3", "author", FieldKind::named("users", false))
-        .with_relation_name("user_posts")
-        .as_primary();
+    let author = FieldDescription::new(
+        "3",
+        "author",
+        FieldKind::named("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_posts")
+    .as_primary();
     let posts = CollectionVersion::new("posts", "v-posts", "coll-posts", vec![author]);
 
     let error =
@@ -248,9 +297,14 @@ fn paired_relation_cannot_have_two_primary_fields() {
 
 #[test]
 fn self_relation_must_use_self_kind() {
-    let manager = FieldDescription::new("3", "manager", FieldKind::named("users", false))
-        .with_relation_name("user_manager")
-        .as_primary();
+    let manager = FieldDescription::new(
+        "3",
+        "manager",
+        FieldKind::named("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("user_manager")
+    .as_primary();
     let users = CollectionVersion::new("users", "v-users", "coll-users", vec![manager]);
 
     let error =

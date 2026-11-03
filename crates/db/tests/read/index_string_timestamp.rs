@@ -47,11 +47,36 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
         "stamps-v1",
         "stamps-collection",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "owner", FieldKind::string()),
-            FieldDescription::new("3", "created_at", FieldKind::string()),
-            FieldDescription::new("4", "observed_at", FieldKind::datetime()),
-            FieldDescription::new("5", "seen_at", FieldKind::datetime_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "owner",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "created_at",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "4",
+                "observed_at",
+                FieldKind::datetime(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "5",
+                "seen_at",
+                FieldKind::datetime_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.is_materialized = true;
@@ -62,16 +87,19 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
         index(4, "seen_at"),
     ];
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(version).await.unwrap();
+    db.create_collection(version.clone()).await.unwrap();
     let docs = STAMPS
         .iter()
         .map(|stamp| {
-            let mut doc = Document::new();
-            doc.set("owner", NormalValue::String("alice".to_string()));
-            doc.set("created_at", NormalValue::String((*stamp).to_string()));
+            let mut doc = Document::new(version.clone());
+            doc.set("owner", NormalValue::String("alice".to_string()))
+                .unwrap();
+            doc.set("created_at", NormalValue::String((*stamp).to_string()))
+                .unwrap();
             let time = chrono::DateTime::parse_from_rfc3339(stamp).unwrap();
-            doc.set("observed_at", NormalValue::Time(time));
-            doc.set("seen_at", NormalValue::TimeArray(vec![time]));
+            doc.set("observed_at", NormalValue::Time(time)).unwrap();
+            doc.set("seen_at", NormalValue::TimeArray(vec![time]))
+                .unwrap();
             doc
         })
         .collect();
@@ -101,17 +129,21 @@ async fn stamps_matching(db: &Arc<DB<RegolithStore>>, filter: &str) -> Vec<Strin
         .collect()
 }
 
-#[tokio::test]
-async fn equality_on_rfc3339_text_uses_the_string_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{created_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn equality_on_rfc3339_text_uses_the_string_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{created_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_range_of_rfc3339_text_uses_the_string_index() {
+#[test]
+fn a_range_of_rfc3339_text_uses_the_string_index() {
+    workers::block_on(async {
     let db = seeded_db().await;
     assert_eq!(
         stamps_matching(&db, r#"{created_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
@@ -125,26 +157,34 @@ async fn a_range_of_rfc3339_text_uses_the_string_index() {
         .await,
         vec![STAMPS[1]]
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_range_of_rfc3339_text_uses_the_datetime_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{observed_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
-        vec![STAMPS[1], STAMPS[2]]
-    );
-    assert_eq!(
-        stamps_matching(&db, r#"{observed_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn a_range_of_rfc3339_text_uses_the_datetime_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{observed_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
+            vec![STAMPS[1], STAMPS[2]]
+        );
+        assert_eq!(
+            stamps_matching(&db, r#"{observed_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_element_of_rfc3339_text_uses_the_datetime_array_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{seen_at: {_any: {_eq: "2026-09-29T04:20:21Z"}}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn an_element_of_rfc3339_text_uses_the_datetime_array_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{seen_at: {_any: {_eq: "2026-09-29T04:20:21Z"}}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }

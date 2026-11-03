@@ -251,7 +251,7 @@ mod tests {
 
         let payload = CompositeDeltaPayload {
             priority: 1,
-            schema_version_id: collection_id.to_string(),
+            collection_version_id: collection_id.to_string(),
             status: 1,
         };
         let delta = CrdtDelta::Composite(payload);

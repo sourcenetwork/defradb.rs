@@ -369,10 +369,12 @@ impl<'a> SdlParser<'a> {
         // NOTE: Go uses CType::None (0) for _docID, not LwwRegister (1)
         let doc_id_kind = FieldKind::doc_id();
         let doc_id_field_id = generate_field_id("_docID", &doc_id_kind, CType::None);
-        fields.push(
-            FieldDescription::new(&doc_id_field_id, "_docID", doc_id_kind)
-                .with_crdt_type(CType::None),
-        );
+        fields.push(FieldDescription::new(
+            &doc_id_field_id,
+            "_docID",
+            doc_id_kind,
+            CType::None,
+        ));
 
         // Process user-defined fields
         for parsed_field in &type_def.fields {
@@ -455,8 +457,8 @@ impl<'a> SdlParser<'a> {
                 generate_field_id(&parsed_field.name, &kind, crdt_type)
             };
 
-            let mut field = FieldDescription::new(&field_id, &parsed_field.name, kind.clone())
-                .with_crdt_type(crdt_type);
+            let mut field =
+                FieldDescription::new(&field_id, &parsed_field.name, kind.clone(), crdt_type);
 
             // Set is_primary based on our earlier computation
             if is_primary {
@@ -507,10 +509,13 @@ impl<'a> SdlParser<'a> {
                         String::new()
                     };
                     // FK field has same is_primary status as relation object field
-                    let mut id_field =
-                        FieldDescription::new(&id_field_id, &id_field_name, id_field_kind)
-                            .with_crdt_type(id_field_crdt)
-                            .with_relation_name(relation_name.clone());
+                    let mut id_field = FieldDescription::new(
+                        &id_field_id,
+                        &id_field_name,
+                        id_field_kind,
+                        id_field_crdt,
+                    )
+                    .with_relation_name(relation_name.clone());
                     if is_primary {
                         id_field = id_field.as_primary();
 

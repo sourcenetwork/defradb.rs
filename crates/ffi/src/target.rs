@@ -33,10 +33,10 @@ impl Target {
     }
 
     /// The transaction the call runs in, if it runs in one.
-    pub(crate) fn txn_id(&self) -> Option<&str> {
+    pub(crate) fn txn_id(&self) -> Option<defra_core::TxnId> {
         match self {
             Target::Node(_) => None,
-            Target::Txn(txn) => Some(&txn.id),
+            Target::Txn(txn) => Some(txn.id),
         }
     }
 }

@@ -378,10 +378,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         };
 
         // Determine CRDT type
-        let crdt_type = payload.crdt.map(CType::from_u8).unwrap_or_default();
+        let crdt_type = payload.crdt.map_or(CType::None, |code| {
+            CType::from_definition(code, payload.custom_crdt.as_deref())
+        });
 
-        let mut field =
-            FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type);
+        let mut field = FieldDescription::new(field_id.to_string(), name, kind, crdt_type);
         // Immutability is in the field's own identity, so it round-trips.
         field.immutable = payload.immutable;
         Ok(field)

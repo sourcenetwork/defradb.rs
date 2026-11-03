@@ -2,7 +2,7 @@
 
 use cli::config::{
     ApiConfig, DatastoreConfig, DatastoreType, KeyringBackend, KeyringConfig, LogConfig, LogFormat,
-    LogLevel, LogOutput, NetConfig,
+    LogLevel, LogOutput, NetConfig, NetworkSecretHex,
 };
 use cli::error::Error;
 use storage::backends::DurabilityMode;
@@ -31,6 +31,10 @@ fn test_api_config_defaults() {
     assert_eq!(
         config.query_max_filter_depth,
         query::DEFAULT_MAX_FILTER_DEPTH
+    );
+    assert_eq!(
+        config.query_max_fragment_nesting,
+        query::DEFAULT_MAX_FRAGMENT_NESTING
     );
 }
 
@@ -163,6 +167,43 @@ fn test_net_config_validate_skipped_when_p2p_disabled() {
     assert!(config.validate().is_ok());
 }
 
+#[test]
+fn service_record_settings_are_checked() {
+    let secret = "ab".repeat(32);
+    let valid = NetConfig {
+        iroh_network_secret: Some(NetworkSecretHex(secret.clone())),
+        iroh_service_role: Some("archive".into()),
+        iroh_custom_services: vec!["search".into()],
+        ..Default::default()
+    };
+    assert!(valid.validate().is_ok());
+    assert!(
+        !format!("{valid:?}").contains(&secret),
+        "the secret is redacted"
+    );
+
+    for invalid in [
+        NetConfig {
+            iroh_network_secret: Some(NetworkSecretHex("abcd".into())),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_network_secret: Some(NetworkSecretHex("zz".repeat(32))),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_service_role: Some("leader".into()),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_custom_services: vec!["x".repeat(129)],
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(invalid.validate(), Err(Error::InvalidConfig(_))));
+    }
+}
+
 /// Every node started on a pre-`Option<u64>` binary had the old 1 GiB default
 /// serialized into its own `config.yaml` by `create_if_missing`. Reading it
 /// back would apply a 16x compaction-target change to regolith for an
@@ -194,4 +235,33 @@ fn valuelogfilesize_is_not_serialized_into_generated_config() {
         !yaml.contains("valuelogfilesize"),
         "generated config.yaml must not carry the key:\n{yaml}"
     );
+}
+
+#[test]
+fn test_api_config_reads_query_max_fragment_nesting_from_yaml() {
+    let config: ApiConfig =
+        serde_yaml::from_str("query_max_fragment_nesting: 64\n").expect("api config loads");
+    assert_eq!(config.query_max_fragment_nesting, 64);
+}
+
+#[test]
+fn test_api_config_refuses_a_fragment_nesting_the_stack_cannot_hold() {
+    let safe_max = query::max_fragment_nesting_for_stack(query::query_thread_stack_bytes());
+    for refused in [0, safe_max + 1] {
+        let config = ApiConfig {
+            query_max_fragment_nesting: refused,
+            ..ApiConfig::default()
+        };
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("--query-max-fragment-nesting"), "{error}");
+        assert!(
+            error.contains(&format!("set it from 1 to {safe_max}")),
+            "{error}"
+        );
+    }
+    let config = ApiConfig {
+        query_max_fragment_nesting: safe_max,
+        ..ApiConfig::default()
+    };
+    config.validate().unwrap();
 }

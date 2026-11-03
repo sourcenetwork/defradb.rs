@@ -26,12 +26,18 @@ mod commits_height;
 mod commits_numeric;
 #[cfg(test)]
 mod context_tests;
+#[cfg(test)]
+mod encrypted_select_tests;
 mod executor;
 mod explain;
 mod fetcher;
 pub(crate) mod introspection;
+mod json_conflicts;
+#[cfg(test)]
+mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
+mod owners;
 mod plan;
 mod plan_aggregates;
 mod plan_drive;
@@ -43,6 +49,8 @@ mod prepare_fetcher;
 mod prepare_parse_tests;
 mod query;
 mod se_transport;
+#[cfg(test)]
+mod similarity_validation_tests;
 mod turn;
 mod version;
 
@@ -198,8 +206,8 @@ pub struct QueryRunner<F: DocFetcher, R: TransactionRegistry = NoOpTransactionRe
     /// Optional searchable-encryption remote query transport.
     ///
     /// When set, `encrypted_<Collection>` queries fan search tags out to
-    /// replicators (Go semantics) instead of resolving against local plaintext.
-    /// `None` keeps the back-compat local-plaintext path (unit/FFI/non-P2P).
+    /// replicators (Go semantics). `None` means searchable encryption is off,
+    /// so `encrypted_<Collection>` does not exist, as in Go.
     pub(crate) se_transport: Option<Arc<dyn SeQueryTransport>>,
     /// App read validator, checked after ACP on every read path.
     pub(crate) retry_inputs: Option<crate::prepared::PreparedInputMemo>,
@@ -568,8 +576,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// Set the searchable-encryption remote query transport.
     ///
     /// When set, `encrypted_<Collection>` queries resolve by fanning search tags
-    /// out to replicators (Go's owner-queries-replicator model) rather than
-    /// matching local plaintext.
+    /// out to replicators (Go's owner-queries-replicator model). Without it,
+    /// `encrypted_<Collection>` fails validation as it does in Go.
     pub fn with_se_transport(mut self, transport: Arc<dyn SeQueryTransport>) -> Self {
         self.se_transport = Some(transport);
         self
@@ -773,3 +781,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod owners_tests;

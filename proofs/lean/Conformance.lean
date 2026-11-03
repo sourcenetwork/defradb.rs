@@ -14,7 +14,7 @@ vocabulary the Rust side must keep matching. New families append to
 
 namespace Conformance
 
-/-- Mirrors `crates/crdt/src/traits.rs` `enum MergeResult`. -/
+/-- Mirrors `crates/crdt/src/field/mod.rs` `enum MergeResult`. -/
 inductive MergeOutcome
   | applied
   | rejectedLowerPriority

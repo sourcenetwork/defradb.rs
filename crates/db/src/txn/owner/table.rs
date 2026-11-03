@@ -12,6 +12,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use defra_core::thread_bounds::MaybeSend;
 use rapidhash::fast::RandomState;
 use regolith::sync::{ArrayQueue, HopscotchMap, UnboundedSender};
 
@@ -56,8 +57,8 @@ where
 
 impl<T, K> Table<T, K>
 where
-    T: 'static,
-    K: Clone + PartialEq + 'static,
+    T: MaybeSend + 'static,
+    K: Clone + PartialEq + Send + 'static,
 {
     pub(super) fn new() -> Self {
         Self {

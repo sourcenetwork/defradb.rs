@@ -96,7 +96,7 @@ iroh-gossip = { workspace = true, optional = true }
 iroh-tickets = { workspace = true, optional = true }
 iroh-relay = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["ring", "std"], optional = true }
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10.1", optional = true }
 blake3 = { version = "1", optional = true }
 
 [features]
@@ -139,8 +139,11 @@ sha2 = { workspace = true, features = ["asm"] }
 edge = { path = "../edge", features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tempfile = "3"
+
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "multiaddr", "noq", "rand"]
+ignored = ["getrandom", "multiaddr", "noq"]
 
 [lints]
 workspace = true

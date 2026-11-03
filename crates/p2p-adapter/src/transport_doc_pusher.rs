@@ -11,8 +11,40 @@ use p2p::P2PTransport;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
+    async fn prepare_replicator_install(
+        &self,
+        _request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        Err(P2PError::unsupported(
+            "durable replicator installs are unavailable",
+        ))
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        _plan: &crate::ReplicatorInstall,
+        _error: Option<String>,
+        _bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "durable replicator installs are unavailable",
+        ))
+    }
+
+    async fn recover_replicator_installs(&self) -> P2PResult<()> {
+        Ok(())
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         Ok(storage::stores::PushRetryMarkerStats::default())
+    }
+
+    /// Durable push retries owed to one peer, or `None` when there are none.
+    async fn push_retries_for_peer(
+        &self,
+        _peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        Ok(None)
     }
 
     async fn replication_acknowledged(
@@ -23,6 +55,17 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
     ) -> P2PResult<Vec<bool>> {
         Err(P2PError::unsupported(
             "replication acknowledgement is unavailable",
+        ))
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "document head acknowledgement is unavailable",
         ))
     }
 
@@ -119,6 +162,7 @@ pub struct DbTransportDocPusher<S: storage::corekv::Store, T: P2PTransport> {
     car_authority: p2p::sync::HeadHintCarAuthority,
     retry_schedule: storage::stores::RetrySchedule,
     document_acp: regolith::sync::OnceCell<Arc<dyn acp::DocumentACP>>,
+    installs: Arc<crate::replicator_installs::ReplicatorInstalls>,
 }
 
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<S, T> {
@@ -127,12 +171,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
         transport: T,
         car_authority: p2p::sync::HeadHintCarAuthority,
     ) -> Self {
+        car_authority.bind_peerstore(db.peerstore());
+        let installs = Arc::new(crate::replicator_installs::ReplicatorInstalls::new(
+            Arc::clone(db.replication_runtime()),
+        ));
         Self {
             db,
             transport,
             car_authority,
             retry_schedule: storage::stores::RetrySchedule::default(),
             document_acp: regolith::sync::OnceCell::new(),
+            installs,
         }
     }
 
@@ -159,6 +208,70 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     for DbTransportDocPusher<S, T>
 {
+    async fn prepare_replicator_install(
+        &self,
+        request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        let peerstore = self.db.peerstore();
+        crate::replicator_install_store::recover_peer(
+            &peerstore,
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            self.db.event_bus().cloned(),
+            request.info.peer_id_str(),
+        )
+        .await?;
+        crate::replicator_install_store::prepare(
+            &peerstore,
+            self.db.options().retry_options(),
+            &self.installs,
+            request,
+        )
+        .await
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        plan: &crate::ReplicatorInstall,
+        error: Option<String>,
+        bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        crate::replicator_install_store::finish(
+            &self.db.peerstore(),
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            bus.or_else(|| self.db.event_bus().cloned()),
+            plan,
+            error,
+        )
+        .await
+    }
+
+    async fn recover_replicator_installs(&self) -> P2PResult<()> {
+        let peerstore = self.db.peerstore();
+        crate::replicator_install_store::recover(
+            &peerstore,
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            self.db.event_bus().cloned(),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn push_retries_for_peer(
+        &self,
+        peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        let markers = self
+            .db
+            .peerstore()
+            .get_retry_documents(peer_id)
+            .await
+            .map_err(|error| P2PError::internal(error.to_string()))?;
+        Ok(crate::peer_details::PeerPushRetries::from_markers(&markers))
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         self.db
             .peerstore()
@@ -174,6 +287,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         doc_ids: &[String],
     ) -> P2PResult<Vec<bool>> {
         db::merge::replication_acknowledged(&self.db, peer_id, collection_name, doc_ids)
+            .await
+            .map_err(P2PError::internal)
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        db::merge::document_heads_acknowledged(&self.db, peer_id, collection_name, doc_ids)
             .await
             .map_err(P2PError::internal)
     }
@@ -213,21 +337,13 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         peer_id: &PeerId,
         docs: &[(String, String)],
     ) -> P2PResult<()> {
-        let peer_id_str = peer_id.to_string();
-        let peerstore = self.db.peerstore();
-        let filters = match peerstore.get_replicator(&peer_id_str).await {
-            Ok(Some(bytes)) => p2p::ReplicatorInfo::from_bytes(&bytes)
-                .map(|info| info.filters)
-                .unwrap_or_default(),
-            _ => p2p::ReplicationFilters::new(),
-        };
         db::merge::push_existing_docs_by_id(
             &self.transport,
             &self.db,
             self.document_acp.get().map(|acp| acp.as_ref()),
             peer_id,
             docs,
-            &filters,
+            &p2p::ReplicationFilters::new(),
             db::merge::PushExistingDocsSeOptions::default(),
             db::merge::ReplayPushConfig {
                 retry_schedule: self.retry_schedule.clone(),

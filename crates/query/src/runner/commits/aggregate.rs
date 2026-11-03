@@ -1,4 +1,4 @@
-use document::Document;
+use document::CommitRow;
 use serde_json::Value as JsonValue;
 
 use crate::mapper::{Aggregate, AggregateType, Requestable, Select};
@@ -49,7 +49,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     pub(super) fn decode_commit_delta_numeric(
         &self,
-        commit: &Document,
+        commit: &CommitRow,
     ) -> Option<CommitNumericValue> {
         use base64::Engine;
 
@@ -63,7 +63,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     pub(super) fn commit_numeric_value(
         &self,
-        commit: &Document,
+        commit: &CommitRow,
         field_name: &str,
     ) -> Option<CommitNumericValue> {
         if field_name == "delta" {
@@ -77,8 +77,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     pub(super) fn collect_commit_numeric_values(
         &self,
-        commit: &Document,
-        group_docs: Option<&[Document]>,
+        commit: &CommitRow,
+        group_docs: Option<&[CommitRow]>,
         field_name: &str,
     ) -> Vec<CommitNumericValue> {
         let mut values = Vec::new();
@@ -98,8 +98,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     pub(super) fn count_commit_aggregate_values(
         &self,
-        commit: &Document,
-        group_docs: Option<&[Document]>,
+        commit: &CommitRow,
+        group_docs: Option<&[CommitRow]>,
         field_name: Option<&str>,
     ) -> i64 {
         match field_name {
@@ -107,7 +107,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             Some(field_name) => {
                 let mut count = 0i64;
 
-                let mut count_doc = |doc: &Document| {
+                let mut count_doc = |doc: &CommitRow| {
                     if field_name == "delta" {
                         if self.decode_commit_delta_numeric(doc).is_some() {
                             count += 1;
@@ -142,8 +142,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     pub(super) fn compute_commit_aggregate(
         &self,
         agg: &Aggregate,
-        commit: &Document,
-        group_docs: Option<&[Document]>,
+        commit: &CommitRow,
+        group_docs: Option<&[CommitRow]>,
     ) -> JsonValue {
         match agg.aggregate_type {
             AggregateType::Count => {

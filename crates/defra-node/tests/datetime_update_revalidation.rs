@@ -12,7 +12,7 @@
 //! These tests prove (a) the bug reproduces at the embedded-node layer, and
 //! (b) whether @index changes the behavior.
 
-use defra_node::EmbeddedNode;
+use defra_node::Node;
 use defra_node::Result;
 
 const SDL_NOINDEX: &str = r#"
@@ -31,7 +31,7 @@ type ProbeIdx {
 
 /// Mirror obs-mcp exactly: create via `create_<Type>`, then resolve the docID
 /// with a filter query (obs-mcp never parses the create response).
-async fn create_get_id(node: &EmbeddedNode, coll: &str) -> Result<String> {
+async fn create_get_id(node: &Node, coll: &str) -> Result<String> {
     let m = format!(r#"mutation {{ create_{coll}(input: {{ name: "initial" }}) {{ _docID }} }}"#);
     let r = node.execute(&m).await;
     assert!(!r.has_errors(), "create_{coll} failed: {:?}", r.errors);
@@ -54,10 +54,11 @@ async fn create_get_id(node: &EmbeddedNode, coll: &str) -> Result<String> {
 
 /// Set a DateTime field, then update a *different* field. The second update is
 /// where obs-mcp fails. EXPECTED TO FAIL on unfixed defradb.rs.
-#[tokio::test(flavor = "current_thread")]
-async fn datetime_update_revalidation_noindex() -> Result<()> {
-    let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(SDL_NOINDEX).await?;
+#[test]
+fn datetime_update_revalidation_noindex() -> Result<()> {
+    workers::block_on(async {
+    let node = Node::builder().build().await?;
+    node.add_collection(SDL_NOINDEX).await?;
     let id = create_get_id(&node, "Probe").await?;
 
     let set_dt = format!(
@@ -82,14 +83,17 @@ async fn datetime_update_revalidation_noindex() -> Result<()> {
         r2.errors
     );
     Ok(())
+})
+    .unwrap()
 }
 
 /// Same scenario but the DateTime field is indexed (coding-store's
 /// CodingSession.created_at pattern). Confirms whether @index is the difference.
-#[tokio::test(flavor = "current_thread")]
-async fn datetime_update_revalidation_indexed() -> Result<()> {
-    let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(SDL_INDEXED).await?;
+#[test]
+fn datetime_update_revalidation_indexed() -> Result<()> {
+    workers::block_on(async {
+    let node = Node::builder().build().await?;
+    node.add_collection(SDL_INDEXED).await?;
     let id = create_get_id(&node, "ProbeIdx").await?;
 
     let set_dt = format!(
@@ -112,4 +116,6 @@ async fn datetime_update_revalidation_indexed() -> Result<()> {
         r2.errors
     );
     Ok(())
+})
+    .unwrap()
 }

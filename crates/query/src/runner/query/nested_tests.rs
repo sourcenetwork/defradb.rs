@@ -170,11 +170,21 @@ fn relation_collections() -> (
         "v1",
         "coll-file",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "path", FieldKind::string()),
-            FieldDescription::new("4", "functions", FieldKind::relation("Function", true))
-                .with_relation_name("file_functions"),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "path", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "4",
+                "functions",
+                FieldKind::relation("Function", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions"),
         ],
     );
 
@@ -183,14 +193,29 @@ fn relation_collections() -> (
         "v1",
         "coll-function",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "file", FieldKind::relation("File", false))
-                .with_relation_name("file_functions")
-                .as_primary(),
-            FieldDescription::new("4", "_fileID", FieldKind::doc_id())
-                .with_relation_name("file_functions")
-                .as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "file",
+                FieldKind::relation("File", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions")
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_fileID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions")
+            .as_primary(),
         ],
     );
 
@@ -273,8 +298,13 @@ fn relation_collections_resolved_by_id() -> (
         "vers-file",
         "coll-file",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
 
@@ -283,11 +313,27 @@ fn relation_collections_resolved_by_id() -> (
         "vers-function",
         "coll-function",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "file", FieldKind::relation("coll-file", false))
-                .as_primary(),
-            FieldDescription::new("4", "_fileID", FieldKind::doc_id()).as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "file",
+                FieldKind::relation("coll-file", false),
+                schema::CType::LwwRegister,
+            )
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_fileID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .as_primary(),
         ],
     );
 
@@ -309,7 +355,7 @@ fn relation_collections_resolved_by_id() -> (
 }
 
 fn doc(json: &str) -> Document {
-    Document::from_json_str(json).unwrap()
+    crate::test_utils::doc_from_json(json)
 }
 
 struct MockDocumentAcp {
@@ -397,64 +443,68 @@ impl DocumentACP for MockDocumentAcp {
     }
 }
 
-#[tokio::test]
-async fn compute_fulltext_path_scores_lifts_parent_relation_scores() {
-    let (file_collection, function_collection, collections_map) = relation_collections();
-    let fetcher = FullTextTestFetcher::default();
-    let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
-    let file_2 = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
-    let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
-    let fn_2 = "bae-daad4cec-56aa-5b13-9502-657f29321b5d";
+#[test]
+fn compute_fulltext_path_scores_lifts_parent_relation_scores() {
+    workers::block_on(async {
+        let (file_collection, function_collection, collections_map) = relation_collections();
+        let fetcher = FullTextTestFetcher::default();
+        let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
+        let file_2 = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+        let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
+        let fn_2 = "bae-daad4cec-56aa-5b13-9502-657f29321b5d";
 
-    fetcher.add_doc(
-        "File",
-        doc(&format!(
-            r#"{{"_docID":"{file_1}","name":"auth.rs","path":"src/auth.rs"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "File",
-        doc(&format!(
-            r#"{{"_docID":"{file_2}","name":"utils.rs","path":"src/utils.rs"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "Function",
-        doc(&format!(
-            r#"{{"_docID":"{fn_1}","name":"handle_request","_fileID":"{file_1}"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "Function",
-        doc(&format!(
-            r#"{{"_docID":"{fn_2}","name":"handle_request","_fileID":"{file_2}"}}"#
-        )),
-    );
-    fetcher.set_scores(
-        "File",
-        "name",
-        "auth",
-        RapidHashMap::from_iter([(file_1.to_string(), 1.5)]),
-    );
-
-    let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
-    let scores = runner
-        .compute_fulltext_path_scores(
-            collections_map.get("Function").unwrap().clone(),
-            "file.name",
+        fetcher.add_doc(
+            "File",
+            doc(&format!(
+                r#"{{"_docID":"{file_1}","name":"auth.rs","path":"src/auth.rs"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "File",
+            doc(&format!(
+                r#"{{"_docID":"{file_2}","name":"utils.rs","path":"src/utils.rs"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "Function",
+            doc(&format!(
+                r#"{{"_docID":"{fn_1}","name":"handle_request","_fileID":"{file_1}"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "Function",
+            doc(&format!(
+                r#"{{"_docID":"{fn_2}","name":"handle_request","_fileID":"{file_2}"}}"#
+            )),
+        );
+        fetcher.set_scores(
+            "File",
+            "name",
             "auth",
-            runner.fetcher.as_ref(),
-            &collections_map,
-        )
-        .await
-        .unwrap();
+            RapidHashMap::from_iter([(file_1.to_string(), 1.5)]),
+        );
 
-    assert_eq!(scores.get(fn_1), Some(&1.5));
-    assert!(!scores.contains_key(fn_2));
+        let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
+        let scores = runner
+            .compute_fulltext_path_scores(
+                collections_map.get("Function").unwrap().clone(),
+                "file.name",
+                "auth",
+                runner.fetcher.as_ref(),
+                &collections_map,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(scores.get(fn_1), Some(&1.5));
+        assert!(!scores.contains_key(fn_2));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn nested_acp_relations_keep_public_join_targets() {
+#[test]
+fn nested_acp_relations_keep_public_join_targets() {
+    workers::block_on(async {
     let employee_owner =
         Did::new("did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw").unwrap();
 
@@ -463,9 +513,9 @@ async fn nested_acp_relations_keep_public_join_targets() {
         "v1",
         "coll-company",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "employees", FieldKind::relation("Employee", true), schema::CType::LwwRegister)
                 .with_relation_name("employee_company"),
         ],
     );
@@ -476,12 +526,12 @@ async fn nested_acp_relations_keep_public_join_targets() {
         "v1",
         "coll-employee",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "company", FieldKind::relation("Company", false))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "company", FieldKind::relation("Company", false), schema::CType::LwwRegister)
                 .with_relation_name("employee_company")
                 .as_primary(),
-            FieldDescription::new("4", "_companyID", FieldKind::doc_id())
+            FieldDescription::new("4", "_companyID", FieldKind::doc_id(), schema::CType::LwwRegister)
                 .with_relation_name("employee_company")
                 .as_primary(),
         ],
@@ -581,66 +631,72 @@ async fn nested_acp_relations_keep_public_join_targets() {
 
     assert!(by_name["PubEmp in PrivateCompany"].is_null());
     assert_eq!(by_name["PubEmp in PubCompany"]["name"], "Public Company");
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn compute_fulltext_path_scores_lifts_reverse_relation_scores() {
-    let (file_collection, function_collection, collections_map) = relation_collections();
-    let fetcher = FullTextTestFetcher::default();
-    let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
-    let file_2 = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
-    let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
-    let fn_2 = "bae-daad4cec-56aa-5b13-9502-657f29321b5d";
+#[test]
+fn compute_fulltext_path_scores_lifts_reverse_relation_scores() {
+    workers::block_on(async {
+        let (file_collection, function_collection, collections_map) = relation_collections();
+        let fetcher = FullTextTestFetcher::default();
+        let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
+        let file_2 = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+        let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
+        let fn_2 = "bae-daad4cec-56aa-5b13-9502-657f29321b5d";
 
-    fetcher.add_doc(
-        "File",
-        doc(&format!(
-            r#"{{"_docID":"{file_1}","name":"auth.rs","path":"src/auth.rs"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "File",
-        doc(&format!(
-            r#"{{"_docID":"{file_2}","name":"utils.rs","path":"src/utils.rs"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "Function",
-        doc(&format!(
-            r#"{{"_docID":"{fn_1}","name":"parse_token","_fileID":"{file_1}"}}"#
-        )),
-    );
-    fetcher.add_doc(
-        "Function",
-        doc(&format!(
-            r#"{{"_docID":"{fn_2}","name":"format_output","_fileID":"{file_2}"}}"#
-        )),
-    );
-    fetcher.set_scores(
-        "Function",
-        "name",
-        "parse_token",
-        RapidHashMap::from_iter([(fn_1.to_string(), 2.0)]),
-    );
-
-    let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
-    let scores = runner
-        .compute_fulltext_path_scores(
-            collections_map.get("File").unwrap().clone(),
-            "functions.name",
+        fetcher.add_doc(
+            "File",
+            doc(&format!(
+                r#"{{"_docID":"{file_1}","name":"auth.rs","path":"src/auth.rs"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "File",
+            doc(&format!(
+                r#"{{"_docID":"{file_2}","name":"utils.rs","path":"src/utils.rs"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "Function",
+            doc(&format!(
+                r#"{{"_docID":"{fn_1}","name":"parse_token","_fileID":"{file_1}"}}"#
+            )),
+        );
+        fetcher.add_doc(
+            "Function",
+            doc(&format!(
+                r#"{{"_docID":"{fn_2}","name":"format_output","_fileID":"{file_2}"}}"#
+            )),
+        );
+        fetcher.set_scores(
+            "Function",
+            "name",
             "parse_token",
-            runner.fetcher.as_ref(),
-            &collections_map,
-        )
-        .await
-        .unwrap();
+            RapidHashMap::from_iter([(fn_1.to_string(), 2.0)]),
+        );
 
-    assert_eq!(scores.get(file_1), Some(&2.0));
-    assert!(!scores.contains_key(file_2));
+        let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
+        let scores = runner
+            .compute_fulltext_path_scores(
+                collections_map.get("File").unwrap().clone(),
+                "functions.name",
+                "parse_token",
+                runner.fetcher.as_ref(),
+                &collections_map,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(scores.get(file_1), Some(&2.0));
+        assert!(!scores.contains_key(file_2));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn compute_fulltext_path_scores_with_parsed_sdl_schema() {
+#[test]
+fn compute_fulltext_path_scores_with_parsed_sdl_schema() {
+    workers::block_on(async {
     let (_file_collection, _function_collection, collections_map) = parsed_relation_collections();
     let function_collection = collections_map.get("Function").unwrap();
     let file_field = function_collection.field_by_name("file").unwrap();
@@ -688,46 +744,52 @@ async fn compute_fulltext_path_scores_with_parsed_sdl_schema() {
 
     assert_eq!(scores.get(fn_1), Some(&0.7));
     assert!(!scores.contains_key(fn_2));
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn compute_fulltext_path_scores_resolves_target_collection_by_collection_id() {
-    let (file_collection, function_collection, collections_map) =
-        relation_collections_resolved_by_id();
-    let fetcher = FullTextTestFetcher::default();
-    let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
-    let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
+#[test]
+fn compute_fulltext_path_scores_resolves_target_collection_by_collection_id() {
+    workers::block_on(async {
+        let (file_collection, function_collection, collections_map) =
+            relation_collections_resolved_by_id();
+        let fetcher = FullTextTestFetcher::default();
+        let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
+        let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
 
-    fetcher.add_doc(
-        "Function",
-        doc(&format!(
-            r#"{{"_docID":"{fn_1}","name":"handle_request","_fileID":"{file_1}"}}"#
-        )),
-    );
-    fetcher.set_scores(
-        "File",
-        "name",
-        "auth",
-        RapidHashMap::from_iter([(file_1.to_string(), 1.25)]),
-    );
-
-    let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
-    let scores = runner
-        .compute_fulltext_path_scores(
-            collections_map.get("Function").unwrap().clone(),
-            "file.name",
+        fetcher.add_doc(
+            "Function",
+            doc(&format!(
+                r#"{{"_docID":"{fn_1}","name":"handle_request","_fileID":"{file_1}"}}"#
+            )),
+        );
+        fetcher.set_scores(
+            "File",
+            "name",
             "auth",
-            runner.fetcher.as_ref(),
-            &collections_map,
-        )
-        .await
-        .unwrap();
+            RapidHashMap::from_iter([(file_1.to_string(), 1.25)]),
+        );
 
-    assert_eq!(scores.get(fn_1), Some(&1.25));
+        let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
+        let scores = runner
+            .compute_fulltext_path_scores(
+                collections_map.get("Function").unwrap().clone(),
+                "file.name",
+                "auth",
+                runner.fetcher.as_ref(),
+                &collections_map,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(scores.get(fn_1), Some(&1.25));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn precompute_fulltext_scores_scopes_nested_bm25_aliases() {
+#[test]
+fn precompute_fulltext_scores_scopes_nested_bm25_aliases() {
+    workers::block_on(async {
     let (_file_collection, _function_collection, collections_map) = parsed_relation_collections();
     let fetcher = FullTextTestFetcher::default();
     let file_1 = "bae-7b649bba-3168-5c05-827c-514c0f8d56fd";
@@ -781,48 +843,54 @@ async fn precompute_fulltext_scores_scopes_nested_bm25_aliases() {
         Some(&1.0)
     );
     assert_eq!(scores.get(&child_key).and_then(|m| m.get(fn_1)), Some(&1.0));
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn precompute_fulltext_scores_skips_nested_local_bm25_fields() {
-    let (_file_collection, _function_collection, collections_map) = parsed_relation_collections();
-    let fetcher = FullTextTestFetcher::default();
-    let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
+#[test]
+fn precompute_fulltext_scores_skips_nested_local_bm25_fields() {
+    workers::block_on(async {
+        let (_file_collection, _function_collection, collections_map) =
+            parsed_relation_collections();
+        let fetcher = FullTextTestFetcher::default();
+        let fn_1 = "bae-bdeed30f-a5e4-5952-93df-27eccec5a5b9";
 
-    fetcher.set_scores(
-        "Function",
-        "name",
-        "handle",
-        RapidHashMap::from_iter([(fn_1.to_string(), 1.75)]),
-    );
+        fetcher.set_scores(
+            "Function",
+            "name",
+            "handle",
+            RapidHashMap::from_iter([(fn_1.to_string(), 1.75)]),
+        );
 
-    let select = crate::parse_query(
-        r#"query {
+        let select = crate::parse_query(
+            r#"query {
             File {
                 functions(order: {_alias: {score: DESC}}) {
                     score: BM25(query: "handle", fields: ["name"])
                 }
             }
         }"#,
-    )
-    .unwrap()
-    .into_iter()
-    .next()
-    .unwrap();
-
-    let runner = QueryRunner::new(fetcher, vec![]);
-    let scores = runner
-        .precompute_fulltext_scores(&select, runner.fetcher.as_ref(), &collections_map)
-        .await
+        )
+        .unwrap()
+        .into_iter()
+        .next()
         .unwrap();
 
-    let child_scope = vec![
-        select.field.output_name().to_string(),
-        "functions".to_string(),
-    ];
-    let child_key = Planner::fts_score_key(&child_scope, "score");
+        let runner = QueryRunner::new(fetcher, vec![]);
+        let scores = runner
+            .precompute_fulltext_scores(&select, runner.fetcher.as_ref(), &collections_map)
+            .await
+            .unwrap();
 
-    assert!(!scores.contains_key(&child_key));
+        let child_scope = vec![
+            select.field.output_name().to_string(),
+            "functions".to_string(),
+        ];
+        let child_key = Planner::fts_score_key(&child_scope, "score");
+
+        assert!(!scores.contains_key(&child_key));
+    })
+    .unwrap()
 }
 
 #[test]

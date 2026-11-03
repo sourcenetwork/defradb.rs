@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::encryption::EncryptionConfig;
 use crate::signing::SigningConfig;
+use crate::txn_id::TxnId;
 
 /// What one request carries: who acts, with which privileges and bearer
 /// token, and how its writes are encrypted and signed.
@@ -37,6 +38,7 @@ struct Fields {
     /// The DID that presented a bearer token and the token, when the request
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
+    txn: Option<TxnId>,
 }
 
 impl RequestContext {
@@ -209,6 +211,19 @@ impl RequestContext {
         }
     }
 
+    /// The explicit transaction this request runs in; `None` for a request
+    /// that commits on its own.
+    pub fn txn(&self) -> Option<TxnId> {
+        self.0.txn
+    }
+
+    /// This context running in the explicit transaction `txn`.
+    #[must_use]
+    pub fn with_txn(mut self, txn: Option<TxnId>) -> Self {
+        Arc::make_mut(&mut self.0).txn = txn;
+        self
+    }
+
     /// The DID that presented this request's bearer token and the token,
     /// when it carries a bearer.
     #[cfg(any(test, feature = "ambient"))]
@@ -237,6 +252,7 @@ impl fmt::Debug for RequestContext {
             )
             .field("batch_session", &self.0.batch_session)
             .field("creator", &self.0.creator)
+            .field("txn", &self.0.txn)
             .field(
                 "bearer_presenter",
                 &self.0.bearer.as_ref().map(|(presenter, _)| presenter),
@@ -341,35 +357,38 @@ mod tests {
         assert_eq!(merged.batch_session(), Some("ambient-session"));
     }
 
-    #[tokio::test]
-    async fn mirror_installs_the_context_while_its_future_runs_and_restores_after() {
-        let context = RequestContext::default()
-            .with_identity(Some("did:key:mirrored".to_string()))
-            .with_dac_bypass(true)
-            .with_creator(Some("did:key:creator".to_string()));
-        let seen = context
-            .mirror(async {
-                tokio::task::yield_now().await;
+    #[test]
+    fn mirror_installs_the_context_while_its_future_runs_and_restores_after() {
+        workers::block_on(async {
+            let context = RequestContext::default()
+                .with_identity(Some("did:key:mirrored".to_string()))
+                .with_dac_bypass(true)
+                .with_creator(Some("did:key:creator".to_string()));
+            let seen = context
+                .mirror(async {
+                    workers::yield_now().await;
+                    (
+                        crate::current_identity::get_effective_identity(),
+                        crate::current_identity::get_current_identity(),
+                        crate::ambient::get_dac_bypass(),
+                        crate::ambient::get_broadcast_creator_did(),
+                    )
+                })
+                .await;
+            assert_eq!(
+                seen,
                 (
-                    crate::current_identity::get_effective_identity(),
-                    crate::current_identity::get_current_identity(),
-                    crate::ambient::get_dac_bypass(),
-                    crate::ambient::get_broadcast_creator_did(),
+                    Some("did:key:mirrored".to_string()),
+                    Some("did:key:mirrored".to_string()),
+                    true,
+                    Some("did:key:creator".to_string()),
                 )
-            })
-            .await;
-        assert_eq!(
-            seen,
-            (
-                Some("did:key:mirrored".to_string()),
-                Some("did:key:mirrored".to_string()),
-                true,
-                Some("did:key:creator".to_string()),
-            )
-        );
-        assert_eq!(crate::current_identity::get_current_identity(), None);
-        assert!(!crate::ambient::get_dac_bypass());
-        assert_eq!(crate::ambient::get_broadcast_creator_did(), None);
+            );
+            assert_eq!(crate::current_identity::get_current_identity(), None);
+            assert!(!crate::ambient::get_dac_bypass());
+            assert_eq!(crate::ambient::get_broadcast_creator_did(), None);
+        })
+        .unwrap()
     }
 
     #[test]
@@ -398,16 +417,19 @@ mod tests {
         crate::signing::clear_request_bearer_token(other);
     }
 
-    #[tokio::test]
-    async fn mirror_installs_the_bearer_for_the_old_api() {
-        let did = "did:key:mirrored-bearer";
-        let context = RequestContext::default()
-            .with_bearer(Some(did.to_string()), Some("mirrored".to_string()));
-        let seen = context
-            .mirror(async { crate::ambient::get_request_bearer_token(did) })
-            .await;
-        assert_eq!(seen.as_deref(), Some("mirrored"));
-        assert_eq!(crate::ambient::get_request_bearer_token(did), None);
+    #[test]
+    fn mirror_installs_the_bearer_for_the_old_api() {
+        workers::block_on(async {
+            let did = "did:key:mirrored-bearer";
+            let context = RequestContext::default()
+                .with_bearer(Some(did.to_string()), Some("mirrored".to_string()));
+            let seen = context
+                .mirror(async { crate::ambient::get_request_bearer_token(did) })
+                .await;
+            assert_eq!(seen.as_deref(), Some("mirrored"));
+            assert_eq!(crate::ambient::get_request_bearer_token(did), None);
+        })
+        .unwrap()
     }
 
     #[test]

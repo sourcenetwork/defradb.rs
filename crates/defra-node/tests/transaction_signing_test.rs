@@ -1,6 +1,6 @@
 use crypto::Key;
 use defra_core::signing::{SigningConfig, SigningKeyType};
-use defra_node::{EmbeddedNode, QueryRequest};
+use defra_node::{Node, QueryRequest};
 use identity::{Identity as _, RawIdentity};
 
 fn register_local_node_identity() -> (String, String) {
@@ -26,17 +26,18 @@ fn register_local_node_identity() -> (String, String) {
     (did, public_key_hex)
 }
 
-#[tokio::test]
-async fn embedded_transaction_mutation_uses_node_signer() {
+#[test]
+fn embedded_transaction_mutation_uses_node_signer() {
+    workers::block_on(async {
     defra_core::signing::clear_identity_store();
     let (did, expected_identity) = register_local_node_identity();
 
-    let node = EmbeddedNode::builder()
+    let node = Node::builder()
         .with_node_identity_did(&did)
         .build()
         .await
         .expect("build signed node");
-    node.add_schema("type Widget { name: String }")
+    node.add_collection("type Widget { name: String }")
         .await
         .expect("add schema");
 
@@ -177,17 +178,17 @@ async fn embedded_transaction_mutation_uses_node_signer() {
         "configured transactional execute must fail closed when its signer disappears: {:?}",
         create_in_txn_without_signer.errors
     );
-    node.rollback_transaction(&txn_without_signer)
+    node.discard_transaction(&txn_without_signer)
         .await
-        .expect("rollback txn");
+        .expect("discard txn");
 
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
 
-    let node = EmbeddedNode::builder()
+    let node = Node::builder()
         .build()
         .await
         .expect("build unsigned node");
-    node.add_schema("type UnsignedWidget { name: String }")
+    node.add_collection("type UnsignedWidget { name: String }")
         .await
         .expect("add schema");
 
@@ -244,5 +245,7 @@ async fn embedded_transaction_mutation_uses_node_signer() {
         "unexpected missing-block error: {missing_error:#}"
     );
 
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
+})
+    .unwrap()
 }

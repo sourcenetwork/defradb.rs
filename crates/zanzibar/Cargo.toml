@@ -28,7 +28,7 @@ kovan-map.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+workers = { path = "../workers" }
 proptest.workspace = true
 
 [lints]

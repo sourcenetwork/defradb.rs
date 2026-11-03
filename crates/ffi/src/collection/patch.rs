@@ -24,23 +24,19 @@ pub unsafe extern "C" fn defra_collection_patch(
 ) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::CollectionPatch));
-        let node = try_ffi!(request.require_node("collection patch"));
-        let database = try_ffi!(request.database());
+        try_ffi!(request.require_node("collection patch"));
+        let runner = try_ffi!(request.runner());
         let context = request.context();
         let patch = go_string(patch);
         let lens_config = non_empty(lens_config);
-        ffi_async_ok!(node, {
+        ffi_async_ok!(caller, {
             let migration = lens_config
                 .map(|config| serde_json::from_str::<lens::LensConfig>(&config))
                 .transpose()
                 .map_err(|e| format!("invalid lens configuration: {}", e))?;
-            let patch_ops: serde_json::Value =
-                serde_json::from_str(&patch).map_err(|e| format!("invalid patch JSON: {}", e))?;
-            let name = db::definition::patch::json::patch_collection_name(&patch_ops)?;
-            database
-                .patch_collection_with_migration_as(&context, &name, &patch, migration)
+            runner
+                .patch_collection_as(&context, &patch, migration)
                 .await
-                .map(drop)
                 .map_err(|e| e.to_string())
         })
     }

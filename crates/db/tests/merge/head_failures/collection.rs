@@ -19,7 +19,7 @@ async fn collection_block(
     heads: Vec<Cid>,
 ) -> CollectionBlock {
     let payload = CollectionDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority,
     };
     let block = Block::new(CrdtDelta::Collection(payload.clone()), heads, vec![]);
@@ -75,62 +75,71 @@ impl Fixture {
     }
 }
 
-#[tokio::test]
-async fn collection_head_write_failure_aborts_standalone_merge() {
-    let fixture = fixture().await;
-    let block = collection_block(&fixture.blocks, 1, vec![]).await;
-    let before = fixture.snapshot().await;
-    fixture.fail_at(&[FailPoint::CollectionHead(block.cid)]);
+#[test]
+fn collection_head_write_failure_aborts_standalone_merge() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let block = collection_block(&fixture.blocks, 1, vec![]).await;
+        let before = fixture.snapshot().await;
+        fixture.fail_at(&[FailPoint::CollectionHead(block.cid)]);
 
-    let result = fixture.merge_collection_standalone(&block).await;
-    assert!(
-        result.is_err(),
-        "a head write failure must fail the merge: {result:?}"
-    );
-    assert_eq!(fixture.snapshot().await, before);
+        let result = fixture.merge_collection_standalone(&block).await;
+        assert!(
+            result.is_err(),
+            "a head write failure must fail the merge: {result:?}"
+        );
+        assert_eq!(fixture.snapshot().await, before);
 
-    fixture.fail_at(&[]);
-    fixture.merge_collection_standalone(&block).await.unwrap();
-    assert_eq!(fixture.live_collection_heads().await, vec![block.cid]);
+        fixture.fail_at(&[]);
+        fixture.merge_collection_standalone(&block).await.unwrap();
+        assert_eq!(fixture.live_collection_heads().await, vec![block.cid]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn collection_marker_write_failure_aborts_standalone_merge() {
-    let fixture = fixture().await;
-    let parent = collection_block(&fixture.blocks, 1, vec![]).await;
-    fixture.merge_collection_standalone(&parent).await.unwrap();
-    let child = collection_block(&fixture.blocks, 2, vec![parent.cid]).await;
-    let before = fixture.snapshot().await;
-    fixture.fail_at(&[FailPoint::CollectionSupersede(child.cid)]);
+#[test]
+fn collection_marker_write_failure_aborts_standalone_merge() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let parent = collection_block(&fixture.blocks, 1, vec![]).await;
+        fixture.merge_collection_standalone(&parent).await.unwrap();
+        let child = collection_block(&fixture.blocks, 2, vec![parent.cid]).await;
+        let before = fixture.snapshot().await;
+        fixture.fail_at(&[FailPoint::CollectionSupersede(child.cid)]);
 
-    let result = fixture.merge_collection_standalone(&child).await;
-    assert!(
-        result.is_err(),
-        "a marker write failure must fail the merge: {result:?}"
-    );
-    assert_eq!(fixture.snapshot().await, before);
-    assert_eq!(fixture.live_collection_heads().await, vec![parent.cid]);
+        let result = fixture.merge_collection_standalone(&child).await;
+        assert!(
+            result.is_err(),
+            "a marker write failure must fail the merge: {result:?}"
+        );
+        assert_eq!(fixture.snapshot().await, before);
+        assert_eq!(fixture.live_collection_heads().await, vec![parent.cid]);
 
-    fixture.fail_at(&[]);
-    fixture.merge_collection_standalone(&child).await.unwrap();
-    assert_eq!(fixture.live_collection_heads().await, vec![child.cid]);
+        fixture.fail_at(&[]);
+        fixture.merge_collection_standalone(&child).await.unwrap();
+        assert_eq!(fixture.live_collection_heads().await, vec![child.cid]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn collection_head_write_failure_aborts_transactional_merge() {
-    let fixture = fixture().await;
-    let block = collection_block(&fixture.blocks, 1, vec![]).await;
-    let before = fixture.snapshot().await;
-    fixture.fail_at(&[FailPoint::CollectionHead(block.cid)]);
+#[test]
+fn collection_head_write_failure_aborts_transactional_merge() {
+    workers::block_on(async {
+        let fixture = fixture().await;
+        let block = collection_block(&fixture.blocks, 1, vec![]).await;
+        let before = fixture.snapshot().await;
+        fixture.fail_at(&[FailPoint::CollectionHead(block.cid)]);
 
-    let result = fixture.merge_collection(&block).await;
-    assert!(
-        result.is_err(),
-        "a head write failure must fail the merge: {result:?}"
-    );
-    assert_eq!(fixture.snapshot().await, before);
+        let result = fixture.merge_collection(&block).await;
+        assert!(
+            result.is_err(),
+            "a head write failure must fail the merge: {result:?}"
+        );
+        assert_eq!(fixture.snapshot().await, before);
 
-    fixture.fail_at(&[]);
-    fixture.merge_collection(&block).await.unwrap();
-    assert_eq!(fixture.live_collection_heads().await, vec![block.cid]);
+        fixture.fail_at(&[]);
+        fixture.merge_collection(&block).await.unwrap();
+        assert_eq!(fixture.live_collection_heads().await, vec![block.cid]);
+    })
+    .unwrap()
 }

@@ -44,7 +44,7 @@ bytes = { workspace = true }
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+futures.workspace = true
 multihash = { workspace = true }
 sha2 = { workspace = true }
 

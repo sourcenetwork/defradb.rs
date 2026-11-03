@@ -15,7 +15,7 @@ use p2p::{ManageCorrelator, ManageQueryCorrelator};
 /// correlators to deliver inbound replies.
 #[derive(Clone)]
 pub struct ManageHooks {
-    pub ops: Arc<dyn defra_http::P2POperations>,
+    pub ops: Arc<dyn crate::P2POperations>,
     pub nac: Arc<dyn db::NacManagerApi>,
     pub correlator: ManageCorrelator,
     pub query_correlator: ManageQueryCorrelator,

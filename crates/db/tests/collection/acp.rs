@@ -37,8 +37,13 @@ fn collection_without_policy() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -49,8 +54,13 @@ fn collection_with_policy() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
     col.policy = Some(PolicyDescription::new("policy1", "users"));
@@ -148,300 +158,339 @@ impl DocumentACP for FailingDocumentAcp {
     }
 }
 
-#[tokio::test]
-async fn test_no_policy_allows_all() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_without_policy();
+#[test]
+fn test_no_policy_allows_all() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_without_policy();
 
-    // Anyone should have access when there's no policy
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Anonymous,
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-
-    assert!(allowed);
-}
-
-#[tokio::test]
-async fn test_register_with_policy_and_identity() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let collection = collection_with_policy();
-    let owner = test_did();
-
-    // Register document
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
-        .await
-        .unwrap();
-
-    // Verify owner has access
-    let policy = collection.policy.as_ref().unwrap();
-    let is_registered = acp
-        .is_doc_registered(&policy.id, &policy.resource_name, "doc1")
-        .await
-        .unwrap();
-    assert!(is_registered);
-}
-
-#[tokio::test]
-async fn test_no_register_without_identity() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let collection = collection_with_policy();
-
-    // Register without identity (public document)
-    register_doc_if_needed(&acp, None, &collection, "doc1")
-        .await
-        .unwrap();
-
-    // Document should NOT be registered
-    let policy = collection.policy.as_ref().unwrap();
-    let is_registered = acp
-        .is_doc_registered(&policy.id, &policy.resource_name, "doc1")
-        .await
-        .unwrap();
-    assert!(!is_registered);
-}
-
-#[tokio::test]
-async fn branchable_permissioned_with_identity_registers_collection_object_owned_by_creator() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = branchable_collection_with_policy();
-    let owner = test_did();
-
-    register_collection_if_needed(&acp, Some(&owner), &collection)
-        .await
-        .unwrap();
-
-    let policy = collection.policy.as_ref().unwrap();
-    assert!(acp
-        .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
-        .await
-        .unwrap());
-    assert_eq!(
-        acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
-            .await
-            .unwrap(),
-        Some(owner)
-    );
-}
-
-#[tokio::test]
-async fn branchable_permissioned_no_identity_registers_nothing_public() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = branchable_collection_with_policy();
-
-    register_collection_if_needed(&acp, None, &collection)
-        .await
-        .unwrap();
-
-    let policy = collection.policy.as_ref().unwrap();
-    assert!(!acp
-        .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
-        .await
-        .unwrap());
-    assert!(acp
-        .check_doc_access(
+        // Anyone should have access when there's no policy
+        let allowed = check_doc_permission(
+            &acp,
             &Identity::Anonymous,
             DocumentPermission::Read,
-            &policy.id,
-            &policy.resource_name,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(allowed);
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_register_with_policy_and_identity() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let collection = collection_with_policy();
+        let owner = test_did();
+
+        // Register document
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Verify owner has access
+        let policy = collection.policy.as_ref().unwrap();
+        let is_registered = acp
+            .is_doc_registered(&policy.id, &policy.resource_name, "doc1")
+            .await
+            .unwrap();
+        assert!(is_registered);
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_no_register_without_identity() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let collection = collection_with_policy();
+
+        // Register without identity (public document)
+        register_doc_if_needed(&acp, None, &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Document should NOT be registered
+        let policy = collection.policy.as_ref().unwrap();
+        let is_registered = acp
+            .is_doc_registered(&policy.id, &policy.resource_name, "doc1")
+            .await
+            .unwrap();
+        assert!(!is_registered);
+    })
+    .unwrap()
+}
+
+#[test]
+fn branchable_permissioned_with_identity_registers_collection_object_owned_by_creator() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = branchable_collection_with_policy();
+        let owner = test_did();
+
+        register_collection_if_needed(&acp, Some(&owner), &collection)
+            .await
+            .unwrap();
+
+        let policy = collection.policy.as_ref().unwrap();
+        assert!(acp
+            .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
+            .await
+            .unwrap());
+        assert_eq!(
+            acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
+                .await
+                .unwrap(),
+            Some(owner)
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn branchable_permissioned_no_identity_registers_nothing_public() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = branchable_collection_with_policy();
+
+        register_collection_if_needed(&acp, None, &collection)
+            .await
+            .unwrap();
+
+        let policy = collection.policy.as_ref().unwrap();
+        assert!(!acp
+            .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
+            .await
+            .unwrap());
+        assert!(acp
+            .check_doc_access(
+                &Identity::Anonymous,
+                DocumentPermission::Read,
+                &policy.id,
+                &policy.resource_name,
+                &collection.collection_id,
+            )
+            .await
+            .unwrap());
+    })
+    .unwrap()
+}
+
+#[test]
+fn non_branchable_registers_no_collection_object() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_with_policy();
+        let owner = test_did();
+
+        register_collection_if_needed(&acp, Some(&owner), &collection)
+            .await
+            .unwrap();
+
+        let policy = collection.policy.as_ref().unwrap();
+        assert!(!acp
+            .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
+            .await
+            .unwrap());
+    })
+    .unwrap()
+}
+
+#[test]
+fn unpermissioned_branchable_is_fully_public() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = branchable_collection_without_policy();
+        let owner = test_did();
+
+        register_collection_if_needed(&acp, Some(&owner), &collection)
+            .await
+            .unwrap();
+
+        assert!(check_doc_permission(
+            &acp,
+            &Identity::Anonymous,
+            DocumentPermission::Read,
+            &collection,
             &collection.collection_id,
+            None,
         )
         .await
         .unwrap());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn non_branchable_registers_no_collection_object() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_with_policy();
-    let owner = test_did();
+#[test]
+fn double_collection_registration_is_idempotent() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = branchable_collection_with_policy();
+        let owner = test_did();
 
-    register_collection_if_needed(&acp, Some(&owner), &collection)
-        .await
-        .unwrap();
-
-    let policy = collection.policy.as_ref().unwrap();
-    assert!(!acp
-        .is_doc_registered(&policy.id, &policy.resource_name, &collection.collection_id)
-        .await
-        .unwrap());
-}
-
-#[tokio::test]
-async fn unpermissioned_branchable_is_fully_public() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = branchable_collection_without_policy();
-    let owner = test_did();
-
-    register_collection_if_needed(&acp, Some(&owner), &collection)
-        .await
-        .unwrap();
-
-    assert!(check_doc_permission(
-        &acp,
-        &Identity::Anonymous,
-        DocumentPermission::Read,
-        &collection,
-        &collection.collection_id,
-        None,
-    )
-    .await
-    .unwrap());
-}
-
-#[tokio::test]
-async fn double_collection_registration_is_idempotent() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = branchable_collection_with_policy();
-    let owner = test_did();
-
-    register_collection_if_needed(&acp, Some(&owner), &collection)
-        .await
-        .unwrap();
-    register_collection_if_needed(&acp, Some(&owner), &collection)
-        .await
-        .unwrap();
-
-    let policy = collection.policy.as_ref().unwrap();
-    assert_eq!(
-        acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
+        register_collection_if_needed(&acp, Some(&owner), &collection)
             .await
-            .unwrap(),
-        Some(owner)
-    );
-}
-
-#[tokio::test]
-async fn different_owner_collection_registration_fails_closed() {
-    // Mirrors Go's bridgeDocumentACP.RegisterDocObject: a re-registration that
-    // finds the collection object already owned by a different identity must
-    // error (not silently no-op), so a node cannot persist a protected
-    // collection whose ACP object is owned by someone else.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = branchable_collection_with_policy();
-    let owner_a = test_did();
-    let owner_b = test_did2();
-
-    register_collection_if_needed(&acp, Some(&owner_a), &collection)
-        .await
-        .unwrap();
-
-    let err = register_collection_if_needed(&acp, Some(&owner_b), &collection)
-        .await
-        .expect_err("different-owner re-registration must fail closed");
-    assert!(
-        err.to_string().contains("different owner"),
-        "error should describe the owner mismatch, got: {err}"
-    );
-
-    // The original owner is unchanged.
-    let policy = collection.policy.as_ref().unwrap();
-    assert_eq!(
-        acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
+            .unwrap();
+        register_collection_if_needed(&acp, Some(&owner), &collection)
             .await
-            .unwrap(),
-        Some(owner_a)
-    );
+            .unwrap();
+
+        let policy = collection.policy.as_ref().unwrap();
+        assert_eq!(
+            acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
+                .await
+                .unwrap(),
+            Some(owner)
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn branchable_permissioned_create_fails_closed_if_collection_acp_registration_fails() {
-    let db = db::DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    let acp = Arc::new(FailingDocumentAcp);
-    let owner = test_did();
+#[test]
+fn different_owner_collection_registration_fails_closed() {
+    workers::block_on(async {
+        // Mirrors Go's bridgeDocumentACP.RegisterDocObject: a re-registration that
+        // finds the collection object already owned by a different identity must
+        // error (not silently no-op), so a node cannot persist a protected
+        // collection whose ACP object is owned by someone else.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = branchable_collection_with_policy();
+        let owner_a = test_did();
+        let owner_b = test_did2();
 
-    let err = db
-        .create_collection_with_acp_registration(
-            branchable_collection_with_policy(),
-            acp,
-            Some(owner),
+        register_collection_if_needed(&acp, Some(&owner_a), &collection)
+            .await
+            .unwrap();
+
+        let err = register_collection_if_needed(&acp, Some(&owner_b), &collection)
+            .await
+            .expect_err("different-owner re-registration must fail closed");
+        assert!(
+            err.to_string().contains("different owner"),
+            "error should describe the owner mismatch, got: {err}"
+        );
+
+        // The original owner is unchanged.
+        let policy = collection.policy.as_ref().unwrap();
+        assert_eq!(
+            acp.get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
+                .await
+                .unwrap(),
+            Some(owner_a)
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn branchable_permissioned_create_fails_closed_if_collection_acp_registration_fails() {
+    workers::block_on(async {
+        let db = db::DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        let acp = Arc::new(FailingDocumentAcp);
+        let owner = test_did();
+
+        let err = db
+            .create_collection_with_acp_registration(
+                branchable_collection_with_policy(),
+                acp,
+                Some(owner),
+            )
+            .await
+            .expect_err("ACP registration failure must abort collection create");
+
+        assert!(err.to_string().contains("registration failed"));
+        assert!(db.get_collection("users").unwrap().is_none());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_owner_has_update_permission() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let collection = collection_with_policy();
+        let owner = test_did();
+
+        // Register document
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Owner should have update permission
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(owner.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
         )
         .await
-        .expect_err("ACP registration failure must abort collection create");
-
-    assert!(err.to_string().contains("registration failed"));
-    assert!(db.get_collection("users").unwrap().is_none());
+        .unwrap();
+        assert!(allowed);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_owner_has_update_permission() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let collection = collection_with_policy();
-    let owner = test_did();
+#[test]
+fn test_non_owner_denied_update_permission() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let stranger = test_did2();
 
-    // Register document
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        // Register document with owner
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Stranger should NOT have update permission
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
-
-    // Owner should have update permission
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(owner.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(allowed);
+        assert!(!allowed);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_non_owner_denied_update_permission() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let stranger = test_did2();
+#[test]
+fn test_acp_context() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = Arc::new(LocalDocumentACP::new(store));
+        let collection = collection_with_policy();
+        let owner = test_did();
 
-    // Register document with owner
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
-        .await
-        .unwrap();
+        let ctx = AcpContext::new(acp, Identity::Authenticated(owner), None);
 
-    // Stranger should NOT have update permission
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed);
-}
+        // Register document using context
+        ctx.register_doc(&collection, "doc1").await.unwrap();
 
-#[tokio::test]
-async fn test_acp_context() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = Arc::new(LocalDocumentACP::new(store));
-    let collection = collection_with_policy();
-    let owner = test_did();
-
-    let ctx = AcpContext::new(acp, Identity::Authenticated(owner), None);
-
-    // Register document using context
-    ctx.register_doc(&collection, "doc1").await.unwrap();
-
-    // Check permission using context
-    let allowed = ctx
-        .check_permission(DocumentPermission::Delete, &collection, "doc1")
-        .await
-        .unwrap();
-    assert!(allowed);
+        // Check permission using context
+        let allowed = ctx
+            .check_permission(DocumentPermission::Delete, &collection, "doc1")
+            .await
+            .unwrap();
+        assert!(allowed);
+    })
+    .unwrap()
 }
 
 // ============================================================================
@@ -554,435 +603,460 @@ fn test_block_unsafe_policy_transition_allows_forced() {
 
 /// Test that documents registered before a policy change retain their
 /// ACP registrations but may become orphaned if the resource name changes.
-#[tokio::test]
-async fn test_policy_change_mid_transaction_resource_name_change() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let owner = test_did();
+#[test]
+fn test_policy_change_mid_transaction_resource_name_change() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let owner = test_did();
 
-    // Start with policy1 (resource_name = "users")
-    let collection_v1 = collection_with_policy();
-    let policy_v1 = collection_v1.policy.as_ref().unwrap();
+        // Start with policy1 (resource_name = "users")
+        let collection_v1 = collection_with_policy();
+        let policy_v1 = collection_v1.policy.as_ref().unwrap();
 
-    // Register a document under the old policy
-    register_doc_if_needed(&acp, Some(&owner), &collection_v1, "doc1")
-        .await
-        .unwrap();
+        // Register a document under the old policy
+        register_doc_if_needed(&acp, Some(&owner), &collection_v1, "doc1")
+            .await
+            .unwrap();
 
-    // Verify document is registered under old resource name
-    assert!(acp
-        .is_doc_registered(&policy_v1.id, &policy_v1.resource_name, "doc1")
-        .await
-        .unwrap());
+        // Verify document is registered under old resource name
+        assert!(acp
+            .is_doc_registered(&policy_v1.id, &policy_v1.resource_name, "doc1")
+            .await
+            .unwrap());
 
-    // Now create a "new version" with different resource name
-    let mut collection_v2 = collection_v1.clone();
-    collection_v2.policy = Some(PolicyDescription::new("policy1", "profiles"));
-    let policy_v2 = collection_v2.policy.as_ref().unwrap();
+        // Now create a "new version" with different resource name
+        let mut collection_v2 = collection_v1.clone();
+        collection_v2.policy = Some(PolicyDescription::new("policy1", "profiles"));
+        let policy_v2 = collection_v2.policy.as_ref().unwrap();
 
-    // Document should NOT be registered under new resource name
-    // (simulating the orphaned registration scenario)
-    assert!(!acp
-        .is_doc_registered(&policy_v2.id, &policy_v2.resource_name, "doc1")
-        .await
-        .unwrap());
+        // Document should NOT be registered under new resource name
+        // (simulating the orphaned registration scenario)
+        assert!(!acp
+            .is_doc_registered(&policy_v2.id, &policy_v2.resource_name, "doc1")
+            .await
+            .unwrap());
 
-    // But the old registration still exists
-    assert!(acp
-        .is_doc_registered(&policy_v1.id, &policy_v1.resource_name, "doc1")
-        .await
-        .unwrap());
+        // But the old registration still exists
+        assert!(acp
+            .is_doc_registered(&policy_v1.id, &policy_v1.resource_name, "doc1")
+            .await
+            .unwrap());
+    })
+    .unwrap()
 }
 
 /// Test that checking permissions uses the current collection's policy,
 /// so a policy change affects permission checks immediately.
-#[tokio::test]
-async fn test_policy_change_mid_transaction_permission_check() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let owner = test_did();
-    let stranger = test_did2();
+#[test]
+fn test_policy_change_mid_transaction_permission_check() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let owner = test_did();
+        let stranger = test_did2();
 
-    // Register document under policy with resource_name = "users"
-    let collection_v1 = collection_with_policy();
-    register_doc_if_needed(&acp, Some(&owner), &collection_v1, "doc1")
+        // Register document under policy with resource_name = "users"
+        let collection_v1 = collection_with_policy();
+        register_doc_if_needed(&acp, Some(&owner), &collection_v1, "doc1")
+            .await
+            .unwrap();
+
+        // Owner should have access
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(owner.clone()),
+            DocumentPermission::Read,
+            &collection_v1,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
+        assert!(allowed);
 
-    // Owner should have access
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(owner.clone()),
-        DocumentPermission::Read,
-        &collection_v1,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(allowed);
+        // Stranger should NOT have access
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger.clone()),
+            DocumentPermission::Read,
+            &collection_v1,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!allowed);
 
-    // Stranger should NOT have access
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger.clone()),
-        DocumentPermission::Read,
-        &collection_v1,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed);
+        // Now check with new collection version (different resource name)
+        // This simulates mid-transaction policy change
+        let mut collection_v2 = collection_v1.clone();
+        collection_v2.policy = Some(PolicyDescription::new("policy1", "profiles"));
 
-    // Now check with new collection version (different resource name)
-    // This simulates mid-transaction policy change
-    let mut collection_v2 = collection_v1.clone();
-    collection_v2.policy = Some(PolicyDescription::new("policy1", "profiles"));
-
-    // Document is not registered under new resource name, so it appears
-    // unregistered (public) and BOTH users have access
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger.clone()),
-        DocumentPermission::Read,
-        &collection_v2,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    // This is the dangerous case - document becomes "public"
-    assert!(allowed);
+        // Document is not registered under new resource name, so it appears
+        // unregistered (public) and BOTH users have access
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger.clone()),
+            DocumentPermission::Read,
+            &collection_v2,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        // This is the dangerous case - document becomes "public"
+        assert!(allowed);
+    })
+    .unwrap()
 }
 
 /// Test that removing a policy mid-transaction makes documents public.
-#[tokio::test]
-async fn test_policy_removal_mid_transaction_makes_docs_public() {
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store);
-    let owner = test_did();
-    let stranger = test_did2();
+#[test]
+fn test_policy_removal_mid_transaction_makes_docs_public() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store);
+        let owner = test_did();
+        let stranger = test_did2();
 
-    // Register document under policy
-    let collection_with_pol = collection_with_policy();
-    register_doc_if_needed(&acp, Some(&owner), &collection_with_pol, "doc1")
+        // Register document under policy
+        let collection_with_pol = collection_with_policy();
+        register_doc_if_needed(&acp, Some(&owner), &collection_with_pol, "doc1")
+            .await
+            .unwrap();
+
+        // Stranger denied when policy exists
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger.clone()),
+            DocumentPermission::Update,
+            &collection_with_pol,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
+        assert!(!allowed);
 
-    // Stranger denied when policy exists
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger.clone()),
-        DocumentPermission::Update,
-        &collection_with_pol,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed);
+        // Now check with collection without policy (simulating policy removal)
+        let collection_no_pol = collection_without_policy();
 
-    // Now check with collection without policy (simulating policy removal)
-    let collection_no_pol = collection_without_policy();
+        // Document is now "public" - everyone has access
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger.clone()),
+            DocumentPermission::Update,
+            &collection_no_pol,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        // This is the dangerous case - previously protected doc is now public
+        assert!(allowed);
 
-    // Document is now "public" - everyone has access
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger.clone()),
-        DocumentPermission::Update,
-        &collection_no_pol,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    // This is the dangerous case - previously protected doc is now public
-    assert!(allowed);
-
-    // Even anonymous users have access
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Anonymous,
-        DocumentPermission::Update,
-        &collection_no_pol,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(allowed);
+        // Even anonymous users have access
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Anonymous,
+            DocumentPermission::Update,
+            &collection_no_pol,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(allowed);
+    })
+    .unwrap()
 }
 
 // =========================================================================
 // Bypass tests for #738 (DAC bypass thread-local) and #739 (node identity)
 // =========================================================================
 
-#[tokio::test]
-async fn test_node_identity_bypass_grants_full_access() {
-    // A request from the node identity should be granted full access to a
-    // protected document owned by a different identity.
-    // Matches Go's `internal/db/collection_acp.go:60-62`.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let node_identity = test_did2();
+#[test]
+fn test_node_identity_bypass_grants_full_access() {
+    workers::block_on(async {
+        // A request from the node identity should be granted full access to a
+        // protected document owned by a different identity.
+        // Matches Go's `internal/db/collection_acp.go:60-62`.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let node_identity = test_did2();
 
-    // Register the document with `owner` as the owner.
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        // Register the document with `owner` as the owner.
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // The node identity is a different DID — it has no document-level grants.
+        // Without the bypass, this would be denied.
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(node_identity.clone()),
+            DocumentPermission::Read,
+            &collection,
+            "doc1",
+            Some(&node_identity),
+        )
         .await
         .unwrap();
+        assert!(allowed, "node identity must be granted full access");
 
-    // The node identity is a different DID — it has no document-level grants.
-    // Without the bypass, this would be denied.
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(node_identity.clone()),
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        Some(&node_identity),
-    )
-    .await
-    .unwrap();
-    assert!(allowed, "node identity must be granted full access");
+        // Same for Update.
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(node_identity.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            Some(&node_identity),
+        )
+        .await
+        .unwrap();
+        assert!(allowed, "node identity must be granted Update access");
 
-    // Same for Update.
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(node_identity.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        Some(&node_identity),
-    )
-    .await
-    .unwrap();
-    assert!(allowed, "node identity must be granted Update access");
-
-    // Same for Delete.
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(node_identity.clone()),
-        DocumentPermission::Delete,
-        &collection,
-        "doc1",
-        Some(&node_identity),
-    )
-    .await
-    .unwrap();
-    assert!(allowed, "node identity must be granted Delete access");
+        // Same for Delete.
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(node_identity.clone()),
+            DocumentPermission::Delete,
+            &collection,
+            "doc1",
+            Some(&node_identity),
+        )
+        .await
+        .unwrap();
+        assert!(allowed, "node identity must be granted Delete access");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_non_node_identity_still_denied() {
-    // Sanity check: with a configured node_identity, a different identity
-    // must still be subject to the normal DAC checks.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let node_identity = test_did2();
-    let stranger = Did::new("did:key:z6MkpZqHJYYwK7gP9eVUuLAMz3jJW4Wc8nN6F2VQ8RJ7Wn1V").unwrap();
+#[test]
+fn test_non_node_identity_still_denied() {
+    workers::block_on(async {
+        // Sanity check: with a configured node_identity, a different identity
+        // must still be subject to the normal DAC checks.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let node_identity = test_did2();
+        let stranger =
+            Did::new("did:key:z6MkpZqHJYYwK7gP9eVUuLAMz3jJW4Wc8nN6F2VQ8RJ7Wn1V").unwrap();
 
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger),
+            DocumentPermission::Read,
+            &collection,
+            "doc1",
+            Some(&node_identity),
+        )
         .await
         .unwrap();
-
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger),
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        Some(&node_identity),
-    )
-    .await
-    .unwrap();
-    assert!(
-        !allowed,
-        "stranger must still be denied even with node_identity configured"
-    );
+        assert!(
+            !allowed,
+            "stranger must still be denied even with node_identity configured"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_node_identity_none_falls_through() {
-    // When node_identity is None, the bypass shortcut is skipped and DAC
-    // applies normally.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let stranger = test_did2();
+#[test]
+fn test_node_identity_none_falls_through() {
+    workers::block_on(async {
+        // When node_identity is None, the bypass shortcut is skipped and DAC
+        // applies normally.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let stranger = test_did2();
 
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(stranger),
+            DocumentPermission::Read,
+            &collection,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
-
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(stranger),
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(
-        !allowed,
-        "stranger must be denied when no node_identity is set"
-    );
+        assert!(
+            !allowed,
+            "stranger must be denied when no node_identity is set"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_dac_bypass_thread_local_grants_full_access() {
-    // The thread-local `dac_bypass` flag (set by HTTP/FFI entry points after
-    // resolving NAC `bypass-dac` permission via `should_bypass_dac`) must
-    // grant access on the mutation path too.
-    // This covers #738 — the previous gap was that the mutation path
-    // (`check_doc_permission`) ignored this flag.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let admin = test_did2();
+#[test]
+fn test_dac_bypass_thread_local_grants_full_access() {
+    workers::block_on(async {
+        // The thread-local `dac_bypass` flag (set by HTTP/FFI entry points after
+        // resolving NAC `bypass-dac` permission via `should_bypass_dac`) must
+        // grant access on the mutation path too.
+        // This covers #738 — the previous gap was that the mutation path
+        // (`check_doc_permission`) ignored this flag.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let admin = test_did2();
 
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Without the flag, admin is denied.
+        defra_core::dac_bypass::set_dac_bypass(false);
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(admin.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
+        assert!(!allowed, "admin without bypass flag must be denied");
 
-    // Without the flag, admin is denied.
-    defra_core::dac_bypass::set_dac_bypass(false);
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(admin.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed, "admin without bypass flag must be denied");
+        // With the flag set, admin is granted access regardless of DAC.
+        defra_core::dac_bypass::set_dac_bypass(true);
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(admin.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(allowed, "admin with dac_bypass flag must be granted access");
 
-    // With the flag set, admin is granted access regardless of DAC.
-    defra_core::dac_bypass::set_dac_bypass(true);
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(admin.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(allowed, "admin with dac_bypass flag must be granted access");
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Anonymous,
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!allowed, "dac_bypass must not grant anonymous access");
 
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Anonymous,
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed, "dac_bypass must not grant anonymous access");
-
-    // Reset the thread-local so it doesn't leak into other tests.
-    defra_core::dac_bypass::set_dac_bypass(false);
+        // Reset the thread-local so it doesn't leak into other tests.
+        defra_core::dac_bypass::set_dac_bypass(false);
+    })
+    .unwrap()
 }
 
 // =========================================================================
 // Parity test for #740: "writer" must NOT be a recognized relation
 // =========================================================================
 
-#[tokio::test]
-async fn test_writer_relation_is_not_recognized() {
-    // Go DefraDB uses only owner/reader/updater/deleter relations.
-    // A "writer" relation (which used to be checked in local.rs) must not
-    // grant Update or Read access.
+#[test]
+fn test_writer_relation_is_not_recognized() {
+    workers::block_on(async {
+        // Go DefraDB uses only owner/reader/updater/deleter relations.
+        // A "writer" relation (which used to be checked in local.rs) must not
+        // grant Update or Read access.
 
-    let store = Arc::new(MemoryAcpStore::new());
-    let acp = LocalDocumentACP::new(store.clone());
-    let collection = collection_with_policy();
-    let owner = test_did();
-    let granted_user = test_did2();
+        let store = Arc::new(MemoryAcpStore::new());
+        let acp = LocalDocumentACP::new(store.clone());
+        let collection = collection_with_policy();
+        let owner = test_did();
+        let granted_user = test_did2();
 
-    register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+        register_doc_if_needed(&acp, Some(&owner), &collection, "doc1")
+            .await
+            .unwrap();
+
+        // Manually insert a "writer" relation tuple via put_tuple.
+        let policy = collection.policy.as_ref().unwrap();
+        let ns_collection = format!("{}:{}", policy.id, policy.resource_name);
+        let tuple = RelationTuple::try_new(granted_user.clone(), "writer", &ns_collection, "doc1")
+            .expect("relation tuple");
+        store.put_tuple(&tuple).await.unwrap();
+
+        // The "writer" relation must NOT grant Update access (Go has no such relation).
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(granted_user.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
         .await
         .unwrap();
+        assert!(
+            !allowed,
+            "\"writer\" relation must not grant Update — Go DefraDB uses \"updater\""
+        );
 
-    // Manually insert a "writer" relation tuple via put_tuple.
-    let policy = collection.policy.as_ref().unwrap();
-    let ns_collection = format!("{}:{}", policy.id, policy.resource_name);
-    let tuple = RelationTuple::try_new(granted_user.clone(), "writer", &ns_collection, "doc1")
+        // And it must NOT grant Read either.
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(granted_user.clone()),
+            DocumentPermission::Read,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!allowed, "\"writer\" relation must not grant Read");
+
+        // Now grant the canonical "updater" relation and verify Read+Update work.
+        let tuple = RelationTuple::try_new(
+            granted_user.clone(),
+            UPDATER_RELATION,
+            &ns_collection,
+            "doc1",
+        )
         .expect("relation tuple");
-    store.put_tuple(&tuple).await.unwrap();
+        store.put_tuple(&tuple).await.unwrap();
 
-    // The "writer" relation must NOT grant Update access (Go has no such relation).
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(granted_user.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(
-        !allowed,
-        "\"writer\" relation must not grant Update — Go DefraDB uses \"updater\""
-    );
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(granted_user.clone()),
+            DocumentPermission::Update,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(allowed, "canonical 'updater' relation must grant Update");
 
-    // And it must NOT grant Read either.
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(granted_user.clone()),
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(!allowed, "\"writer\" relation must not grant Read");
-
-    // Now grant the canonical "updater" relation and verify Read+Update work.
-    let tuple = RelationTuple::try_new(
-        granted_user.clone(),
-        UPDATER_RELATION,
-        &ns_collection,
-        "doc1",
-    )
-    .expect("relation tuple");
-    store.put_tuple(&tuple).await.unwrap();
-
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(granted_user.clone()),
-        DocumentPermission::Update,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(allowed, "canonical 'updater' relation must grant Update");
-
-    let allowed = check_doc_permission(
-        &acp,
-        &Identity::Authenticated(granted_user),
-        DocumentPermission::Read,
-        &collection,
-        "doc1",
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(
-        allowed,
-        "canonical 'updater' relation must imply Read (matches Go's ImplyDocumentReadPerm)"
-    );
+        let allowed = check_doc_permission(
+            &acp,
+            &Identity::Authenticated(granted_user),
+            DocumentPermission::Read,
+            &collection,
+            "doc1",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            allowed,
+            "canonical 'updater' relation must imply Read (matches Go's ImplyDocumentReadPerm)"
+        );
+    })
+    .unwrap()
 }

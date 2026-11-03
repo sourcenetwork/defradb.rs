@@ -1,4 +1,4 @@
-use document::Document;
+use document::{CommitRow, Document};
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
@@ -108,7 +108,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// Render a commit document according to the _version selection fields.
     pub(super) fn render_commit(
         &self,
-        commit: &Document,
+        commit: &CommitRow,
         version_select: &Select,
     ) -> Result<JsonValue> {
         let mut obj = serde_json::Map::new();

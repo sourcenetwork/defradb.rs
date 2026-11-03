@@ -15,9 +15,14 @@ fn make_test_collection() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -28,9 +33,14 @@ fn make_test_collection_with_index() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(IndexDescription {
@@ -63,10 +73,15 @@ fn make_test_collection_with_filter_and_order_indexes() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
-            FieldDescription::new("4", "score", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "score", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(IndexDescription {
@@ -116,11 +131,21 @@ fn make_users_collection() -> CollectionVersion {
         "v1",
         "coll-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // One-to-many relation to posts (array)
-            FieldDescription::new("3", "posts", FieldKind::relation("posts", true))
-                .with_relation_name("author_posts"),
+            FieldDescription::new(
+                "3",
+                "posts",
+                FieldKind::relation("posts", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts"),
         ],
     )
 }
@@ -131,16 +156,36 @@ fn make_posts_collection() -> CollectionVersion {
         "v1",
         "coll-posts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
             // Many-to-one relation to users (singular)
-            FieldDescription::new("3", "author", FieldKind::relation("users", false))
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("users", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
             // Auto-generated FK field (Go naming: _{fieldname}ID)
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
         ],
     )
 }
@@ -152,55 +197,67 @@ fn test_planner_new() {
     assert!(planner.collection("Posts").is_none());
 }
 
-#[tokio::test]
-async fn test_plan_simple_select() {
-    let planner = Planner::new(vec![make_test_collection()]);
+#[test]
+fn test_plan_simple_select() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection()]);
 
-    let select = Select::new("Users")
-        .with_field(Field::new("_docID"))
-        .with_field(Field::new("name"));
+        let select = Select::new("Users")
+            .with_field(Field::new("_docID"))
+            .with_field(Field::new("name"));
 
-    let plan = planner.plan(&select).unwrap();
-    assert_eq!(plan.kind(), "selectNode");
+        let plan = planner.plan(&select).unwrap();
+        assert_eq!(plan.kind(), "selectNode");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_with_limit() {
-    let planner = Planner::new(vec![make_test_collection()]);
+#[test]
+fn test_plan_with_limit() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection()]);
 
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_limit(10);
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_limit(10);
 
-    let plan = planner.plan(&select).unwrap();
-    assert_eq!(plan.kind(), "limitNode");
+        let plan = planner.plan(&select).unwrap();
+        assert_eq!(plan.kind(), "limitNode");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_unknown_collection() {
-    let planner = Planner::new(vec![make_test_collection()]);
+#[test]
+fn test_plan_unknown_collection() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection()]);
 
-    let select = Select::new("Posts").with_field(Field::new("title"));
+        let select = Select::new("Posts").with_field(Field::new("title"));
 
-    let result = planner.plan(&select);
-    assert!(result.is_err());
+        let result = planner.plan(&select);
+        assert!(result.is_err());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_with_filter() {
-    let planner = Planner::new(vec![make_test_collection()]);
+#[test]
+fn test_plan_with_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection()]);
 
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Alice"}),
-    )]));
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Alice"}),
+        )]));
 
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
 
-    let plan = planner.plan(&select).unwrap();
-    assert_eq!(plan.kind(), "selectNode");
+        let plan = planner.plan(&select).unwrap();
+        assert_eq!(plan.kind(), "selectNode");
+    })
+    .unwrap()
 }
 
 #[test]
@@ -236,154 +293,175 @@ fn test_build_mapping_with_alias() {
 
 // === Index-Aware Planning Tests ===
 
-#[tokio::test]
-async fn test_plan_uses_index_for_eq_filter() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
+#[test]
+fn test_plan_uses_index_for_eq_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
 
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Alice"}),
-    )]));
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Alice"}),
+        )]));
 
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
 
-    let result = planner.plan_with_index_info(&select).unwrap();
+        let result = planner.plan_with_index_info(&select).unwrap();
 
-    // Should use index
-    assert!(result.uses_index());
-    assert_eq!(result.index_scan.as_ref().unwrap().index_name, "name_idx");
+        // Should use index
+        assert!(result.uses_index());
+        assert_eq!(result.index_scan.as_ref().unwrap().index_name, "name_idx");
 
-    // Plan should have indexScanNode at the leaf
-    // (wrapped by selectNode for field projection)
-    assert_eq!(result.plan.kind(), "selectNode");
+        // Plan should have indexScanNode at the leaf
+        // (wrapped by selectNode for field projection)
+        assert_eq!(result.plan.kind(), "selectNode");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_uses_index_for_range_filter() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
+#[test]
+fn test_plan_uses_index_for_range_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
 
-    let filter = Filter::from_conditions(map([(
-        "age".to_string(),
-        serde_json::json!({"_gte": 18, "_lt": 65}),
-    )]));
+        let filter = Filter::from_conditions(map([(
+            "age".to_string(),
+            serde_json::json!({"_gte": 18, "_lt": 65}),
+        )]));
 
-    let select = Select::new("Users")
-        .with_field(Field::new("age"))
-        .with_filter(filter);
+        let select = Select::new("Users")
+            .with_field(Field::new("age"))
+            .with_filter(filter);
 
-    let result = planner.plan_with_index_info(&select).unwrap();
+        let result = planner.plan_with_index_info(&select).unwrap();
 
-    // Should use age index
-    assert!(result.uses_index());
-    assert_eq!(result.index_scan.as_ref().unwrap().index_name, "age_idx");
+        // Should use age index
+        assert!(result.uses_index());
+        assert_eq!(result.index_scan.as_ref().unwrap().index_name, "age_idx");
 
-    // Verify it's a range scan
-    match &result.index_scan.as_ref().unwrap().scan_type {
-        IndexScanType::RangeScan { .. } => {}
-        _ => panic!("expected RangeScan"),
-    }
-}
-
-#[tokio::test]
-async fn test_plan_no_index_without_filter() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
-
-    let select = Select::new("Users").with_field(Field::new("name"));
-
-    let result = planner.plan_with_index_info(&select).unwrap();
-
-    // No filter, so no index should be used
-    assert!(!result.uses_index());
-}
-
-#[tokio::test]
-async fn test_plan_no_index_for_non_indexed_field() {
-    // Collection without indexes
-    let planner = Planner::new(vec![make_test_collection()]);
-
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Alice"}),
-    )]));
-
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
-
-    let result = planner.plan_with_index_info(&select).unwrap();
-
-    // No indexes available, so shouldn't use index
-    assert!(!result.uses_index());
-}
-
-#[tokio::test]
-async fn test_plan_uses_index_for_ne_filter() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
-
-    // _ne uses full index scan (matching Go behavior)
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_ne": "Alice"}),
-    )]));
-
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
-
-    let result = planner.plan_with_index_info(&select).unwrap();
-
-    // _ne uses full index scan
-    assert!(result.uses_index());
-}
-
-#[tokio::test]
-async fn test_plan_uses_index_for_in_filter() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
-
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_in": ["Alice", "Bob"]}),
-    )]));
-
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
-
-    let result = planner.plan_with_index_info(&select).unwrap();
-
-    // _in can use index
-    assert!(result.uses_index());
-    assert_eq!(result.index_scan.as_ref().unwrap().index_name, "name_idx");
-
-    match &result.index_scan.as_ref().unwrap().scan_type {
-        IndexScanType::InScan { values, .. } => {
-            assert_eq!(values.len(), 2);
+        // Verify it's a range scan
+        match &result.index_scan.as_ref().unwrap().scan_type {
+            IndexScanType::RangeScan { .. } => {}
+            _ => panic!("expected RangeScan"),
         }
-        _ => panic!("expected InScan"),
-    }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_result_uses_index_method() {
-    let planner = Planner::new(vec![make_test_collection_with_index()]);
+#[test]
+fn test_plan_no_index_without_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
 
-    // With index
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Alice"}),
-    )]));
-    let select = Select::new("Users")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
-    let result = planner.plan_with_index_info(&select).unwrap();
-    assert!(result.uses_index());
+        let select = Select::new("Users").with_field(Field::new("name"));
 
-    // Without index (no filter)
-    let select_no_filter = Select::new("Users").with_field(Field::new("name"));
-    let result_no_filter = planner.plan_with_index_info(&select_no_filter).unwrap();
-    assert!(!result_no_filter.uses_index());
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        // No filter, so no index should be used
+        assert!(!result.uses_index());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_plan_no_index_for_non_indexed_field() {
+    workers::block_on(async {
+        // Collection without indexes
+        let planner = Planner::new(vec![make_test_collection()]);
+
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Alice"}),
+        )]));
+
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        // No indexes available, so shouldn't use index
+        assert!(!result.uses_index());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_plan_uses_index_for_ne_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+
+        // _ne uses full index scan (matching Go behavior)
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_ne": "Alice"}),
+        )]));
+
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        // _ne uses full index scan
+        assert!(result.uses_index());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_plan_uses_index_for_in_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_in": ["Alice", "Bob"]}),
+        )]));
+
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        // _in can use index
+        assert!(result.uses_index());
+        assert_eq!(result.index_scan.as_ref().unwrap().index_name, "name_idx");
+
+        match &result.index_scan.as_ref().unwrap().scan_type {
+            IndexScanType::InScan { values, .. } => {
+                assert_eq!(values.len(), 2);
+            }
+            _ => panic!("expected InScan"),
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_plan_result_uses_index_method() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+
+        // With index
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Alice"}),
+        )]));
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
+        let result = planner.plan_with_index_info(&select).unwrap();
+        assert!(result.uses_index());
+
+        // Without index (no filter)
+        let select_no_filter = Select::new("Users").with_field(Field::new("name"));
+        let result_no_filter = planner.plan_with_index_info(&select_no_filter).unwrap();
+        assert!(!result_no_filter.uses_index());
+    })
+    .unwrap()
 }
 
 #[test]
@@ -443,243 +521,267 @@ fn test_first_cursor_page_still_prefers_filter_index() {
 // Join Planning Tests
 // ========================================================================
 
-#[tokio::test]
-async fn test_plan_with_one_to_one_relation() {
-    // Query: posts { title, author { name } }
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_with_one_to_one_relation() {
+    workers::block_on(async {
+        // Query: posts { title, author { name } }
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Build nested select for author - field name is "author" (relation field), collection is "users"
-    let author_select = Select::new("users")
-        .with_field_name("author")
-        .with_field(Field::new("name"));
+        // Build nested select for author - field name is "author" (relation field), collection is "users"
+        let author_select = Select::new("users")
+            .with_field_name("author")
+            .with_field(Field::new("name"));
 
-    let select = Select::new("posts")
-        .with_field(Field::new("title"))
-        .with_select(author_select);
+        let select = Select::new("posts")
+            .with_field(Field::new("title"))
+            .with_select(author_select);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // After plan_with_index_info: ScanNode → TypeJoinOne → SelectNode
-    // Outermost is SelectNode (Go DefraDB plan order: joins before select)
-    assert_eq!(plan.kind(), "selectNode");
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "typeIndexJoin");
+        // After plan_with_index_info: ScanNode → TypeJoinOne → SelectNode
+        // Outermost is SelectNode (Go DefraDB plan order: joins before select)
+        assert_eq!(plan.kind(), "selectNode");
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_with_one_to_many_relation() {
-    // Query: users { name, posts { title } }
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_with_one_to_many_relation() {
+    workers::block_on(async {
+        // Query: users { name, posts { title } }
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Build nested select for posts - field name is "posts" (relation field), collection is "posts"
-    let posts_select = Select::new("posts")
-        .with_field_name("posts")
-        .with_field(Field::new("title"));
+        // Build nested select for posts - field name is "posts" (relation field), collection is "posts"
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"));
 
-    let select = Select::new("users")
-        .with_field(Field::new("name"))
-        .with_select(posts_select);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // After plan_with_index_info: ScanNode → TypeJoinMany → SelectNode
-    // Outermost is SelectNode (Go DefraDB plan order: joins before select)
-    assert_eq!(plan.kind(), "selectNode");
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "typeIndexJoin");
+        // After plan_with_index_info: ScanNode → TypeJoinMany → SelectNode
+        // Outermost is SelectNode (Go DefraDB plan order: joins before select)
+        assert_eq!(plan.kind(), "selectNode");
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_relation_unknown_field() {
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_relation_unknown_field() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Try to select a non-existent relation field
-    let nested = Select::new("users")
-        .with_field_name("nonexistent")
-        .with_field(Field::new("name"));
+        // Try to select a non-existent relation field
+        let nested = Select::new("users")
+            .with_field_name("nonexistent")
+            .with_field(Field::new("name"));
 
-    let select = Select::new("posts")
-        .with_field(Field::new("title"))
-        .with_select(nested);
+        let select = Select::new("posts")
+            .with_field(Field::new("title"))
+            .with_select(nested);
 
-    let result = planner.plan(&select);
-    assert!(result.is_err());
+        let result = planner.plan(&select);
+        assert!(result.is_err());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_relation_with_limit() {
-    // Query: users { name, posts { title } } limit 5
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_relation_with_limit() {
+    workers::block_on(async {
+        // Query: users { name, posts { title } } limit 5
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    let posts_select = Select::new("posts")
-        .with_field_name("posts")
-        .with_field(Field::new("title"));
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"));
 
-    let select = Select::new("users")
-        .with_field(Field::new("name"))
-        .with_select(posts_select)
-        .with_limit(5);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select)
+            .with_limit(5);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // The outermost node should be a LimitNode
-    assert_eq!(plan.kind(), "limitNode");
+        // The outermost node should be a LimitNode
+        assert_eq!(plan.kind(), "limitNode");
 
-    // The source should be SelectNode (which wraps the join)
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "selectNode");
+        // The source should be SelectNode (which wraps the join)
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "selectNode");
 
-    // SelectNode's source should be the join
-    let join = source.source().unwrap();
-    assert_eq!(join.kind(), "typeIndexJoin");
+        // SelectNode's source should be the join
+        let join = source.source().unwrap();
+        assert_eq!(join.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
 // ========================================================================
 // Nested Relation Filter Tests
 // ========================================================================
 
-#[tokio::test]
-async fn test_plan_with_nested_filter_on_type_join_many() {
-    // Query: users { name, posts(filter: { title: { _eq: "Hello" } }) { title } }
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_with_nested_filter_on_type_join_many() {
+    workers::block_on(async {
+        // Query: users { name, posts(filter: { title: { _eq: "Hello" } }) { title } }
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Build nested select with filter
-    let filter = Filter::from_conditions(map([(
-        "title".to_string(),
-        serde_json::json!({"_eq": "Hello"}),
-    )]));
+        // Build nested select with filter
+        let filter = Filter::from_conditions(map([(
+            "title".to_string(),
+            serde_json::json!({"_eq": "Hello"}),
+        )]));
 
-    let posts_select = Select::new("posts")
-        .with_field_name("posts")
-        .with_field(Field::new("title"))
-        .with_filter(filter);
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"))
+            .with_filter(filter);
 
-    let select = Select::new("users")
-        .with_field(Field::new("name"))
-        .with_select(posts_select);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // The outermost node should be selectNode (wraps the join)
-    assert_eq!(plan.kind(), "selectNode");
+        // The outermost node should be selectNode (wraps the join)
+        assert_eq!(plan.kind(), "selectNode");
 
-    // SelectNode's source should be typeIndexJoin
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "typeIndexJoin");
+        // SelectNode's source should be typeIndexJoin
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_with_nested_filter_on_type_join_one() {
-    // Query: posts { title, author(filter: { name: { _eq: "Alice" } }) { name } }
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_with_nested_filter_on_type_join_one() {
+    workers::block_on(async {
+        // Query: posts { title, author(filter: { name: { _eq: "Alice" } }) { name } }
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Build nested select with filter
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Alice"}),
-    )]));
+        // Build nested select with filter
+        let filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Alice"}),
+        )]));
 
-    let author_select = Select::new("users")
-        .with_field_name("author")
-        .with_field(Field::new("name"))
-        .with_filter(filter);
+        let author_select = Select::new("users")
+            .with_field_name("author")
+            .with_field(Field::new("name"))
+            .with_filter(filter);
 
-    let select = Select::new("posts")
-        .with_field(Field::new("title"))
-        .with_select(author_select);
+        let select = Select::new("posts")
+            .with_field(Field::new("title"))
+            .with_select(author_select);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // The outermost node should be selectNode (wraps the join)
-    assert_eq!(plan.kind(), "selectNode");
+        // The outermost node should be selectNode (wraps the join)
+        assert_eq!(plan.kind(), "selectNode");
 
-    // SelectNode's source should be typeIndexJoin
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "typeIndexJoin");
+        // SelectNode's source should be typeIndexJoin
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_nested_filter_with_parent_filter() {
-    // Query: users(filter: { name: { _eq: "Bob" } }) {
-    //   name,
-    //   posts(filter: { title: { _like: "Hello%" } }) { title }
-    // }
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_nested_filter_with_parent_filter() {
+    workers::block_on(async {
+        // Query: users(filter: { name: { _eq: "Bob" } }) {
+        //   name,
+        //   posts(filter: { title: { _like: "Hello%" } }) { title }
+        // }
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Parent filter
-    let parent_filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        serde_json::json!({"_eq": "Bob"}),
-    )]));
+        // Parent filter
+        let parent_filter = Filter::from_conditions(map([(
+            "name".to_string(),
+            serde_json::json!({"_eq": "Bob"}),
+        )]));
 
-    // Child filter
-    let child_filter = Filter::from_conditions(map([(
-        "title".to_string(),
-        serde_json::json!({"_like": "Hello%"}),
-    )]));
+        // Child filter
+        let child_filter = Filter::from_conditions(map([(
+            "title".to_string(),
+            serde_json::json!({"_like": "Hello%"}),
+        )]));
 
-    let posts_select = Select::new("posts")
-        .with_field_name("posts")
-        .with_field(Field::new("title"))
-        .with_filter(child_filter);
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"))
+            .with_filter(child_filter);
 
-    let select = Select::new("users")
-        .with_field(Field::new("name"))
-        .with_select(posts_select)
-        .with_filter(parent_filter);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select)
+            .with_filter(parent_filter);
 
-    let plan = planner.plan(&select).unwrap();
+        let plan = planner.plan(&select).unwrap();
 
-    // The outermost node should be selectNode (wraps the join)
-    assert_eq!(plan.kind(), "selectNode");
+        // The outermost node should be selectNode (wraps the join)
+        assert_eq!(plan.kind(), "selectNode");
 
-    // SelectNode's source should be typeIndexJoin
-    let source = plan.source().unwrap();
-    assert_eq!(source.kind(), "typeIndexJoin");
+        // SelectNode's source should be typeIndexJoin
+        let source = plan.source().unwrap();
+        assert_eq!(source.kind(), "typeIndexJoin");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_nested_filter_references_unselected_field_fails_at_planning() {
-    // Query: users { posts(filter: { author_id: { _eq: "user-1" } }) { title } }
-    // The filter references "author_id" but the select only includes "title"
-    // This should fail at planning time with a clear error message
-    let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+#[test]
+fn test_plan_nested_filter_references_unselected_field_fails_at_planning() {
+    workers::block_on(async {
+        // Query: users { posts(filter: { author_id: { _eq: "user-1" } }) { title } }
+        // The filter references "author_id" but the select only includes "title"
+        // This should fail at planning time with a clear error message
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
 
-    // Filter references "author_id" which is NOT in the select list
-    let filter = Filter::from_conditions(map([(
-        "author_id".to_string(),
-        serde_json::json!({"_eq": "user-1"}),
-    )]));
+        // Filter references "author_id" which is NOT in the select list
+        let filter = Filter::from_conditions(map([(
+            "author_id".to_string(),
+            serde_json::json!({"_eq": "user-1"}),
+        )]));
 
-    let posts_select = Select::new("posts")
-        .with_field_name("posts")
-        .with_field(Field::new("title")) // Only selecting "title", not "author_id"
-        .with_filter(filter);
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title")) // Only selecting "title", not "author_id"
+            .with_filter(filter);
 
-    let select = Select::new("users")
-        .with_field(Field::new("name"))
-        .with_select(posts_select);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select);
 
-    let result = planner.plan(&select);
+        let result = planner.plan(&select);
 
-    // Should fail at planning time
-    let err = match result {
-        Ok(_) => panic!("Expected error but got Ok"),
-        Err(e) => e,
-    };
+        // Should fail at planning time
+        let err = match result {
+            Ok(_) => panic!("Expected error but got Ok"),
+            Err(e) => e,
+        };
 
-    // Error message should indicate the filter field is not in the select list
-    let err_msg = err.to_string();
-    assert!(
-        err_msg.contains("author_id"),
-        "Error should mention the field name: {}",
-        err_msg
-    );
-    assert!(
-        err_msg.contains("select list") || err_msg.contains("posts"),
-        "Error should mention select list or collection: {}",
-        err_msg
-    );
+        // Error message should indicate the filter field is not in the select list
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("author_id"),
+            "Error should mention the field name: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("select list") || err_msg.contains("posts"),
+            "Error should mention select list or collection: {}",
+            err_msg
+        );
+    })
+    .unwrap()
 }
 
 // === Secondary Relation ID Field Tests ===
@@ -692,15 +794,30 @@ fn make_book_collection() -> CollectionVersion {
         "v1",
         "coll-book",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // Secondary relation to Author (no @primary)
-            FieldDescription::new("3", "author", FieldKind::relation("Author", false))
-                .with_relation_name("book_author"),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("Author", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author"),
             // Auto-generated _authorID field (added by add_relation_id_fields)
             // Even though this is secondary, the _authorID field exists for querying
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("book_author"),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author"),
         ],
     )
 }
@@ -713,16 +830,31 @@ fn make_author_collection() -> CollectionVersion {
         "v1",
         "coll-author",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // Primary relation to Book (@primary - stores FK)
-            FieldDescription::new("3", "published", FieldKind::relation("Book", false))
-                .with_relation_name("book_author")
-                .as_primary(),
+            FieldDescription::new(
+                "3",
+                "published",
+                FieldKind::relation("Book", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author")
+            .as_primary(),
             // Auto-generated _publishedID field (primary side stores FK)
-            FieldDescription::new("4", "_publishedID", FieldKind::doc_id())
-                .with_relation_name("book_author")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_publishedID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author")
+            .as_primary(),
         ],
     )
 }
@@ -783,11 +915,21 @@ fn make_user_with_name_index() -> CollectionVersion {
         "v1",
         "coll-user",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // One-to-many relation to Device (array)
-            FieldDescription::new("3", "devices", FieldKind::relation("Device", true))
-                .with_relation_name("owner_devices"),
+            FieldDescription::new(
+                "3",
+                "devices",
+                FieldKind::relation("Device", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices"),
         ],
     )
     .with_index(IndexDescription {
@@ -810,17 +952,42 @@ fn make_device_with_owner_index() -> CollectionVersion {
         "v1",
         "coll-device",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "model", FieldKind::string()),
-            FieldDescription::new("3", "manufacturer", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "model",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "manufacturer",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
             // Many-to-one relation to User
-            FieldDescription::new("4", "owner", FieldKind::relation("User", false))
-                .with_relation_name("owner_devices")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "owner",
+                FieldKind::relation("User", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices")
+            .as_primary(),
             // Auto-generated FK field
-            FieldDescription::new("5", "_ownerID", FieldKind::doc_id())
-                .with_relation_name("owner_devices")
-                .as_primary(),
+            FieldDescription::new(
+                "5",
+                "_ownerID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices")
+            .as_primary(),
         ],
     )
     // `owner: User @index` creates a non-unique index on _ownerID
@@ -837,170 +1004,185 @@ fn make_device_with_owner_index() -> CollectionVersion {
     })
 }
 
-#[tokio::test]
-async fn test_plan_fk_filter_eq_null_uses_index() {
-    // Go: TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_EqNilFilterShouldUseIndex
-    // Filter: {_ownerID: {_eq: null}} — direct FK filter should use _ownerID index
-    let planner = Planner::new(vec![
-        make_user_with_name_index(),
-        make_device_with_owner_index(),
-    ]);
+#[test]
+fn test_plan_fk_filter_eq_null_uses_index() {
+    workers::block_on(async {
+        // Go: TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_EqNilFilterShouldUseIndex
+        // Filter: {_ownerID: {_eq: null}} — direct FK filter should use _ownerID index
+        let planner = Planner::new(vec![
+            make_user_with_name_index(),
+            make_device_with_owner_index(),
+        ]);
 
-    let filter = Filter::from_conditions(map([(
-        "_ownerID".to_string(),
-        serde_json::json!({"_eq": null}),
-    )]));
+        let filter = Filter::from_conditions(map([(
+            "_ownerID".to_string(),
+            serde_json::json!({"_eq": null}),
+        )]));
 
-    let select = Select::new("Device")
-        .with_field(Field::new("model"))
-        .with_filter(filter);
+        let select = Select::new("Device")
+            .with_field(Field::new("model"))
+            .with_filter(filter);
 
-    let result = planner.plan_with_index_info(&select).unwrap();
-    assert!(
-        result.uses_index(),
-        "Filter on _ownerID should use index on _ownerID"
-    );
-    assert_eq!(
-        result.index_scan.as_ref().unwrap().index_name,
-        "Device__ownerID_ASC"
-    );
+        let result = planner.plan_with_index_info(&select).unwrap();
+        assert!(
+            result.uses_index(),
+            "Filter on _ownerID should use index on _ownerID"
+        );
+        assert_eq!(
+            result.index_scan.as_ref().unwrap().index_name,
+            "Device__ownerID_ASC"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_fk_filter_ne_null_uses_index() {
-    // Go: TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_NeNilFilterShouldUseIndex
-    // Filter: {_ownerID: {_neq: null}} — should use full index scan
-    let planner = Planner::new(vec![
-        make_user_with_name_index(),
-        make_device_with_owner_index(),
-    ]);
+#[test]
+fn test_plan_fk_filter_ne_null_uses_index() {
+    workers::block_on(async {
+        // Go: TestQueryWithIndexOnOneToMany_IfIndexedRelationIsNil_NeNilFilterShouldUseIndex
+        // Filter: {_ownerID: {_neq: null}} — should use full index scan
+        let planner = Planner::new(vec![
+            make_user_with_name_index(),
+            make_device_with_owner_index(),
+        ]);
 
-    let filter = Filter::from_conditions(map([(
-        "_ownerID".to_string(),
-        serde_json::json!({"_ne": null}),
-    )]));
+        let filter = Filter::from_conditions(map([(
+            "_ownerID".to_string(),
+            serde_json::json!({"_ne": null}),
+        )]));
 
-    let select = Select::new("Device")
-        .with_field(Field::new("model"))
-        .with_filter(filter);
+        let select = Select::new("Device")
+            .with_field(Field::new("model"))
+            .with_filter(filter);
 
-    let result = planner.plan_with_index_info(&select).unwrap();
-    assert!(
-        result.uses_index(),
-        "Filter on _ownerID with _ne should use index"
-    );
-    assert_eq!(
-        result.index_scan.as_ref().unwrap().index_name,
-        "Device__ownerID_ASC"
-    );
+        let result = planner.plan_with_index_info(&select).unwrap();
+        assert!(
+            result.uses_index(),
+            "Filter on _ownerID with _ne should use index"
+        );
+        assert_eq!(
+            result.index_scan.as_ref().unwrap().index_name,
+            "Device__ownerID_ASC"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_plan_relation_filter_still_uses_fk_index() {
-    // Go: TestQueryWithIndexOnManyToOne_IfFilterOnIndexedRelation_ShouldFilterWithExplain
-    // Filter: {owner: {name: {_eq: "Keenan"}}} — relation filter.
-    // Even with a relation filter, the FK index on _ownerID should still be usable.
-    // Go produces typeIndexJoin where root uses _ownerID index.
-    // The `has_relation_filter` guard must not block FK-based index selection.
-    let planner = Planner::new(vec![
-        make_user_with_name_index(),
-        make_device_with_owner_index(),
-    ]);
+#[test]
+fn test_plan_relation_filter_still_uses_fk_index() {
+    workers::block_on(async {
+        // Go: TestQueryWithIndexOnManyToOne_IfFilterOnIndexedRelation_ShouldFilterWithExplain
+        // Filter: {owner: {name: {_eq: "Keenan"}}} — relation filter.
+        // Even with a relation filter, the FK index on _ownerID should still be usable.
+        // Go produces typeIndexJoin where root uses _ownerID index.
+        // The `has_relation_filter` guard must not block FK-based index selection.
+        let planner = Planner::new(vec![
+            make_user_with_name_index(),
+            make_device_with_owner_index(),
+        ]);
 
-    let filter = Filter::from_conditions(map([(
-        "owner".to_string(),
-        serde_json::json!({"name": {"_eq": "Keenan"}}),
-    )]));
-
-    let select = Select::new("Device")
-        .with_field(Field::new("model"))
-        .with_filter(filter);
-
-    let result = planner.plan_with_index_info(&select).unwrap();
-
-    // The plan should still produce a typeIndexJoin (join node)
-    // even though we have a relation filter
-    let plan = result.plan;
-    assert_eq!(plan.kind(), "selectNode");
-    let source = plan.source().unwrap();
-    assert_eq!(
-        source.kind(),
-        "typeIndexJoin",
-        "Relation filter should produce a typeIndexJoin node"
-    );
-}
-
-#[tokio::test]
-async fn test_plan_mixed_scalar_and_relation_filter_uses_index() {
-    // Go: TestQueryWithIndex_WithMultipleScalarsAndRelationFilter_ShouldApplyAllAsAnd
-    // Filter has both scalar (_ownerID or model) and relation (owner: {...}) conditions.
-    // Scalar conditions on indexed fields should still use the index.
-    // Add a model index for this test
-    let mut device = make_device_with_owner_index();
-    device.indexes.push(IndexDescription {
-        id: 2,
-        name: "Device_model_ASC".to_string(),
-        unique: false,
-        kind: None,
-        auto_generated: false,
-        fields: vec![IndexedFieldDescription {
-            name: "model".to_string(),
-            descending: false,
-        }],
-    });
-
-    let planner = Planner::new(vec![make_user_with_name_index(), device]);
-
-    let filter = Filter::from_conditions(map([
-        ("model".to_string(), serde_json::json!({"_eq": "iPhone"})),
-        (
+        let filter = Filter::from_conditions(map([(
             "owner".to_string(),
             serde_json::json!({"name": {"_eq": "Keenan"}}),
-        ),
-    ]));
+        )]));
 
-    let select = Select::new("Device")
-        .with_field(Field::new("model"))
-        .with_filter(filter);
+        let select = Select::new("Device")
+            .with_field(Field::new("model"))
+            .with_filter(filter);
 
-    let result = planner.plan_with_index_info(&select).unwrap();
+        let result = planner.plan_with_index_info(&select).unwrap();
 
-    // Should use an index for the scalar part (model)
-    // even though there's also a relation filter
-    assert!(
-        result.uses_index(),
-        "Mixed scalar+relation filter should use index for scalar part"
-    );
+        // The plan should still produce a typeIndexJoin (join node)
+        // even though we have a relation filter
+        let plan = result.plan;
+        assert_eq!(plan.kind(), "selectNode");
+        let source = plan.source().unwrap();
+        assert_eq!(
+            source.kind(),
+            "typeIndexJoin",
+            "Relation filter should produce a typeIndexJoin node"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_plan_mixed_scalar_and_relation_filter_uses_index() {
+    workers::block_on(async {
+        // Go: TestQueryWithIndex_WithMultipleScalarsAndRelationFilter_ShouldApplyAllAsAnd
+        // Filter has both scalar (_ownerID or model) and relation (owner: {...}) conditions.
+        // Scalar conditions on indexed fields should still use the index.
+        // Add a model index for this test
+        let mut device = make_device_with_owner_index();
+        device.indexes.push(IndexDescription {
+            id: 2,
+            name: "Device_model_ASC".to_string(),
+            unique: false,
+            kind: None,
+            auto_generated: false,
+            fields: vec![IndexedFieldDescription {
+                name: "model".to_string(),
+                descending: false,
+            }],
+        });
+
+        let planner = Planner::new(vec![make_user_with_name_index(), device]);
+
+        let filter = Filter::from_conditions(map([
+            ("model".to_string(), serde_json::json!({"_eq": "iPhone"})),
+            (
+                "owner".to_string(),
+                serde_json::json!({"name": {"_eq": "Keenan"}}),
+            ),
+        ]));
+
+        let select = Select::new("Device")
+            .with_field(Field::new("model"))
+            .with_filter(filter);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        // Should use an index for the scalar part (model)
+        // even though there's also a relation filter
+        assert!(
+            result.uses_index(),
+            "Mixed scalar+relation filter should use index for scalar part"
+        );
+    })
+    .unwrap()
 }
 
 // === Secondary Relation ID Field Tests ===
 
-#[tokio::test]
-async fn test_plan_secondary_relation_id_field() {
-    // Test that selecting _authorID on Book (secondary side) creates a TypeJoin
-    let planner = Planner::new(vec![make_book_collection(), make_author_collection()]);
+#[test]
+fn test_plan_secondary_relation_id_field() {
+    workers::block_on(async {
+        // Test that selecting _authorID on Book (secondary side) creates a TypeJoin
+        let planner = Planner::new(vec![make_book_collection(), make_author_collection()]);
 
-    // Query: Book { name _authorID }
-    let select = Select::new("Book")
-        .with_field(Field::new("name"))
-        .with_field(Field::new("_authorID"));
+        // Query: Book { name _authorID }
+        let select = Select::new("Book")
+            .with_field(Field::new("name"))
+            .with_field(Field::new("_authorID"));
 
-    let result = planner.plan(&select);
-    assert!(
-        result.is_ok(),
-        "Planning should succeed: {:?}",
-        result.err()
-    );
+        let result = planner.plan(&select);
+        assert!(
+            result.is_ok(),
+            "Planning should succeed: {:?}",
+            result.err()
+        );
 
-    let plan = result.unwrap();
-    // The plan should have a TypeJoinOne node somewhere in the tree
-    // since we need to do a reverse lookup for _authorID
+        let plan = result.unwrap();
+        // The plan should have a TypeJoinOne node somewhere in the tree
+        // since we need to do a reverse lookup for _authorID
 
-    // For now, just verify the plan was created
-    // A more thorough test would execute the plan with test data
-    assert!(
-        plan.kind() == "selectNode" || plan.kind() == "typeJoinOne",
-        "Plan should be selectNode or typeJoinOne, got: {}",
-        plan.kind()
-    );
+        // For now, just verify the plan was created
+        // A more thorough test would execute the plan with test data
+        assert!(
+            plan.kind() == "selectNode" || plan.kind() == "typeJoinOne",
+            "Plan should be selectNode or typeJoinOne, got: {}",
+            plan.kind()
+        );
+    })
+    .unwrap()
 }

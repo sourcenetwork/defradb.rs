@@ -101,11 +101,26 @@ impl Fixture {
             "write-baseline-v1",
             "write-baseline",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "label", FieldKind::string()),
-                FieldDescription::new("3", "left", FieldKind::string()),
-                FieldDescription::new("4", "right", FieldKind::string()),
-                FieldDescription::new("5", "count", FieldKind::int())
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "label",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("3", "left", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new(
+                    "4",
+                    "right",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("5", "count", FieldKind::int(), schema::CType::LwwRegister)
                     .with_crdt_type(CType::PnCounter),
             ],
         );

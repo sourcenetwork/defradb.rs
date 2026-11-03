@@ -11,7 +11,7 @@ fn test_block() -> Block {
     Block {
         delta: CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: b"original".to_vec(),
         }),

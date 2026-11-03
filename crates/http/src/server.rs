@@ -24,11 +24,10 @@ use serde_json::Map;
 
 use crate::error::Result;
 use crate::router::{
-    create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
-    BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    SchemaOperations, TransactionOperations, ViewOperations,
+    create_router_with_state_and_body_limits, AppState, AppStateBuilder, BackupOperations,
+    BlockOperations, BodyLimits, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
+    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -85,6 +84,11 @@ impl Default for ServerConfig {
     }
 }
 
+/// Application-owned wrapping of the complete serving router. The callback
+/// runs once per router construction, after native and extra routes are merged,
+/// including the native fallback. Its body is trusted application code.
+pub type RouterTransform = Arc<dyn Fn(Router) -> Router + Send + Sync>;
+
 /// HTTP server for DefraDB.
 pub struct Server {
     config: ServerConfig,
@@ -99,24 +103,33 @@ pub struct Server {
     rest: Option<Arc<dyn RestOperations>>,
     p2p: Option<Arc<dyn P2POperations>>,
     manage: Option<Arc<dyn ManageRequester>>,
-    acp: Option<Arc<dyn AcpOperations>>,
     index: Option<Arc<dyn IndexOperations>>,
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    schema: Option<Arc<dyn SchemaOperations>>,
-    lens: Option<Arc<dyn LensOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
-    collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
-    txn_ops: Option<Arc<dyn TransactionOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
     dev_mode: bool,
+    extra_routes: Option<Router>,
+    router_transform: Option<RouterTransform>,
+}
+
+/// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
+/// listener. Call it on the network runtime.
+pub async fn serve_router(listener: std::net::TcpListener, router: Router) -> std::io::Result<()> {
+    axum::serve(adopt(listener)?, router).await
+}
+
+fn adopt(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
+    listener.set_nonblocking(true)?;
+    TcpListener::from_std(listener)
 }
 
 impl Server {
@@ -157,25 +170,36 @@ impl Server {
             rest: None,
             p2p: None,
             manage: None,
-            acp: None,
             index: None,
             encrypted_index: None,
             backup: None,
             block: None,
             schema: None,
-            lens: None,
             nac: None,
-            collection_versions: None,
             collection_mgmt: None,
             doc_acp: None,
             view: None,
             dump: None,
-            txn_ops: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
             dev_mode: false,
+            extra_routes: None,
+            router_transform: None,
         }
+    }
+
+    /// Serve `routes` beside the API's own.
+    pub fn with_extra_routes(mut self, routes: Router) -> Self {
+        self.extra_routes = Some(routes);
+        self
+    }
+
+    /// Wrap the complete router, including native authentication, extra routes
+    /// and the normalized fallback. The same composition serves HTTP and TLS.
+    pub fn with_router_transform(mut self, transform: RouterTransform) -> Self {
+        self.router_transform = Some(transform);
+        self
     }
 
     /// Serve HTTPS using a previously validated certificate and private key.
@@ -211,8 +235,8 @@ impl Server {
     /// When P2P operations are configured, the server enables additional endpoints:
     /// - `GET /api/v0/p2p/info` - Get P2P node info (peer ID, addresses)
     /// - `GET /api/v0/p2p/shareable-address` - Get the single best shareable P2P address
-    /// - `GET /api/v0/p2p/peers` - List connected peers
-    /// - `POST /api/v0/p2p/peers` - Connect to a peer
+    /// - `GET /api/v0/p2p/active-peers` - List connected peers
+    /// - `POST /api/v0/p2p/connect` - Connect to peers
     /// - And other P2P management endpoints
     pub fn with_p2p<P: P2POperations + 'static>(mut self, p2p: P) -> Self {
         self.p2p = Some(Arc::new(p2p));
@@ -231,12 +255,6 @@ impl Server {
     /// peers on behalf of HTTP callers.
     pub fn with_manage_arc(mut self, manage: Arc<dyn ManageRequester>) -> Self {
         self.manage = Some(manage);
-        self
-    }
-
-    /// Set ACP operations from an Arc.
-    pub fn with_acp_arc(mut self, acp: Arc<dyn AcpOperations>) -> Self {
-        self.acp = Some(acp);
         self
     }
 
@@ -270,31 +288,15 @@ impl Server {
     /// Set schema operations for schema management endpoints.
     ///
     /// When schema operations are configured, the server enables:
-    /// - `POST /api/v0/schema` - Add schema from SDL
-    pub fn with_schema<S: SchemaOperations + 'static>(mut self, schema: S) -> Self {
+    /// - `POST /api/v0/collections` - Add schema from SDL
+    pub fn with_schema<S: CollectionOperations + 'static>(mut self, schema: S) -> Self {
         self.schema = Some(Arc::new(schema));
         self
     }
 
     /// Set schema operations from an Arc.
-    pub fn with_schema_arc(mut self, schema: Arc<dyn SchemaOperations>) -> Self {
+    pub fn with_schema_arc(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
-        self
-    }
-
-    /// Set lens operations for schema migration endpoints.
-    ///
-    /// When lens operations are configured, the server enables:
-    /// - `POST /api/v0/lens/set` - Set a migration between schema versions
-    /// - `POST /api/v0/lens/reload` - Reload all lens modules
-    pub fn with_lens<L: LensOperations + 'static>(mut self, lens: L) -> Self {
-        self.lens = Some(Arc::new(lens));
-        self
-    }
-
-    /// Set lens operations from an Arc.
-    pub fn with_lens_arc(mut self, lens: Arc<dyn LensOperations>) -> Self {
-        self.lens = Some(lens);
         self
     }
 
@@ -319,15 +321,6 @@ impl Server {
         self
     }
 
-    /// Set read-only collection-version operations from an Arc.
-    pub fn with_collection_versions_arc(
-        mut self,
-        collection_versions: Arc<dyn CollectionVersionOperations>,
-    ) -> Self {
-        self.collection_versions = Some(collection_versions);
-        self
-    }
-
     /// Set view operations from an Arc.
     pub fn with_view_arc(mut self, view: Arc<dyn ViewOperations>) -> Self {
         self.view = Some(view);
@@ -337,12 +330,6 @@ impl Server {
     /// Set dump operations from an Arc.
     pub fn with_dump_arc(mut self, dump: Arc<dyn DumpOperations>) -> Self {
         self.dump = Some(dump);
-        self
-    }
-
-    /// Set transaction operations from an Arc.
-    pub fn with_txn_ops_arc(mut self, txn_ops: Arc<dyn TransactionOperations>) -> Self {
-        self.txn_ops = Some(txn_ops);
         self
     }
 
@@ -413,9 +400,6 @@ impl Server {
         if let Some(ref manage) = self.manage {
             builder = builder.with_manage(Arc::clone(manage));
         }
-        if let Some(ref acp) = self.acp {
-            builder = builder.with_acp(Arc::clone(acp));
-        }
         if let Some(ref index) = self.index {
             builder = builder.with_index(Arc::clone(index));
         }
@@ -431,14 +415,8 @@ impl Server {
         if let Some(ref schema) = self.schema {
             builder = builder.with_schema(Arc::clone(schema));
         }
-        if let Some(ref lens) = self.lens {
-            builder = builder.with_lens(Arc::clone(lens));
-        }
         if let Some(ref nac) = self.nac {
             builder = builder.with_nac(Arc::clone(nac));
-        }
-        if let Some(ref collection_versions) = self.collection_versions {
-            builder = builder.with_collection_versions(Arc::clone(collection_versions));
         }
         if let Some(ref collection_mgmt) = self.collection_mgmt {
             builder = builder.with_collection_mgmt(Arc::clone(collection_mgmt));
@@ -451,9 +429,6 @@ impl Server {
         }
         if let Some(ref dump) = self.dump {
             builder = builder.with_dump(Arc::clone(dump));
-        }
-        if let Some(ref txn_ops) = self.txn_ops {
-            builder = builder.with_txn_ops(Arc::clone(txn_ops));
         }
         if let Some(ref event_bus) = self.event_bus {
             builder = builder.with_event_bus(Arc::clone(event_bus));
@@ -547,7 +522,14 @@ impl Server {
         // Router layers run after route matching, so normalize misses through a
         // clone that already carries the complete auth and request middleware.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
-        Ok(router.fallback_service(normalized))
+        let mut router = router.fallback_service(normalized);
+        if let Some(extra) = &self.extra_routes {
+            router = router.merge(extra.clone());
+        }
+        if let Some(transform) = &self.router_transform {
+            router = transform(router);
+        }
+        Ok(router)
     }
 
     /// Build CORS layer matching Go DefraDB behavior.
@@ -615,30 +597,27 @@ impl Server {
         Ok(valid_origins)
     }
 
-    /// Run the server (blocks until shutdown).
+    /// Binds the configured address and serves until shutdown. Call it on
+    /// the network runtime.
     pub async fn run(self) -> Result<()> {
-        let router = self.router()?;
-        let listener = TcpListener::bind(self.config.address).await.map_err(|e| {
-            let hint = match e.kind() {
-                std::io::ErrorKind::AddrInUse => "port is already in use",
-                std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
-                std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
-                _ => "check network configuration",
-            };
-            tracing::error!(
-                address = %self.config.address,
-                error = %e,
-                hint = hint,
-                "Failed to bind HTTP server"
-            );
-            crate::error::HttpError::Internal(format!(
-                "failed to bind to {}: {} ({})",
-                self.config.address, e, hint
-            ))
-        })?;
+        let listener = TcpListener::bind(self.config.address)
+            .await
+            .map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
 
+    /// Serves on `listener`, already bound by the caller, until shutdown.
+    /// Call it on the network runtime.
+    pub async fn serve_on(self, listener: std::net::TcpListener) -> Result<()> {
+        let listener = adopt(listener).map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
+
+    async fn serve(self, listener: TcpListener) -> Result<()> {
+        let router = self.router()?;
+        let address = listener.local_addr().unwrap_or(self.config.address);
         let scheme = if self.tls.is_some() { "https" } else { "http" };
-        tracing::info!("Providing HTTP API at {scheme}://{}", self.config.address);
+        tracing::info!("Providing HTTP API at {scheme}://{address}");
 
         let result = match self.tls {
             Some(tls) => tls.serve(listener, router).await,
@@ -650,6 +629,25 @@ impl Server {
         })?;
 
         Ok(())
+    }
+
+    fn bind_error(&self, e: std::io::Error) -> crate::error::HttpError {
+        let hint = match e.kind() {
+            std::io::ErrorKind::AddrInUse => "port is already in use",
+            std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
+            std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
+            _ => "check network configuration",
+        };
+        tracing::error!(
+            address = %self.config.address,
+            error = %e,
+            hint = hint,
+            "Failed to bind HTTP server"
+        );
+        crate::error::HttpError::Internal(format!(
+            "failed to bind to {}: {} ({})",
+            self.config.address, e, hint
+        ))
     }
 
     /// Get the configured address.
@@ -689,3 +687,7 @@ impl Server {
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "router_transform_tests.rs"]
+mod router_transform_tests;

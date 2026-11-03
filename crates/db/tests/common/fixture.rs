@@ -29,8 +29,9 @@ pub async fn fixture_with_docs(n: usize) -> Arc<DB<RegolithStore>> {
     for i in 0..n {
         let txn = db.new_txn(false).await.unwrap();
         let mutator = DbDocMutator::new(db.clone(), txn);
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String(format!("user-{i}")));
+        let mut doc = Document::new(test_schema());
+        doc.set("name", NormalValue::String(format!("user-{i}")))
+            .unwrap();
         mutator.create("Users", doc).await.unwrap();
         let txn = mutator.take_txn().await.unwrap();
         txn.commit().await.unwrap();

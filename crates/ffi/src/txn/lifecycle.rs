@@ -28,11 +28,14 @@ pub extern "C" fn defra_transaction_create(
         };
 
         let result = crate::call::wait(async move {
-            runner
+            let handle = runner
                 .begin_txn(is_read_only != 0)
                 .await
-                .map(|handle| handle.to_string())
-                .map_err(|e| format!("failed to begin transaction: {}", e))
+                .map_err(|e| format!("failed to begin transaction: {}", e))?;
+            handle
+                .to_string()
+                .parse::<defra_core::TxnId>()
+                .map_err(|e| format!("invalid transaction ID: {}", e))
         });
 
         match result {
@@ -51,10 +54,7 @@ pub extern "C" fn defra_transaction_commit(txn_ptr: usize) -> DefraResult {
         let runner = try_ffi!(get_node_runner(txn.node));
 
         ffi_async_ok!(caller, {
-            let handle: query::txn::TransactionHandle = txn
-                .id
-                .parse()
-                .map_err(|e| format!("invalid transaction ID: {}", e))?;
+            let handle = query::txn::TransactionHandle::new(txn.id.to_string());
             runner
                 .commit_txn(&handle)
                 .await
@@ -75,12 +75,9 @@ pub extern "C" fn defra_transaction_discard(txn_ptr: usize) {
             return;
         };
         let discarded = crate::call::wait(async move {
-            let handle: query::txn::TransactionHandle = txn
-                .id
-                .parse()
-                .map_err(|e| format!("invalid transaction ID: {}", e))?;
+            let handle = query::txn::TransactionHandle::new(txn.id.to_string());
             runner
-                .rollback_txn(&handle)
+                .discard_txn(&handle)
                 .await
                 .map_err(|e| format!("failed to discard transaction: {}", e))
         });

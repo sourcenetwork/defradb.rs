@@ -1,22 +1,74 @@
 //! Index HTTP client methods
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use urlencoding::encode;
 
 use super::HttpClient;
 use crate::error::Result;
 
-/// Index create request
+/// Go's index create body (`client.IndexDescriptionCreateRequest`).
 #[derive(Debug, Serialize)]
-pub struct IndexCreateRequest {
-    pub collection: String,
-    pub fields: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub unique: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vector: Option<schema::VectorIndexDescription>,
+struct GoIndexCreateRequest {
+    #[serde(rename = "Name", skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(rename = "Fields")]
+    fields: Vec<GoIndexedField>,
+    #[serde(rename = "Unique", skip_serializing_if = "std::ops::Not::not")]
+    unique: bool,
+    #[serde(rename = "Vector", skip_serializing_if = "Option::is_none")]
+    vector: Option<schema::VectorIndexDescription>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GoIndexedField {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Descending", default)]
+    descending: bool,
+}
+
+/// Go's index description as `POST /collections/{name}/indexes` returns it.
+#[derive(Debug, Deserialize)]
+struct GoIndexDescription {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Fields")]
+    fields: Vec<GoIndexedField>,
+    #[serde(rename = "Unique", default)]
+    unique: bool,
+    #[serde(flatten)]
+    kind: schema::IndexKind,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoListIndexesResult {
+    #[serde(rename = "Description")]
+    description: GoIndexDescription,
+}
+
+impl GoIndexDescription {
+    fn into_info(self, collection: &str) -> IndexInfo {
+        let kind = match self.kind {
+            schema::IndexKind::Ordered(_) => None,
+            kind => Some(kind),
+        };
+        IndexInfo {
+            name: self.name,
+            collection: collection.to_string(),
+            fields: self
+                .fields
+                .into_iter()
+                .map(|field| IndexFieldInfo {
+                    name: field.name,
+                    direction: Some(if field.descending { "DESC" } else { "ASC" }.to_string()),
+                })
+                .collect(),
+            unique: self.unique,
+            kind,
+        }
+    }
 }
 
 /// Index info from list/create
@@ -74,28 +126,61 @@ impl HttpClient {
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
     ) -> Result<IndexInfo> {
-        let url = format!("{}/api/v0/index", self.base_url);
-        let request = IndexCreateRequest {
-            collection: collection.to_string(),
-            fields: fields.to_vec(),
+        let url = format!(
+            "{}/api/v0/collections/{}/indexes",
+            self.base_url,
+            encode(collection)
+        );
+        let request = GoIndexCreateRequest {
             name: name.map(|s| s.to_string()),
+            fields: fields
+                .iter()
+                .map(|name| GoIndexedField {
+                    name: name.clone(),
+                    descending: false,
+                })
+                .collect(),
             unique,
             vector,
         };
-        self.post_json(&url, &request).await
+        let created: GoIndexDescription = self.post_json(&url, &request).await?;
+        Ok(created.into_info(collection))
     }
 
     pub async fn index_list(&self, collection: Option<&str>) -> Result<Vec<IndexInfo>> {
-        let url = match collection {
-            Some(col) => format!("{}/api/v0/index?collection={}", self.base_url, encode(col)),
-            None => format!("{}/api/v0/index", self.base_url),
-        };
-        self.request_json("GET", &url, None).await
+        match collection {
+            Some(col) => {
+                let url = format!(
+                    "{}/api/v0/collections/{}/indexes",
+                    self.base_url,
+                    encode(col)
+                );
+                let results: Vec<GoListIndexesResult> =
+                    self.request_json("GET", &url, None).await?;
+                Ok(results
+                    .into_iter()
+                    .map(|result| result.description.into_info(col))
+                    .collect())
+            }
+            None => {
+                let url = format!("{}/api/v0/collections/indexes", self.base_url);
+                let grouped: BTreeMap<String, Vec<GoListIndexesResult>> =
+                    self.request_json("GET", &url, None).await?;
+                Ok(grouped
+                    .into_iter()
+                    .flat_map(|(col, results)| {
+                        results
+                            .into_iter()
+                            .map(move |result| result.description.into_info(&col))
+                    })
+                    .collect())
+            }
+        }
     }
 
     pub async fn index_delete(&self, collection: &str, name: &str) -> Result<()> {
         let url = format!(
-            "{}/api/v0/index?collection={}&name={}",
+            "{}/api/v0/collections/{}/indexes/{}",
             self.base_url,
             encode(collection),
             encode(name)

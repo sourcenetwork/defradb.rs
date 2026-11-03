@@ -1,0 +1,25 @@
+flowchart TB
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef defra fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef bad fill:#fde7c9,stroke:#c77700,color:#000
+    classDef disk fill:#ffffff,stroke:#999999,color:#000
+
+    subgraph PREVIOUS["previous design: per-value encryption above regolith"]
+        A1["defradb.rs encrypting wrapper:<br/>random nonce per value, no merge path"] --> A2["regolith sees ciphertext"]
+        A2 --> A3["identical plaintexts differ in bytes:<br/>elision, value-validated reads and ContentAddressed same-bytes fail"]
+        A2 --> A4["merge operators see ciphertext:<br/>counters, head sets and part operands impossible"]
+    end
+
+    subgraph NOW["current design: encryption at rest inside regolith"]
+        B1["defradb.rs implements KeyProvider"] --> B2["regolith engine: values plaintext in memory,<br/>every mechanism unchanged"]
+        B2 --> B3["AEAD inside the existing frames: each SST block,<br/>WAL record and manifest batch sealed with AES-256-GCM-SIV,<br/>the tag in place of the checksum;<br/>each log's stamp sealed and synced at creation"]
+        B3 --> B4[("disk or OPFS: ciphertext only")]
+    end
+
+    PREVIOUS -.->|"replaced by"| NOW
+
+    class A1 defra
+    class A2,A3,A4 bad
+    class B1 defra
+    class B2,B3 rego
+    class B4 disk

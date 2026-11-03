@@ -94,8 +94,12 @@ impl DocStream for CollectionDocStream {
                 continue;
             };
 
-            let mut doc = Document::from_storage_cbor(&pair.value)
-                .map_err(|e| self.fuse_err("document decode error", e))?;
+            let mut doc = crdt::stored::document_from_storage(
+                &pair.value,
+                self.collection.schema_arc(),
+                self.collection.crdts(),
+            )
+            .map_err(|e| self.fuse_err("document decode error", e))?;
 
             let Some(doc_id_str) = crate::docid::map::get_doc_id(&self.systemstore, doc_short_id)
                 .await
@@ -123,7 +127,7 @@ impl DocStream for CollectionDocStream {
                 .await
                 .map_err(|e| self.fuse_err("storage error", e))?
             {
-                doc.set_schema_version_id(version);
+                doc.set_collection_version_id(version);
             }
 
             self.last_short_id = Some(doc_short_id);

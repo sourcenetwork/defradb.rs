@@ -1,10 +1,10 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
+use defra_p2p_adapter::peer;
 
 use super::{json, ok, run};
 use crate::ffi_entry;
-use crate::state::NODES;
 use crate::target::{go_string, split_comma_separated};
 use crate::types::DefraResult;
 
@@ -22,10 +22,7 @@ pub unsafe extern "C" fn defra_p2p_connect(
     ffi_entry! {
         let addresses = split_comma_separated(&go_string(peer_addresses));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pPeerConnect, None, |ops| async move {
-            for address in &addresses {
-                ops.connect_peer(address).await?;
-            }
-            Ok(())
+            peer::connect(&*ops, &addresses).await
         }))
     }
 }
@@ -44,35 +41,18 @@ pub unsafe extern "C" fn defra_p2p_disconnect(
     ffi_entry! {
         let addresses = split_comma_separated(&go_string(peer_addresses));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pPeerDisconnect, None, |ops| async move {
-            for address in &addresses {
-                ops.disconnect_peer(address).await?;
-            }
-            Ok(())
+            peer::disconnect(&*ops, &addresses).await
         }))
     }
 }
 
 /// Answers with the addresses other peers reach this node at, as a JSON
-/// array: for libp2p, each listen address with this node's peer ID.
+/// array: each multiaddr with this node's peer ID appended.
 #[no_mangle]
 pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let kind = NODES
-            .get(node_ptr, |state| state.p2p.as_ref().map(|p2p| p2p.system.kind()))
-            .flatten();
         json(run(node_ptr, identity_ptr, NodePermission::P2pPeerInfo, None, |ops| async move {
-            let addresses = ops.listen_addresses().await?;
-            match kind {
-                #[cfg(feature = "libp2p")]
-                Some(embedded::TransportKind::Libp2p) => {
-                    let peer_id = ops.local_peer_id().await?;
-                    Ok(addresses
-                        .into_iter()
-                        .map(|address| format!("{}/p2p/{}", address, peer_id))
-                        .collect())
-                }
-                _ => Ok(addresses),
-            }
+            peer::peer_info(&*ops).await
         }))
     }
 }
@@ -82,7 +62,7 @@ pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraR
 pub extern "C" fn defra_p2p_peer_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pPeerActive, None, |ops| async move {
-            ops.connected_peers().await
+            peer::active_peers(&*ops).await
         }))
     }
 }

@@ -28,7 +28,7 @@ impl Protected {
         let sdl = format!(
             r#"type {collection} @policy(id: "{policy_id}", resource: "users") {{ name: String age: Int }}"#
         );
-        node::add_schema(&sdl, Some(&token)).await;
+        node::add_collection(&sdl, Some(&token)).await;
         node::subscribe(&[collection]).await;
         Self {
             owner,

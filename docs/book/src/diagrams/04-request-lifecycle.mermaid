@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    participant G as gents
+    participant N as defradb.rs network boundary
+    participant W as defradb.rs core: local async executor
+    participant T as regolith transaction
+    participant C as regolith commit pipeline
+
+    G->>N: GraphQL mutation, for example update a document
+    N->>W: routed at the edge to the document's core, through its inbox
+    N->>N: prepare on the caller, before the pool: KMS keys, embeddings, short IDs
+    W->>T: transact(policy, f) begins at a snapshot
+    W->>T: get_parts(doc, parts the filter and the indexes use)
+    W->>T: ACP check: validated reads of the tuples it relies on
+    W->>T: merge(doc, part operand), index puts and deletes, append(journal) when new
+    W->>C: commit_nowait()
+    C->>C: validate against a sampled horizon, then only the delta
+    alt no conflict
+        C->>C: decide in order: sequence, log positions, WAL range
+        C-->>W: CommitTicket, pending
+        W->>W: the task awaits its ticket, and the core runs other tasks
+        W->>C: IoQueue poll between tasks: claims the group's fsync unit,<br/>unless another member core already runs it
+        C-->>W: completion on this core's own queue: durable and visible, receipt with seq
+        W->>N: response, events ordered by seq
+        N->>G: result
+    else conflict
+        C-->>W: Conflict with key, mine, theirs, sequences
+        C-->>W: EventListener on_conflict, after every lock is released
+        W->>W: business logic on the reason
+        W->>T: transact re-runs f with the conflict
+    end

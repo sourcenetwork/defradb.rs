@@ -204,6 +204,19 @@ pub async fn get_doc_id(systemstore: &NamespaceView, doc_short_id: u64) -> Resul
     }
 }
 
+pub(crate) async fn resolve_doc_id_pairs(
+    systemstore: &NamespaceView,
+    doc_short_ids: &[u64],
+) -> Result<Vec<(String, u64)>> {
+    let mut pairs = Vec::with_capacity(doc_short_ids.len());
+    for &short_id in doc_short_ids {
+        if let Some(doc_id) = get_doc_id(systemstore, short_id).await? {
+            pairs.push((doc_id, short_id));
+        }
+    }
+    Ok(pairs)
+}
+
 /// Resolve doc short IDs to public DocIDs, preserving order and skipping
 /// IDs with no mapping (index scan read path).
 pub async fn resolve_doc_ids(
@@ -377,6 +390,34 @@ pub async fn get_doc_ids_for_block(
     Ok(doc_ids)
 }
 
+/// Whether any document owns `block_cid`, by a validated scan: an owner edge
+/// for the block written by a transaction that commits first aborts the
+/// decision, so a block a concurrent merge adopts is never deleted.
+pub async fn block_has_owners(systemstore: &NamespaceView, block_cid: &str) -> Result<bool> {
+    use storage::corekv::IterOptions;
+
+    let prefix = BlockCIDToDocIDKey::block_prefix(block_cid);
+    let prefix_len = prefix.len();
+    let mut iter = systemstore
+        .iterator(
+            IterOptions::new()
+                .with_prefix(prefix)
+                .with_keys_only(true)
+                .with_validation(true),
+        )
+        .await
+        .map_err(Error::Storage)?;
+    let mut owned = false;
+    while let Some(kv) = iter.next().await.map_err(Error::Storage)? {
+        if kv.key.len() > prefix_len {
+            owned = true;
+            break;
+        }
+    }
+    iter.close().await.map_err(Error::Storage)?;
+    Ok(owned)
+}
+
 /// Resolve the document owners used to authorize a block.
 ///
 /// `Some([])` identifies collection-level/non-document blocks, `Some(owners)`
@@ -387,13 +428,11 @@ pub async fn resolve_block_doc_ids(
     cid: &cid::Cid,
     block: &defra_core::Block,
 ) -> Result<Option<Vec<String>>> {
-    let is_doc_delta = matches!(
-        block.delta,
-        defra_core::CrdtDelta::Lww(_)
-            | defra_core::CrdtDelta::Counter(_)
-            | defra_core::CrdtDelta::Immutable(_)
-            | defra_core::CrdtDelta::Composite(_)
-    );
+    let is_doc_delta = block.delta.field().is_some()
+        || matches!(
+            block.delta,
+            defra_core::CrdtDelta::Immutable(_) | defra_core::CrdtDelta::Composite(_)
+        );
     if !is_doc_delta {
         return Ok(Some(Vec::new()));
     }

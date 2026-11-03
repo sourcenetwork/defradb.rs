@@ -6,15 +6,12 @@ use datastore::NamespaceView;
 use defra_core::Block;
 
 async fn remove_owner(systemstore: &NamespaceView, cid: &Cid, doc_id: &str) -> Result<bool> {
-    crate::docid::map::delete_block_doc_id_mapping(systemstore, &cid.to_string(), doc_id).await?;
-    Ok(
-        crate::docid::map::get_doc_ids_for_block(systemstore, &cid.to_string())
-            .await?
-            .is_empty(),
-    )
+    let cid = cid.to_string();
+    crate::docid::map::delete_block_doc_id_mapping(systemstore, &cid, doc_id).await?;
+    Ok(!crate::docid::map::block_has_owners(systemstore, &cid).await?)
 }
 
-async fn load_block(blockstore: &NamespaceView, cid: &Cid) -> Result<Option<Block>> {
+pub(crate) async fn load_block(blockstore: &NamespaceView, cid: &Cid) -> Result<Option<Block>> {
     let Some(bytes) = blockstore
         .get(&cid.to_bytes())
         .await
@@ -31,11 +28,15 @@ async fn remove_leaf_owner(
     cid: &Cid,
     doc_id: &str,
     can_delete: bool,
+    retained: &RapidHashSet<Cid>,
 ) -> Result<()> {
     let block = load_block(blockstore, cid).await?;
     let unowned = remove_owner(systemstore, cid, doc_id).await?;
     if let Some(block) = block {
-        if let Some(encryption_cid) = block.encryption {
+        if let Some(encryption_cid) = block
+            .encryption
+            .filter(|encryption_cid| !retained.contains(encryption_cid))
+        {
             let encryption_unowned = remove_owner(systemstore, &encryption_cid, doc_id).await?;
             if can_delete && unowned && encryption_unowned {
                 blockstore
@@ -79,25 +80,62 @@ async fn remove_encryption_owner(
     Ok(())
 }
 
+/// The blocks `commits` still need: the commits, the field blocks they link
+/// and the encryption blocks either references.
+pub async fn referenced_blocks(
+    blockstore: &NamespaceView,
+    commits: impl IntoIterator<Item = Cid>,
+) -> Result<RapidHashSet<Cid>> {
+    let mut stack: Vec<Cid> = commits.into_iter().collect();
+    let mut referenced = RapidHashSet::new();
+    while let Some(cid) = stack.pop() {
+        if !referenced.insert(cid) {
+            continue;
+        }
+        let Some(block) = load_block(blockstore, &cid).await? else {
+            continue;
+        };
+        referenced.extend(block.encryption);
+        stack.extend(block.links.iter().flatten().map(|link| link.link));
+    }
+    Ok(referenced)
+}
+
 /// Remove one document's ownership of a commit and its direct field blocks.
 /// History parents are deliberately retained; the caller chooses which
-/// priorities to prune.
+/// commits to prune. Blocks in `retained` are still referenced by the
+/// document's remaining commits, so they keep their owner and their bytes.
+/// Encryption blocks are inherited across commits while ownership is recorded
+/// once per document, so a pruned commit cannot tell on its own whether
+/// another commit still links its encryption block.
 pub async fn delete_owned_commit(
     blockstore: &NamespaceView,
     systemstore: &NamespaceView,
     cid: &Cid,
     doc_id: &str,
+    retained: &RapidHashSet<Cid>,
 ) -> Result<()> {
     let block = load_block(blockstore, cid).await?;
     let unowned = remove_owner(systemstore, cid, doc_id).await?;
 
     if let Some(block) = block {
         if let Some(links) = block.links {
-            for link in links {
-                remove_leaf_owner(blockstore, systemstore, &link.link, doc_id, unowned).await?;
+            for link in links.iter().filter(|link| !retained.contains(&link.link)) {
+                remove_leaf_owner(
+                    blockstore,
+                    systemstore,
+                    &link.link,
+                    doc_id,
+                    unowned,
+                    retained,
+                )
+                .await?;
             }
         }
-        if let Some(encryption_cid) = block.encryption {
+        if let Some(encryption_cid) = block
+            .encryption
+            .filter(|encryption_cid| !retained.contains(encryption_cid))
+        {
             remove_encryption_owner(blockstore, systemstore, &encryption_cid, doc_id, unowned)
                 .await?;
         }
@@ -131,48 +169,33 @@ pub async fn delete_owned_dag(
 }
 
 /// Remove several aliases' ownership from every block reachable from `roots`.
-/// Shared blocks and everything they still reference remain intact.
+/// Shared blocks and everything they still reference remain intact. Whether a
+/// block is still owned is decided by a validated scan, so an owner edge a
+/// concurrent merge commits first aborts the attempt instead of losing the
+/// block.
 pub async fn delete_owned_dag_for_owners(
     blockstore: &NamespaceView,
     systemstore: &NamespaceView,
     roots: &[Cid],
     doc_ids: &[String],
 ) -> Result<()> {
-    let mut stack = roots.to_vec();
-    let mut edges: RapidHashMap<Cid, Vec<Cid>> = RapidHashMap::new();
-    let mut signatures: RapidHashMap<Cid, Cid> = RapidHashMap::new();
-    let mut visited = RapidHashSet::new();
-
-    while let Some(cid) = stack.pop() {
-        if !visited.insert(cid) {
-            continue;
-        }
-        let Some(block) = load_block(blockstore, &cid).await? else {
-            continue;
-        };
-        let mut children = block.all_links();
-        if let Some(encryption_cid) = block.encryption {
-            children.push(encryption_cid);
-        }
-        if let Some(signature_cid) = block.signature {
-            signatures.insert(cid, signature_cid);
-        }
-        stack.extend(children.iter().copied());
-        edges.insert(cid, children);
-    }
-
+    let DagWalk {
+        visited,
+        edges,
+        signatures,
+    } = DagWalk::from_roots(blockstore, roots).await?;
     let mut retained = RapidHashSet::new();
     for cid in &visited {
-        let mut has_owner = true;
+        let key = cid.to_string();
         for doc_id in doc_ids {
-            has_owner = !remove_owner(systemstore, cid, doc_id).await?;
+            crate::docid::map::delete_block_doc_id_mapping(systemstore, &key, doc_id).await?;
         }
-        if has_owner {
+        if crate::docid::map::block_has_owners(systemstore, &key).await? {
             retained.insert(*cid);
         }
     }
 
-    stack.extend(retained.iter().copied());
+    let mut stack: Vec<Cid> = retained.iter().copied().collect();
     while let Some(cid) = stack.pop() {
         if let Some(children) = edges.get(&cid) {
             for child in children {
@@ -185,6 +208,7 @@ pub async fn delete_owned_dag_for_owners(
 
     for cid in visited.difference(&retained) {
         if let Some(signature_cid) = signatures.get(cid) {
+            drop_owners(systemstore, signature_cid, doc_ids).await?;
             blockstore
                 .delete(&signature_cid.to_bytes())
                 .await
@@ -196,4 +220,66 @@ pub async fn delete_owned_dag_for_owners(
             .map_err(Error::Storage)?;
     }
     Ok(())
+}
+
+/// Remove several aliases' ownership from every block reachable from `roots`
+/// and from their signature blocks, keeping every block. A purge in a
+/// branchable collection keeps the history the collection DAG links, and
+/// leaves no owner edge naming a document that is gone.
+pub async fn drop_dag_owners(
+    blockstore: &NamespaceView,
+    systemstore: &NamespaceView,
+    roots: &[Cid],
+    doc_ids: &[String],
+) -> Result<()> {
+    let walk = DagWalk::from_roots(blockstore, roots).await?;
+    for cid in walk.visited.iter().chain(walk.signatures.values()) {
+        drop_owners(systemstore, cid, doc_ids).await?;
+    }
+    Ok(())
+}
+
+async fn drop_owners(systemstore: &NamespaceView, cid: &Cid, doc_ids: &[String]) -> Result<()> {
+    let key = cid.to_string();
+    for doc_id in doc_ids {
+        crate::docid::map::delete_block_doc_id_mapping(systemstore, &key, doc_id).await?;
+    }
+    Ok(())
+}
+
+/// The blocks reachable from some roots, with each one's links and
+/// signature block.
+struct DagWalk {
+    visited: RapidHashSet<Cid>,
+    edges: RapidHashMap<Cid, Vec<Cid>>,
+    signatures: RapidHashMap<Cid, Cid>,
+}
+
+impl DagWalk {
+    async fn from_roots(blockstore: &NamespaceView, roots: &[Cid]) -> Result<Self> {
+        let mut stack = roots.to_vec();
+        let mut walk = Self {
+            visited: RapidHashSet::new(),
+            edges: RapidHashMap::new(),
+            signatures: RapidHashMap::new(),
+        };
+        while let Some(cid) = stack.pop() {
+            if !walk.visited.insert(cid) {
+                continue;
+            }
+            let Some(block) = load_block(blockstore, &cid).await? else {
+                continue;
+            };
+            let mut children = block.all_links();
+            if let Some(encryption_cid) = block.encryption {
+                children.push(encryption_cid);
+            }
+            if let Some(signature_cid) = block.signature {
+                walk.signatures.insert(cid, signature_cid);
+            }
+            stack.extend(children.iter().copied());
+            walk.edges.insert(cid, children);
+        }
+        Ok(walk)
+    }
 }

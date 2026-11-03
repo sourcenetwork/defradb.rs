@@ -56,7 +56,11 @@ where
             .retry_options()
             .max_attempts
             .saturating_add(first.ilog2());
-        let attempt = PageAttempt { page, size: first };
+        let attempt = PageAttempt {
+            page,
+            size: first,
+            crdts: self.crdts().clone(),
+        };
         match self
             .store()
             .transact_retry(RetryOptions::new(attempts), Box::new(attempt))
@@ -80,6 +84,7 @@ where
 struct PageAttempt<P> {
     page: P,
     size: usize,
+    crdts: crdt::Crdts,
 }
 
 impl<P> RetryAttemptFn for PageAttempt<P>
@@ -98,7 +103,7 @@ where
                 );
             }
             let io = retry.begin_attempt_io()?;
-            let mut txn = BasicTxn::from_retry_attempt_io(io, 0);
+            let mut txn = BasicTxn::from_retry_attempt_io(io, 0, self.crdts.clone());
             let output = self
                 .page
                 .run(&mut txn, self.size)

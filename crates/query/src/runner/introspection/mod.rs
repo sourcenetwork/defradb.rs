@@ -187,6 +187,37 @@ pub fn build_introspection_schema(
         .argument(InputValue::new("docID", TypeRef::named_nn_list("ID"))),
     );
 
+    let json_conflict = Object::new("JsonConflict")
+        .field(Field::new(
+            "path",
+            TypeRef::named_nn_list_nn("String"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
+        ))
+        .field(Field::new("cid", TypeRef::named("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("height", TypeRef::named_nn("Int"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("value", TypeRef::named("JSON"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("deleted", TypeRef::named_nn("Boolean"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }));
+    schema_builder = schema_builder.register(json_conflict);
+    query_type = query_type.field(
+        Field::new(
+            "_jsonConflicts",
+            TypeRef::named_nn_list_nn("JsonConflict"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
+        )
+        .description("Lists, for each path of a document's Json field, the concurrent edits its winner beat.")
+        .argument(InputValue::new("collection", TypeRef::named_nn("String")))
+        .argument(InputValue::new("docID", TypeRef::named_nn("ID")))
+        .argument(InputValue::new("field", TypeRef::named_nn("String"))),
+    );
+
     // Register Commit type and supporting types
     schema_builder = schema_builder
         .register(build_commit_type())
@@ -378,20 +409,24 @@ mod tests {
     /// A bare `{ __typename }` (e.g. a GraphQL health probe) must resolve to
     /// the root query type name via the introspection engine, not fail as an
     /// unknown collection. Regression test for #1124.
-    #[tokio::test]
-    async fn root_typename_returns_query() {
-        let result = execute_introspection(&[], "{ __typename }")
-            .await
-            .expect("introspection execution should succeed");
-        assert_eq!(result, serde_json::json!({ "__typename": "Query" }));
+    #[test]
+    fn root_typename_returns_query() {
+        workers::block_on(async {
+            let result = execute_introspection(&[], "{ __typename }")
+                .await
+                .expect("introspection execution should succeed");
+            assert_eq!(result, serde_json::json!({ "__typename": "Query" }));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn aggregate_nullability_matches_go() {
-        let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
-        let result = execute_introspection(
-            &[Arc::new(collection)],
-            r#"query {
+    #[test]
+    fn aggregate_nullability_matches_go() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"query {
                 collection: __type(name: "Users") {
                     fields { name type { kind name ofType { kind name } } }
                 }
@@ -402,32 +437,36 @@ mod tests {
                     fields { name type { kind name ofType { kind name } } }
                 }
             }"#,
-        )
-        .await
-        .expect("introspection execution should succeed");
+            )
+            .await
+            .expect("introspection execution should succeed");
 
-        for type_name in ["collection", "query", "commit"] {
-            assert_non_null_aggregate(&result[type_name], "AVG", "Float");
-            assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
-            assert_non_null_aggregate(&result[type_name], "SUM", "Float");
-        }
+            for type_name in ["collection", "query", "commit"] {
+                assert_non_null_aggregate(&result[type_name], "AVG", "Float");
+                assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
+                assert_non_null_aggregate(&result[type_name], "SUM", "Float");
+            }
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn collection_count_and_array_types_match_go() {
-        let collection = CollectionVersion::new(
-            "Users",
-            "v1",
-            "users",
-            vec![FieldDescription::new(
-                "1",
-                "tags",
-                FieldKind::ScalarArray(ScalarArrayKind::StringArray),
-            )],
-        );
-        let result = execute_introspection(
-            &[Arc::new(collection)],
-            r#"query {
+    #[test]
+    fn collection_count_and_array_types_match_go() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "Users",
+                "v1",
+                "users",
+                vec![FieldDescription::new(
+                    "1",
+                    "tags",
+                    FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                    schema::CType::LwwRegister,
+                )],
+            );
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"query {
                 selector: __type(name: "Users__CountSelector") {
                     inputFields {
                         name
@@ -441,53 +480,58 @@ mod tests {
                     }
                 }
             }"#,
-        )
-        .await
-        .expect("introspection execution should succeed");
+            )
+            .await
+            .expect("introspection execution should succeed");
 
-        let group_by = result["selector"]["inputFields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|field| field["name"] == "groupBy")
-            .unwrap();
-        assert_eq!(group_by["type"]["kind"], "LIST");
-        assert_eq!(group_by["type"]["ofType"]["kind"], "NON_NULL");
-        assert_eq!(group_by["type"]["ofType"]["ofType"]["name"], "UsersField");
+            let group_by = result["selector"]["inputFields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == "groupBy")
+                .unwrap();
+            assert_eq!(group_by["type"]["kind"], "LIST");
+            assert_eq!(group_by["type"]["ofType"]["kind"], "NON_NULL");
+            assert_eq!(group_by["type"]["ofType"]["ofType"]["name"], "UsersField");
 
-        let tags = result["collection"]["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|field| field["name"] == "tags")
-            .unwrap();
-        assert_eq!(tags["type"]["kind"], "LIST");
-        assert_eq!(tags["type"]["ofType"]["kind"], "NON_NULL");
-        assert_eq!(tags["type"]["ofType"]["ofType"]["name"], "String");
+            let tags = result["collection"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == "tags")
+                .unwrap();
+            assert_eq!(tags["type"]["kind"], "LIST");
+            assert_eq!(tags["type"]["ofType"]["kind"], "NON_NULL");
+            assert_eq!(tags["type"]["ofType"]["ofType"]["name"], "String");
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn mutation_input_fields_are_nullable() {
-        let collection = CollectionVersion::new(
-            "Users",
-            "v1",
-            "users",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "name",
-                    FieldKind::Scalar(schema::ScalarKind::NonNillableString),
-                ),
-                FieldDescription::new(
-                    "2",
-                    "tags",
-                    FieldKind::ScalarArray(ScalarArrayKind::StringArray),
-                ),
-            ],
-        );
-        let result = execute_introspection(
-            &[Arc::new(collection)],
-            r#"{
+    #[test]
+    fn mutation_input_fields_are_nullable() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "Users",
+                "v1",
+                "users",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "name",
+                        FieldKind::Scalar(schema::ScalarKind::String),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "tags",
+                        FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            );
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"{
                 __type(name: "UsersMutationInputArg") {
                     inputFields {
                         name
@@ -495,25 +539,28 @@ mod tests {
                     }
                 }
             }"#,
-        )
-        .await
-        .expect("introspection execution should succeed");
+            )
+            .await
+            .expect("introspection execution should succeed");
 
-        let fields = result["__type"]["inputFields"].as_array().unwrap();
-        let name = fields.iter().find(|field| field["name"] == "name").unwrap();
-        assert_eq!(name["type"]["kind"], "SCALAR");
-        assert_eq!(name["type"]["name"], "String");
+            let fields = result["__type"]["inputFields"].as_array().unwrap();
+            let name = fields.iter().find(|field| field["name"] == "name").unwrap();
+            assert_eq!(name["type"]["kind"], "SCALAR");
+            assert_eq!(name["type"]["name"], "String");
 
-        let tags = fields.iter().find(|field| field["name"] == "tags").unwrap();
-        assert_eq!(tags["type"]["kind"], "LIST");
-        assert_eq!(tags["type"]["ofType"]["kind"], "SCALAR");
-        assert_eq!(tags["type"]["ofType"]["name"], "String");
+            let tags = fields.iter().find(|field| field["name"] == "tags").unwrap();
+            assert_eq!(tags["type"]["kind"], "LIST");
+            assert_eq!(tags["type"]["ofType"]["kind"], "SCALAR");
+            assert_eq!(tags["type"]["ofType"]["name"], "String");
+        })
+        .unwrap()
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
-    async fn mutation_input_is_safe_for_concurrent_first_use() {
-        const CALLERS: usize = 16;
-        const QUERY: &str = r#"{
+    #[test]
+    fn mutation_input_is_safe_for_concurrent_first_use() {
+        workers::block_on(async {
+            const CALLERS: usize = 16;
+            const QUERY: &str = r#"{
             __type(name: "UsersMutationInputArg") {
                 inputFields {
                     name
@@ -522,44 +569,53 @@ mod tests {
             }
         }"#;
 
-        let collection = CollectionVersion::new(
-            "Users",
-            "v1",
-            "users",
-            vec![
-                FieldDescription::new("1", "name", FieldKind::Scalar(schema::ScalarKind::String)),
-                FieldDescription::new(
-                    "2",
-                    "tags",
-                    FieldKind::ScalarArray(ScalarArrayKind::StringArray),
-                ),
-            ],
-        );
-        let schema = build_introspection_schema(&[Arc::new(collection)]).unwrap();
-        let barrier = Arc::new(Barrier::new(CALLERS));
+            let collection = CollectionVersion::new(
+                "Users",
+                "v1",
+                "users",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "name",
+                        FieldKind::Scalar(schema::ScalarKind::NillableString),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "tags",
+                        FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            );
+            let schema = build_introspection_schema(&[Arc::new(collection)]).unwrap();
+            let barrier = Arc::new(Barrier::new(CALLERS));
 
-        let handles: Vec<_> = (0..CALLERS)
-            .map(|_| {
-                let (schema, barrier) = (schema.clone(), barrier.clone());
-                tokio::spawn(async move {
-                    barrier.wait().await;
-                    let response = schema.execute(async_graphql::Request::new(QUERY)).await;
-                    assert!(response.errors.is_empty(), "{:?}", response.errors);
-                    serde_json::to_value(response.data).unwrap()
+            let handles: Vec<_> = (0..CALLERS)
+                .map(|_| {
+                    let (schema, barrier) = (schema.clone(), barrier.clone());
+                    workers::spawn(None, "test", move || async move {
+                        barrier.wait().await;
+                        let response = schema.execute(async_graphql::Request::new(QUERY)).await;
+                        assert!(response.errors.is_empty(), "{:?}", response.errors);
+                        serde_json::to_value(response.data).unwrap()
+                    })
+                    .unwrap()
                 })
-            })
-            .collect();
-        let mut results = Vec::<JsonValue>::with_capacity(CALLERS);
-        for handle in handles {
-            results.push(handle.await.unwrap());
-        }
+                .collect();
+            let mut results = Vec::<JsonValue>::with_capacity(CALLERS);
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
 
-        for result in &results[1..] {
-            assert_eq!(result, &results[0]);
-        }
-        let fields = results[0]["__type"]["inputFields"].as_array().unwrap();
-        assert_eq!(fields.len(), 2);
-        assert!(fields.iter().any(|field| field["name"] == "name"));
-        assert!(fields.iter().any(|field| field["name"] == "tags"));
+            for result in &results[1..] {
+                assert_eq!(result, &results[0]);
+            }
+            let fields = results[0]["__type"]["inputFields"].as_array().unwrap();
+            assert_eq!(fields.len(), 2);
+            assert!(fields.iter().any(|field| field["name"] == "name"));
+            assert!(fields.iter().any(|field| field["name"] == "tags"));
+        })
+        .unwrap()
     }
 }

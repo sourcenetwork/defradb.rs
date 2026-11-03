@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use document::{Document, WritePreparation};
-use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use storage::corekv::Store;
 
-use crate::{block::builder::DocStorageIdentity, database::DB};
+use crate::{block::builder::DocRef, database::DB};
 use defra_core::encryption::EncryptionConfig;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -52,14 +52,14 @@ pub(crate) fn kms_input_request(
 /// invalidate the payload before the mutation retries.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedCreateBlocks {
-    pub schema_version_id: String,
+    pub collection_version_id: String,
     pub computed: crate::block::builder::ComputedBlocks,
 }
 
 pub(crate) async fn prepare_keys<S: Store + 'static>(
     db: &DB<S>,
     doc: &mut Document,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&RapidHashSet<String>>,
     config: Option<&EncryptionConfig>,
 ) -> query::error::Result<()> {
@@ -70,7 +70,7 @@ pub(crate) async fn prepare_keys<S: Store + 'static>(
 pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
     db: &DB<S>,
     doc: &mut Document,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&RapidHashSet<String>>,
     config: Option<&EncryptionConfig>,
     stores: Option<(&datastore::NamespaceView, &datastore::NamespaceView)>,
@@ -163,15 +163,26 @@ pub(crate) async fn prepare_keys_with_stores<S: Store + 'static>(
             scopes.push((field, None));
         }
     }
+    // One key per scope: every field under document encryption shares the
+    // document's key, as Go's one doc key per document.
+    let mut generated = RapidHashMap::new();
     for (field, key_field) in scopes {
-        let scope = kms::KeyScope::Document {
-            doc_id: hex::encode(identity.doc_ref_bytes()),
-            field: key_field.clone(),
+        let (cid, key) = match generated.get(&key_field) {
+            Some(generated) => *generated,
+            None => {
+                let scope = kms::KeyScope::Document {
+                    doc_id: hex::encode(identity.encode()),
+                    field: key_field.clone(),
+                };
+                let fresh = kms
+                    .generate_key(&kms::RequestContext::anonymous(), scope)
+                    .await
+                    .map_err(|e| {
+                        query::error::QueryError::execution(format!("kms generate_key: {e}"))
+                    })?;
+                *generated.entry(key_field.clone()).or_insert(fresh)
+            }
         };
-        let (cid, key) = kms
-            .generate_key(&kms::RequestContext::anonymous(), scope)
-            .await
-            .map_err(|e| query::error::QueryError::execution(format!("kms generate_key: {e}")))?;
         prepared.insert_scoped_key(field, cid, key, key_field);
     }
     doc.set_write_preparation(Arc::new(prepared));
@@ -491,10 +502,9 @@ where
         .collect()
 }
 
-pub(crate) fn prepared_identity(doc: &Document) -> Option<DocStorageIdentity> {
-    doc.write_preparation().map(|prepared| {
-        DocStorageIdentity::new(prepared.collection_short_id, prepared.doc_short_id)
-    })
+pub(crate) fn prepared_identity(doc: &Document) -> Option<DocRef> {
+    doc.write_preparation()
+        .map(|prepared| DocRef::new(prepared.collection_short_id, prepared.doc_short_id))
 }
 
 impl<S: Store + 'static> crate::AutoCommitMutator<S> {
@@ -529,7 +539,8 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                 {
                     fields.insert(embedding.field_name.clone());
                     if doc.get(&embedding.field_name).is_none() {
-                        doc.set(&embedding.field_name, document::NormalValue::Null);
+                        doc.set(&embedding.field_name, document::NormalValue::Null)
+                            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
                     }
                 }
             }
@@ -554,7 +565,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         if self.db.kms().is_none() && !prepare_create {
             if modified_fields.is_none() && crate::write::prepare::prepared_identity(&doc).is_none()
             {
-                let identity = DocStorageIdentity::new(
+                let identity = DocRef::new(
                     collection.resolved_root_id(),
                     self.db
                         .next_doc_short_id()
@@ -573,7 +584,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         let prior = doc.write_preparation().cloned();
         let identity = if let Some(prior) = &prior {
             doc.clear_write_preparation();
-            DocStorageIdentity::new(prior.collection_short_id, prior.doc_short_id)
+            DocRef::new(prior.collection_short_id, prior.doc_short_id)
         } else if modified_fields.is_some() {
             let txn = self
                 .db
@@ -592,13 +603,13 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     .await
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
                 doc.set_id(canonical);
-                DocStorageIdentity::new(collection.resolved_root_id(), short_id)
+                DocRef::new(collection.resolved_root_id(), short_id)
             };
             txn.discard()
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
             identity
         } else {
-            DocStorageIdentity::new(
+            DocRef::new(
                 collection.resolved_root_id(),
                 self.db
                     .next_doc_short_id()
@@ -631,6 +642,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         if modified_fields.is_none() {
             if let Some(signing_config) = signing_config {
                 let blocks = crate::block::builder::compute_document_blocks(
+                    collection.crdts(),
                     &doc,
                     collection.schema(),
                     identity,
@@ -644,7 +656,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                 })?;
                 let mut write = (*preparation).clone();
                 write.set_payload(Arc::new(PreparedCreateBlocks {
-                    schema_version_id: collection.version_id().to_string(),
+                    collection_version_id: collection.version_id().to_string(),
                     computed: blocks,
                 }));
                 doc.set_write_preparation(Arc::new(write));

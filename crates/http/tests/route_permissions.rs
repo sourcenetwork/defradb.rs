@@ -173,22 +173,6 @@ fn p2p_routes() {
 }
 
 #[test]
-fn nac_routes() {
-    assert_eq!(
-        route_permission("/api/v0/nac/status", &Method::GET),
-        RoutePermission::Required(NodePermission::NacStatus)
-    );
-    assert_eq!(
-        route_permission("/api/v0/nac/admin", &Method::POST),
-        RoutePermission::Required(NodePermission::NacRelationAdd)
-    );
-    assert_eq!(
-        route_permission("/api/v0/nac/admin", &Method::DELETE),
-        RoutePermission::Required(NodePermission::NacRelationDelete)
-    );
-}
-
-#[test]
 fn acp_status_route_uses_dac_status_permission() {
     // Regression test for #758: the route was missing from the
     // permission table and falling through to DocumentRead, which
@@ -255,11 +239,6 @@ fn all_registered_routes_return_expected_permission() {
             Method::GET,
             RoutePermission::Required(NodePermission::CollectionGet),
         ),
-        (
-            "/api/v0/schema",
-            Method::POST,
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
         // Transactions
         ("/api/v0/tx", Method::POST, RoutePermission::IdentityOnly),
         (
@@ -271,21 +250,6 @@ fn all_registered_routes_return_expected_permission() {
             "/api/v0/tx/{id}",
             Method::DELETE,
             RoutePermission::IdentityOnly,
-        ),
-        (
-            "/api/v0/tx/{id}/lens",
-            Method::POST,
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/tx/{id}/collections",
-            Method::GET,
-            RoutePermission::Required(NodePermission::CollectionGet),
-        ),
-        (
-            "/api/v0/tx/{id}/schema",
-            Method::POST,
-            RoutePermission::Required(NodePermission::CollectionPatch),
         ),
         // Collections
         (
@@ -307,11 +271,6 @@ fn all_registered_routes_return_expected_permission() {
             "/api/v0/collections/default",
             Method::POST,
             RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/collections/versions",
-            Method::GET,
-            RoutePermission::Required(NodePermission::CollectionGet),
         ),
         (
             "/api/v0/collections/versions",
@@ -367,6 +326,11 @@ fn all_registered_routes_return_expected_permission() {
         ),
         (
             "/api/v0/p2p/sync/status",
+            Method::GET,
+            RoutePermission::Required(NodePermission::P2pPeerInfo),
+        ),
+        (
+            "/api/v0/p2p/peers/{peer_id}",
             Method::GET,
             RoutePermission::Required(NodePermission::P2pPeerInfo),
         ),
@@ -437,11 +401,6 @@ fn all_registered_routes_return_expected_permission() {
             RoutePermission::Required(NodePermission::DacStatus),
         ),
         (
-            "/api/v0/acp/policy",
-            Method::POST,
-            RoutePermission::Required(NodePermission::DacPolicyAdd),
-        ),
-        (
             "/api/v0/acp/document/policy",
             Method::POST,
             RoutePermission::Required(NodePermission::DacPolicyAdd),
@@ -499,17 +458,17 @@ fn all_registered_routes_return_expected_permission() {
         ),
         // Index
         (
-            "/api/v0/index",
+            "/api/v0/collections/{name}/indexes",
             Method::POST,
             RoutePermission::Required(NodePermission::IndexCreate),
         ),
         (
-            "/api/v0/index",
+            "/api/v0/collections/{name}/indexes",
             Method::GET,
             RoutePermission::Required(NodePermission::IndexList),
         ),
         (
-            "/api/v0/index",
+            "/api/v0/collections/{name}/indexes/{index}",
             Method::DELETE,
             RoutePermission::Required(NodePermission::IndexDelete),
         ),
@@ -537,21 +496,10 @@ fn all_registered_routes_return_expected_permission() {
         ),
         // Views
         (
-            "/api/v0/views",
-            Method::POST,
-            RoutePermission::Required(NodePermission::ViewAdd),
-        ),
-        (
-            "/api/v0/views/refresh",
-            Method::POST,
-            RoutePermission::Required(NodePermission::ViewRefresh),
-        ),
-        (
             "/api/v0/views/gc",
             Method::POST,
             RoutePermission::Required(NodePermission::ViewGc),
         ),
-        // Go-compatible view mount
         (
             "/api/v0/view",
             Method::POST,

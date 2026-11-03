@@ -192,6 +192,7 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
     // The caller acts in the request's context, so DB-layer NAC checks
     // resolve it; a NAC admin/owner can read all documents.
     let context = defra_core::RequestContext::default()
+        .with_txn(target.txn_id())
         .with_identity(identity_str.clone())
         .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
         .with_signing(signing)
@@ -251,9 +252,7 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
         Some(id) => Prepared::Txn {
             runner,
             request,
-            handle: id
-                .parse()
-                .map_err(|e| DefraResult::error(format!("invalid transaction ID: {}", e)))?,
+            handle: query::txn::TransactionHandle::new(id.to_string()),
         },
     })
 }

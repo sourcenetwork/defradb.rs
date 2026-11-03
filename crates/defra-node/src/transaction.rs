@@ -1,4 +1,4 @@
-use crate::{EmbeddedNode, QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
+use crate::{Node, QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 use query::{TransactionError, TransactionGuard};
 
 /// An owning transaction that uses the node's signing and identity context.
@@ -7,20 +7,20 @@ use query::{TransactionError, TransactionGuard};
 /// or runtime shutdown. Cloned handles are non-owning. Cancellation after a
 /// durable commit cannot undo it; see [`TransactionGuard`].
 #[must_use = "dropping the transaction abandons its uncommitted writes"]
-pub struct EmbeddedTransaction<'a> {
-    node: &'a EmbeddedNode,
+pub struct NodeTransaction<'a> {
+    node: &'a Node,
     guard: TransactionGuard<'a, dyn QueryExecutor>,
 }
 
-impl EmbeddedNode {
+impl Node {
     /// Begin a transaction that is abandoned automatically unless finalized.
     ///
     /// ```no_run
-    /// # async fn example(node: &defra_node::EmbeddedNode) -> Result<(), query::TransactionError> {
+    /// # async fn example(node: &defra_node::Node) -> Result<(), query::TransactionError> {
     /// let txn = node.begin_transaction_guard(false).await?;
     /// let response = txn.execute("mutation { add_Users(input: {name: \"Alice\"}) { _docID } }").await;
     /// if response.has_errors() {
-    ///     txn.rollback().await
+    ///     txn.discard().await
     /// } else {
     ///     txn.commit().await
     /// }
@@ -29,15 +29,15 @@ impl EmbeddedNode {
     pub async fn begin_transaction_guard(
         &self,
         readonly: bool,
-    ) -> Result<EmbeddedTransaction<'_>, TransactionError> {
+    ) -> Result<NodeTransaction<'_>, TransactionError> {
         let guard =
             TransactionGuard::begin_as(self.runner().as_ref(), self.node_context(), readonly)
                 .await?;
-        Ok(EmbeddedTransaction { node: self, guard })
+        Ok(NodeTransaction { node: self, guard })
     }
 }
 
-impl EmbeddedTransaction<'_> {
+impl NodeTransaction<'_> {
     /// Borrow the non-owning ID for APIs that accept a transaction handle.
     pub fn handle(&self) -> &TransactionHandle {
         self.guard.handle().expect("active transaction")
@@ -61,7 +61,27 @@ impl EmbeddedTransaction<'_> {
     }
 
     /// Roll back the writes and consume the owning transaction.
-    pub async fn rollback(self) -> Result<(), TransactionError> {
-        self.guard.rollback().await
+    pub async fn discard(self) -> Result<(), TransactionError> {
+        self.guard.discard().await
+    }
+}
+
+impl Node {
+    /// Read authenticated owners in the same explicit transaction as its rows.
+    /// The node remains the transaction actor. A supplied document-read identity
+    /// follows the ordinary GraphQL permission path; it does not borrow another
+    /// actor's transaction. This grants no relationship or detached ACP read.
+    pub async fn observe_document_owners_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> query::error::Result<Vec<query::owners::DocumentOwnerObservation>> {
+        let context = self.node_context();
+        let identity = identity.or_else(|| self.node_query_identity.clone());
+        self.runner()
+            .observe_document_owners_in_txn(context, handle, collection, doc_ids, identity)
+            .await
     }
 }

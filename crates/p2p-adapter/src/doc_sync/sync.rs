@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use defra_http::P2PResult;
+use crate::P2PResult;
 use rapidhash::RapidHashSet;
 
 use crate::doc_sync::dispatch::DocSyncDispatch;

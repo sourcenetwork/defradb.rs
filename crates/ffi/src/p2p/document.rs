@@ -1,24 +1,12 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
-use defra_http::router::P2pDocumentRequest;
+use defra_p2p_adapter::peer;
 
 use super::{json, ok, run, timeout};
 use crate::target::{go_string, split_comma_separated};
 use crate::types::DefraResult;
 use crate::{ffi_entry, try_ffi};
-
-/// The documents a comma-separated list of document IDs names; each one's
-/// collection is found from its ID.
-fn documents(doc_ids: &str) -> Vec<P2pDocumentRequest> {
-    split_comma_separated(doc_ids)
-        .into_iter()
-        .map(|doc_id| P2pDocumentRequest {
-            collection: String::new(),
-            doc_id,
-        })
-        .collect()
-}
 
 /// Adds the comma-separated document IDs `doc_ids` to the documents the
 /// node replicates.
@@ -33,9 +21,9 @@ pub unsafe extern "C" fn defra_p2p_document_add(
     identity_ptr: usize,
 ) -> DefraResult {
     ffi_entry! {
-        let docs = documents(&go_string(doc_ids));
+        let doc_ids = split_comma_separated(&go_string(doc_ids));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pDocumentAdd, None, |ops| async move {
-            ops.add_documents(docs).await
+            peer::add_p2p_documents(&*ops, &doc_ids).await
         }))
     }
 }
@@ -53,19 +41,20 @@ pub unsafe extern "C" fn defra_p2p_document_delete(
     identity_ptr: usize,
 ) -> DefraResult {
     ffi_entry! {
-        let docs = documents(&go_string(doc_ids));
+        let doc_ids = split_comma_separated(&go_string(doc_ids));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pDocumentDelete, None, |ops| async move {
-            ops.remove_documents(docs).await
+            peer::delete_p2p_documents(&*ops, &doc_ids).await
         }))
     }
 }
 
-/// Answers with the documents the node replicates as JSON.
+/// Answers with the IDs of the documents the node replicates as a JSON
+/// array.
 #[no_mangle]
 pub extern "C" fn defra_p2p_document_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pDocumentList, None, |ops| async move {
-            ops.get_documents().await
+            peer::list_p2p_documents(&*ops).await
         }))
     }
 }

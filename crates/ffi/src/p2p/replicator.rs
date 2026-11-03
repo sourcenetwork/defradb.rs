@@ -1,15 +1,15 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
-use defra_http::handlers::p2p::ReplicatorInfoResponse;
+use defra_p2p_adapter::peer;
 
 use super::{json, ok, run};
 use crate::ffi_entry;
 use crate::target::{go_string, non_empty, split_comma_separated};
 use crate::types::DefraResult;
 
-/// Replicates the comma-separated `collections` to each of the
-/// comma-separated peer multiaddrs `addresses`.
+/// Replicates the comma-separated `collections` to the peer the
+/// comma-separated multiaddrs `addresses` name.
 ///
 /// # Safety
 ///
@@ -26,17 +26,7 @@ pub unsafe extern "C" fn defra_p2p_replicator_add(
         let collections = split_comma_separated(&go_string(collections));
         let addresses = split_comma_separated(&go_string(addresses));
         ok(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorAdd, None, |ops| async move {
-            for address in &addresses {
-                ops.add_replicator(
-                    collections.clone(),
-                    Some(address),
-                    Default::default(),
-                    Vec::new(),
-                    None,
-                )
-                .await?;
-            }
-            Ok(())
+            peer::add_replicator(&*ops, &addresses, &collections, Default::default()).await
         }))
     }
 }
@@ -69,11 +59,7 @@ pub unsafe extern "C" fn defra_p2p_replicator_delete(
 pub extern "C" fn defra_p2p_replicator_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorList, None, |ops| async move {
-            let replicators = ops.get_replicators().await?;
-            Ok(replicators
-                .into_iter()
-                .map(ReplicatorInfoResponse::from)
-                .collect::<Vec<_>>())
+            peer::list_replicators(&*ops).await
         }))
     }
 }

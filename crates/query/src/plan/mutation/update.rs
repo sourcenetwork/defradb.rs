@@ -7,20 +7,22 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crdt::Crdts;
 use defra_core::RequestContext;
-use document::{DocID, Document, NormalValue};
-use schema::{CType, CollectionVersion};
+use document::{DocID, Document};
+use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 use tracing;
 
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::{QueryError, Result};
 use crate::fetcher::DocFetcher;
-use crate::mapper::Filter;
+use crate::mapper::{Filter, InputOp};
 use crate::mutator::{DocMutator, UpdateResult};
 use crate::planner::{Doc, PlanNode};
 
 use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_value_to_json};
+use super::update_ops;
 use chrono::{DateTime, FixedOffset};
 
 fn is_known_prepared_update_target(
@@ -36,6 +38,8 @@ fn is_known_prepared_update_target(
 pub struct UpdateInput {
     /// Field values to update, keyed by field name
     pub fields: RapidHashMap<String, JsonValue>,
+    /// Explicit CRDT ops, keyed by field
+    pub ops: RapidHashMap<String, InputOp>,
 }
 
 impl UpdateInput {
@@ -43,7 +47,13 @@ impl UpdateInput {
     pub fn new() -> Self {
         Self {
             fields: RapidHashMap::new(),
+            ops: RapidHashMap::new(),
         }
+    }
+
+    /// Every field this update writes, through a value or an op.
+    pub fn field_names(&self) -> RapidHashSet<String> {
+        self.fields.keys().chain(self.ops.keys()).cloned().collect()
     }
 
     /// Add a field value to update.
@@ -58,15 +68,17 @@ impl UpdateInput {
     /// increment rather than a replacement, matching Go DefraDB behavior.
     pub fn apply_to(
         &self,
+        crdts: &Crdts,
         doc: &mut Document,
         collection: Option<&CollectionVersion>,
     ) -> Result<usize> {
-        self.apply_to_with_time(doc, collection, None)
+        self.apply_to_with_time(crdts, doc, collection, None)
     }
 
     /// Apply this update to a document with an optional pre-computed request time for UTC_NOW.
     pub fn apply_to_with_time(
         &self,
+        crdts: &Crdts,
         doc: &mut Document,
         collection: Option<&CollectionVersion>,
         request_time: Option<DateTime<FixedOffset>>,
@@ -76,28 +88,21 @@ impl UpdateInput {
         for (field_name, value) in &self.fields {
             let field_def =
                 collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
-            let field_kind = field_def.map(|f| &f.kind);
-            let normal_value =
-                json_to_normal_value_with_kind_and_time(value, field_kind, request_time)?;
+            let normal_value = json_to_normal_value_with_kind_and_time(
+                value,
+                field_def.map(|f| &f.kind),
+                request_time,
+            )?;
+            let op = update_ops::implicit_op(crdts, field_def, normal_value)?;
+            update_ops::write_op(crdts, doc, field_name, field_def, op)?;
+            modified_count += 1;
+        }
 
-            // Counter CRDT fields use increment semantics
-            if let Some(fd) = field_def {
-                if fd.crdt_type.is_counter() {
-                    // PCounter rejects negative increments
-                    if fd.crdt_type == CType::PCounter {
-                        validate_pcounter_increment(&normal_value)?;
-                    }
-                    // Store the raw increment for block builder (delta encoding)
-                    doc.set_counter_delta(field_name.clone(), normal_value.clone());
-                    let current = doc.get(field_name);
-                    let new_value = increment_value(current, &normal_value)?;
-                    doc.set(field_name.clone(), new_value);
-                    modified_count += 1;
-                    continue;
-                }
-            }
-
-            doc.set(field_name.clone(), normal_value);
+        for (field_name, op) in &self.ops {
+            let field_def =
+                collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
+            let op = update_ops::named_op(crdts, field_name, field_def, op, request_time)?;
+            update_ops::write_op(crdts, doc, field_name, field_def, op)?;
             modified_count += 1;
         }
 
@@ -108,58 +113,6 @@ impl UpdateInput {
 impl Default for UpdateInput {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Validate that a PCounter increment is non-negative.
-fn validate_pcounter_increment(value: &NormalValue) -> Result<()> {
-    let is_negative = match value {
-        NormalValue::Int(v) => *v < 0,
-        NormalValue::Float64(v) => *v < 0.0,
-        NormalValue::Float32(v) => *v < 0.0,
-        _ => false,
-    };
-    if is_negative {
-        return Err(QueryError::execution("value cannot be negative"));
-    }
-    Ok(())
-}
-
-/// Increment a counter value by an increment amount.
-/// For counter CRDTs, updates add to the current value rather than replacing it.
-/// Uses wrapping arithmetic to match Go DefraDB overflow behavior.
-fn increment_value(current: Option<&NormalValue>, increment: &NormalValue) -> Result<NormalValue> {
-    match increment {
-        NormalValue::Int(inc) => {
-            let cur = match current {
-                Some(NormalValue::Int(v)) => *v,
-                None | Some(NormalValue::Null) => 0,
-                _ => 0,
-            };
-            Ok(NormalValue::Int(cur.wrapping_add(*inc)))
-        }
-        NormalValue::Float64(inc) => {
-            let cur = match current {
-                Some(NormalValue::Float64(v)) => *v,
-                Some(NormalValue::Float32(v)) => *v as f64,
-                None | Some(NormalValue::Null) => 0.0,
-                _ => 0.0,
-            };
-            Ok(NormalValue::Float64(cur + inc))
-        }
-        NormalValue::Float32(inc) => {
-            let cur = match current {
-                Some(NormalValue::Float32(v)) => *v,
-                Some(NormalValue::Float64(v)) => *v as f32,
-                None | Some(NormalValue::Null) => 0.0,
-                _ => 0.0,
-            };
-            Ok(NormalValue::Float32(cur + inc))
-        }
-        _ => Err(QueryError::execution(format!(
-            "Counter fields only support numeric increments, got: {:?}",
-            increment
-        ))),
     }
 }
 
@@ -369,10 +322,13 @@ impl UpdateNode {
             return None;
         }
         let collection = self.collection.as_deref()?;
-        let patch: RapidHashSet<String> = self.input.fields.keys().cloned().collect();
-        self.mutator
-            .update_run()
-            .planned(collection, &patch, self.filter.as_ref())
+        let patch: RapidHashSet<String> = self.input.field_names();
+        self.mutator.update_run().planned(
+            &self.mutator.crdts(),
+            collection,
+            &patch,
+            self.filter.as_ref(),
+        )
     }
 }
 
@@ -494,14 +450,14 @@ impl PlanNode for UpdateNode {
 
                     // Apply update input with schema-aware coercion and request time
                     self.input.apply_to_with_time(
+                        &self.mutator.crdts(),
                         &mut doc,
                         self.collection.as_deref(),
                         self.request_time,
                     )?;
 
                     // Collect the modified field names for block creation
-                    let mut modified_fields: RapidHashSet<String> =
-                        self.input.fields.keys().cloned().collect();
+                    let mut modified_fields: RapidHashSet<String> = self.input.field_names();
 
                     if let Some(embeddings) = &self.prepared_embeddings {
                         let id = doc.id().map(ToString::to_string).unwrap_or_default();
@@ -523,7 +479,8 @@ impl PlanNode for UpdateNode {
                                     continue;
                                 };
                                 if dependencies_match && embedding.request == request {
-                                    doc.set(embedding.field.clone(), embedding.value.clone());
+                                    doc.set(embedding.field.clone(), embedding.value.clone())
+                                        .map_err(|e| QueryError::execution(e.to_string()))?;
                                     modified_fields.insert(embedding.field.clone());
                                     continue;
                                 }
@@ -547,7 +504,8 @@ impl PlanNode for UpdateNode {
                                 doc.set(
                                     embedding.field.clone(),
                                     document::NormalValue::Float64Array(vector),
-                                );
+                                )
+                                .map_err(|e| QueryError::execution(e.to_string()))?;
                                 modified_fields.insert(embedding.field.clone());
                             }
                         }
@@ -678,6 +636,12 @@ impl PlanNode for UpdateNode {
         for (field_name, value) in &self.input.fields {
             input_obj.insert(field_name.clone(), value.clone());
         }
+        for (field_name, op) in &self.input.ops {
+            input_obj.insert(
+                field_name.clone(),
+                serde_json::to_value(op).unwrap_or(JsonValue::Null),
+            );
+        }
         obj.insert("input".to_string(), JsonValue::Object(input_obj));
 
         // Include child node if present
@@ -713,6 +677,10 @@ mod prepared_target_tests {
 
     #[async_trait]
     impl DocMutator for RecordingMutator {
+        fn crdts(&self) -> crdt::Crdts {
+            crdt::Crdts::default()
+        }
+
         async fn create(&self, _collection: &str, _doc: Document) -> Result<CreateResult> {
             Err(QueryError::execution("unused in update target test"))
         }
@@ -749,7 +717,7 @@ mod prepared_target_tests {
     }
 
     fn doc(seed: &str) -> Document {
-        let mut doc = Document::from_json_str(r#"{"value":"before"}"#).unwrap();
+        let mut doc = crate::test_utils::doc_from_json(r#"{"value":"before"}"#);
         doc.set_id(DocID::new_v0_from_seed(seed));
         doc
     }

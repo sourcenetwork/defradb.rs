@@ -1,9 +1,12 @@
-//! Shared P2P adapters implementing the HTTP P2P operation surface.
+//! The P2P operation surface (`P2POperations` and the `peer` core every edge
+//! calls) and the adapters that implement it over libp2p and iroh.
 
 use std::sync::Arc;
 
 use kovan::Atom;
-use rapidhash::{RapidHashMap, RapidHashSet};
+#[cfg(test)]
+use rapidhash::RapidHashMap;
+use rapidhash::RapidHashSet;
 use zeroize::Zeroizing;
 
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
@@ -17,10 +20,20 @@ mod iroh_restore;
 #[cfg(feature = "libp2p")]
 mod libp2p;
 pub mod manage;
+mod operations;
+pub mod peer;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod peer_details;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod pooled_doc_pusher;
 mod read_gate;
 mod replication_events;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_install_store;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_installs;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_replay;
 mod replicator_status;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod retry;
@@ -45,9 +58,13 @@ pub use iroh_restore::restore_iroh_p2p_state;
 #[cfg(feature = "libp2p")]
 pub use libp2p::{CollectionLookup, P2PAdapter, VersionSyncer};
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub use peer_details::PeerPushRetries;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
 pub use pooled_doc_pusher::pooled;
 pub use read_gate::{DbBlockClassifier, DbBlockReadGate};
 pub use replication_events::publish_replication_result;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub use replicator_install_store::{ReplicatorInstall, ReplicatorInstallRequest};
 pub use replicator_status::{
     load_persisted_replicators, set_persisted_replicator_status,
     set_persisted_replicator_status_for_incarnation,
@@ -65,9 +82,12 @@ pub use transport_version_syncer::{DbTransportVersionSyncer, TransportVersionSyn
 #[cfg(feature = "libp2p")]
 pub use version_syncer::DbVersionSyncer;
 
-pub use defra_http::router::{
-    ExplicitReplayCapabilityInput, P2PError, P2POperations, P2PResult, P2pDocumentInfo,
-    P2pDocumentRequest, ReplicationFilter, ReplicationFilters, ReplicatorInfo, TransportPeerId,
+pub use operations::{
+    ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations, P2PResult,
+    P2pDocumentInfo, P2pDocumentRequest, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp,
+    RemoteManageQueryResult, ReplicationFilter, ReplicationFilters, ReplicatorInfo,
+    SyncBranchableRequest, SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId,
+    MANAGE_UNAUTHORIZED,
 };
 
 /// Resolve replicator-delete collection arguments from names to CIDs.
@@ -113,7 +133,7 @@ pub fn collections_requiring_replay(
         .collect()
 }
 
-#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
+#[cfg(test)]
 fn collections_with_changed_capabilities(
     collection_cids: &[String],
     validated_capabilities: &[(String, String)],
@@ -421,21 +441,16 @@ pub(crate) fn to_http_replicator_info(info: p2p::ReplicatorInfo) -> ReplicatorIn
 /// `_gt`, etc.) are encoded via the `Conditions` field.
 pub(crate) fn p2p_filter_to_http(
     filter: &p2p::ReplicationFilter,
-) -> Option<defra_http::router::ReplicationFilter> {
+) -> Option<crate::ReplicationFilter> {
     match filter {
         p2p::ReplicationFilter::Predicate(conds) => {
             if conds.len() == 1 {
                 let (field, condition) = conds.iter().next()?;
                 if let Some(value) = condition.as_object().and_then(|op| op.get("_eq")).cloned() {
-                    return Some(defra_http::router::ReplicationFilter::eq(
-                        field.clone(),
-                        value,
-                    ));
+                    return Some(crate::ReplicationFilter::eq(field.clone(), value));
                 }
             }
-            Some(defra_http::router::ReplicationFilter::predicate(
-                conds.clone(),
-            ))
+            Some(crate::ReplicationFilter::predicate(conds.clone()))
         }
         p2p::ReplicationFilter::Acp { .. } | p2p::ReplicationFilter::All(_) => {
             tracing::warn!(

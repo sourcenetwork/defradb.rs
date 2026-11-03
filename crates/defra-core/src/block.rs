@@ -14,8 +14,9 @@ use crate::{Error, Result};
 // Re-export delta payload types
 pub use crate::block_delta::{
     CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
-    CompositeDeltaPayload, CounterDeltaPayload, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
-    LwwDeltaPayload, IMMUTABLE_LINK_NAME,
+    CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload, FieldDefinitionDeltaPayload,
+    ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload, TextDeltaPayload,
+    IMMUTABLE_LINK_NAME,
 };
 
 // Re-export signature/encryption types
@@ -268,6 +269,18 @@ pub enum CrdtDelta {
     #[serde(rename = "immutable")]
     Immutable(ImmutableDeltaPayload),
 
+    /// Text delta (Rust-only)
+    #[serde(rename = "text")]
+    Text(TextDeltaPayload),
+
+    /// JSON delta (Rust-only)
+    #[serde(rename = "json")]
+    Json(JsonDeltaPayload),
+
+    /// Custom CRDT delta (Rust-only)
+    #[serde(rename = "custom")]
+    Custom(CustomDeltaPayload),
+
     /// Collection delta
     #[serde(rename = "collection")]
     Collection(CollectionDeltaPayload),
@@ -285,7 +298,47 @@ pub enum CrdtDelta {
     CollectionDefinition(CollectionDefinitionDeltaPayload),
 }
 
+/// A field block's delta, read the same whichever field CRDT wrote it.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldDelta<'a> {
+    pub field_name: &'a str,
+    pub priority: u64,
+    pub collection_version_id: &'a str,
+    /// The encoded (and possibly encrypted) value or operation.
+    pub data: &'a [u8],
+}
+
 impl CrdtDelta {
+    /// The field delta this is, when a field CRDT wrote it.
+    pub fn field(&self) -> Option<FieldDelta<'_>> {
+        let (field_name, priority, collection_version_id, data) = match self {
+            CrdtDelta::Lww(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Counter(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Text(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Json(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            CrdtDelta::Custom(d) => (&d.field_name, d.priority, &d.collection_version_id, &d.data),
+            _ => return None,
+        };
+        Some(FieldDelta {
+            field_name,
+            priority,
+            collection_version_id,
+            data,
+        })
+    }
+
+    /// The data of a field delta, to replace with its decryption.
+    pub fn field_data_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            CrdtDelta::Lww(d) => Some(&mut d.data),
+            CrdtDelta::Counter(d) => Some(&mut d.data),
+            CrdtDelta::Text(d) => Some(&mut d.data),
+            CrdtDelta::Json(d) => Some(&mut d.data),
+            CrdtDelta::Custom(d) => Some(&mut d.data),
+            _ => None,
+        }
+    }
+
     /// Get the priority of this delta
     pub fn priority(&self) -> u64 {
         match self {
@@ -293,6 +346,9 @@ impl CrdtDelta {
             CrdtDelta::Counter(d) => d.priority,
             CrdtDelta::Composite(d) => d.priority,
             CrdtDelta::Immutable(d) => d.priority,
+            CrdtDelta::Text(d) => d.priority,
+            CrdtDelta::Json(d) => d.priority,
+            CrdtDelta::Custom(d) => d.priority,
             CrdtDelta::Collection(d) => d.priority,
             CrdtDelta::CollectionSet(d) => d.priority,
             CrdtDelta::FieldDefinition(d) => d.priority,
@@ -307,6 +363,9 @@ impl CrdtDelta {
             CrdtDelta::Counter(d) => d.priority = priority,
             CrdtDelta::Composite(d) => d.priority = priority,
             CrdtDelta::Immutable(d) => d.priority = priority,
+            CrdtDelta::Text(d) => d.priority = priority,
+            CrdtDelta::Json(d) => d.priority = priority,
+            CrdtDelta::Custom(d) => d.priority = priority,
             CrdtDelta::Collection(d) => d.priority = priority,
             CrdtDelta::CollectionSet(d) => d.priority = priority,
             CrdtDelta::FieldDefinition(d) => d.priority = priority,
@@ -314,17 +373,20 @@ impl CrdtDelta {
         }
     }
 
-    /// Get the schema version ID / collection version ID (if present)
+    /// Get the collection version ID / collection version ID (if present)
     ///
     /// Note: FieldDefinition and CollectionDefinition deltas do not have
-    /// a schema_version_id, so return None for those types.
-    pub fn schema_version_id(&self) -> Option<&str> {
+    /// a collection_version_id, so return None for those types.
+    pub fn collection_version_id(&self) -> Option<&str> {
         match self {
-            CrdtDelta::Lww(d) => Some(&d.schema_version_id),
-            CrdtDelta::Counter(d) => Some(&d.schema_version_id),
-            CrdtDelta::Composite(d) => Some(&d.schema_version_id),
-            CrdtDelta::Immutable(d) => Some(&d.schema_version_id),
-            CrdtDelta::Collection(d) => Some(&d.schema_version_id),
+            CrdtDelta::Lww(d) => Some(&d.collection_version_id),
+            CrdtDelta::Counter(d) => Some(&d.collection_version_id),
+            CrdtDelta::Composite(d) => Some(&d.collection_version_id),
+            CrdtDelta::Immutable(d) => Some(&d.collection_version_id),
+            CrdtDelta::Text(d) => Some(&d.collection_version_id),
+            CrdtDelta::Json(d) => Some(&d.collection_version_id),
+            CrdtDelta::Custom(d) => Some(&d.collection_version_id),
+            CrdtDelta::Collection(d) => Some(&d.collection_version_id),
             CrdtDelta::CollectionSet(_) => None,
             CrdtDelta::FieldDefinition(_) => None,
             CrdtDelta::CollectionDefinition(_) => None,

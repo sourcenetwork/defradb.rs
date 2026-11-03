@@ -41,18 +41,6 @@ impl FieldValue {
         })
     }
 
-    /// Create a new FieldValue with LwwRegister CRDT type.
-    ///
-    /// LwwRegister accepts any value type, so this never fails.
-    /// New values are marked as dirty by default.
-    pub fn new_lww(value: NormalValue) -> Self {
-        Self {
-            crdt_type: CType::LwwRegister,
-            value,
-            is_dirty: true,
-        }
-    }
-
     /// Create a new FieldValue that is not marked as dirty.
     ///
     /// Returns an error if the value type is incompatible with the CRDT type.
@@ -66,13 +54,11 @@ impl FieldValue {
         })
     }
 
-    /// Create a new clean FieldValue with LwwRegister CRDT type.
-    ///
-    /// LwwRegister accepts any value type, so this never fails.
-    /// Used when loading from storage.
-    pub fn new_clean_lww(value: NormalValue) -> Self {
+    /// A clean value read from storage, kept as stored without checking it
+    /// against `crdt_type`.
+    pub(crate) fn loaded(crdt_type: CType, value: NormalValue) -> Self {
         Self {
-            crdt_type: CType::LwwRegister,
+            crdt_type,
             value,
             is_dirty: false,
         }
@@ -99,8 +85,17 @@ impl FieldValue {
                     });
                 }
             }
-            CType::LwwRegister | CType::None => {
-                // LWW Register and None accept any value
+            CType::LwwRegister | CType::None | CType::Json | CType::Custom(_) => {
+                // LWW Register, None, Json and custom types accept any value;
+                // a custom type's operations refuse what it cannot hold
+            }
+            CType::Text => {
+                if value.as_str().is_none() && !value.is_nil() {
+                    return Err(Error::IncompatibleCrdtType {
+                        crdt_type,
+                        value_type: Self::value_type_name(value),
+                    });
+                }
             }
             CType::Unknown(_) | _ => {
                 return Err(Error::IncompatibleCrdtType {

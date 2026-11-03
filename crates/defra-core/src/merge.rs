@@ -84,6 +84,8 @@ impl RecoveredBlockMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MergeOutcome {
+    /// A bounded traversal turn committed progress and is ready to resume locally.
+    Yielded,
     /// Block was merged successfully into the database.
     Merged,
     /// Block was skipped (already applied, rejected by CRDT, etc.).

@@ -75,7 +75,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         peer_id_str: &str,
         collection_id: &str,
     ) -> Result<()> {
-        if self.access.peer_state.is_connected(peer_id_str) {
+        if self.authorizer.peer_connected(peer_id_str).await {
             return Ok(());
         }
 

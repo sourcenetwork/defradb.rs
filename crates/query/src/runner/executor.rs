@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -215,7 +215,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 runner.registry.run_as(&context, handle, deadline, job)
             })
             .await;
-        answered(Some(handle), outcome)
+        answered(outcome)
+    }
+
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        self.observe_owners(context, handle, collection, doc_ids, identity)
+            .await
     }
 
     async fn begin_txn(
@@ -248,19 +260,156 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.commit_as(context, handle).await
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback(handle).await
+        self.registry.discard(handle).await
     }
 
-    async fn rollback_txn_as(
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback_as(context, handle).await
+        self.registry.discard_as(context, handle).await
+    }
+
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.add_collection_as(context, sdl).await
+    }
+
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.get_collections_as(context, selector).await
+    }
+
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .patch_collection_as(context, patch, migration)
+            .await
+    }
+
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .set_active_collection_version_as(context, version_id)
+            .await
+    }
+
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .truncate_collection_as(context, name, filter)
+            .await
+    }
+
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_dac_policy_as(context, policy).await
+    }
+
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        self.registry.list_dac_policies_as(context).await
+    }
+
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        self.registry.get_dac_policy_as(context, policy_id).await
+    }
+
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        self.registry.acp_light_client_status_as(context).await
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.set_migration_as(context, config).await
+    }
+
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_lens_as(context, config).await
+    }
+
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.list_lenses_as(context).await
+    }
+
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .delete_collections_as(context, targets, active_only)
+            .await
+    }
+
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        self.registry
+            .set_collection_active_as(context, version_id, is_active)
+            .await
+    }
+
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .verify_block_signature_as(context, document_acp, cid, public_key, key_type, caller)
+            .await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {
@@ -298,12 +447,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .and_then(|prepared| prepared.parsed.as_deref())
         {
             Some(parsed) => parsed.clone(),
-            None => match parse_request_with_limits(
-                &request.query,
-                variables.as_ref(),
-                request.operation_name.as_deref(),
-                self.query_limits,
-            ) {
+            None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(p) => p,
                 Err(e) => {
                     return QueryResponse {
@@ -334,14 +478,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .await
             {
                 Err(TransactionError::NotSupported(_)) => {}
-                Err(error @ TransactionError::Execution(_)) => return answered(None, Err(error)),
+                Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
+                    return answered(Err(error));
+                }
                 Err(error) => {
                     return QueryResponse::error(format!(
                         "failed to create implicit read-only transaction: {}",
                         error
                     ));
                 }
-                outcome => return answered(None, outcome),
+                outcome => return answered(outcome),
             }
         }
 
@@ -585,6 +731,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 doc_ids: &request.doc_ids,
                 create_input: &request.create_input,
                 update_input: &request.update_input,
+                update_ops: &request.update_ops,
             })
             .await
             .map_err(crate::error::QueryError::execution)?;
@@ -676,21 +823,25 @@ mod tests {
     use crate::test_utils::{MockFetcher, MockTxnRegistry};
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn caller_deadline_uses_its_configured_node_pool() {
-        let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-        pool.shutdown_blocking().unwrap();
-        let runner = QueryRunner::new(MockFetcher::new(), vec![]).with_deadline_pool(Some(pool));
+    #[test]
+    fn caller_deadline_uses_its_configured_node_pool() {
+        workers::block_on(async {
+            let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+            pool.shutdown_blocking().unwrap();
+            let runner =
+                QueryRunner::new(MockFetcher::new(), vec![]).with_deadline_pool(Some(pool));
 
-        let result = runner
-            .prepare_request(&QueryRequest::new("{ probe }"))
-            .await;
+            let result = runner
+                .prepare_request(&QueryRequest::new("{ probe }"))
+                .await;
 
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("deadline could not be kept: the worker pool is shut down"),
-            "{error}"
-        );
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("deadline could not be kept: the worker pool is shut down"),
+                "{error}"
+            );
+        })
+        .unwrap();
     }
 
     #[test]
@@ -718,9 +869,9 @@ mod tests {
         }
 
         fn make_doc(&self, name: String) -> Document {
-            let mut doc = Document::new();
+            let mut doc = crate::test_utils::test_doc(&["name"]);
             doc.set_id(document::DocID::new_v0_from_seed(&name));
-            doc.set("name", serde_json::Value::String(name));
+            doc.set("name", serde_json::Value::String(name)).unwrap();
             doc
         }
     }
@@ -785,42 +936,46 @@ mod tests {
     }
 
     fn make_users_doc(name: &str) -> Document {
-        let mut doc = Document::new();
+        let mut doc = crate::test_utils::test_doc(&["name"]);
         doc.set_id(document::DocID::new_v0_from_seed(name));
-        doc.set("name", serde_json::Value::String(name.to_string()));
+        doc.set("name", serde_json::Value::String(name.to_string()))
+            .unwrap();
         doc
     }
 
-    #[tokio::test]
-    async fn execute_uses_implicit_read_txn_when_registry_is_available() {
-        let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
+    #[test]
+    fn execute_uses_implicit_read_txn_when_registry_is_available() {
+        workers::block_on(async {
+            let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
 
-        let txn_fetcher = MockFetcher::new();
-        txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
+            let txn_fetcher = MockFetcher::new();
+            txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
 
-        let runner = QueryRunner::with_registry(
-            ChangingFetcher::new(),
-            collections,
-            MockTxnRegistry::new(txn_fetcher),
-        );
+            let runner = QueryRunner::with_registry(
+                ChangingFetcher::new(),
+                collections,
+                MockTxnRegistry::new(txn_fetcher),
+            );
 
-        let response = runner
-            .execute(QueryRequest::new(
-                "{ first: Users { name } second: Users { name } }",
-            ))
-            .await;
+            let response = runner
+                .execute(QueryRequest::new(
+                    "{ first: Users { name } second: Users { name } }",
+                ))
+                .await;
 
-        assert!(
-            !response.has_errors(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-        assert_eq!(
-            response.data,
-            Some(json!({
-                "first": [{"name": "txn-snapshot"}],
-                "second": [{"name": "txn-snapshot"}],
-            }))
-        );
+            assert!(
+                !response.has_errors(),
+                "unexpected errors: {:?}",
+                response.errors
+            );
+            assert_eq!(
+                response.data,
+                Some(json!({
+                    "first": [{"name": "txn-snapshot"}],
+                    "second": [{"name": "txn-snapshot"}],
+                }))
+            );
+        })
+        .unwrap()
     }
 }

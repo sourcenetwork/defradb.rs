@@ -70,8 +70,8 @@ pub trait TransformStore: Send + Sync {
 
     /// List all registered transforms.
     ///
-    /// Returns a map of transform IDs to their lens modules.
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>>;
+    /// Returns a map of transform IDs to their lenses' modules, in order.
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>>;
 
     /// Transform documents using a registered lens.
     ///
@@ -176,11 +176,11 @@ impl TransformStore for MemoryTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<crate::LensModule>>> {
         let result = self
             .transforms
             .iter()
-            .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
+            .map(|(id, config)| (id.to_string(), config.lenses.clone()))
             .collect();
 
         Ok(result)
@@ -222,47 +222,62 @@ mod tests {
     use super::*;
     use crate::LensModule;
 
-    #[tokio::test]
-    async fn test_memory_store_add_transform() {
-        let store = MemoryTransformStore::new();
-        let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
+    #[test]
+    fn test_memory_store_add_transform() {
+        workers::block_on(async {
+            let store = MemoryTransformStore::new();
+            let config =
+                LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
 
-        let id = store.add(config).await.unwrap();
-        assert!(store.has_transform(&id));
+            let id = store.add(config).await.unwrap();
+            assert!(store.has_transform(&id));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_memory_store_remove_transform() {
-        let store = MemoryTransformStore::new();
-        let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
+    #[test]
+    fn test_memory_store_remove_transform() {
+        workers::block_on(async {
+            let store = MemoryTransformStore::new();
+            let config =
+                LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
 
-        let id = store.add(config).await.unwrap();
-        assert!(store.has_transform(&id));
+            let id = store.add(config).await.unwrap();
+            assert!(store.has_transform(&id));
 
-        store.remove(&id).await.unwrap();
-        assert!(!store.has_transform(&id));
+            store.remove(&id).await.unwrap();
+            assert!(!store.has_transform(&id));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn isolated_memory_store_starts_empty_and_stays_apart() {
-        let store = MemoryTransformStore::new();
-        let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
-        let id = store.add(config.clone()).await.unwrap();
+    #[test]
+    fn isolated_memory_store_starts_empty_and_stays_apart() {
+        workers::block_on(async {
+            let store = MemoryTransformStore::new();
+            let config =
+                LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
+            let id = store.add(config.clone()).await.unwrap();
 
-        let isolated = store.new_isolated_store();
-        assert!(!isolated.has_transform(&id));
-        let local = TransformId::new("local");
-        isolated.add_with_id(local.clone(), config).await.unwrap();
-        assert!(isolated.has_transform(&local));
-        assert!(!store.has_transform(&local));
+            let isolated = store.new_isolated_store();
+            assert!(!isolated.has_transform(&id));
+            let local = TransformId::new("local");
+            isolated.add_with_id(local.clone(), config).await.unwrap();
+            assert!(isolated.has_transform(&local));
+            assert!(!store.has_transform(&local));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_memory_store_transform_not_found() {
-        let store = MemoryTransformStore::new();
-        let id = TransformId::new("nonexistent");
+    #[test]
+    fn test_memory_store_transform_not_found() {
+        workers::block_on(async {
+            let store = MemoryTransformStore::new();
+            let id = TransformId::new("nonexistent");
 
-        let result = store.transform(&id, Box::pin(futures::stream::empty()));
-        assert!(matches!(result, Err(Error::TransformNotFound(_))));
+            let result = store.transform(&id, Box::pin(futures::stream::empty()));
+            assert!(matches!(result, Err(Error::TransformNotFound(_))));
+        })
+        .unwrap()
     }
 }

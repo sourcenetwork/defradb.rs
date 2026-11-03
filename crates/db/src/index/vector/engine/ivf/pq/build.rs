@@ -139,6 +139,7 @@ impl<S: VectorNodeStore> IvfPq<S> {
             dimensions: dimensions as u32,
         };
 
+        quantizer.prepare_encode();
         let mut code = vec![0u8; quantizer.code_len()];
         let mut residual = vec![0.0f32; dimensions];
         let indexed = self

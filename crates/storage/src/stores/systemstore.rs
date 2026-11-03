@@ -22,6 +22,10 @@ impl<S: Store> crate::corekv::private::Sealed for Systemstore<S> {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store> Store for Systemstore<S> {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.store.allocate(key, count).await
     }
@@ -57,23 +61,26 @@ mod tests {
     use crate::keys::systemstore::CollectionKey;
     use bytes::Bytes;
 
-    #[tokio::test]
-    async fn test_systemstore_basic() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let systemstore = Systemstore::new(store);
+    #[test]
+    fn test_systemstore_basic() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let systemstore = Systemstore::new(store);
 
-        let key = CollectionKey::new("users_v1");
+            let key = CollectionKey::new("users_v1");
 
-        // Write
-        let mut txn = systemstore.new_txn(false).await.unwrap();
-        txn.set(&key.bytes(), b"collection_definition")
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
+            // Write
+            let mut txn = systemstore.new_txn(false).await.unwrap();
+            txn.set(&key.bytes(), b"collection_definition")
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
 
-        // Read
-        let txn = systemstore.new_txn(true).await.unwrap();
-        let value = txn.get(&key.bytes()).await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"collection_definition")));
+            // Read
+            let txn = systemstore.new_txn(true).await.unwrap();
+            let value = txn.get(&key.bytes()).await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"collection_definition")));
+        })
+        .unwrap()
     }
 }

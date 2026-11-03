@@ -48,9 +48,14 @@ fn profiles() -> Vec<Profile> {
 
 fn collection_version(index: usize) -> CollectionVersion {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "name", FieldKind::string()),
-        FieldDescription::new("3", "note", FieldKind::string()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        FieldDescription::new("3", "note", FieldKind::string(), schema::CType::LwwRegister),
     ];
     CollectionVersion::new(
         format!("Collection{index}"),
@@ -74,9 +79,11 @@ async fn seed(path: &Path, options: RegolithStoreOptions, count: usize, docs: us
         let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
         let name = collection_version(0).name.clone();
         for seq in 0..docs {
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String(format!("name-{seq}")));
-            doc.set("note", NormalValue::String(format!("note-{seq}")));
+            let mut doc = Document::new(collection_version(0));
+            doc.set("name", NormalValue::String(format!("name-{seq}")))
+                .unwrap();
+            doc.set("note", NormalValue::String(format!("note-{seq}")))
+                .unwrap();
             mutator
                 .create(&name, doc)
                 .await

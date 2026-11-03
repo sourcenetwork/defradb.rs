@@ -1,10 +1,7 @@
-//! REST operations for document CRUD endpoints.
-//!
-//! This module defines the interface between the HTTP layer and REST-specific operations.
-//! It provides collection listing and document CRUD operations separate from GraphQL.
+//! REST reads: collection listing and documents by ID.
 
 mod error;
-pub mod gql;
+mod gql;
 mod operations;
 mod trait_def;
 

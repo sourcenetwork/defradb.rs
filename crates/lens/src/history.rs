@@ -10,7 +10,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 /// Matches Go's collectionHistoryLink.
 #[derive(Debug, Clone)]
 pub struct CollectionHistoryLink {
-    /// The schema version ID at this point in history.
+    /// The collection version ID at this point in history.
     pub version_id: String,
 
     /// Collection ID (schema root).
@@ -64,7 +64,7 @@ impl CollectionHistoryLink {
 /// Matches Go's targetedCollectionHistoryLink.
 #[derive(Debug, Clone)]
 pub struct TargetedHistoryLink {
-    /// The schema version ID at this point in history.
+    /// The collection version ID at this point in history.
     pub version_id: String,
 
     /// Collection ID (schema root).

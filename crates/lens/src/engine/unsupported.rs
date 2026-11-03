@@ -30,7 +30,7 @@ impl TransformStore for UnsupportedTransformStore {
         Err(Error::RuntimeUnavailable)
     }
 
-    async fn list(&self) -> Result<RapidHashMap<String, LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, Vec<LensModule>>> {
         Ok(RapidHashMap::new())
     }
 
@@ -55,11 +55,15 @@ impl TransformStore for UnsupportedTransformStore {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn add_returns_runtime_unavailable() {
-        let store = UnsupportedTransformStore;
-        let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
-        let result = store.add(config).await;
-        assert!(matches!(result, Err(Error::RuntimeUnavailable)));
+    #[test]
+    fn add_returns_runtime_unavailable() {
+        workers::block_on(async {
+            let store = UnsupportedTransformStore;
+            let config =
+                LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
+            let result = store.add(config).await;
+            assert!(matches!(result, Err(Error::RuntimeUnavailable)));
+        })
+        .unwrap()
     }
 }

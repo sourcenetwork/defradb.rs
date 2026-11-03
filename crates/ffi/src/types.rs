@@ -257,8 +257,8 @@ pub struct NodeInitOptions {
     /// Retries of a conflicting transaction. 0 keeps the default.
     pub max_transaction_retries: c_int,
 
-    /// Store type: "regolith" (default) or "memory". The names of the stores
-    /// regolith replaced ("badger" among them) mean "regolith".
+    /// Store type: "regolith" (default) or "memory". Go's store name,
+    /// "badger", means "regolith".
     pub store_type: *const c_char,
     /// The store's compaction output target in bytes (Go's Badger value log
     /// file size). 0 keeps the default.

@@ -10,16 +10,20 @@ use crate::DB;
 use storage::RegolithStore;
 
 fn users(version_id: &str) -> Collection {
-    Collection::new(schema::CollectionVersion::new(
-        "Users",
-        version_id,
-        "users-collection",
-        vec![schema::FieldDescription::new(
-            "1",
-            "name",
-            schema::FieldKind::string(),
-        )],
-    ))
+    Collection::new(
+        schema::CollectionVersion::new(
+            "Users",
+            version_id,
+            "users-collection",
+            vec![schema::FieldDescription::new(
+                "1",
+                "name",
+                schema::FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 fn fetcher() -> (
@@ -41,43 +45,46 @@ fn context() -> Arc<MigrationContext> {
     Arc::new((false, None))
 }
 
-#[tokio::test]
-async fn a_hit_is_served_from_the_snapshot_of_its_generation() {
-    let (db, fetcher) = fetcher();
-    let collection = users("v1");
+#[test]
+fn a_hit_is_served_from_the_snapshot_of_its_generation() {
+    workers::block_on(async {
+        let (db, fetcher) = fetcher();
+        let collection = users("v1");
 
-    let (generation, has_migrations, history) =
+        let (generation, has_migrations, history) =
+            fetcher.load_migration_context(&collection).await.unwrap();
+        assert!(!has_migrations);
+        assert!(history.is_none());
+        assert_eq!(snapshot(&fetcher.migration_cache), (generation, 1));
+        let first = fetcher
+            .migration_cache
+            .get(generation, "users-collection:v1")
+            .unwrap();
+
         fetcher.load_migration_context(&collection).await.unwrap();
-    assert!(!has_migrations);
-    assert!(history.is_none());
-    assert_eq!(snapshot(&fetcher.migration_cache), (generation, 1));
-    let first = fetcher
-        .migration_cache
-        .get(generation, "users-collection:v1")
-        .unwrap();
+        let second = fetcher
+            .migration_cache
+            .get(generation, "users-collection:v1")
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "a hit reads the published context, it does not compute it again"
+        );
 
-    fetcher.load_migration_context(&collection).await.unwrap();
-    let second = fetcher
-        .migration_cache
-        .get(generation, "users-collection:v1")
-        .unwrap();
-    assert!(
-        Arc::ptr_eq(&first, &second),
-        "a hit reads the published context, it does not compute it again"
-    );
-
-    db.bump_migration_generation();
-    let (next, _, _) = fetcher.load_migration_context(&collection).await.unwrap();
-    assert_eq!(next, generation + 1);
-    assert_eq!(
-        snapshot(&fetcher.migration_cache),
-        (next, 1),
-        "a new generation starts from an empty snapshot"
-    );
-    assert!(fetcher
-        .migration_cache
-        .get(generation, "users-collection:v1")
-        .is_none());
+        db.bump_migration_generation();
+        let (next, _, _) = fetcher.load_migration_context(&collection).await.unwrap();
+        assert_eq!(next, generation + 1);
+        assert_eq!(
+            snapshot(&fetcher.migration_cache),
+            (next, 1),
+            "a new generation starts from an empty snapshot"
+        );
+        assert!(fetcher
+            .migration_cache
+            .get(generation, "users-collection:v1")
+            .is_none());
+    })
+    .unwrap()
 }
 
 #[test]
@@ -111,20 +118,30 @@ fn a_published_snapshot_never_changes() {
     assert!(both.with(0, "c", &context()).is_none());
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_loads_publish_every_context_into_one_snapshot() {
-    let (_db, fetcher) = fetcher();
-    let fetcher = Arc::new(fetcher);
-    let mut tasks = Vec::new();
-    for index in 0..32 {
-        let fetcher = Arc::clone(&fetcher);
-        tasks.push(tokio::spawn(async move {
-            let collection = users(&format!("v{}", index % 8));
-            fetcher.load_migration_context(&collection).await.unwrap().0
-        }));
-    }
-    for task in tasks {
-        assert_eq!(task.await.unwrap(), 0);
-    }
-    assert_eq!(snapshot(&fetcher.migration_cache), (0, 8));
+#[test]
+fn concurrent_loads_publish_every_context_into_one_snapshot() {
+    workers::block_on(async {
+        let (_db, fetcher) = fetcher();
+        let fetcher = Arc::new(fetcher);
+        let mut tasks = Vec::new();
+        for index in 0..32 {
+            let fetcher = Arc::clone(&fetcher);
+            tasks.push(
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let collection = users(&format!("v{}", index % 8));
+                        fetcher.load_migration_context(&collection).await.unwrap().0
+                    },
+                )
+                .unwrap(),
+            );
+        }
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), 0);
+        }
+        assert_eq!(snapshot(&fetcher.migration_cache), (0, 8));
+    })
+    .unwrap()
 }

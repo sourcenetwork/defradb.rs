@@ -165,286 +165,322 @@ fn did(s: &str) -> identity::Did {
     s.parse().unwrap()
 }
 
-#[tokio::test]
-async fn doc_scope_allow_when_user_has_dac_grant() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
-    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
-    let decision = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Allow);
-}
-
-#[tokio::test]
-async fn delegated_release_is_bound_to_the_document_collection() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
-    let scope = KeyScope::Document {
-        doc_id: "d1".into(),
-        field: None,
-    };
-    let actor = did("did:key:zalice");
-
-    assert_eq!(
-        policy
-            .check_delegated_release(&actor, &scope, "col-1")
+#[test]
+fn doc_scope_allow_when_user_has_dac_grant() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
+        policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+        let decision = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                },
+            )
             .await
-            .unwrap(),
-        PolicyDecision::Allow
-    );
-    assert_eq!(
-        policy
-            .check_delegated_release(&actor, &scope, "other-collection")
-            .await
-            .unwrap(),
-        PolicyDecision::Deny
-    );
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Allow);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn doc_scope_deny_when_user_lacks_grant() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
-    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
-    let decision = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Deny);
-}
+#[test]
+fn delegated_release_is_bound_to_the_document_collection() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
+        let scope = KeyScope::Document {
+            doc_id: "d1".into(),
+            field: None,
+        };
+        let actor = did("did:key:zalice");
 
-#[tokio::test]
-async fn collection_scope_uses_nac() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
-    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
-    let decision = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Collection {
-                collection_id: "c".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Allow);
-}
-
-#[tokio::test]
-async fn nac_not_configured_allows_collection() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
-    // No set_node_acp call.
-    let decision = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Collection {
-                collection_id: "c".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Allow);
-}
-
-#[tokio::test]
-async fn doc_scope_with_no_actor_uses_anonymous_dac() {
-    // FakeDac::allow=false means the DAC denies regardless of identity,
-    // so this exercises the Anonymous-conversion path on the None branch.
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
-    // NAC unset.
-    let decision = policy
-        .check_release(
-            None,
-            &KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Deny);
-}
-
-#[tokio::test]
-async fn collection_scope_with_nac_set_and_no_actor_denies() {
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
-    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
-    let decision = policy
-        .check_release(
-            None,
-            &KeyScope::Collection {
-                collection_id: "c".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(decision, PolicyDecision::Deny);
-}
-
-#[tokio::test]
-async fn doc_scope_no_policy_collection_allows_release() {
-    // A collection with no DAC policy attached resolves to `None`. With no
-    // policy there is no per-document access gate, so release is allowed —
-    // matching the legacy decrypt path (no policy check at all).
-    struct EmptyLookup;
-    #[async_trait::async_trait]
-    impl crate::policy::DocCollectionLookup for EmptyLookup {
-        async fn collection_for_doc(
-            &self,
-            _: &str,
-        ) -> crate::Result<Option<crate::policy::DocCollectionInfo>> {
-            Ok(None)
-        }
-    }
-
-    let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(EmptyLookup));
-    let result = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Document {
-                doc_id: "no-policy".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(result, PolicyDecision::Allow);
-}
-
-#[tokio::test]
-async fn branchable_public_doc_denies_when_collection_denies() {
-    let policy = NacDacPolicy::new(
-        Arc::new(BranchableDac {
-            doc_registered: false,
-            doc_granted: false,
-            collection_registered: true,
-            collection_granted: false,
-            unregistered_public: true,
-        }),
-        Arc::new(BranchableLookup),
-    );
-
-    let result = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(result, PolicyDecision::Deny);
-}
-
-#[tokio::test]
-async fn branchable_explicit_doc_grant_allows_despite_collection_denial() {
-    let policy = NacDacPolicy::new(
-        Arc::new(BranchableDac {
-            doc_registered: true,
-            doc_granted: true,
-            collection_registered: true,
-            collection_granted: false,
-            unregistered_public: true,
-        }),
-        Arc::new(BranchableLookup),
-    );
-
-    let result = policy
-        .check_release(
-            Some(&did("did:key:zalice")),
-            &KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(result, PolicyDecision::Allow);
-}
-
-#[tokio::test]
-async fn private_unregistered_doc_denies_owner_key_release() {
-    let policy = NacDacPolicy::new(
-        Arc::new(BranchableDac {
-            doc_registered: false,
-            doc_granted: true,
-            collection_registered: false,
-            collection_granted: false,
-            unregistered_public: false,
-        }),
-        Arc::new(FakeLookup),
-    );
-    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
-    let owner = did("did:key:zalice");
-    let scope = KeyScope::Document {
-        doc_id: "d1".into(),
-        field: None,
-    };
-
-    // A prior owner grant cannot make missing registration public, and NAC
-    // permission alone does not authorize a document-scoped key.
-    for actor in [Some(&owner), None] {
         assert_eq!(
-            policy.check_release(actor, &scope).await.unwrap(),
+            policy
+                .check_delegated_release(&actor, &scope, "col-1")
+                .await
+                .unwrap(),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy
+                .check_delegated_release(&actor, &scope, "other-collection")
+                .await
+                .unwrap(),
             PolicyDecision::Deny
         );
-    }
-    assert_eq!(
-        policy
-            .check_delegated_release(&owner, &scope, "col-1")
-            .await
-            .unwrap(),
-        PolicyDecision::Deny
-    );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn private_branchable_doc_inherits_only_live_collection_grant() {
-    let owner = did("did:key:zalice");
-    let scope = KeyScope::Document {
-        doc_id: "d1".into(),
-        field: Some("name".into()),
-    };
+#[test]
+fn doc_scope_deny_when_user_lacks_grant() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
+        policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+        let decision = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Deny);
+    })
+    .unwrap()
+}
 
-    for collection_registered in [true, false] {
+#[test]
+fn collection_scope_uses_nac() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
+        policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+        let decision = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Collection {
+                    collection_id: "c".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Allow);
+    })
+    .unwrap()
+}
+
+#[test]
+fn nac_not_configured_allows_collection() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
+        // No set_node_acp call.
+        let decision = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Collection {
+                    collection_id: "c".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Allow);
+    })
+    .unwrap()
+}
+
+#[test]
+fn doc_scope_with_no_actor_uses_anonymous_dac() {
+    workers::block_on(async {
+        // FakeDac::allow=false means the DAC denies regardless of identity,
+        // so this exercises the Anonymous-conversion path on the None branch.
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(FakeLookup));
+        // NAC unset.
+        let decision = policy
+            .check_release(
+                None,
+                &KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Deny);
+    })
+    .unwrap()
+}
+
+#[test]
+fn collection_scope_with_nac_set_and_no_actor_denies() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: true }), Arc::new(FakeLookup));
+        policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+        let decision = policy
+            .check_release(
+                None,
+                &KeyScope::Collection {
+                    collection_id: "c".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision, PolicyDecision::Deny);
+    })
+    .unwrap()
+}
+
+#[test]
+fn doc_scope_no_policy_collection_allows_release() {
+    workers::block_on(async {
+        // A collection with no DAC policy attached resolves to `None`. With no
+        // policy there is no per-document access gate, so release is allowed —
+        // matching the legacy decrypt path (no policy check at all).
+        struct EmptyLookup;
+        #[async_trait::async_trait]
+        impl crate::policy::DocCollectionLookup for EmptyLookup {
+            async fn collection_for_doc(
+                &self,
+                _: &str,
+            ) -> crate::Result<Option<crate::policy::DocCollectionInfo>> {
+                Ok(None)
+            }
+        }
+
+        let policy = NacDacPolicy::new(Arc::new(FakeDac { allow: false }), Arc::new(EmptyLookup));
+        let result = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Document {
+                    doc_id: "no-policy".into(),
+                    field: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, PolicyDecision::Allow);
+    })
+    .unwrap()
+}
+
+#[test]
+fn branchable_public_doc_denies_when_collection_denies() {
+    workers::block_on(async {
         let policy = NacDacPolicy::new(
             Arc::new(BranchableDac {
                 doc_registered: false,
                 doc_granted: false,
-                collection_registered,
-                collection_granted: true,
-                unregistered_public: false,
+                collection_registered: true,
+                collection_granted: false,
+                unregistered_public: true,
             }),
             Arc::new(BranchableLookup),
         );
-        let expected = if collection_registered {
-            PolicyDecision::Allow
-        } else {
-            PolicyDecision::Deny
-        };
-        assert_eq!(
-            policy.check_release(Some(&owner), &scope).await.unwrap(),
-            expected
+
+        let result = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, PolicyDecision::Deny);
+    })
+    .unwrap()
+}
+
+#[test]
+fn branchable_explicit_doc_grant_allows_despite_collection_denial() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(
+            Arc::new(BranchableDac {
+                doc_registered: true,
+                doc_granted: true,
+                collection_registered: true,
+                collection_granted: false,
+                unregistered_public: true,
+            }),
+            Arc::new(BranchableLookup),
         );
+
+        let result = policy
+            .check_release(
+                Some(&did("did:key:zalice")),
+                &KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, PolicyDecision::Allow);
+    })
+    .unwrap()
+}
+
+#[test]
+fn private_unregistered_doc_denies_owner_key_release() {
+    workers::block_on(async {
+        let policy = NacDacPolicy::new(
+            Arc::new(BranchableDac {
+                doc_registered: false,
+                doc_granted: true,
+                collection_registered: false,
+                collection_granted: false,
+                unregistered_public: false,
+            }),
+            Arc::new(FakeLookup),
+        );
+        policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+        let owner = did("did:key:zalice");
+        let scope = KeyScope::Document {
+            doc_id: "d1".into(),
+            field: None,
+        };
+
+        // A prior owner grant cannot make missing registration public, and NAC
+        // permission alone does not authorize a document-scoped key.
+        for actor in [Some(&owner), None] {
+            assert_eq!(
+                policy.check_release(actor, &scope).await.unwrap(),
+                PolicyDecision::Deny
+            );
+        }
         assert_eq!(
             policy
                 .check_delegated_release(&owner, &scope, "col-1")
                 .await
                 .unwrap(),
-            expected
+            PolicyDecision::Deny
         );
-    }
+    })
+    .unwrap()
+}
+
+#[test]
+fn private_branchable_doc_inherits_only_live_collection_grant() {
+    workers::block_on(async {
+        let owner = did("did:key:zalice");
+        let scope = KeyScope::Document {
+            doc_id: "d1".into(),
+            field: Some("name".into()),
+        };
+
+        for collection_registered in [true, false] {
+            let policy = NacDacPolicy::new(
+                Arc::new(BranchableDac {
+                    doc_registered: false,
+                    doc_granted: false,
+                    collection_registered,
+                    collection_granted: true,
+                    unregistered_public: false,
+                }),
+                Arc::new(BranchableLookup),
+            );
+            let expected = if collection_registered {
+                PolicyDecision::Allow
+            } else {
+                PolicyDecision::Deny
+            };
+            assert_eq!(
+                policy.check_release(Some(&owner), &scope).await.unwrap(),
+                expected
+            );
+            assert_eq!(
+                policy
+                    .check_delegated_release(&owner, &scope, "col-1")
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    })
+    .unwrap()
 }

@@ -38,7 +38,11 @@ impl Collection {
             }
 
             match doc.get(&field_def.name) {
-                Some(value) if value.is_nil() && !field_def.kind.is_nillable() => {
+                Some(value)
+                    if (value.is_nil() && !field_def.kind.is_nillable())
+                        || (matches!(field_def.kind, FieldKind::ScalarArray(array) if !array.has_nillable_elements())
+                            && has_null_element(value)) =>
+                {
                     return Err(Error::InvalidDocument(format!(
                         "null value provided for non-nillable field. Name: {}",
                         field_def.name
@@ -73,6 +77,24 @@ impl Collection {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Parse every relation ID this write sets, as Go does on write. A value
+    /// equal to the stored one is not re-parsed, so a document holding a relation
+    /// ID an earlier version accepted can still have its other fields updated.
+    pub fn validate_relation_ids(&self, doc: &Document, stored: Option<&Document>) -> Result<()> {
+        for field_def in &self.def.fields {
+            let is_relation_id = field_def.name != "_docID"
+                && matches!(field_def.kind, FieldKind::Scalar(scalar) if scalar.base_kind() == ScalarKind::DocID);
+            let Some(value @ NormalValue::String(id)) = doc.get(&field_def.name) else {
+                continue;
+            };
+            if !is_relation_id || stored.and_then(|old| old.get(&field_def.name)) == Some(value) {
+                continue;
+            }
+            DocID::from_string(id).map_err(|error| Error::InvalidDocument(error.to_string()))?;
         }
         Ok(())
     }
@@ -112,16 +134,19 @@ impl Collection {
             .iter()
             .filter(|field| field.immutable && checked(&field.name))
         {
-            let unchanged = ::document::stored::stores_same_lww(
-                old_doc.get(&field_def.name),
-                new_doc.get(&field_def.name),
-            )
-            .map_err(|error| {
-                Error::InvalidDocument(format!(
-                    "immutable field '{}' holds a value that cannot be stored: {error}",
-                    field_def.name
-                ))
-            })?;
+            // Values compare by the state a register stores for them.
+            let stored = |doc: &Document| {
+                let value = doc.get(&field_def.name).unwrap_or(&NormalValue::Null);
+                crdt::field::LwwField::stored(String::new(), 0, value).map(|state| state.value)
+            };
+            let unchanged = stored(old_doc)
+                .and_then(|old| Ok(old == stored(new_doc)?))
+                .map_err(|error| {
+                    Error::InvalidDocument(format!(
+                        "immutable field '{}' holds a value that cannot be stored: {error}",
+                        field_def.name
+                    ))
+                })?;
             if !unchanged {
                 return Err(Error::InvalidDocument(format!(
                     "immutable field '{}' cannot be changed",
@@ -134,6 +159,20 @@ impl Collection {
 }
 
 /// Check if a NormalValue is compatible with a FieldKind.
+/// Whether an array value holds a null element, which a `[T!]` field refuses
+/// as Go does.
+fn has_null_element(value: &NormalValue) -> bool {
+    match value {
+        NormalValue::JsonArray(values) => values.iter().any(serde_json::Value::is_null),
+        NormalValue::NillableBoolElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableIntElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableFloat64ElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableFloat32ElementArray(values) => values.iter().any(Option::is_none),
+        NormalValue::NillableStringElementArray(values) => values.iter().any(Option::is_none),
+        _ => false,
+    }
+}
+
 fn is_value_compatible_with_kind(value: &NormalValue, kind: &FieldKind) -> bool {
     if value.is_nil() {
         return kind.is_nillable();
@@ -164,9 +203,13 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
     match scalar.base_kind() {
         ScalarKind::None => true,
         ScalarKind::DocID => matches!(value, NormalValue::String(_)),
-        ScalarKind::Bool => matches!(value, NormalValue::Bool(_) | NormalValue::NillableBool(_)),
-        ScalarKind::Int => matches!(value, NormalValue::Int(_) | NormalValue::NillableInt(_)),
-        ScalarKind::Float64 => {
+        ScalarKind::NillableBool => {
+            matches!(value, NormalValue::Bool(_) | NormalValue::NillableBool(_))
+        }
+        ScalarKind::NillableInt => {
+            matches!(value, NormalValue::Int(_) | NormalValue::NillableInt(_))
+        }
+        ScalarKind::NillableFloat64 => {
             // Accept Int values for Float64 fields (common in JSON where 5 and 5.0 are equivalent)
             matches!(
                 value,
@@ -176,7 +219,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
                     | NormalValue::NillableInt(_)
             )
         }
-        ScalarKind::Float32 => {
+        ScalarKind::NillableFloat32 => {
             // Accept Int and Float64 values for Float32 fields (JSON only has one float type)
             matches!(
                 value,
@@ -188,7 +231,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
                     | NormalValue::NillableInt(_)
             )
         }
-        ScalarKind::DateTime => match value {
+        ScalarKind::NillableDateTime => match value {
             NormalValue::Time(_) | NormalValue::NillableTime(_) => true,
             // Document storage is schema-blind for DateTime: a `Time` round-trips
             // through CBOR as an untagged text string and reads back as `String`
@@ -201,13 +244,13 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
             NormalValue::NillableString(Some(s)) => document::is_valid_rfc3339(s),
             _ => false,
         },
-        ScalarKind::String => {
+        ScalarKind::NillableString => {
             matches!(
                 value,
                 NormalValue::String(_) | NormalValue::NillableString(_)
             )
         }
-        ScalarKind::Blob => {
+        ScalarKind::NillableBlob => {
             // Accept String values for Blob fields (hex-encoded strings from JSON)
             matches!(
                 value,
@@ -217,7 +260,7 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
         // CBOR preserves JSON content but not the Json wrapper: retained scalar
         // and array values return as their inferred native variants. Restrict
         // these to JSON-native values; binary/document/time values remain invalid.
-        ScalarKind::Json => {
+        ScalarKind::NillableJson => {
             matches!(
                 value,
                 NormalValue::Json(_)

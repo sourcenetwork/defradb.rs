@@ -45,7 +45,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 regolith.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+workers = { path = "../workers" }
 
 [lints]
 workspace = true

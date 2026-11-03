@@ -76,7 +76,7 @@ fn assert_transaction_denied(binary: &Path, url: &str, query: &str, tx: &str, ke
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains(&format!("transaction '{tx}' not found")),
+        stderr.contains("transaction not found"),
         "expected transaction ownership rejection, got: {stderr}"
     );
 }

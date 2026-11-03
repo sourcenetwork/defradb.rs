@@ -62,7 +62,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     pub async fn list_lenses_in_txn(
         &self,
         txn_id: &str,
-    ) -> Result<rapidhash::RapidHashMap<String, LensModule>> {
+    ) -> Result<rapidhash::RapidHashMap<String, Vec<LensModule>>> {
         self.list_lenses_in_txn_as(&RequestContext::ambient(), txn_id)
             .await
     }
@@ -72,7 +72,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         &self,
         context: &RequestContext,
         txn_id: &str,
-    ) -> Result<rapidhash::RapidHashMap<String, LensModule>> {
+    ) -> Result<rapidhash::RapidHashMap<String, Vec<LensModule>>> {
+        self.db
+            .check_node_access_as(context, acp::nac::NodePermission::LensList)
+            .await?;
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 owned

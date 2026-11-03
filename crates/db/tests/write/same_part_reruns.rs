@@ -67,6 +67,10 @@ impl storage::corekv::private::Sealed for PausingStore {}
 
 #[async_trait]
 impl Store for PausingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -153,8 +157,13 @@ async fn node(indexed: bool) -> Node {
         "sample-v1",
         "col-sample",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
         ],
     ))
     .await
@@ -221,7 +230,12 @@ impl Node {
                 self.id.clone(),
                 paused.to_owned(),
             );
-            tokio::spawn(async move { set_left(&*queries, &id, &value).await })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move { set_left(&*queries, &id, &value).await },
+            )
+            .unwrap()
         };
         for (stop, value) in self.gate.stops.iter().zip([winner, third]) {
             stop.reached.wait().await;
@@ -290,82 +304,96 @@ impl Node {
 /// above the winner, and the field settles them by its last-writer-wins
 /// order: at one priority the greater value wins, as every replica settles
 /// the two blocks.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_rerun_merges_its_write_beside_another_write_of_the_field() {
-    let node = node(false).await;
-    node.race("rerun", "first", "third").await;
+#[test]
+fn a_rerun_merges_its_write_beside_another_write_of_the_field() {
+    workers::block_on(async {
+        let node = node(false).await;
+        node.race("rerun", "first", "third").await;
 
-    assert_eq!(
-        node.reasons(),
-        vec![None, Some(regolith::Access::ReadParts)],
-        "the update lost once, to the winner, and its re-run committed"
-    );
-    assert_eq!(node.left().await, "third");
+        assert_eq!(
+            node.reasons(),
+            vec![None, Some(regolith::Access::ReadParts)],
+            "the update lost once, to the winner, and its re-run committed"
+        );
+        assert_eq!(node.left().await, "third");
+    })
+    .unwrap()
 }
 
 /// An indexed field is decided on every run: the old index entry is found
 /// from it. The re-run that meets a third write loses again, runs on top of
 /// it, and leaves the one index entry its value names.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_rerun_still_decides_on_an_indexed_field() {
-    let node = node(true).await;
-    node.race("rerun", "first", "third").await;
+#[test]
+fn a_rerun_still_decides_on_an_indexed_field() {
+    workers::block_on(async {
+        let node = node(true).await;
+        node.race("rerun", "first", "third").await;
 
-    assert_eq!(
-        node.reasons(),
-        vec![
-            None,
-            Some(regolith::Access::ReadParts),
-            Some(regolith::Access::ReadParts)
-        ],
-        "the update lost to the winner, then its re-run lost to the third write"
-    );
-    assert_eq!(node.left().await, "rerun");
-    assert_eq!(node.indexed(&[]).await, (vec![node.id.clone()], 1));
-    assert_eq!(node.indexed(&["rerun"]).await, (vec![node.id.clone()], 1));
+        assert_eq!(
+            node.reasons(),
+            vec![
+                None,
+                Some(regolith::Access::ReadParts),
+                Some(regolith::Access::ReadParts)
+            ],
+            "the update lost to the winner, then its re-run lost to the third write"
+        );
+        assert_eq!(node.left().await, "rerun");
+        assert_eq!(node.indexed(&[]).await, (vec![node.id.clone()], 1));
+        assert_eq!(node.indexed(&["rerun"]).await, (vec![node.id.clone()], 1));
+    })
+    .unwrap()
 }
 
 /// Concurrent updates of one field of one document each lose at most once:
 /// every request commits, with no more storage conflicts than requests.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_updates_of_one_field_each_lose_at_most_once() {
-    const WRITERS: usize = 16;
-    const UPDATES: usize = 16;
-    let node = node(false).await;
-    let stats = node.store.transaction_stats_handle().unwrap();
-    let before = stats.snapshot().conflicts;
-    let start = Arc::new(Barrier::new(WRITERS));
-    let writers: Vec<_> = (0..WRITERS)
-        .map(|writer| {
-            let (queries, id, start) = (
-                Arc::clone(&node.queries),
-                node.id.clone(),
-                Arc::clone(&start),
-            );
-            tokio::spawn(async move {
-                start.wait().await;
-                for update in 0..UPDATES {
-                    set_left(
-                        &*queries,
-                        &id,
-                        &format!("writer-{writer:02}-update-{update:02}"),
-                    )
-                    .await;
-                }
+#[test]
+fn concurrent_updates_of_one_field_each_lose_at_most_once() {
+    workers::block_on(async {
+        const WRITERS: usize = 16;
+        const UPDATES: usize = 16;
+        let node = node(false).await;
+        let stats = node.store.transaction_stats_handle().unwrap();
+        let before = stats.snapshot().conflicts;
+        let start = Arc::new(Barrier::new(WRITERS));
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|writer| {
+                let (queries, id, start) = (
+                    Arc::clone(&node.queries),
+                    node.id.clone(),
+                    Arc::clone(&start),
+                );
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        start.wait().await;
+                        for update in 0..UPDATES {
+                            set_left(
+                                &*queries,
+                                &id,
+                                &format!("writer-{writer:02}-update-{update:02}"),
+                            )
+                            .await;
+                        }
+                    },
+                )
+                .unwrap()
             })
-        })
-        .collect();
-    for writer in writers {
-        writer.await.unwrap();
-    }
+            .collect();
+        for writer in writers {
+            writer.await.unwrap();
+        }
 
-    let conflicts = stats.snapshot().conflicts - before;
-    assert!(
-        conflicts <= (WRITERS * UPDATES) as u64,
-        "{conflicts} conflicts for {} updates",
-        WRITERS * UPDATES
-    );
-    assert!(node.left().await.ends_with("-update-15"));
+        let conflicts = stats.snapshot().conflicts - before;
+        assert!(
+            conflicts <= (WRITERS * UPDATES) as u64,
+            "{conflicts} conflicts for {} updates",
+            WRITERS * UPDATES
+        );
+        assert!(node.left().await.ends_with("-update-15"));
+    })
+    .unwrap()
 }
 
 /// An update reads the heads it builds on before its transaction. When
@@ -374,33 +402,45 @@ async fn concurrent_updates_of_one_field_each_lose_at_most_once() {
 /// other, the document keeps its value, and the index's one entry names it.
 /// Built on the earlier heads, its write would tie the other's priority and
 /// lose to the greater value while its index entry replaced the other's.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_update_builds_on_heads_that_landed_before_its_transaction() {
-    let node = node(true).await;
-    node.gate.ahead.store(true, Ordering::SeqCst);
-    node.gate.armed.store(true, Ordering::SeqCst);
-    let watched = {
-        let (db, id) = (Arc::clone(&node.db), node.id.clone());
-        tokio::spawn(async move {
-            let mut doc = document::Document::new();
-            doc.set_id(document::DocID::from_string(&id).unwrap());
-            doc.set("left".to_string(), NormalValue::String("aaa".to_string()));
-            AutoCommitMutator::new(db)
-                .update("Sample", doc, ["left".to_string()].into_iter().collect())
-                .await
-                .unwrap();
-        })
-    };
-    node.gate.stops[0].reached.wait().await;
-    set_left(&*node.queries, &node.id, "zzz").await;
-    node.gate.stops[0].resume.set();
-    watched.await.unwrap();
+#[test]
+fn an_update_builds_on_heads_that_landed_before_its_transaction() {
+    workers::block_on(async {
+        let node = node(true).await;
+        node.gate.ahead.store(true, Ordering::SeqCst);
+        node.gate.armed.store(true, Ordering::SeqCst);
+        let watched = {
+            let (db, id) = (Arc::clone(&node.db), node.id.clone());
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move {
+                    let collection = db.get_collection("Sample").unwrap().unwrap();
+                    let mut doc = document::Document::with_id(
+                        document::DocID::from_string(&id).unwrap(),
+                        collection.schema_arc(),
+                    );
+                    doc.set("left".to_string(), NormalValue::String("aaa".to_string()))
+                        .unwrap();
+                    AutoCommitMutator::new(db)
+                        .update("Sample", doc, ["left".to_string()].into_iter().collect())
+                        .await
+                        .unwrap();
+                },
+            )
+            .unwrap()
+        };
+        node.gate.stops[0].reached.wait().await;
+        set_left(&*node.queries, &node.id, "zzz").await;
+        node.gate.stops[0].resume.set();
+        watched.await.unwrap();
 
-    assert_eq!(
-        node.left().await,
-        "aaa",
-        "the later update sits above the other"
-    );
-    assert_eq!(node.indexed(&[]).await, (vec![node.id.clone()], 1));
-    assert_eq!(node.indexed(&["aaa"]).await, (vec![node.id.clone()], 1));
+        assert_eq!(
+            node.left().await,
+            "aaa",
+            "the later update sits above the other"
+        );
+        assert_eq!(node.indexed(&[]).await, (vec![node.id.clone()], 1));
+        assert_eq!(node.indexed(&["aaa"]).await, (vec![node.id.clone()], 1));
+    })
+    .unwrap()
 }

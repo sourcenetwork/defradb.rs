@@ -1,7 +1,7 @@
 //! A stored `Float` must round-trip its exact f64 bits. `13.600000000000001`
 //! is a different double from `13.6`, and Go DefraDB returns it verbatim.
 
-use crate::one_to_many_common::{add_author, add_book, add_schema};
+use crate::one_to_many_common::{add_author, add_book, add_collection};
 use integration_test::{DefraClient, TestCluster};
 
 /// `4.9 + 4.5 + 4.2` accumulated in insertion order.
@@ -44,7 +44,7 @@ async fn filter_round_trip_test(cluster: TestCluster) {
 
 async fn sum_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
 
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);

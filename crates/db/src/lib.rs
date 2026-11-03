@@ -33,7 +33,7 @@
 /// let txn = db.new_txn(false).await?;
 ///
 /// // Create a collection
-/// let col = Collection::new(schema);
+/// let col = Collection::new(schema, db.crdts().clone());
 ///
 /// // Documents are written through the mutator APIs, which allocate the
 /// // node-local short ID and derive the public DocID from the genesis
@@ -60,7 +60,9 @@ pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
 pub mod merge;
 pub mod nac;
 pub mod read;
+pub mod receive_gate;
 pub(crate) mod remote_inputs;
+pub mod replication_filter;
 pub mod search;
 pub mod txn;
 pub(crate) mod view;
@@ -72,6 +74,7 @@ pub use crate::search::{
     embed_text, hybrid_search_dense, require_query_success, DenseHybridSearchHit,
     DenseHybridSearchRequest, DenseHybridSearchResponse,
 };
+pub use access::dac::{DacPolicies, DacPolicyError};
 pub use access::kms::{
     DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
 };
@@ -83,9 +86,9 @@ pub use collection::acp::{
 };
 pub use collection::cache::CollectionCache;
 pub use collection::name::CollectionName;
+pub use collection::ops::{AddCollectionError, TruncateError};
 pub use collection::provider::DbCollectionProvider;
 pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
-pub use collection::selector::CollectionSelector;
 pub use collection::snapshot::CollectionSnapshot;
 #[allow(deprecated)]
 pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
@@ -106,9 +109,10 @@ pub use read::doc::DbDocFetcher;
 pub use read::lensed::autocommit::LensedAutoCommitFetcher;
 pub use read::lensed::fetcher::LensedDocFetcher;
 pub use read::versioned::VersionedFetcher;
+pub use schema::CollectionSelector;
 pub use txn::context::DbTransactionContext;
 pub use txn::registry::{
-    CleanupResult, DbTransactionRegistry, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
+    CleanupResult, DbTransactionRegistry, TxnOwnership, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
     DEFAULT_TRANSACTION_IDLE_TIMEOUT,
 };
 pub use txn::DbTxn;
@@ -125,3 +129,18 @@ pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacMana
 pub use datastore::{BasicTxn, NamespaceView};
 pub use document::{DocID, Document, NormalValue};
 pub use schema::CollectionVersion;
+
+#[cfg(test)]
+#[path = "../tests/common/worker_io.rs"]
+mod worker_io;
+
+#[cfg(test)]
+#[path = "../tests/common/schema.rs"]
+#[allow(dead_code)]
+mod test_schemas;
+
+#[cfg(test)]
+mod common {
+    pub(crate) use super::test_schemas as schema;
+    pub(crate) use super::worker_io;
+}

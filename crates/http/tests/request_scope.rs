@@ -15,22 +15,22 @@ use axum::{
 };
 use defra_core::RequestContext;
 use defra_http::request_scope::{bound, CallerContext};
-use defra_http::router::{AppState, AppStateBuilder, SchemaOperations};
+use defra_http::router::{AppState, AppStateBuilder, CollectionOperations};
 use defra_http::MockQueryExecutor;
 use identity::{new_token, Identity, RawIdentity};
 use schema::CollectionVersion;
 use tower::ServiceExt;
 
 /// Answers with the identity acting in the request it is bound to.
-struct BoundSchemaOperations(Option<String>);
+struct BoundCollectionOperations(Option<String>);
 
 #[async_trait]
-impl SchemaOperations for BoundSchemaOperations {
-    fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn SchemaOperations>> {
+impl CollectionOperations for BoundCollectionOperations {
+    fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn CollectionOperations>> {
         Some(Arc::new(Self(context.identity().map(str::to_owned))))
     }
 
-    async fn add_schema(&self, _sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection(&self, _sdl: &str) -> Result<Vec<CollectionVersion>, String> {
         Err(self.0.clone().unwrap_or_else(|| "anonymous".to_string()))
     }
 }
@@ -40,7 +40,7 @@ async fn observe(
     CallerContext(context): CallerContext,
 ) -> Json<Vec<Option<String>>> {
     let schema = state.schema.clone().expect("schema operations");
-    let bound_identity = bound(&schema, &context).add_schema("").await.err();
+    let bound_identity = bound(&schema, &context).add_collection("").await.err();
     Json(vec![context.identity().map(str::to_owned), bound_identity])
 }
 
@@ -62,7 +62,7 @@ async fn each_request_binds_its_own_caller() {
     let alice = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
     let bob = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
     let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
-        .with_schema(Arc::new(BoundSchemaOperations(None)))
+        .with_schema(Arc::new(BoundCollectionOperations(None)))
         .build();
     let app = Router::new()
         .route("/probe", get(observe))

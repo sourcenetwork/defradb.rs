@@ -30,8 +30,8 @@ impl<S: Store> DB<S> {
     ///
     /// The transform ID that was registered.
     #[instrument(skip(self, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
+        source = %config.source_collection_version_id,
+        dest = %config.destination_collection_version_id
     ))]
     /// [`Self::set_migration_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
     pub async fn set_migration(
@@ -50,8 +50,8 @@ impl<S: Store> DB<S> {
     ) -> Result<TransformId> {
         self.check_node_access_as(context, acp::nac::NodePermission::MigrationSet)
             .await?;
-        let dest_version_id = config.destination_schema_version_id.clone();
-        let source_version_id = config.source_schema_version_id.clone();
+        let dest_version_id = config.destination_collection_version_id.clone();
+        let source_version_id = config.source_collection_version_id.clone();
         let config_for_persistence = config.clone();
 
         let txn = self.new_txn(false).await?;
@@ -249,7 +249,7 @@ impl<S: Store> DB<S> {
             let collections = std::sync::Arc::clone(&self.collections);
             let collection_name = collection_name.clone();
             let dest_version_id = dest_version_id.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
                     let matches_dest = cache
@@ -277,8 +277,8 @@ impl<S: Store> DB<S> {
     ///
     /// This is used for transaction-aware migration configuration via the FFI.
     #[instrument(skip(self, txn, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
+        source = %config.source_collection_version_id,
+        dest = %config.destination_collection_version_id
     ))]
     /// [`Self::set_migration_in_txn_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
     pub async fn set_migration_in_txn(
@@ -305,8 +305,8 @@ impl<S: Store> DB<S> {
     }
 
     #[instrument(skip(self, txn, lens_store, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
+        source = %config.source_collection_version_id,
+        dest = %config.destination_collection_version_id
     ))]
     pub(crate) async fn set_migration_in_txn_with_store(
         &self,
@@ -314,8 +314,8 @@ impl<S: Store> DB<S> {
         lens_store: std::sync::Arc<dyn lens::TransformStore>,
         config: LensConfig,
     ) -> Result<SetMigrationInTxnOutcome> {
-        let dest_version_id = config.destination_schema_version_id.clone();
-        let source_version_id = config.source_schema_version_id.clone();
+        let dest_version_id = config.destination_collection_version_id.clone();
+        let source_version_id = config.source_collection_version_id.clone();
         let config_for_persistence = config.clone();
 
         let (source_col, mut dst_col) = {

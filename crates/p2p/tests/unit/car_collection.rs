@@ -155,7 +155,7 @@ fn linked_block(links: Vec<DAGLink>) -> Vec<u8> {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_owned(),
             priority: 1,
-            schema_version_id: "version".to_owned(),
+            collection_version_id: "version".to_owned(),
             data: Vec::new(),
         }),
         Vec::new(),

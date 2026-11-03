@@ -520,7 +520,7 @@ mod tests {
                 barrier.wait().await;
             }
             if let Some(delay) = self.delays.get(doc_id) {
-                tokio::time::sleep(*delay).await;
+                workers::delay(*delay).unwrap().await.unwrap();
             }
 
             self.active.fetch_sub(1, Ordering::SeqCst);
@@ -567,36 +567,39 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn prepared_permission_check_exits_for_external_input_without_calling_provider() {
-        let yielded = Arc::new(AtomicUsize::new(0));
-        let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
-        let memo = crate::prepared::PreparedInputMemo::default();
-        let node = PermissionFilterNode::new(
-            Box::new(MockSource::new(&["doc-1".to_string()], yielded)),
-            acp.clone(),
-            Identity::Anonymous,
-            "policy",
-            "User",
-        )
-        .with_retry_inputs(Some(memo.clone()));
-        let doc = Doc::default();
-        let error = node
-            .permission_check("doc-1".to_string(), doc.deep_clone())
-            .await
-            .unwrap_err();
-        let crate::error::QueryError::NeedsInput(request) = error else {
-            panic!("expected typed ACP input request");
-        };
-        assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
+    #[test]
+    fn prepared_permission_check_exits_for_external_input_without_calling_provider() {
+        workers::block_on(async {
+            let yielded = Arc::new(AtomicUsize::new(0));
+            let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
+            let memo = crate::prepared::PreparedInputMemo::default();
+            let node = PermissionFilterNode::new(
+                Box::new(MockSource::new(&["doc-1".to_string()], yielded)),
+                acp.clone(),
+                Identity::Anonymous,
+                "policy",
+                "User",
+            )
+            .with_retry_inputs(Some(memo.clone()));
+            let doc = Doc::default();
+            let error = node
+                .permission_check("doc-1".to_string(), doc.deep_clone())
+                .await
+                .unwrap_err();
+            let crate::error::QueryError::NeedsInput(request) = error else {
+                panic!("expected typed ACP input request");
+            };
+            assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
 
-        memo.insert(request, b"true".as_slice());
-        let (_, allowed) = node
-            .permission_check("doc-1".to_string(), doc)
-            .await
-            .expect("memoized decision succeeds");
-        assert!(allowed);
-        assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
+            memo.insert(request, b"true".as_slice());
+            let (_, allowed) = node
+                .permission_check("doc-1".to_string(), doc)
+                .await
+                .expect("memoized decision succeeds");
+            assert!(allowed);
+            assert_eq!(acp.calls.load(Ordering::SeqCst), 0);
+        })
+        .unwrap()
     }
 
     fn permission_filter(
@@ -613,72 +616,81 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn dispatches_a_bounded_window_concurrently() {
-        let doc_ids: Vec<_> = (0..=MAX_IN_FLIGHT_PERMISSION_CHECKS)
-            .map(|index| format!("doc-{index}"))
-            .collect();
-        let yielded = Arc::new(AtomicUsize::new(0));
-        let acp = Arc::new(MockAcp::new(
-            Some(Arc::new(Barrier::new(MAX_IN_FLIGHT_PERMISSION_CHECKS))),
-            RapidHashMap::new(),
-        ));
-        let mut node = permission_filter(&doc_ids, Arc::clone(&yielded), Arc::clone(&acp));
+    #[test]
+    fn dispatches_a_bounded_window_concurrently() {
+        workers::block_on(async {
+            let doc_ids: Vec<_> = (0..=MAX_IN_FLIGHT_PERMISSION_CHECKS)
+                .map(|index| format!("doc-{index}"))
+                .collect();
+            let yielded = Arc::new(AtomicUsize::new(0));
+            let acp = Arc::new(MockAcp::new(
+                Some(Arc::new(Barrier::new(MAX_IN_FLIGHT_PERMISSION_CHECKS))),
+                RapidHashMap::new(),
+            ));
+            let mut node = permission_filter(&doc_ids, Arc::clone(&yielded), Arc::clone(&acp));
 
-        node.init().await.unwrap();
-        node.start().await.unwrap();
-        let has_row = tokio::time::timeout(Duration::from_secs(1), node.next())
-            .await
-            .expect("permission checks did not run concurrently")
-            .unwrap();
+            node.init().await.unwrap();
+            node.start().await.unwrap();
+            let has_row = workers::timeout(Duration::from_secs(1), node.next())
+                .await
+                .expect("permission checks did not run concurrently")
+                .unwrap();
 
-        assert!(has_row);
-        assert_eq!(node.value().doc_id(), Some("doc-0"));
-        assert_eq!(
-            yielded.load(Ordering::SeqCst),
-            MAX_IN_FLIGHT_PERMISSION_CHECKS
-        );
-        assert_eq!(
-            acp.max_active.load(Ordering::SeqCst),
-            MAX_IN_FLIGHT_PERMISSION_CHECKS
-        );
+            assert!(has_row);
+            assert_eq!(node.value().doc_id(), Some("doc-0"));
+            assert_eq!(
+                yielded.load(Ordering::SeqCst),
+                MAX_IN_FLIGHT_PERMISSION_CHECKS
+            );
+            assert_eq!(
+                acp.max_active.load(Ordering::SeqCst),
+                MAX_IN_FLIGHT_PERMISSION_CHECKS
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn preserves_source_order_when_checks_finish_out_of_order() {
-        let doc_ids = vec!["slow".to_string(), "fast".to_string(), "medium".to_string()];
-        let delays = RapidHashMap::from_iter([
-            ("slow".to_string(), Duration::from_millis(30)),
-            ("fast".to_string(), Duration::from_millis(1)),
-            ("medium".to_string(), Duration::from_millis(10)),
-        ]);
-        let yielded = Arc::new(AtomicUsize::new(0));
-        let acp = Arc::new(MockAcp::new(None, delays));
-        let mut node = permission_filter(&doc_ids, yielded, Arc::clone(&acp));
+    #[test]
+    fn preserves_source_order_when_checks_finish_out_of_order() {
+        workers::block_on(async {
+            let doc_ids = vec!["slow".to_string(), "fast".to_string(), "medium".to_string()];
+            let delays = RapidHashMap::from_iter([
+                ("slow".to_string(), Duration::from_millis(30)),
+                ("fast".to_string(), Duration::from_millis(1)),
+                ("medium".to_string(), Duration::from_millis(10)),
+            ]);
+            let yielded = Arc::new(AtomicUsize::new(0));
+            let acp = Arc::new(MockAcp::new(None, delays));
+            let mut node = permission_filter(&doc_ids, yielded, Arc::clone(&acp));
 
-        node.init().await.unwrap();
-        node.start().await.unwrap();
+            node.init().await.unwrap();
+            node.start().await.unwrap();
 
-        let mut actual = Vec::new();
-        while node.next().await.unwrap() {
-            actual.push(node.value().doc_id().unwrap().to_string());
-        }
+            let mut actual = Vec::new();
+            while node.next().await.unwrap() {
+                actual.push(node.value().doc_id().unwrap().to_string());
+            }
 
-        assert_eq!(actual, doc_ids);
-        assert_eq!(acp.max_active.load(Ordering::SeqCst), 3);
+            assert_eq!(actual, doc_ids);
+            assert_eq!(acp.max_active.load(Ordering::SeqCst), 3);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn permission_errors_fail_closed_without_stopping_the_scan() {
-        let doc_ids = vec!["error".to_string(), "allowed".to_string()];
-        let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
-        let mut node = permission_filter(&doc_ids, Arc::new(AtomicUsize::new(0)), acp);
+    #[test]
+    fn permission_errors_fail_closed_without_stopping_the_scan() {
+        workers::block_on(async {
+            let doc_ids = vec!["error".to_string(), "allowed".to_string()];
+            let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
+            let mut node = permission_filter(&doc_ids, Arc::new(AtomicUsize::new(0)), acp);
 
-        node.init().await.unwrap();
-        node.start().await.unwrap();
+            node.init().await.unwrap();
+            node.start().await.unwrap();
 
-        assert!(node.next().await.unwrap());
-        assert_eq!(node.value().doc_id(), Some("allowed"));
-        assert!(!node.next().await.unwrap());
+            assert!(node.next().await.unwrap());
+            assert_eq!(node.value().doc_id(), Some("allowed"));
+            assert!(!node.next().await.unwrap());
+        })
+        .unwrap()
     }
 }

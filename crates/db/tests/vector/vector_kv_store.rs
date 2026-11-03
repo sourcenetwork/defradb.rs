@@ -189,100 +189,124 @@ fn corrupt_values_are_rejected() {
     assert!(decode_meta(&negative_layer).is_err());
 }
 
-#[tokio::test]
-async fn a_graph_round_trips_through_the_store() {
-    let store = RegolithStore::in_memory().unwrap();
-    let vectors: Vec<Vec<f32>> = (0..200)
-        .map(|i| {
-            let a = i as f32 * 0.37;
-            vec![a.sin(), a.cos(), (a * 0.5).sin(), (a * 0.25).cos()]
-        })
-        .collect();
+#[test]
+fn a_graph_round_trips_through_the_store() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let vectors: Vec<Vec<f32>> = (0..200)
+            .map(|i| {
+                let a = i as f32 * 0.37;
+                vec![a.sin(), a.cos(), (a * 0.5).sin(), (a * 0.25).cos()]
+            })
+            .collect();
 
-    let mut write = txn(&store).await;
-    {
-        let mut index = Hnsw::new(
-            KvNodeStore::new(&mut write, COLLECTION, INDEX, EPOCH),
+        let mut write = txn(&store).await;
+        {
+            let mut index = Hnsw::new(
+                KvNodeStore::new(&mut write, COLLECTION, INDEX, EPOCH),
+                Metric::Cosine,
+                Params::new(DEFAULT_M),
+                SEED,
+            );
+            for (i, vector) in vectors.iter().enumerate() {
+                index.insert(NodeId(i as u64), vector).await.unwrap();
+            }
+        }
+        write.commit().await.unwrap();
+
+        // A second transaction, so the graph is read back from the store rather
+        // than from the writer's own buffer.
+        let mut txn = txn(&store).await;
+        let reopened = Hnsw::new(
+            KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH),
             Metric::Cosine,
             Params::new(DEFAULT_M),
             SEED,
         );
         for (i, vector) in vectors.iter().enumerate() {
-            index.insert(NodeId(i as u64), vector).await.unwrap();
+            let hits = reopened.search_with_ef(vector, 1, 64).await.unwrap();
+            assert_eq!(
+                hits.first().map(|h| h.id),
+                Some(NodeId(i as u64)),
+                "vector {i} was not retrievable after a reopen"
+            );
         }
-    }
-    write.commit().await.unwrap();
-
-    // A second transaction, so the graph is read back from the store rather
-    // than from the writer's own buffer.
-    let mut txn = txn(&store).await;
-    let reopened = Hnsw::new(
-        KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH),
-        Metric::Cosine,
-        Params::new(DEFAULT_M),
-        SEED,
-    );
-    for (i, vector) in vectors.iter().enumerate() {
-        let hits = reopened.search_with_ef(vector, 1, 64).await.unwrap();
-        assert_eq!(
-            hits.first().map(|h| h.id),
-            Some(NodeId(i as u64)),
-            "vector {i} was not retrievable after a reopen"
-        );
-    }
+    })
+    .unwrap()
 }
 
 /// A node written by the engine must come back byte-identical, not merely
 /// equal after a lossy re-encode.
-#[tokio::test]
-async fn stored_nodes_are_byte_identical() {
-    let store = RegolithStore::in_memory().unwrap();
-    let node = node_fixture();
+#[test]
+fn stored_nodes_are_byte_identical() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let node = node_fixture();
 
-    let mut write = txn(&store).await;
-    KvNodeStore::new(&mut write, COLLECTION, INDEX, EPOCH)
-        .put_node(node.clone())
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
-
-    let mut read = txn(&store).await;
-    let raw = read
-        .get(&VectorIndexKey::node(COLLECTION, INDEX, EPOCH, node.id.0).bytes())
-        .await
-        .unwrap()
-        .expect("the node was written under the Go key layout");
-    assert_eq!(raw, encode_node(&node));
-    assert_eq!(
-        KvNodeStore::new(&mut read, COLLECTION, INDEX, EPOCH)
-            .get_node(node.id)
+        let mut write = txn(&store).await;
+        KvNodeStore::new(&mut write, COLLECTION, INDEX, EPOCH)
+            .put_node(node.clone())
             .await
-            .unwrap(),
-        Some(node)
-    );
+            .unwrap();
+        write.commit().await.unwrap();
+
+        let mut read = txn(&store).await;
+        let raw = read
+            .get(&VectorIndexKey::node(COLLECTION, INDEX, EPOCH, node.id.0).bytes())
+            .await
+            .unwrap()
+            .expect("the node was written under the Go key layout");
+        assert_eq!(raw, encode_node(&node));
+        assert_eq!(
+            KvNodeStore::new(&mut read, COLLECTION, INDEX, EPOCH)
+                .get_node(node.id)
+                .await
+                .unwrap(),
+            Some(node)
+        );
+    })
+    .unwrap()
 }
 
 /// The node prefix must select exactly one epoch of one index: not the meta
 /// key, not a neighbouring epoch, not a neighbouring index or collection.
-#[tokio::test]
-async fn a_node_scan_sees_one_epoch_only() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn = txn(&store).await;
+#[test]
+fn a_node_scan_sees_one_epoch_only() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = txn(&store).await;
 
-    let elsewhere = [
-        (COLLECTION, INDEX, EPOCH + 1),
-        (COLLECTION, INDEX + 1, EPOCH),
-        (COLLECTION + 1, INDEX, EPOCH),
-    ];
-    for (collection, index, epoch) in elsewhere {
-        let mut kv = KvNodeStore::new(&mut txn, collection, index, epoch);
-        for id in 0..5u64 {
-            kv.put_node(Node::new(NodeId(1000 + id), vec![1.0], 0))
+        let elsewhere = [
+            (COLLECTION, INDEX, EPOCH + 1),
+            (COLLECTION, INDEX + 1, EPOCH),
+            (COLLECTION + 1, INDEX, EPOCH),
+        ];
+        for (collection, index, epoch) in elsewhere {
+            let mut kv = KvNodeStore::new(&mut txn, collection, index, epoch);
+            for id in 0..5u64 {
+                kv.put_node(Node::new(NodeId(1000 + id), vec![1.0], 0))
+                    .await
+                    .unwrap();
+            }
+            kv.put_meta(Meta {
+                entry_point: NodeId(1000),
+                top_layer: 0,
+                live: 0,
+                waste: 0,
+                rebuilds: 0,
+            })
+            .await
+            .unwrap();
+        }
+
+        let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+        for id in 0..3u64 {
+            kv.put_node(Node::new(NodeId(id + 1), vec![1.0], 0))
                 .await
                 .unwrap();
         }
         kv.put_meta(Meta {
-            entry_point: NodeId(1000),
+            entry_point: NodeId(1),
             top_layer: 0,
             live: 0,
             waste: 0,
@@ -290,33 +314,18 @@ async fn a_node_scan_sees_one_epoch_only() {
         })
         .await
         .unwrap();
-    }
 
-    let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-    for id in 0..3u64 {
-        kv.put_node(Node::new(NodeId(id + 1), vec![1.0], 0))
-            .await
-            .unwrap();
-    }
-    kv.put_meta(Meta {
-        entry_point: NodeId(1),
-        top_layer: 0,
-        live: 0,
-        waste: 0,
-        rebuilds: 0,
+        let mut seen = Vec::new();
+        kv.iterate_nodes(|node| {
+            seen.push(node.id);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        seen.sort();
+        assert_eq!(seen, vec![NodeId(1), NodeId(2), NodeId(3)]);
     })
-    .await
-    .unwrap();
-
-    let mut seen = Vec::new();
-    kv.iterate_nodes(|node| {
-        seen.push(node.id);
-        Ok(())
-    })
-    .await
-    .unwrap();
-    seen.sort();
-    assert_eq!(seen, vec![NodeId(1), NodeId(2), NodeId(3)]);
+    .unwrap()
 }
 
 /// Keys must sort so that a prefix scan is contiguous: every node key of an
@@ -374,87 +383,93 @@ fn keys_sort_into_contiguous_epochs() {
         .starts_with(&prefix));
 }
 
-#[tokio::test]
-async fn clearing_an_epoch_leaves_its_neighbours_alone() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn = txn(&store).await;
+#[test]
+fn clearing_an_epoch_leaves_its_neighbours_alone() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = txn(&store).await;
 
-    for epoch in [EPOCH, EPOCH + 1] {
-        let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, epoch);
-        for id in 0..2000u64 {
-            kv.put_node(Node::new(NodeId(id + 1), vec![1.0], 0))
-                .await
-                .unwrap();
+        for epoch in [EPOCH, EPOCH + 1] {
+            let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, epoch);
+            for id in 0..2000u64 {
+                kv.put_node(Node::new(NodeId(id + 1), vec![1.0], 0))
+                    .await
+                    .unwrap();
+            }
+            kv.put_meta(Meta {
+                entry_point: NodeId(1),
+                top_layer: 0,
+                live: 0,
+                waste: 0,
+                rebuilds: 0,
+            })
+            .await
+            .unwrap();
+            kv.put_aux(b's', b"key", b"value").await.unwrap();
         }
-        kv.put_meta(Meta {
-            entry_point: NodeId(1),
-            top_layer: 0,
-            live: 0,
-            waste: 0,
-            rebuilds: 0,
-        })
-        .await
-        .unwrap();
-        kv.put_aux(b's', b"key", b"value").await.unwrap();
-    }
 
-    KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH)
-        .clear()
-        .await
-        .unwrap();
+        KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH)
+            .clear()
+            .await
+            .unwrap();
 
-    let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-    assert_eq!(kv.get_meta().await.unwrap(), None);
-    let mut count = 0;
-    kv.iterate_nodes(|_| {
-        count += 1;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    assert_eq!(count, 0, "the cleared epoch still has nodes");
-
-    assert!(
-        kv.get_aux(b's', b"key").await.unwrap().is_none(),
-        "the cleared epoch kept its aux entry"
-    );
-
-    let survivor = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH + 1);
-    assert!(survivor.get_meta().await.unwrap().is_some());
-    assert!(
-        survivor.get_aux(b's', b"key").await.unwrap().is_some(),
-        "the next epoch's aux entry was cleared with the previous one"
-    );
-    let mut count = 0;
-    survivor
-        .iterate_nodes(|_| {
+        let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+        assert_eq!(kv.get_meta().await.unwrap(), None);
+        let mut count = 0;
+        kv.iterate_nodes(|_| {
             count += 1;
             Ok(())
         })
         .await
         .unwrap();
-    assert_eq!(count, 2000, "clearing one epoch removed another's nodes");
+        assert_eq!(count, 0, "the cleared epoch still has nodes");
+
+        assert!(
+            kv.get_aux(b's', b"key").await.unwrap().is_none(),
+            "the cleared epoch kept its aux entry"
+        );
+
+        let survivor = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH + 1);
+        assert!(survivor.get_meta().await.unwrap().is_some());
+        assert!(
+            survivor.get_aux(b's', b"key").await.unwrap().is_some(),
+            "the next epoch's aux entry was cleared with the previous one"
+        );
+        let mut count = 0;
+        survivor
+            .iterate_nodes(|_| {
+                count += 1;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 2000, "clearing one epoch removed another's nodes");
+    })
+    .unwrap()
 }
 
 /// A corrupt value reaching the store surfaces as an error, not a panic and not
 /// a silently skipped node.
-#[tokio::test]
-async fn a_corrupt_stored_value_is_an_error() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn = txn(&store).await;
-    txn.set(
-        &VectorIndexKey::node(COLLECTION, INDEX, EPOCH, 1).bytes(),
-        b"not a node",
-    )
-    .await
-    .unwrap();
+#[test]
+fn a_corrupt_stored_value_is_an_error() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = txn(&store).await;
+        txn.set(
+            &VectorIndexKey::node(COLLECTION, INDEX, EPOCH, 1).bytes(),
+            b"not a node",
+        )
+        .await
+        .unwrap();
 
-    let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-    assert!(matches!(kv.get_node(NodeId(1)).await, Err(Error::Other(_))));
-    assert!(matches!(
-        kv.iterate_nodes(|_| Ok(())).await,
-        Err(Error::Other(_))
-    ));
+        let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+        assert!(matches!(kv.get_node(NodeId(1)).await, Err(Error::Other(_))));
+        assert!(matches!(
+            kv.iterate_nodes(|_| Ok(())).await,
+            Err(Error::Other(_))
+        ));
+    })
+    .unwrap()
 }
 
 /// `clear` has to remove every key of the epoch, which includes the aux space
@@ -466,65 +481,68 @@ async fn a_corrupt_stored_value_is_an_error() {
 /// reindex re-inserts into lists built from centroids that are gone, because
 /// the surviving state marker says the index is trained; and a dropped index
 /// leaks its whole aux keyspace, because nothing else ever removes it.
-#[tokio::test]
-async fn clear_removes_the_aux_space_too() {
-    let store = RegolithStore::in_memory().unwrap();
+#[test]
+fn clear_removes_the_aux_space_too() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
 
-    // Kinds an engine actually uses, plus one nobody uses yet: the sweep is by
-    // prefix, so a kind added later must be covered without being listed here.
-    const KINDS: [u8; 4] = *b"sckz";
+        // Kinds an engine actually uses, plus one nobody uses yet: the sweep is by
+        // prefix, so a kind added later must be covered without being listed here.
+        const KINDS: [u8; 4] = *b"sckz";
 
-    {
-        let mut txn = txn(&store).await;
-        let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-        kv.put_node(Node::new(NodeId(1), vec![1.0, 0.0], 0))
+        {
+            let mut txn = txn(&store).await;
+            let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+            kv.put_node(Node::new(NodeId(1), vec![1.0, 0.0], 0))
+                .await
+                .unwrap();
+            kv.put_meta(Meta {
+                entry_point: NodeId(1),
+                top_layer: 0,
+                live: 0,
+                waste: 0,
+                rebuilds: 0,
+            })
             .await
             .unwrap();
-        kv.put_meta(Meta {
-            entry_point: NodeId(1),
-            top_layer: 0,
-            live: 0,
-            waste: 0,
-            rebuilds: 0,
-        })
-        .await
-        .unwrap();
-        for kind in KINDS {
-            kv.put_aux(kind, b"key", b"value").await.unwrap();
+            for kind in KINDS {
+                kv.put_aux(kind, b"key", b"value").await.unwrap();
+            }
+            txn.commit().await.unwrap();
         }
-        txn.commit().await.unwrap();
-    }
 
-    {
+        {
+            let mut txn = txn(&store).await;
+            let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+            for kind in KINDS {
+                assert!(
+                    kv.get_aux(kind, b"key").await.unwrap().is_some(),
+                    "kind {} was not written",
+                    kind as char
+                );
+            }
+        }
+
+        {
+            let mut txn = txn(&store).await;
+            let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+            kv.clear().await.unwrap();
+            txn.commit().await.unwrap();
+        }
+
         let mut txn = txn(&store).await;
         let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
+        assert!(kv.get_node(NodeId(1)).await.unwrap().is_none(), "node kept");
+        assert!(kv.get_meta().await.unwrap().is_none(), "meta kept");
         for kind in KINDS {
             assert!(
-                kv.get_aux(kind, b"key").await.unwrap().is_some(),
-                "kind {} was not written",
+                kv.get_aux(kind, b"key").await.unwrap().is_none(),
+                "aux kind {} survived the clear",
                 kind as char
             );
         }
-    }
-
-    {
-        let mut txn = txn(&store).await;
-        let mut kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-        kv.clear().await.unwrap();
-        txn.commit().await.unwrap();
-    }
-
-    let mut txn = txn(&store).await;
-    let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX, EPOCH);
-    assert!(kv.get_node(NodeId(1)).await.unwrap().is_none(), "node kept");
-    assert!(kv.get_meta().await.unwrap().is_none(), "meta kept");
-    for kind in KINDS {
-        assert!(
-            kv.get_aux(kind, b"key").await.unwrap().is_none(),
-            "aux kind {} survived the clear",
-            kind as char
-        );
-    }
+    })
+    .unwrap()
 }
 
 /// A meta written before the rebuild counters existed still decodes: its

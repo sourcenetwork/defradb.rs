@@ -133,7 +133,7 @@ pub async fn tx_discard(
         .parse()
         .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
 
-    match state.executor.rollback_txn_as(&context, &handle).await {
+    match state.executor.discard_txn_as(&context, &handle).await {
         Ok(()) => {
             tracing::info!(txn_id = %handle, "Transaction discarded");
             // Go returns 200 OK with empty body

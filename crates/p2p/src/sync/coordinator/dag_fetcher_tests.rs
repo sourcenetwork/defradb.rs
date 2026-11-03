@@ -1,7 +1,15 @@
 use super::*;
 
+#[path = "../../../tests/unit/busy_provider_rotation.rs"]
+mod busy_provider_rotation;
 #[path = "../../../tests/unit/car_size_retry.rs"]
 mod car_size_retry;
+#[path = "../../../tests/unit/dag_fetch_depth.rs"]
+mod dag_fetch_depth;
+#[path = "../../../tests/unit/dag_fetch_logs.rs"]
+mod dag_fetch_logs;
+#[path = "../../../tests/unit/provider_ranking.rs"]
+mod provider_ranking;
 use crate::error::Result as P2PResult;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
@@ -28,6 +36,13 @@ use tokio::sync::mpsc;
 
 type StreamedBlocks = Arc<AtomOption<Vec<(Cid, Vec<u8>)>>>;
 type CompletionSlot = Arc<AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>;
+type FailureAnswer = Arc<
+    AtomOption<(
+        crate::sync::manager::BlockSyncCompletionTracker,
+        FetchFailureCause,
+        Duration,
+    )>,
+>;
 
 fn rapid_map<K, V>() -> HopscotchMap<K, V, rapidhash::fast::RandomState>
 where
@@ -66,11 +81,12 @@ struct TestTransport {
     skip_serving_syncs: Arc<AtomicUsize>,
     fail_connected_peers: Arc<AtomicBool>,
     connected_peers: Arc<Atom<Vec<PeerId>>>,
+    record_providers: Arc<Atom<Vec<PeerId>>>,
     cancelled_queries: Arc<SegQueue<u64>>,
     hang_car_requests: Arc<AtomicBool>,
     streamed_rooted_blocks: StreamedBlocks,
     stream_completion: CompletionSlot,
-    early_failure_completion: CompletionSlot,
+    failure_answer: FailureAnswer,
     early_deferred_completion: CompletionSlot,
     early_success_completion: CompletionSlot,
     stream_block_delay_nanos: Arc<AtomicU64>,
@@ -83,9 +99,28 @@ struct TestTransport {
             rapidhash::fast::RandomState,
         >,
     >,
+    busy_providers: Arc<
+        HopscotchMap<
+            String,
+            crate::sync::manager::BlockSyncCompletionTracker,
+            rapidhash::fast::RandomState,
+        >,
+    >,
     disconnected_peers: Arc<Atom<Vec<String>>>,
     empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    busy_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
     force_rooted_sync: Arc<AtomicBool>,
+    fetch_stats: Arc<Atom<Vec<crate::transport::PeerFetchStats>>>,
+    /// Providers that fail every selective query after a delay.
+    refusing_providers: Arc<
+        HopscotchMap<
+            String,
+            (crate::sync::manager::BlockSyncCompletionTracker, Duration),
+            rapidhash::fast::RandomState,
+        >,
+    >,
+    closure_provider: Arc<AtomOption<Arc<DefraBlockstore<RegolithStore>>>>,
+    closure_rounds: Arc<Atom<Vec<(u32, usize)>>>,
 }
 
 impl TestTransport {
@@ -116,11 +151,12 @@ impl TestTransport {
                 PeerId::new("alt-peer".to_string()),
                 PeerId::new("other-peer".to_string()),
             ])),
+            record_providers: Arc::new(Atom::new(Vec::new())),
             cancelled_queries: Arc::new(SegQueue::new()),
             hang_car_requests: Arc::new(AtomicBool::new(false)),
             streamed_rooted_blocks: Arc::new(AtomOption::none()),
             stream_completion: Arc::new(AtomOption::none()),
-            early_failure_completion: Arc::new(AtomOption::none()),
+            failure_answer: Arc::new(AtomOption::none()),
             early_deferred_completion: Arc::new(AtomOption::none()),
             early_success_completion: Arc::new(AtomOption::none()),
             stream_block_delay_nanos: Arc::new(AtomicU64::new(
@@ -129,10 +165,26 @@ impl TestTransport {
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
             size_limited_providers: Arc::new(rapid_map()),
+            busy_providers: Arc::new(rapid_map()),
             disconnected_peers: Arc::new(Atom::new(Vec::new())),
             empty_car_answer: Arc::new(AtomOption::none()),
+            busy_car_answer: Arc::new(AtomOption::none()),
             force_rooted_sync: Arc::new(AtomicBool::new(false)),
+            fetch_stats: Arc::new(Atom::new(Vec::new())),
+            refusing_providers: Arc::new(rapid_map()),
+            closure_provider: Arc::new(AtomOption::none()),
+            closure_rounds: Arc::new(Atom::new(Vec::new())),
         }
+    }
+
+    /// Serve depth-cut syncs from `provider` the way the iroh responder does.
+    fn set_closure_provider(&self, provider: Arc<DefraBlockstore<RegolithStore>>) {
+        self.closure_provider.store_some(provider);
+    }
+
+    /// Each depth-cut sync's depth and the number of blocks it served.
+    fn closure_rounds(&self) -> Vec<(u32, usize)> {
+        self.closure_rounds.load_clone()
     }
 
     fn disconnected_peers(&self) -> Vec<String> {
@@ -144,6 +196,10 @@ impl TestTransport {
     /// with a dead Bitswap queue looks from the fetcher.
     fn set_empty_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
         self.empty_car_answer.store_some(tracker);
+    }
+
+    fn set_busy_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
+        self.busy_car_answer.store_some(tracker);
     }
 
     fn set_force_rooted_sync(&self) {
@@ -178,6 +234,10 @@ impl TestTransport {
         self.connected_peers.store(peers);
     }
 
+    fn set_record_providers(&self, peers: Vec<PeerId>) {
+        self.record_providers.store(peers);
+    }
+
     fn cancelled_queries(&self) -> Vec<u64> {
         std::iter::from_fn(|| self.cancelled_queries.pop()).collect()
     }
@@ -195,11 +255,13 @@ impl TestTransport {
         self.stream_completion.store_some(completion);
     }
 
-    fn set_early_failure_completion(
+    fn set_failure_answer(
         &self,
         completion: crate::sync::manager::BlockSyncCompletionTracker,
+        cause: FetchFailureCause,
+        after: Duration,
     ) {
-        self.early_failure_completion.store_some(completion);
+        self.failure_answer.store_some((completion, cause, after));
     }
 
     fn set_early_deferred_completion(
@@ -274,6 +336,14 @@ impl P2PTransport for TestTransport {
             ));
         }
         Ok(self.connected_peers.load_clone())
+    }
+
+    async fn collection_providers(&self, _collection_id: &str) -> P2PResult<Vec<PeerId>> {
+        Ok(self.record_providers.load_clone())
+    }
+
+    async fn fetch_stats(&self) -> P2PResult<Vec<crate::transport::PeerFetchStats>> {
+        Ok(self.fetch_stats.load_clone())
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -367,6 +437,14 @@ impl P2PTransport for TestTransport {
             tracker.complete(root_cid, peer_id, false);
             return Ok(());
         }
+        if let Some(tracker) = self.busy_car_answer.load().map(|t| t.clone()) {
+            tracker.complete_with(
+                root_cid,
+                peer_id,
+                crate::sync::manager::FetchCompletion::ProviderBusy,
+            );
+            return Ok(());
+        }
         if self.hang_car_requests.load(Ordering::SeqCst) {
             n0_future::time::sleep(Duration::from_secs(600)).await;
             return Ok(());
@@ -445,8 +523,37 @@ impl P2PTransport for TestTransport {
             completion.size_limit(query_id, cid);
             return Ok(query_id);
         }
-        if let Some(completion) = self.early_failure_completion.load().as_deref().cloned() {
-            completion.complete(query_id, false);
+        if let Some(completion) = providers
+            .first()
+            .and_then(|peer| self.busy_providers.get(peer.as_str()))
+        {
+            completion.provider_busy(query_id);
+            return Ok(query_id);
+        }
+        if let Some((completion, cause, after)) = self.failure_answer.load().as_deref().cloned() {
+            let failure = FetchCompletion::Failure(cause);
+            if after.is_zero() {
+                completion.complete_with(query_id, failure);
+            } else {
+                n0_future::task::spawn(async move {
+                    n0_future::time::sleep(after).await;
+                    completion.complete_with(query_id, failure);
+                });
+            }
+            return Ok(query_id);
+        }
+        if let Some((completion, delay)) = providers
+            .first()
+            .and_then(|peer| self.refusing_providers.get(peer.as_str()))
+        {
+            if delay.is_zero() {
+                completion.complete(query_id, false);
+            } else {
+                n0_future::task::spawn(async move {
+                    n0_future::time::sleep(delay).await;
+                    completion.complete(query_id, false);
+                });
+            }
             return Ok(query_id);
         }
         if let Some(completion) = self.early_deferred_completion.load().as_deref().cloned() {
@@ -516,6 +623,34 @@ impl P2PTransport for TestTransport {
             }
         }
         Ok(query_id)
+    }
+
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        max_depth: u32,
+    ) -> P2PResult<QueryId> {
+        let provider = self.closure_provider.load().as_deref().cloned();
+        if let Some(provider) = provider {
+            let collected = crate::sync::car::collect_dag_blocks_within(
+                provider.as_ref(),
+                &missing,
+                Some(max_depth),
+            )
+            .await?;
+            let served = collected.blocks.len();
+            self.closure_rounds.rcu(|rounds| {
+                let mut next = rounds.clone();
+                next.push((max_depth, served));
+                next
+            });
+            for (cid, data) in collected.blocks {
+                self.blockstore.put(&cid, &data).await.unwrap();
+            }
+        }
+        self.sync_blocks(root, providers, missing).await
     }
 
     async fn cancel_sync(&self, query_id: QueryId) -> P2PResult<bool> {
@@ -780,6 +915,7 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
@@ -805,7 +941,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         RapidHashMap::new(),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
-    transport.set_early_failure_completion(completion.clone());
+    transport.set_failure_answer(completion.clone(), FetchFailureCause::Error, Duration::ZERO);
     let context = DagFetchContext::new(
         "doc-id".to_string(),
         "collection-id".to_string(),
@@ -822,10 +958,15 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
-    assert_eq!(outcome, ProviderWindowOutcome::Stalled);
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::FailedFast(FetchFailureCause::Error),
+        "an early failure answer is not a watchdog stall"
+    );
     assert_eq!(
         n0_future::time::Instant::now(),
         started,
@@ -1574,6 +1715,70 @@ async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
     assert_eq!(transport.sync_providers(), vec!["remote-peer".to_string()]);
 }
 
+fn peers(names: &[&str]) -> Vec<PeerId> {
+    names
+        .iter()
+        .map(|name| PeerId::new(name.to_string()))
+        .collect()
+}
+
+async fn fetch_providers(transport: &TestTransport, root_cid: &Cid) -> Vec<PeerId> {
+    let source = PeerId::new("remote-peer".to_string());
+    let alternates = alternate_providers(transport, root_cid, "collection-id", &source).await;
+    DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        source,
+    )
+    .with_alternate_providers(alternates)
+    .providers()
+}
+
+/// Connected peers alone fill the alternates cap, so a record provider is
+/// kept only through its reserved slot: the best one, skipping the source.
+#[tokio::test]
+async fn record_provider_keeps_an_alternate_slot_past_connected_peers() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, _, _) = single_child_dag();
+    let transport = TestTransport::new(
+        blockstore,
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+
+    transport.set_record_providers(peers(&["remote-peer", "record-peer", "second-record"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "dead-peer", "alt-peer", "record-peer"])
+    );
+
+    transport.set_connected_peers(peers(&["a", "b", "c", "remote-peer", "record-peer"]));
+    transport.set_record_providers(peers(&["record-peer"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "a", "b", "record-peer"]),
+        "a connected record provider past the cap moves into the slot"
+    );
+
+    transport.set_connected_peers(peers(&["remote-peer", "record-peer", "a", "b"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "record-peer", "a", "b"]),
+        "a record provider already kept stays where it is"
+    );
+
+    transport.set_connected_peers(Vec::new());
+    transport.set_record_providers(peers(&["record-peer", "second-record"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "record-peer", "second-record"])
+    );
+}
+
 /// The limiter permit must be released during retry backoff: a second
 /// waiter acquires the single permit while the first fetch is sleeping
 /// between attempts, not after all of its retries complete.
@@ -1671,6 +1876,7 @@ async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 
@@ -1781,6 +1987,7 @@ async fn late_success_completion_keeps_the_full_landing_grace() {
         &blockstore,
         &PeerId::new("remote-peer".to_string()),
         &context,
+        ClosureDepth::initial(),
     )
     .await;
 

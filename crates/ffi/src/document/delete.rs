@@ -2,8 +2,8 @@ use std::ffi::c_char;
 
 use acp::nac::NodePermission;
 
-use super::run::{doc_ids, DocumentCall};
-use super::{filter_value, Selection, ERR_DOCUMENT_NOT_FOUND};
+use super::run::DocumentCall;
+use super::{filter_value, Selection};
 use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
 
@@ -29,21 +29,20 @@ pub unsafe extern "C" fn defra_document_delete(
         let target = call.target().clone();
         ffi_async!(target &target, {
             let name = call.collection().await?.name;
-            let field = format!("delete_{}", name);
+            let run = |mutation| call.respond(mutation);
             match selection {
                 Selection::Doc(doc_id) => {
-                    let mutation = query::rest::gql::build_delete_mutation(&name, &doc_id);
-                    if doc_ids(&call.run(mutation).await?, &field).is_empty() {
-                        return Err(ERR_DOCUMENT_NOT_FOUND.to_string());
-                    }
+                    query::documents::delete(run, &name, &doc_id)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     Ok(String::new())
                 }
                 Selection::Filter(filter) => {
-                    let mutation =
-                        query::rest::gql::build_filtered_delete_mutation(&name, &filter_value(&filter)?)
-                            .map_err(|e| e.to_string())?;
-                    let deleted = doc_ids(&call.run(mutation).await?, &field);
-                    Ok(serde_json::json!({ "Count": deleted.len(), "DocIDs": deleted }).to_string())
+                    let filter = query::documents::Filter::from(filter_value(&filter)?);
+                    let deleted = query::documents::delete_with_filter(run, &name, &filter)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    serde_json::to_string(&deleted).map_err(|e| e.to_string())
                 }
             }
         })

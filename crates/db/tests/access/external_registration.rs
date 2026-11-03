@@ -236,8 +236,9 @@ async fn create_in_txn(runner: &Runner, identity: Did, name: &str) -> String {
     doc_id
 }
 
-#[tokio::test]
-async fn an_upsert_that_updates_a_public_document_never_registers_its_caller() {
+#[test]
+fn an_upsert_that_updates_a_public_document_never_registers_its_caller() {
+    workers::block_on(async {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let remote = RemoteAcp::new();
     let node = node(store.clone(), gate(&remote, store), true).await;
@@ -277,75 +278,83 @@ async fn an_upsert_that_updates_a_public_document_never_registers_its_caller() {
         "the upsert took the document over"
     );
     assert_eq!(readable(&node.runner, Some(mallory())).await, ["taken"]);
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_failed_registration_keeps_the_document_private_until_a_redrive_settles_it() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let remote = RemoteAcp::new();
-    let gate = gate(&remote, store.clone());
-    let node = node(store, gate.clone(), true).await;
-    remote.down.store(true, Ordering::SeqCst);
-
-    let doc_id = create_in_txn(&node.runner, alice(), "secret").await;
-    let autocommit = node
-        .runner
-        .execute(request(
-            r#"mutation { add_Users(input: {name: "also secret"}) { _docID } }"#,
-            Some(alice()),
-        ))
-        .await;
-    drop(autocommit);
-
-    assert_eq!(remote.owner(&doc_id), None);
-    assert!(readable(&node.runner, Some(mallory())).await.is_empty());
-    assert!(readable(&node.runner, None).await.is_empty());
-    assert_eq!(
-        readable(&node.runner, Some(alice())).await,
-        ["also secret", "secret"]
-    );
-
-    remote.down.store(false, Ordering::SeqCst);
-    let report = gate.redrive_owed().await.unwrap();
-    assert_eq!((report.settled, report.failed), (2, 0));
-    assert_eq!(remote.owner(&doc_id), Some(alice()));
-    assert!(readable(&node.runner, Some(mallory())).await.is_empty());
-    assert_eq!(
-        readable(&node.runner, Some(alice())).await,
-        ["also secret", "secret"]
-    );
-    assert_eq!(
-        gate.redrive_owed().await.unwrap(),
-        acp::RedriveReport::default()
-    );
-}
-
-#[tokio::test]
-async fn a_crash_before_registration_is_settled_by_the_redrive_at_the_next_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let remote = RemoteAcp::new();
-    let doc_id = {
-        let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
-        let node = node(store.clone(), gate(&remote, store), true).await;
+#[test]
+fn a_failed_registration_keeps_the_document_private_until_a_redrive_settles_it() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let remote = RemoteAcp::new();
+        let gate = gate(&remote, store.clone());
+        let node = node(store, gate.clone(), true).await;
         remote.down.store(true, Ordering::SeqCst);
-        let doc_id = create_in_txn(&node.runner, alice(), "before crash").await;
-        node.db.close().await.unwrap();
-        doc_id
-    };
-    remote.down.store(false, Ordering::SeqCst);
-    assert_eq!(remote.owner(&doc_id), None);
 
-    let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
-    let gate = gate(&remote, store.clone());
-    let node = node(store, gate.clone(), false).await;
-    assert!(readable(&node.runner, Some(mallory())).await.is_empty());
-    let report = gate.redrive_owed().await.unwrap();
-    assert_eq!((report.settled, report.failed), (1, 0));
-    assert_eq!(remote.owner(&doc_id), Some(alice()));
-    assert_eq!(remote.registrations.load(Ordering::SeqCst), 1);
-    assert!(readable(&node.runner, Some(mallory())).await.is_empty());
-    assert_eq!(
-        readable(&node.runner, Some(alice())).await,
-        ["before crash"]
-    );
+        let doc_id = create_in_txn(&node.runner, alice(), "secret").await;
+        let autocommit = node
+            .runner
+            .execute(request(
+                r#"mutation { add_Users(input: {name: "also secret"}) { _docID } }"#,
+                Some(alice()),
+            ))
+            .await;
+        drop(autocommit);
+
+        assert_eq!(remote.owner(&doc_id), None);
+        assert!(readable(&node.runner, Some(mallory())).await.is_empty());
+        assert!(readable(&node.runner, None).await.is_empty());
+        assert_eq!(
+            readable(&node.runner, Some(alice())).await,
+            ["also secret", "secret"]
+        );
+
+        remote.down.store(false, Ordering::SeqCst);
+        let report = gate.redrive_owed().await.unwrap();
+        assert_eq!((report.settled, report.failed), (2, 0));
+        assert_eq!(remote.owner(&doc_id), Some(alice()));
+        assert!(readable(&node.runner, Some(mallory())).await.is_empty());
+        assert_eq!(
+            readable(&node.runner, Some(alice())).await,
+            ["also secret", "secret"]
+        );
+        assert_eq!(
+            gate.redrive_owed().await.unwrap(),
+            acp::RedriveReport::default()
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_crash_before_registration_is_settled_by_the_redrive_at_the_next_open() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = RemoteAcp::new();
+        let doc_id = {
+            let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
+            let node = node(store.clone(), gate(&remote, store), true).await;
+            remote.down.store(true, Ordering::SeqCst);
+            let doc_id = create_in_txn(&node.runner, alice(), "before crash").await;
+            node.db.close().await.unwrap();
+            doc_id
+        };
+        remote.down.store(false, Ordering::SeqCst);
+        assert_eq!(remote.owner(&doc_id), None);
+
+        let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
+        let gate = gate(&remote, store.clone());
+        let node = node(store, gate.clone(), false).await;
+        assert!(readable(&node.runner, Some(mallory())).await.is_empty());
+        let report = gate.redrive_owed().await.unwrap();
+        assert_eq!((report.settled, report.failed), (1, 0));
+        assert_eq!(remote.owner(&doc_id), Some(alice()));
+        assert_eq!(remote.registrations.load(Ordering::SeqCst), 1);
+        assert!(readable(&node.runner, Some(mallory())).await.is_empty());
+        assert_eq!(
+            readable(&node.runner, Some(alice())).await,
+            ["before crash"]
+        );
+    })
+    .unwrap()
 }

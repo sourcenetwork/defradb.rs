@@ -104,7 +104,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // Resolved from the block alone, as a governed collection always is:
         // there is no carrier here to name one.
         let Some(collection) = self
-            .block_collection(&payload.schema_version_id, None)
+            .block_collection(&payload.collection_version_id, None)
             .await?
             .filter(|collection| self.is_governed(collection.schema()))
         else {

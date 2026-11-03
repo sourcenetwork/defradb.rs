@@ -1,4 +1,4 @@
-//! What one block's merge reads of its document before it writes it: the
+//! What one merge attempt reads of its document before it writes it: the
 //! head set and the stored value, each read once and shared by the block's
 //! field merges, its value write and its heads write.
 //!
@@ -9,19 +9,21 @@
 //! head set before `update_heads`, and only a counter merge writes the stored
 //! value before `persist_merged_document` (an LWW field writes keys of its
 //! own), so a read kept here is what a fresh read would return until the
-//! writer that drops it.
+//! writer that invalidates it. A head write applies its exact operand to the
+//! decoded snapshot, so subsequent blocks in the same page reuse that state.
+//! Neither cache outlives the engine attempt.
 
 use datastore::NamespaceView;
 use document::{DocID, Document};
-use storage::merge::head_set::Set;
+use storage::merge::head_set::{Set, Write};
 
 use crate::collection::Collection;
 
-/// The head set and the stored value of one block's document, read on first
+/// The head set and the stored value of the attempt's document, read on first
 /// use.
 #[derive(Default)]
 pub(crate) struct BlockReads {
-    heads: Option<Set>,
+    heads: Option<(u64, Set)>,
     /// The value read, with the version and short ID it was read for.
     document: Option<(String, u64, Option<Document>)>,
 }
@@ -34,10 +36,10 @@ impl BlockReads {
         doc_short_id: u64,
     ) -> storage::corekv::Result<&Set> {
         let set = match self.heads.take() {
-            Some(set) => set,
-            None => crate::block::heads::document::load(headstore, doc_short_id).await?,
+            Some((short_id, set)) if short_id == doc_short_id => set,
+            _ => crate::block::heads::document::load(headstore, doc_short_id).await?,
         };
-        Ok(self.heads.insert(set))
+        Ok(&self.heads.insert((doc_short_id, set)).1)
     }
 
     /// The highest priority among `field`'s live heads, `0` when it has none:
@@ -89,9 +91,15 @@ impl BlockReads {
         self.document = None;
     }
 
-    /// The head set was written: the next read reads it again.
-    pub(crate) fn wrote_heads(&mut self) {
-        self.heads = None;
+    /// Keep only this attempt's own head changes; the cache never crosses a commit.
+    pub(crate) fn wrote_heads(&mut self, doc_short_id: u64, write: &Write) {
+        if let Some((short_id, set)) = &mut self.heads {
+            if *short_id == doc_short_id {
+                set.apply(write);
+            } else {
+                self.heads = None;
+            }
+        }
     }
 }
 
@@ -126,43 +134,46 @@ mod tests {
         max
     }
 
-    #[tokio::test]
-    async fn a_field_priority_is_its_highest_live_head_as_its_head_keys_give_it() {
-        let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let txn = db.new_txn(false).await.unwrap();
-        let headstore = txn.headstore().unwrap();
-        // A short ID whose encoding is the byte `/`.
-        let doc_short_id = 0x2f;
-        let mut write = Write::default();
-        write.add(&document::name("name", &cid(1)), 3);
-        write.add(&document::name("name", &cid(2)), 5);
-        write.add(&document::name("nam", &cid(3)), 9);
-        write.add(&document::name("name_2", &cid(4)), 11);
-        write.add(&document::name("name", &cid(5)), 20);
-        write.supersede(&document::name("name", &cid(5)));
-        write.supersede_ahead(&document::name("name", &cid(6)));
-        write.add(&document::name("C", &cid(7)), 2);
-        document::commit(&headstore, doc_short_id, &write)
-            .await
-            .unwrap();
+    #[test]
+    fn a_field_priority_is_its_highest_live_head_as_its_head_keys_give_it() {
+        workers::block_on(async {
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let txn = db.new_txn(false).await.unwrap();
+            let headstore = txn.headstore().unwrap();
+            // A short ID whose encoding is the byte `/`.
+            let doc_short_id = 0x2f;
+            let mut write = Write::default();
+            write.add(&document::name("name", &cid(1)), 3);
+            write.add(&document::name("name", &cid(2)), 5);
+            write.add(&document::name("nam", &cid(3)), 9);
+            write.add(&document::name("name_2", &cid(4)), 11);
+            write.add(&document::name("name", &cid(5)), 20);
+            write.supersede(&document::name("name", &cid(5)));
+            write.supersede_ahead(&document::name("name", &cid(6)));
+            write.add(&document::name("C", &cid(7)), 2);
+            document::commit(&headstore, doc_short_id, &write)
+                .await
+                .unwrap();
 
-        let mut reads = BlockReads::default();
-        for field in ["name", "nam", "name_2", "C", "absent"] {
+            let mut reads = BlockReads::default();
+            for field in ["name", "nam", "name_2", "C", "absent"] {
+                assert_eq!(
+                    reads
+                        .field_priority(&headstore, doc_short_id, field)
+                        .await
+                        .unwrap(),
+                    iterated_priority(&headstore, doc_short_id, field).await,
+                    "{field}"
+                );
+            }
             assert_eq!(
                 reads
-                    .field_priority(&headstore, doc_short_id, field)
+                    .field_priority(&headstore, doc_short_id, "name")
                     .await
                     .unwrap(),
-                iterated_priority(&headstore, doc_short_id, field).await,
-                "{field}"
+                5
             );
-        }
-        assert_eq!(
-            reads
-                .field_priority(&headstore, doc_short_id, "name")
-                .await
-                .unwrap(),
-            5
-        );
+        })
+        .unwrap()
     }
 }

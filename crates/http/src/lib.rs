@@ -17,7 +17,6 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
-//! - `POST /api/v1/tx/concurrent` - Begin a concurrent transaction
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!
@@ -38,14 +37,10 @@
 //! - `GET /api/v1/p2p/active-peers` - List connected peers in Go-compatible format (`handlers/p2p/peers.rs`)
 //! - `POST /api/v1/p2p/connect` - Connect to peers in Go-compatible format (`handlers/p2p/peers.rs`)
 //! - `POST /api/v1/p2p/disconnect` - Disconnect from peers in Go-compatible format (`handlers/p2p/peers.rs`)
-//! - `GET /api/v1/p2p/peers` - List connected peers (`handlers/p2p/peers.rs`)
-//! - `POST /api/v1/p2p/peers` - Connect to peer (`handlers/p2p/peers.rs`)
+//! - `GET /api/v1/p2p/peers/{peer_id}` - Everything known about one peer (`handlers/p2p/peers.rs`)
 //! - `GET /api/v1/p2p/replicators` - List replicators (`handlers/p2p/replicators.rs`)
 //! - `POST /api/v1/p2p/replicators` - Add replicator (`handlers/p2p/replicators.rs`)
 //! - `DELETE /api/v1/p2p/replicators` - Remove replicator (`handlers/p2p/replicators.rs`)
-//! - `GET /api/v1/p2p/replicator` - Legacy alias for listing replicators (`handlers/p2p/replicators.rs`)
-//! - `POST /api/v1/p2p/replicator` - Legacy alias for adding a replicator (`handlers/p2p/replicators.rs`)
-//! - `DELETE /api/v1/p2p/replicator` - Legacy alias for removing a replicator (`handlers/p2p/replicators.rs`)
 //! - `GET /api/v1/p2p/collections` - List P2P collections (`handlers/p2p/collections.rs`)
 //! - `POST /api/v1/p2p/collections` - Add P2P collections (`handlers/p2p/collections.rs`)
 //! - `DELETE /api/v1/p2p/collections` - Remove P2P collections (`handlers/p2p/collections.rs`)
@@ -57,25 +52,23 @@
 //! - `POST /api/v1/p2p/documents/sync` - Sync specific documents (`handlers/p2p/documents.rs`)
 //!
 //! ## ACP (requires AcpOperations)
-//! - `POST /api/v1/acp/document/policy` - Add policy (Go-compatible path)
-//! - `POST /api/v1/acp/policy` - Add policy (Rust alias)
+//! - `POST /api/v1/acp/document/policy` - Add policy
 //! - `GET /api/v1/acp/policy` - List policies
 //! - `GET /api/v1/acp/policy/{id}` - Get policy by ID
 //!
 //! ## Index (requires IndexOperations)
-//! - `POST /api/v1/index` - Create index
-//! - `GET /api/v1/index` - List indexes
-//! - `DELETE /api/v1/index` - Drop index
+//! - `POST /api/v1/collections/{name}/indexes` - Create index
+//! - `GET /api/v1/collections/{name}/indexes` - List a collection's indexes
+//! - `GET /api/v1/collections/indexes` - List every collection's indexes
+//! - `DELETE /api/v1/collections/{name}/indexes/{index}` - Drop index
 //!
 //! ## Backup (requires BackupOperations)
 //! - `POST /api/v1/backup/export` - Export database
 //! - `POST /api/v1/backup/import` - Import database
 //!
 //! ## Views (requires ViewOperations)
-//! - `POST /api/v1/view` - Add a view (Go-compatible path)
-//! - `POST /api/v1/views` - Add a view (Rust alias)
-//! - `POST /api/v1/view/refresh` - Refresh views (Go-compatible path)
-//! - `POST /api/v1/views/refresh` - Refresh views (Rust alias)
+//! - `POST /api/v1/view` - Add a view
+//! - `POST /api/v1/view/refresh` - Refresh views
 //! - `POST /api/v1/views/gc` - Downsample history GC (Rust only)
 //!
 //! # Example
@@ -135,23 +128,19 @@ pub use router::{
     create_router, create_router_with_rest, create_router_with_state, AppState, AppStateBuilder,
 };
 pub use router::{
-    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
-    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
-    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
-    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
+    IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, ViewOperations,
 };
 #[cfg(feature = "server")]
-pub use server::{Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use mock::{
-    FailingMockAcpOperations, FailingMockBackupOperations, FailingMockExecutor,
-    FailingMockIndexOperations, FailingMockNodeAcpOperations, FailingMockP2POperations,
-    FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
-    MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
-    MockIndexOperations, MockLensOperations, MockNodeAcpOperations, MockP2POperations,
-    MockQueryExecutor, MockRestOperations, MockTransactionOperations,
+    FailingMockBackupOperations, FailingMockExecutor, FailingMockIndexOperations,
+    FailingMockNodeAcpOperations, FailingMockP2POperations, FailingMockRestOperations,
+    MockBackupOperations, MockBlockOperations, MockCollectionManagementOperations,
+    MockDocumentAcpOperations, MockEncryptedIndexOperations, MockIndexOperations,
+    MockNodeAcpOperations, MockP2POperations, MockQueryExecutor, MockRestOperations,
 };

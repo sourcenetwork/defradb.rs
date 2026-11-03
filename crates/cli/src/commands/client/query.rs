@@ -25,12 +25,8 @@ pub struct QueryArgs {
     pub operation: Option<String>,
 
     /// Variables to pass to the query (JSON format)
-    #[arg(long)]
+    #[arg(long, short = 'v')]
     pub variables: Option<String>,
-
-    /// Transaction ID to execute the query within
-    #[arg(long)]
-    pub txn_id: Option<String>,
 }
 
 impl QueryArgs {
@@ -39,13 +35,10 @@ impl QueryArgs {
         let query = self.get_query()?;
         let variables = self.parse_variables()?;
 
-        // Use command-level txn_id if provided, otherwise use global context
-        let txn_id = self.txn_id.clone().or_else(|| ctx.tx_id.clone());
-
         let client = HttpClient::new(&ctx.url)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
-        let response = client.graphql(&query, variables, txn_id).await?;
+        let response = client.graphql(&query, variables, ctx.tx_id.clone()).await?;
 
         if response.has_errors() {
             return Err(Error::Server(response.error_message()));
@@ -98,7 +91,6 @@ mod tests {
             file: None,
             operation: None,
             variables: None,
-            txn_id: None,
         };
         assert_eq!(args.get_query().unwrap(), "{ Users { name } }");
     }
@@ -110,7 +102,6 @@ mod tests {
             file: None,
             operation: None,
             variables: Some(r#"{"limit": 10}"#.to_string()),
-            txn_id: None,
         };
         let vars = args.parse_variables().unwrap().unwrap();
         assert_eq!(vars["limit"], 10);
@@ -123,8 +114,20 @@ mod tests {
             file: None,
             operation: None,
             variables: None,
-            txn_id: None,
         };
         assert!(args.get_query().is_err());
+    }
+
+    #[test]
+    fn test_query_short_variables_flag() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: QueryArgs,
+        }
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["q", "{ a }", "-v", r#"{"x":1}"#]).unwrap();
+        assert_eq!(cli.args.variables.as_deref(), Some(r#"{"x":1}"#));
+        assert!(Cli::try_parse_from(["q", "{ a }", "--txn-id", "1"]).is_err());
     }
 }

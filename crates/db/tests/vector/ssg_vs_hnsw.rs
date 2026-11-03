@@ -102,6 +102,34 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.delete_aux(kind, key).await
     }
 
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend,
@@ -207,39 +235,42 @@ async fn score_ssg(vectors: &[Vec<f32>], queries: &[Vec<f32>], pool: u32) -> Sco
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_per_node_read() {
-    println!(
-        "{:>18} {:>7} {:>6} {:>10} {:>8} {:>14}",
-        "index", "N", "effort", "recall@10", "reads", "recall/1k reads"
-    );
+fn recall_per_node_read() {
+    workers::block_on(async {
+        println!(
+            "{:>18} {:>7} {:>6} {:>10} {:>8} {:>14}",
+            "index", "N", "effort", "recall@10", "reads", "recall/1k reads"
+        );
 
-    for dimensions in [32usize, 128] {
-        let mut corpus = crate::support::Corpus::new(SEED);
-        let vectors = corpus.clustered(5_000, dimensions, 50, 0.35);
-        let queries = corpus.vectors(QUERIES, dimensions);
+        for dimensions in [32usize, 128] {
+            let mut corpus = crate::support::Corpus::new(SEED);
+            let vectors = corpus.clustered(5_000, dimensions, 50, 0.35);
+            let queries = corpus.vectors(QUERIES, dimensions);
 
-        for effort in [32usize, 64, 128, 256] {
-            let hnsw = score_hnsw(&vectors, &queries, effort).await;
-            println!(
-                "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
-                format!("hnsw d={dimensions}"),
-                vectors.len(),
-                hnsw.recall,
-                hnsw.reads,
-                hnsw.per_read()
-            );
+            for effort in [32usize, 64, 128, 256] {
+                let hnsw = score_hnsw(&vectors, &queries, effort).await;
+                println!(
+                    "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
+                    format!("hnsw d={dimensions}"),
+                    vectors.len(),
+                    hnsw.recall,
+                    hnsw.reads,
+                    hnsw.per_read()
+                );
 
-            let ssg = score_ssg(&vectors, &queries, effort as u32).await;
-            println!(
-                "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
-                format!("ssg d={dimensions}"),
-                vectors.len(),
-                ssg.recall,
-                ssg.reads,
-                ssg.per_read()
-            );
+                let ssg = score_ssg(&vectors, &queries, effort as u32).await;
+                println!(
+                    "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
+                    format!("ssg d={dimensions}"),
+                    vectors.len(),
+                    ssg.recall,
+                    ssg.reads,
+                    ssg.per_read()
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }

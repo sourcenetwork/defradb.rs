@@ -125,9 +125,9 @@ pub async fn estimate_select(
     let Some(filter) = select.filter.as_ref() else {
         return Ok(None);
     };
-    if select.cursor_params.is_some()
-        || (!select.show_deleted
-            && ScanNode::point_id_for(select.doc_ids.as_deref(), Some(filter)).is_some())
+    if select.show_deleted
+        || select.cursor_params.is_some()
+        || ScanNode::point_id_for(select.doc_ids.as_deref(), Some(filter)).is_some()
     {
         return Ok(None);
     }

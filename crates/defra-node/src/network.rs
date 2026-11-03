@@ -24,6 +24,8 @@ pub(crate) const NETWORK_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 const OWNED_RUNTIME_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1);
 
 pub(crate) struct NodeEdge {
+    #[cfg(feature = "otel")]
+    runtime: Edge,
     scope: Scope,
     owned: SegQueue<EdgeRuntime>,
 }
@@ -50,6 +52,8 @@ impl NodeEdge {
         };
         Ok(Some(Self {
             scope: edge.scope(),
+            #[cfg(feature = "otel")]
+            runtime: edge,
             owned,
         }))
     }
@@ -57,6 +61,13 @@ impl NodeEdge {
     /// The handle the node's network work is submitted through.
     pub(crate) fn edge(&self) -> &Edge {
         self.scope.edge()
+    }
+
+    /// The runtime the node's scope is part of, which still accepts work
+    /// after [`drain`](Self::drain) and until [`stop_owned`](Self::stop_owned).
+    #[cfg(feature = "otel")]
+    pub(crate) fn runtime(&self) -> &Edge {
+        &self.runtime
     }
 
     /// Stops accepting the node's network work, which stops its services,
@@ -106,18 +117,21 @@ mod tests {
         assert!(!given.is_closed());
     }
 
-    #[tokio::test]
-    async fn a_node_given_no_runtime_starts_one_and_stops_it() {
-        let network = NodeEdge::start(None, true)
-            .unwrap()
-            .expect("network work needs a runtime");
-        let edge = network.edge().clone();
+    #[test]
+    fn a_node_given_no_runtime_starts_one_and_stops_it() {
+        workers::block_on(async {
+            let network = NodeEdge::start(None, true)
+                .unwrap()
+                .expect("network work needs a runtime");
+            let edge = network.edge().clone();
 
-        assert_eq!(edge.spawn(async { 1 }).await, Ok(1));
-        network.drain().await;
-        network.stop_owned().await;
+            assert_eq!(edge.spawn(async { 1 }).await, Ok(1));
+            network.drain().await;
+            network.stop_owned().await;
 
-        assert!(edge.is_closed());
-        assert!(network.owned.is_empty());
+            assert!(edge.is_closed());
+            assert!(network.owned.is_empty());
+        })
+        .unwrap()
     }
 }

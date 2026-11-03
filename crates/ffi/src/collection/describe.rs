@@ -1,6 +1,6 @@
 use acp::nac::NodePermission;
 
-use super::select::{collections, Source};
+use super::select::collections;
 use crate::request::Request;
 use crate::target::CollectionArgs;
 use crate::types::{CollectionOptions, DefraResult};
@@ -21,10 +21,10 @@ pub unsafe extern "C" fn defra_collection_describe(
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::CollectionGet));
         let selector = CollectionArgs::read(&opts).selector();
-        let source = try_ffi!(Source::of(&request));
+        let runner = try_ffi!(request.runner());
         let context = request.context();
-        ffi_async!(target &request.target, {
-            let selected = collections(&source, &context, &selector).await?;
+        ffi_async!(caller, {
+            let selected = collections(&runner, &context, &selector).await?;
             serde_json::to_string(&selected).map_err(|e| format!("failed to serialize result: {}", e))
         })
     }

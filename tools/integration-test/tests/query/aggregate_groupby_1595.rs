@@ -1,4 +1,4 @@
-use crate::one_to_many_common::{add_author, add_book, add_schema};
+use crate::one_to_many_common::{add_author, add_book, add_collection};
 use integration_test::{DefraClient, TestCluster};
 
 /// Mirrors the Go `query/simple` fixture
@@ -107,7 +107,7 @@ async fn group_by_and_filter_test(cluster: TestCluster) {
 /// Three books sharing one name -> 1 group.
 async fn relation_all_same_name_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);
     add_book(&node, "Painted House", 4.8, &john);
@@ -133,7 +133,7 @@ async fn relation_all_same_name_test(cluster: TestCluster) {
 /// John has three books under two distinct names, Cornelia has one.
 async fn relation_counting_distinct_names_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let john = add_author(&node, "John Grisham", 65, true);
     let cornelia = add_author(&node, "Cornelia Funke", 62, false);
     add_book(&node, "Painted House", 4.9, &john);
@@ -175,7 +175,7 @@ async fn on_empty_collection_test(cluster: TestCluster) {
 /// An author with no books -> 0 groups.
 async fn relation_counting_zero_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     add_author(&node, "John Grisham", 65, true);
 
     let result = node
@@ -201,7 +201,7 @@ async fn relation_counting_zero_test(cluster: TestCluster) {
 /// which keys as a single null group). A grouped target must not share the
 /// plain target's join, so both counts must hold whichever is written first.
 fn setup_mixed_names(node: &DefraClient) {
-    add_schema(node);
+    add_collection(node);
     let john = add_author(node, "John Grisham", 65, true);
     add_book(node, "Painted House", 4.9, &john);
     add_book(node, "Painted House", 4.8, &john);
@@ -265,7 +265,7 @@ async fn grouped_count_grouped_first_test(cluster: TestCluster) {
 /// `author` keys on `_authorID`: two authors -> two groups.
 async fn top_level_group_by_relation_field_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let john = add_author(&node, "John Grisham", 65, true);
     let cornelia = add_author(&node, "Cornelia Funke", 62, false);
     add_book(&node, "Painted House", 4.9, &john);
@@ -283,7 +283,7 @@ async fn top_level_group_by_relation_field_test(cluster: TestCluster) {
 /// Go rejects grouping by an array relation (`NewErrInvalidFieldToGroupBy`).
 async fn top_level_group_by_array_relation_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     add_author(&node, "John Grisham", 65, true);
 
     let err = node
@@ -322,7 +322,7 @@ async fn relation_group_by_doc_id_test(cluster: TestCluster) {
 /// (regression guard for the #1597 `_docID` leak).
 async fn relation_group_by_doc_id_no_leak_test(cluster: TestCluster) {
     let node = cluster.client(0);
-    add_schema(&node);
+    add_collection(&node);
     let john = add_author(&node, "John Grisham", 65, true);
     add_book(&node, "Painted House", 4.9, &john);
     add_book(&node, "A Time for Mercy", 4.5, &john);

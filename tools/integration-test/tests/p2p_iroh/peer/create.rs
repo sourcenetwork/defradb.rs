@@ -358,7 +358,7 @@ async fn head_hint_fanout_above_car_worker_bound_quiesces() {
         let address = integration_test::extract_p2p_addr(&cluster, receiver);
         source
             .p2p_connect(&[&address])
-            .unwrap_or_else(|_| panic!("connect source to node{receiver}"));
+            .unwrap_or_else(|error| panic!("connect source to node{receiver}: {error:#}"));
         source
             .p2p_replicator_set(&["Users"], &address)
             .unwrap_or_else(|_| panic!("set node{receiver} as replicator"));

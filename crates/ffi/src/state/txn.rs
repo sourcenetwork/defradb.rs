@@ -13,8 +13,8 @@ pub type TxnHandle = usize;
 pub struct TxnState {
     /// The node the transaction runs on.
     pub node: NodeHandle,
-    /// The query runner's ID for the transaction.
-    pub id: String,
+    /// The transaction's ID.
+    pub id: defra_core::TxnId,
 }
 
 /// Global registry of open transactions.

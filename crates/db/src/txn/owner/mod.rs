@@ -7,7 +7,7 @@
 //! in and one out, and no shared lookup. On the worker the request finds the
 //! actor's mailbox in the worker's own table (`table`) and queues there: the
 //! mailbox order is the transaction's order, so requests run one at a time,
-//! a commit or rollback runs after every request queued before it, and the
+//! a commit or discard runs after every request queued before it, and the
 //! idle sweep's ask (`expire_idle`) ends a transaction only when it is the
 //! next message and nothing admitted has run for the idle limit, so a request
 //! that arrived first keeps its transaction.
@@ -20,6 +20,7 @@
 
 mod actor;
 mod id;
+mod idle;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -177,8 +178,9 @@ where
         Ok(make().await)
     }
 
-    /// Runs the work `make` builds on the least loaded worker, outside every
-    /// transaction (a standalone read), and gives back its output.
+    /// Runs the work `make` builds outside every transaction (a standalone
+    /// read) and gives back its output: in place when the caller is already
+    /// a worker, otherwise on the least loaded worker.
     pub(crate) async fn run_anywhere<F, Fut>(
         &self,
         name: &'static str,
@@ -189,6 +191,9 @@ where
         Fut: Future + 'static,
         Fut::Output: MaybeSend + 'static,
     {
+        if workers::on_worker() {
+            return Ok(make().await);
+        }
         self.place(Target::LeastLoaded, name, make).await
     }
 

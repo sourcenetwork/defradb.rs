@@ -1,10 +1,13 @@
 //! P2P calls for an app on a phone, which Go's cbindings have no
 //! counterpart for.
 
+use std::ffi::c_char;
+
 use acp::nac::NodePermission;
 
 use super::{admit, drive, json, ok, run};
 use crate::ffi_entry;
+use crate::target::go_string;
 use crate::types::DefraResult;
 
 /// Answers with the best address to share with another peer so it can dial
@@ -32,6 +35,30 @@ pub extern "C" fn defra_mobile_sync_status(node_ptr: usize, identity_ptr: usize)
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pPeerInfo, None, |ops| async move {
             ops.sync_status().await
+        }))
+    }
+}
+
+/// Answers with everything the node knows about the peer `peer_id`, a raw
+/// transport peer ID, as JSON: whether it is connected, what was pushed to
+/// it, and its retry state.
+///
+/// # Safety
+///
+/// `peer_id` must be null or a valid null-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn defra_mobile_peer_details(
+    node_ptr: usize,
+    peer_id: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
+    ffi_entry! {
+        let peer_id = match defra_p2p_adapter::TransportPeerId::new(go_string(peer_id)) {
+            Ok(peer_id) => peer_id,
+            Err(error) => return DefraResult::error(error.to_string()),
+        };
+        json(run(node_ptr, identity_ptr, NodePermission::P2pPeerInfo, None, |ops| async move {
+            ops.peer_details(&peer_id).await
         }))
     }
 }

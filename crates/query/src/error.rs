@@ -8,15 +8,15 @@ pub type Result<T> = std::result::Result<T, QueryError>;
 /// Error type for transaction operations.
 ///
 /// This provides structured errors for transaction lifecycle operations
-/// (`begin_txn`, `commit_txn`, `rollback_txn`) enabling callers to handle
+/// (`begin_txn`, `commit_txn`, `discard_txn`) enabling callers to handle
 /// different error conditions appropriately.
 #[derive(Debug, Error)]
 pub enum TransactionError {
     /// The transaction was not found (may have been committed/rolled back).
-    #[error("transaction not found: {0}")]
+    #[error("transaction not found")]
     NotFound(String),
 
-    /// The transaction was already finalized (double commit/rollback).
+    /// The transaction was already finalized (double commit/discard).
     #[error("transaction already finalized: {0}")]
     AlreadyFinalized(String),
 
@@ -28,9 +28,18 @@ pub enum TransactionError {
     #[error("transaction error: {0}")]
     Execution(String),
 
+    /// Typed storage failure; it does not authorize resubmitting a transaction.
+    #[error("transaction storage error: {0}")]
+    Storage(#[from] storage::corekv::Error),
+
     /// The commit lost a write conflict; re-running the transaction may succeed.
     #[error("transaction conflict: {0}")]
     Conflict(String),
+
+    /// An operation inside the transaction was refused; the message is the
+    /// reason, in Go's words, with no prefix.
+    #[error("{0}")]
+    Operation(String),
 
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
@@ -58,6 +67,11 @@ impl TransactionError {
         Self::Execution(msg.into())
     }
 
+    /// Create an operation-refused error.
+    pub fn operation(msg: impl Into<String>) -> Self {
+        Self::Operation(msg.into())
+    }
+
     /// Create a write-conflict error.
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::Conflict(msg.into())
@@ -79,8 +93,11 @@ impl TransactionError {
     /// - `AlreadyFinalized`: Not retryable - the transaction was already committed
     ///   or rolled back.
     /// - `NotSupported`: Not retryable - transactions aren't available in this config.
+    /// - `Operation`: Not retryable - the operation itself was refused.
     /// - `Execution`: Retryable - transient storage errors that may succeed on retry
     ///   with a new transaction.
+    /// - `Storage`: Uses the storage owner's classification; a full disk or
+    ///   uncertain WAL does not authorize replay.
     /// - `Conflict`: Retryable - another commit won a write conflict.
     /// - `LockPoisoned`: Not retryable - indicates a panic occurred and the system
     ///   may be in a corrupted state.
@@ -89,7 +106,9 @@ impl TransactionError {
             Self::NotFound(_) => false,
             Self::AlreadyFinalized(_) => false,
             Self::NotSupported(_) => false,
+            Self::Operation(_) => false,
             Self::Execution(_) => true,
+            Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
             Self::LockPoisoned(_) => false,
         }
@@ -114,6 +133,10 @@ pub enum QueryError {
     /// Unknown field referenced in query
     #[error("{0}")]
     UnknownField(String),
+
+    /// A scalar field was given a sub-selection (graphql-go's ScalarLeafs rule)
+    #[error("Field \"{field}\" of type \"{type_name}\" must not have a sub selection.")]
+    SubSelectionOnLeaf { field: String, type_name: String },
 
     /// Collection not found
     #[error("collection not found: {0}")]
@@ -236,6 +259,14 @@ impl QueryError {
     /// Create an unknown field error
     pub fn unknown_field(name: impl Into<String>) -> Self {
         Self::UnknownField(name.into())
+    }
+
+    /// Create a sub-selection-on-scalar error
+    pub fn sub_selection_on_leaf(field: impl Into<String>, type_name: impl Into<String>) -> Self {
+        Self::SubSelectionOnLeaf {
+            field: field.into(),
+            type_name: type_name.into(),
+        }
     }
 
     /// Create a collection not found error
@@ -435,7 +466,7 @@ mod tests {
     #[test]
     fn test_transaction_error_display() {
         let err = TransactionError::not_found("txn-123");
-        assert_eq!(err.to_string(), "transaction not found: txn-123");
+        assert_eq!(err.to_string(), "transaction not found");
 
         let err = TransactionError::already_finalized("txn-456");
         assert_eq!(err.to_string(), "transaction already finalized: txn-456");

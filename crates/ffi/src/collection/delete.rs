@@ -35,14 +35,12 @@ pub unsafe extern "C" fn defra_collection_delete(
                         .map_err(|e| e.to_string())
                 })
             }
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
-                let registry = try_ffi!(request.txn_registry());
+            Some(_) => {
+                let runner = try_ffi!(request.runner());
                 ffi_async_ok!(caller, {
-                    registry
-                        .delete_collections_in_txn_as(&context, &txn_id, names, active_only)
+                    runner
+                        .delete_collections_as(&context, names, active_only)
                         .await
-                        .map(drop)
                         .map_err(|e| e.to_string())
                 })
             }

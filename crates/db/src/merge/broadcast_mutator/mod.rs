@@ -432,6 +432,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
     for BroadcastMutator<S, B, T>
 {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn with_prepared_inputs(
         &self,
         inputs: query::prepared::PreparedInputMemo,
@@ -610,6 +614,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             } else {
                 // Fallback: build blocks if commit data not available
                 match build_blocks_from_document(
+                    collection.crdts(),
                     &result.document,
                     collection.schema(),
                     self.sync.blockstore(),
@@ -806,6 +811,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 (cid, block.clone(), result.doc_id.to_string())
             } else {
                 match build_blocks_from_document(
+                    collection.crdts(),
                     &result.document,
                     collection.schema(),
                     self.sync.blockstore(),
@@ -1241,5 +1247,13 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         doc_id: &DocID,
     ) -> query::error::Result<Option<Document>> {
         self.inner.get_for_update(collection_name, doc_id).await
+    }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        self.inner.is_deleted(collection_name, doc_id).await
     }
 }

@@ -307,13 +307,13 @@ pub fn scalar_to_gql_type(scalar: &ScalarKind) -> GqlType {
     let gql_type = match scalar.base_kind() {
         ScalarKind::None => GqlType::named("Void"),
         ScalarKind::DocID => GqlType::id(),
-        ScalarKind::Bool => GqlType::boolean(),
-        ScalarKind::Int => GqlType::int(),
-        ScalarKind::Float64 | ScalarKind::Float32 => GqlType::float(),
-        ScalarKind::DateTime => GqlType::datetime(),
-        ScalarKind::String => GqlType::string(),
-        ScalarKind::Blob => GqlType::blob(),
-        ScalarKind::Json => GqlType::json(),
+        ScalarKind::NillableBool => GqlType::boolean(),
+        ScalarKind::NillableInt => GqlType::int(),
+        ScalarKind::NillableFloat64 | ScalarKind::NillableFloat32 => GqlType::float(),
+        ScalarKind::NillableDateTime => GqlType::datetime(),
+        ScalarKind::NillableString => GqlType::string(),
+        ScalarKind::NillableBlob => GqlType::blob(),
+        ScalarKind::NillableJson => GqlType::json(),
         _ => GqlType::string(),
     };
     if scalar.is_nillable() {
@@ -383,11 +383,11 @@ pub fn generate_schema(
 
 fn scalar_filter_type_name(kind: &FieldKind) -> &'static str {
     match kind.as_scalar().map(ScalarKind::base_kind) {
-        Some(ScalarKind::Bool) => "Boolean",
-        Some(ScalarKind::Int) => "Int",
-        Some(ScalarKind::Float64 | ScalarKind::Float32) => "Float",
-        Some(ScalarKind::String) => "String",
-        Some(ScalarKind::DateTime) => "DateTime",
+        Some(ScalarKind::NillableBool) => "Boolean",
+        Some(ScalarKind::NillableInt) => "Int",
+        Some(ScalarKind::NillableFloat64 | ScalarKind::NillableFloat32) => "Float",
+        Some(ScalarKind::NillableString) => "String",
+        Some(ScalarKind::NillableDateTime) => "DateTime",
         Some(ScalarKind::DocID) => "ID",
         _ => "Any",
     }
@@ -483,11 +483,21 @@ mod tests {
             "v1",
             "coll-1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "age", FieldKind::int()),
-                FieldDescription::new("4", "active", FieldKind::bool()),
-                FieldDescription::new("5", "tags", FieldKind::string_array()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+                FieldDescription::new("4", "active", FieldKind::bool(), schema::CType::LwwRegister),
+                FieldDescription::new(
+                    "5",
+                    "tags",
+                    FieldKind::string_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         )
     }
@@ -505,10 +515,19 @@ mod tests {
 
     #[test]
     fn test_scalar_to_gql_type() {
-        assert_eq!(scalar_to_gql_type(&ScalarKind::String), GqlType::string());
-        assert_eq!(scalar_to_gql_type(&ScalarKind::Int), GqlType::int());
-        assert_eq!(scalar_to_gql_type(&ScalarKind::Bool), GqlType::boolean());
-        assert_eq!(scalar_to_gql_type(&ScalarKind::Float64), GqlType::float());
+        assert_eq!(
+            scalar_to_gql_type(&ScalarKind::NillableString),
+            GqlType::string()
+        );
+        assert_eq!(scalar_to_gql_type(&ScalarKind::NillableInt), GqlType::int());
+        assert_eq!(
+            scalar_to_gql_type(&ScalarKind::NillableBool),
+            GqlType::boolean()
+        );
+        assert_eq!(
+            scalar_to_gql_type(&ScalarKind::NillableFloat64),
+            GqlType::float()
+        );
         assert_eq!(scalar_to_gql_type(&ScalarKind::DocID), GqlType::id());
     }
 
@@ -545,9 +564,15 @@ mod tests {
                 FieldDescription::new(
                     "1",
                     "name",
-                    FieldKind::Scalar(ScalarKind::NonNillableString),
+                    FieldKind::Scalar(ScalarKind::String),
+                    schema::CType::LwwRegister,
                 ),
-                FieldDescription::new("2", "tags", FieldKind::string_array()),
+                FieldDescription::new(
+                    "2",
+                    "tags",
+                    FieldKind::string_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         );
         let schema = generate_schema(&collection, &[&collection]).unwrap();
@@ -757,7 +782,12 @@ mod tests {
             "User",
             "v1",
             "coll-users",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
         );
 
         let collections: Vec<&CollectionVersion> = vec![&user_collection];

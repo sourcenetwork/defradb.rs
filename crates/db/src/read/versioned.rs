@@ -6,9 +6,12 @@
 //! 3. Replaying CRDT deltas forward to reconstruct document state
 
 use cid::Cid;
-use defra_core::block::{Block, CrdtDelta, Encryption};
-use document::{Document, NormalValue};
+use crdt::stored::StoredField;
+use crdt::{CausalBlock, TaggedBlock};
+use defra_core::block::{Block, CrdtDelta, Encryption, FieldDelta};
+use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use schema::{CType, CollectionVersion, FieldDescription, FieldKind, ScalarKind};
 use std::collections::VecDeque;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -75,9 +78,10 @@ impl<S: Store> VersionedFetcher<S> {
         &self,
         cid_str: &str,
         expected_doc_id: Option<&str>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Document> {
         let docs = self
-            .get_documents_at_cid(cid_str, expected_doc_id, None)
+            .get_documents_at_cid(cid_str, expected_doc_id, None, collection)
             .await?;
         docs.into_iter().next().ok_or_else(|| {
             Error::Serialization("cid either does not exist or belong to document".to_string())
@@ -97,6 +101,7 @@ impl<S: Store> VersionedFetcher<S> {
         cid_str: &str,
         expected_doc_id: Option<&str>,
         collection_short_id: Option<u32>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Vec<Document>> {
         let txn = self.txn.as_deref().ok_or(Error::TxnNotActive)?;
 
@@ -119,6 +124,7 @@ impl<S: Store> VersionedFetcher<S> {
                     &target_block,
                     collection_short_id,
                     expected,
+                    collection,
                 )
                 .await;
         }
@@ -166,10 +172,16 @@ impl<S: Store> VersionedFetcher<S> {
         let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
         sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-        members
-            .into_iter()
-            .map(|doc_id| self.replay_deltas(&sorted_blocks, &doc_id))
-            .collect()
+        let mut documents = Vec::with_capacity(members.len());
+        for doc_id in members {
+            documents.push(replay_deltas(
+                txn.crdts(),
+                &collection,
+                &sorted_blocks,
+                &doc_id,
+            )?);
+        }
+        Ok(documents)
     }
 
     /// Whether `doc_id` belongs to `collection_short_id` (`None` skips the gate).
@@ -202,6 +214,7 @@ impl<S: Store> VersionedFetcher<S> {
         start_block: &Block,
         collection_short_id: Option<u32>,
         expected_doc_id: Option<String>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Vec<Document>> {
         // Walk the collection DAG backwards to find all document composite CIDs.
         // Each collection block links to one document composite block.
@@ -287,7 +300,7 @@ impl<S: Store> VersionedFetcher<S> {
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
             sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-            let document = self.replay_deltas(&sorted_blocks, &doc_id)?;
+            let document = replay_deltas(txn.crdts(), &collection, &sorted_blocks, &doc_id)?;
             documents.push(document);
         }
 
@@ -445,7 +458,7 @@ impl<S: Store> VersionedFetcher<S> {
     ) -> Result<()> {
         let mut cids: Vec<Cid> = blocks
             .values()
-            .filter(|block| matches!(block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_)))
+            .filter(|block| block.delta.field().is_some())
             .filter_map(|block| block.encryption)
             .collect();
         if cids.is_empty() {
@@ -459,10 +472,8 @@ impl<S: Store> VersionedFetcher<S> {
             let Some(encryption_cid) = block.encryption else {
                 continue;
             };
-            let payload = match &mut block.delta {
-                CrdtDelta::Lww(payload) => &mut payload.data,
-                CrdtDelta::Counter(payload) => &mut payload.data,
-                _ => continue,
+            let Some(payload) = block.delta.field_data_mut() else {
+                continue;
             };
             let plaintext = keys
                 .get(&encryption_cid)
@@ -626,162 +637,254 @@ impl<S: Store> VersionedFetcher<S> {
             .map(kms::RequestContext::with_user)
             .unwrap_or_else(kms::RequestContext::anonymous)
     }
+}
 
-    /// Replay CRDT deltas to reconstruct document state.
-    ///
-    /// Blocks should be sorted by priority (ascending) before calling this method.
-    fn replay_deltas(&self, blocks: &[(Cid, Block)], doc_id: &str) -> Result<Document> {
-        let mut field_values: RapidHashMap<String, (u64, NormalValue)> = RapidHashMap::new();
-        let mut is_deleted = false;
-        let mut max_composite_priority: u64 = 0;
+/// Replay CRDT deltas to reconstruct document state.
+///
+/// Blocks should be sorted by priority (ascending) before calling this method.
+fn replay_deltas(
+    crdts: &crdt::Crdts,
+    collection: &Arc<CollectionVersion>,
+    blocks: &[(Cid, Block)],
+    doc_id: &str,
+) -> Result<Document> {
+    let mut fields: RapidHashMap<String, StoredField> = RapidHashMap::new();
+    let mut histories: RapidHashMap<String, Vec<CausalBlock>> = RapidHashMap::new();
+    let mut tagged: RapidHashMap<String, Vec<TaggedBlock>> = RapidHashMap::new();
+    let mut is_deleted = false;
+    let mut max_composite_priority: u64 = 0;
 
-        // An Immutable block replays as the LWW field deltas it replaces.
-        let deltas = blocks.iter().flat_map(|(_, block)| match &block.delta {
+    // An Immutable block replays as the LWW field deltas it replaces.
+    let deltas = blocks.iter().flat_map(|(cid, block)| {
+        let deltas = match &block.delta {
             CrdtDelta::Immutable(payload) => payload
                 .lww_deltas()
                 .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
                 .collect(),
             other => vec![std::borrow::Cow::Borrowed(other)],
-        });
-        for delta in deltas {
-            match delta.as_ref() {
-                CrdtDelta::Lww(payload) => {
-                    let field_name = &payload.field_name;
-                    let priority = payload.priority;
-
-                    // LWW merge: higher priority wins, on tie, lexicographic comparison
-                    let should_apply = match field_values.get(field_name) {
-                        None => true,
-                        Some((current_priority, current_value)) => {
-                            if priority > *current_priority {
-                                true
-                            } else if priority == *current_priority {
-                                // Tie-break: lexicographic comparison of encoded data
-                                let current_encoded = Self::encode_value(current_value);
-                                payload.data > current_encoded
-                            } else {
-                                false
-                            }
-                        }
-                    };
-
-                    if should_apply {
-                        if payload.data.is_empty() {
-                            // Tombstone - remove field
-                            field_values.remove(field_name);
-                        } else {
-                            // Decode and store value
-                            match ciborium::from_reader::<NormalValue, _>(&payload.data[..]) {
-                                Ok(value) => {
-                                    field_values.insert(field_name.clone(), (priority, value));
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        field_name = %field_name,
-                                        error = %e,
-                                        "Failed to decode LWW value during replay"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                CrdtDelta::Counter(payload) => {
-                    let field_name = &payload.field_name;
-
-                    // Counter: accumulate increments
-                    if !payload.data.is_empty() {
-                        match ciborium::from_reader::<NormalValue, _>(&payload.data[..]) {
-                            Ok(increment_value) => match &increment_value {
-                                NormalValue::Int(increment) => {
-                                    let current: i64 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_int())
-                                        .unwrap_or(0);
-                                    let new_value = current.saturating_add(*increment);
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Int(new_value)),
-                                    );
-                                }
-                                NormalValue::Float64(increment) => {
-                                    let current: f64 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_float64())
-                                        .unwrap_or(0.0);
-                                    let new_value = current + increment;
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Float64(new_value)),
-                                    );
-                                }
-                                NormalValue::Float32(increment) => {
-                                    let current: f32 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_float32())
-                                        .unwrap_or(0.0);
-                                    let new_value = current + increment;
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Float32(new_value)),
-                                    );
-                                }
-                                other => {
-                                    tracing::warn!(
-                                        field_name = %field_name,
-                                        value_type = ?other,
-                                        "Unexpected Counter value type during replay"
-                                    );
-                                }
-                            },
-                            Err(e) => {
-                                tracing::warn!(
-                                    field_name = %field_name,
-                                    error = %e,
-                                    "Failed to decode Counter value during replay"
-                                );
-                            }
-                        }
-                    }
-                }
-                CrdtDelta::Composite(payload) if payload.priority >= max_composite_priority => {
-                    // Track document status from composite blocks.
-                    // The highest-priority composite determines the final status.
-                    max_composite_priority = payload.priority;
-                    is_deleted = payload.status == 2;
-                }
-                _ => {
-                    // Collection and schema definition deltas are not relevant for document reconstruction
-                }
+        };
+        deltas.into_iter().map(move |delta| (cid, block, delta))
+    });
+    for (cid, block, delta) in deltas {
+        if let Some(field_delta) = delta.field() {
+            if !causal_history(
+                crdts,
+                collection,
+                &mut histories,
+                cid,
+                block,
+                &delta,
+                &field_delta,
+            )? && !tagged_history(
+                crdts,
+                collection,
+                &mut tagged,
+                cid,
+                block,
+                &delta,
+                &field_delta,
+            ) {
+                replay_field(crdts, collection, &mut fields, &delta, &field_delta);
+            }
+            continue;
+        }
+        match delta.as_ref() {
+            CrdtDelta::Composite(payload) if payload.priority >= max_composite_priority => {
+                // Track document status from composite blocks.
+                // The highest-priority composite determines the final status.
+                max_composite_priority = payload.priority;
+                is_deleted = payload.status == 2;
+            }
+            _ => {
+                // Collection and schema definition deltas are not relevant for document reconstruction
             }
         }
-
-        // Build document from collected field values
-        let mut document = Document::new();
-        for (field_name, (_priority, value)) in field_values {
-            document.set(&field_name, value);
-        }
-
-        // Set document ID
-        if let Ok(doc_id_obj) = document::DocID::from_string(doc_id) {
-            document.set_id(doc_id_obj);
-        }
-
-        // Set deleted status from composite block
-        if is_deleted {
-            document.set_deleted(true);
-        }
-
-        Ok(document)
     }
 
-    /// Encode a NormalValue to bytes for comparison.
-    fn encode_value(value: &NormalValue) -> Vec<u8> {
-        let mut buf = Vec::new();
-        if ciborium::into_writer(value, &mut buf).is_ok() {
-            buf
-        } else {
-            Vec::new()
+    // A causal field is the replay of its whole history.
+    for (name, history) in histories {
+        let Some(field) = collection.field_by_name(&name) else {
+            continue;
+        };
+        let Some(crdt) = crdts.field(field.crdt_type) else {
+            continue;
+        };
+        let Some(causal) = crdt.causal() else {
+            continue;
+        };
+        let state = causal
+            .replay(field, &history)
+            .and_then(|value| crdt.state(field, 0, &value))
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        fields.insert(name, state);
+    }
+
+    // A tagged field is the replay of its whole history.
+    for (name, history) in tagged {
+        let Some((field, tagged)) = collection
+            .field_by_name(&name)
+            .and_then(|field| Some((field, crdts.field(field.crdt_type)?.tagged()?)))
+        else {
+            continue;
+        };
+        let state = tagged
+            .replay(field, &history)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        if let Some(state) = state {
+            fields.insert(name, state);
+        }
+    }
+
+    // Build document from collected field values
+    let mut document = Document::new(collection.clone());
+    for (field_name, state) in fields {
+        // A deleted value (a tombstone) leaves the field unset.
+        if state.value.is_empty() {
+            continue;
+        }
+        match state.materialize(crdts) {
+            Some(value) => document.set_unchecked(field_name, value),
+            None => tracing::warn!(
+                field_name = %field_name,
+                "Undecodable field state during replay"
+            ),
+        }
+    }
+
+    // Set document ID
+    if let Ok(doc_id_obj) = document::DocID::from_string(doc_id) {
+        document.set_id(doc_id_obj);
+    }
+
+    // Set deleted status from composite block
+    if is_deleted {
+        document.set_deleted(true);
+    }
+
+    Ok(document)
+}
+
+/// Add a field block to its field's history when the field is causal, and
+/// report whether it was. A block the field's type cannot read fails the
+/// read: every later block counts in its version, so the history cannot
+/// replay without it.
+fn causal_history(
+    crdts: &crdt::Crdts,
+    collection: &CollectionVersion,
+    histories: &mut RapidHashMap<String, Vec<CausalBlock>>,
+    cid: &Cid,
+    block: &Block,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) -> Result<bool> {
+    let name = field_delta.field_name;
+    let Some(field) = collection.field_by_name(name).filter(|field| {
+        crdts
+            .field(field.crdt_type)
+            .is_some_and(|crdt| crdt.causal().is_some())
+    }) else {
+        return Ok(false);
+    };
+    let op = crdts
+        .delta(delta, field.crdt_type)
+        .map_err(|error| error.to_string())
+        .and_then(|writer| {
+            crdt::history_op(writer, field, field_delta.data).map_err(|error| error.to_string())
+        })
+        .map_err(|error| {
+            Error::Serialization(format!(
+                "field '{name}' block {cid} cannot be read: {error}"
+            ))
+        })?;
+    histories
+        .entry(name.to_owned())
+        .or_default()
+        .push(CausalBlock {
+            id: cid.to_bytes(),
+            parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+            op,
+        });
+    Ok(true)
+}
+
+/// Add a field block to its field's history when the field is tagged, and
+/// report whether it was.
+fn tagged_history(
+    crdts: &crdt::Crdts,
+    collection: &CollectionVersion,
+    histories: &mut RapidHashMap<String, Vec<TaggedBlock>>,
+    cid: &Cid,
+    block: &Block,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) -> bool {
+    let name = field_delta.field_name;
+    let Some(field) = collection.field_by_name(name).filter(|field| {
+        crdts
+            .field(field.crdt_type)
+            .is_some_and(|crdt| crdt.tagged().is_some())
+    }) else {
+        return false;
+    };
+    match crdts.delta(delta, field.crdt_type) {
+        Ok(_) => histories
+            .entry(name.to_owned())
+            .or_default()
+            .push(TaggedBlock {
+                cid: cid.to_bytes(),
+                parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+                priority: field_delta.priority,
+                data: field_delta.data.to_vec(),
+            }),
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Refused field block during replay")
+        }
+    }
+    true
+}
+
+/// Merge one field block into the replayed states, through the CRDT that
+/// wrote it, exactly as a live merge does.
+fn replay_field(
+    crdts: &crdt::Crdts,
+    collection: &CollectionVersion,
+    fields: &mut RapidHashMap<String, StoredField>,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) {
+    let name = field_delta.field_name;
+    let declared = collection.field_by_name(name);
+    let crdt = match crdts.delta(delta, declared.map_or(CType::None, |field| field.crdt_type)) {
+        Ok(crdt) => crdt,
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Refused field block during replay");
+            return;
+        }
+    };
+    let undeclared;
+    let field = match declared {
+        Some(field) => field,
+        None => {
+            undeclared =
+                FieldDescription::new("", name, FieldKind::Scalar(ScalarKind::None), crdt.ctype());
+            &undeclared
+        }
+    };
+    let incoming = match crdt.block_state(field, field_delta.priority, field_delta.data) {
+        Ok(incoming) => incoming,
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Undecodable field block during replay");
+            return;
+        }
+    };
+    match fields.get_mut(name) {
+        Some(state) => {
+            if crdt.merge(state, incoming).is_none() {
+                tracing::warn!(field_name = %name, "Unmergeable field block during replay");
+            }
+        }
+        None => {
+            fields.insert(name.to_owned(), incoming);
         }
     }
 }
@@ -789,6 +892,10 @@ impl<S: Store> VersionedFetcher<S> {
 #[cfg(test)]
 #[path = "versioned_retry_tests.rs"]
 mod retry_tests;
+
+#[cfg(test)]
+#[path = "versioned_replay_tests.rs"]
+mod replay_tests;
 
 /// AES-GCM decryption of a historical field delta.
 fn decrypt_with_key(data: &[u8], key: &[u8; 32]) -> std::result::Result<Vec<u8>, String> {

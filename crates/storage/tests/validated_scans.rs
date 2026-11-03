@@ -31,11 +31,14 @@ async fn phantom_race(store: impl Store) {
     }
 }
 
-#[tokio::test]
-async fn exhausted_validated_ranges_detect_new_members() {
-    phantom_race(RegolithStore::in_memory().unwrap()).await;
-    phantom_race(storage::stores::datastore::Datastore::new(
-        std::sync::Arc::new(RegolithStore::in_memory().unwrap()),
-    ))
-    .await;
+#[test]
+fn exhausted_validated_ranges_detect_new_members() {
+    workers::block_on(async {
+        phantom_race(RegolithStore::in_memory().unwrap()).await;
+        phantom_race(storage::stores::datastore::Datastore::new(
+            std::sync::Arc::new(RegolithStore::in_memory().unwrap()),
+        ))
+        .await;
+    })
+    .unwrap()
 }

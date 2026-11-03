@@ -114,13 +114,12 @@ sha2 = { workspace = true, features = ["asm"] }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 # The test network runtime the P2P push tests wait on.
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "test-util"] }
-axum.workspace = true
 proptest.workspace = true
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"
 ed25519-dalek.workspace = true
+mantra-macros = "0.9"
 
 [lints]
 workspace = true

@@ -68,7 +68,9 @@ impl QueryExecutor for TestExecution {
         match self {
             Self::Slow { started, completed } => {
                 started.store(true, Ordering::SeqCst);
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                edge::testing::edge()
+                    .sleep(std::time::Duration::from_millis(50))
+                    .await;
                 completed
                     .pop()
                     .expect("completion sender missing")
@@ -77,10 +79,12 @@ impl QueryExecutor for TestExecution {
             }
             Self::Spawning { completed } => {
                 let completed = completed.pop().expect("completion sender missing");
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let edge = edge::testing::edge();
+                let timer = edge.clone();
+                drop(edge.spawn(async move {
+                    timer.sleep(std::time::Duration::from_millis(50)).await;
                     completed.send(()).expect("completion receiver dropped");
-                });
+                }));
             }
             Self::ObserveContext {
                 expected_did,
@@ -101,7 +105,7 @@ impl QueryExecutor for TestExecution {
                             "signed query context did not survive an await boundary",
                         );
                     }
-                    tokio::task::yield_now().await;
+                    workers::yield_now().await;
                 }
             }
         }
@@ -130,7 +134,7 @@ impl QueryExecutor for TestExecution {
         Err(TransactionError::not_supported("test executor"))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

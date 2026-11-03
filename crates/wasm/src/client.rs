@@ -12,12 +12,19 @@ use db::{
 };
 use events::Bus;
 use query::runner::QueryRunner;
+use query::QueryExecutor;
+use query::{
+    parse_request_with_limits, ParsedOperation, QueryError, QueryLimits, TransactionError,
+};
+use rapidhash::RapidHashMap;
 use storage::RegolithStore;
 
 type WasmRunner =
     QueryRunner<LensedAutoCommitFetcher<RegolithStore>, DbTransactionRegistry<RegolithStore>>;
 
-use crate::bindings::{from_js, to_js, ClientConfig, CollectionInfo, FieldInfo};
+use crate::bindings::{
+    config_from_js, to_js, ClientConfig, CollectionInfo, ExecRequestOptions, FieldInfo,
+};
 use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
 use crate::identity::ClientIdentity;
@@ -37,16 +44,16 @@ use crate::p2p::P2PRuntime;
 /// import init, { DefraClient } from 'defra-wasm';
 ///
 /// await init();
-/// const client = await DefraClient.create({ storage: 'memory' });
+/// const client = await DefraClient.create({ dbName: 'my-db' });
 ///
-/// await client.add_schema(`
+/// await client.addCollection(`
 ///   type User {
 ///     name: String
 ///     email: String
 ///   }
 /// `);
 ///
-/// const collections = client.get_collections();
+/// const collections = client.getCollections();
 /// console.log(collections);
 ///
 /// await client.close();
@@ -69,16 +76,16 @@ impl DefraClient {
     /// # Configuration
     ///
     /// Pass a JavaScript object with:
-    /// - `db_name`: the OPFS directory the store lives in (optional)
-    /// - `private_key`, `key_type`: a key to author with (optional)
-    /// - `require_sync_handles`: fail instead of falling back to the
+    /// - `dbName`: the OPFS directory the store lives in (optional)
+    /// - `privateKey`, `keyType`: a key to author with (optional)
+    /// - `requireSyncHandles`: fail instead of falling back to the
     ///   in-memory mirror when OPFS synchronous access handles are refused,
     ///   so a Worker taking over a database can retry (optional)
     ///
     /// # Example
     ///
     /// ```javascript
-    /// const client = await DefraClient.create({ db_name: 'defradb' });
+    /// const client = await DefraClient.create({ dbName: 'defradb' });
     /// ```
     #[wasm_bindgen(js_name = create)]
     pub async fn create(config: JsValue) -> std::result::Result<DefraClient, JsValue> {
@@ -92,7 +99,7 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// await client.add_schema(`
+    /// await client.addCollection(`
     ///   type User {
     ///     name: String
     ///     email: String
@@ -104,32 +111,59 @@ impl DefraClient {
     ///   }
     /// `);
     /// ```
-    #[wasm_bindgen]
-    pub async fn add_schema(&mut self, sdl: &str) -> std::result::Result<JsValue, JsValue> {
-        self.add_schema_impl(sdl).await.map_err(|e| e.into())
+    #[wasm_bindgen(js_name = addCollection)]
+    pub async fn add_collection(&mut self, sdl: &str) -> std::result::Result<JsValue, JsValue> {
+        self.add_collection_impl(sdl).await.map_err(|e| e.into())
     }
 
-    /// Execute a GraphQL query.
+    /// Execute a GraphQL request, a query or a mutation, as Go's `execRequest`
+    /// does.
+    ///
+    /// Resolves to `{ gql: { data, errors? } }`. A failed request does not
+    /// reject: `data` is `null` and `errors` lists `{ message }` objects.
+    /// `opts` takes `variables`, an object of values for the request's
+    /// variables, and `txnId`, a transaction from `txnBegin` to run it in; any
+    /// other key rejects, since this client has no per-request identity or
+    /// operation name to honour.
     ///
     /// # Example
     ///
     /// ```javascript
-    /// const result = await client.query(`{
+    /// const { gql } = await client.execRequest(`{
     ///   User {
     ///     name
     ///     email
     ///   }
     /// }`);
     /// ```
-    #[wasm_bindgen]
-    pub async fn query(&self, graphql: &str) -> std::result::Result<JsValue, JsValue> {
-        self.query_impl(graphql).await.map_err(|e| e.into())
+    #[wasm_bindgen(js_name = execRequest)]
+    pub async fn exec_request(
+        &self,
+        request: &str,
+        opts: JsValue,
+    ) -> std::result::Result<JsValue, JsValue> {
+        self.exec_request_impl(request, opts)
+            .await
+            .map_err(|e| e.into())
     }
 
-    /// Execute a GraphQL mutation.
-    #[wasm_bindgen]
-    pub async fn mutate(&self, graphql: &str) -> std::result::Result<JsValue, JsValue> {
-        self.mutate_impl(graphql).await.map_err(|e| e.into())
+    /// Begin a transaction and resolve to its ID. Pass the ID as `txnId` to
+    /// `execRequest`, then end it with `txnCommit` or `txnDiscard`.
+    #[wasm_bindgen(js_name = txnBegin)]
+    pub async fn txn_begin(&self, read_only: bool) -> std::result::Result<String, JsValue> {
+        self.txn_begin_impl(read_only).await.map_err(|e| e.into())
+    }
+
+    /// Make the writes of transaction `id` durable and end it.
+    #[wasm_bindgen(js_name = txnCommit)]
+    pub async fn txn_commit(&self, id: &str) -> std::result::Result<(), JsValue> {
+        self.txn_end_impl(id, true).await.map_err(|e| e.into())
+    }
+
+    /// Drop the writes of transaction `id` and end it.
+    #[wasm_bindgen(js_name = txnDiscard)]
+    pub async fn txn_discard(&self, id: &str) -> std::result::Result<(), JsValue> {
+        self.txn_end_impl(id, false).await.map_err(|e| e.into())
     }
 
     /// Author with a key this client holds, given as hex.
@@ -141,9 +175,9 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// const did = client.set_identity(privateKeyHex, 'ed25519');
+    /// const did = client.setIdentity(privateKeyHex, 'ed25519');
     /// ```
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = setIdentity)]
     pub fn set_identity(
         &mut self,
         private_key_hex: &str,
@@ -169,7 +203,7 @@ impl DefraClient {
 
     /// Notifications of documents changing in this client, by a local write
     /// or a merge from a peer. See [`DocumentChanges`].
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = documentChanges)]
     pub fn document_changes(&self) -> std::result::Result<DocumentChanges, JsValue> {
         self.ensure_open()?;
         Ok(DocumentChanges::new(
@@ -180,7 +214,7 @@ impl DefraClient {
     /// A JWT proving possession of this client's key, for `audience` — the host
     /// of the node's HTTP API it will be sent to, which is what that node checks
     /// it against.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = authToken)]
     pub fn auth_token(&self, audience: Option<String>) -> std::result::Result<String, JsValue> {
         self.ensure_open()?;
         Ok(self
@@ -193,7 +227,7 @@ impl DefraClient {
     /// Get information about all registered collections.
     ///
     /// Returns an array of collection info objects.
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = getCollections)]
     pub fn get_collections(&self) -> std::result::Result<JsValue, JsValue> {
         self.get_collections_impl().map_err(|e| e.into())
     }
@@ -242,7 +276,7 @@ impl DefraClient {
         let config: ClientConfig = if config.is_undefined() || config.is_null() {
             ClientConfig::default()
         } else {
-            from_js(config)?
+            config_from_js(config)?
         };
 
         // The page's thread is the pool's one worker, driven by the event
@@ -325,86 +359,143 @@ impl DefraClient {
         Ok(())
     }
 
-    async fn add_schema_impl(&mut self, sdl: &str) -> Result<JsValue> {
+    async fn add_collection_impl(&mut self, sdl: &str) -> Result<JsValue> {
         let db = self.ensure_open()?;
 
-        // Parse SDL into CollectionVersions using the query crate's parser
-        let collections = query::sdl_parse::parse_sdl(sdl)
-            .map_err(|e| WasmError::Schema(format!("Failed to parse SDL: {}", e)))?;
-
-        schema::definition_validation::validate_new_collections(&collections)
-            .map_err(|e| WasmError::Schema(format!("Failed to validate SDL: {}", e)))?;
-
-        // Create each collection in the database
-        let mut added = Vec::new();
-        for collection in collections {
-            let name = collection.name.clone();
-            db.create_collection(collection).await.map_err(|e| {
-                WasmError::Schema(format!("Failed to create collection '{}': {}", name, e))
-            })?;
-            added.push(name);
-        }
+        let added = db
+            .add_collection(&defra_core::RequestContext::default(), sdl)
+            .await
+            .map_err(|e| WasmError::Schema(e.to_string()))?
+            .into_iter()
+            .map(|collection| collection.name)
+            .collect::<Vec<_>>();
 
         // Persist to OPFS so schema definitions survive page refresh
         self.persist_impl().await?;
 
         to_js(&serde_json::json!({
-            "collections_added": added,
+            "collectionsAdded": added,
         }))
     }
 
-    async fn query_impl(&self, graphql: &str) -> Result<JsValue> {
+    /// The context the transactions of this client run in: the identity it
+    /// authors as owns them.
+    fn txn_context(&self) -> defra_core::RequestContext {
+        defra_core::RequestContext::default().with_identity(
+            self.identity
+                .as_ref()
+                .map(|identity| identity.did().to_owned()),
+        )
+    }
+
+    fn runner(&self) -> Result<&WasmRunner> {
+        self.runner.as_ref().ok_or(WasmError::NotInitialized)
+    }
+
+    async fn txn_begin_impl(&self, read_only: bool) -> Result<String> {
         self.ensure_open()?;
-
-        if graphql.trim().is_empty() {
-            return Err(WasmError::Query("Empty query string".to_string()));
-        }
-
-        let runner = self.runner.as_ref().ok_or(WasmError::NotInitialized)?;
-
-        match runner
-            .execute_query_with_identity(graphql, self.caller())
+        let handle = self
+            .runner()?
+            .begin_txn_as(&self.txn_context(), read_only)
             .await
-        {
-            Ok(result) => {
-                let response = serde_json::json!({
-                    "data": result,
-                    "errors": [],
-                });
-                to_js(&response)
-            }
-            Err(e) => Err(WasmError::Query(e.to_string())),
+            .map_err(|e| WasmError::Query(e.to_string()))?;
+        Ok(handle.to_string())
+    }
+
+    async fn txn_end_impl(&self, id: &str, commit: bool) -> Result<()> {
+        self.ensure_open()?;
+        let handle: query::TransactionHandle = id
+            .parse()
+            .map_err(|e: TransactionError| WasmError::Query(e.to_string()))?;
+        let context = self.txn_context();
+        let runner = self.runner()?;
+        let ended = if commit {
+            runner.commit_txn_as(&context, &handle).await
+        } else {
+            runner.discard_txn_as(&context, &handle).await
+        };
+        ended.map_err(|e| WasmError::Query(e.to_string()))?;
+        if commit {
+            self.persist_impl().await?;
+        }
+        Ok(())
+    }
+
+    async fn run_in_txn(
+        &self,
+        id: &str,
+        request: &str,
+        variables: Option<&RapidHashMap<String, serde_json::Value>>,
+    ) -> std::result::Result<serde_json::Value, QueryError> {
+        let handle: query::TransactionHandle = id
+            .parse()
+            .map_err(|e: TransactionError| QueryError::execution(e.to_string()))?;
+        let runner = self
+            .runner
+            .as_ref()
+            .ok_or_else(|| QueryError::execution("client is not initialized"))?;
+        let context = self
+            .txn_context()
+            .with_signing(self.identity.as_ref().map(ClientIdentity::signing_config));
+        let mut query = query::QueryRequest::new(request)
+            .with_context(context)
+            .with_identity(self.caller());
+        if let Some(variables) = variables {
+            query = query.with_variables(serde_json::to_value(variables).unwrap_or_default());
+        }
+        let response = runner.execute_in_txn(query, &handle).await;
+        match response.errors.first() {
+            Some(error) => Err(QueryError::execution(error.message.clone())),
+            None => Ok(response.data.unwrap_or_default()),
         }
     }
 
-    async fn mutate_impl(&self, graphql: &str) -> Result<JsValue> {
+    async fn exec_request_impl(&self, request: &str, opts: JsValue) -> Result<JsValue> {
         self.ensure_open()?;
+        let opts = ExecRequestOptions::from_js(opts)?;
+        let outcome = match opts.txn_id.as_deref() {
+            Some(id) => self.run_in_txn(id, request, opts.variables.as_ref()).await,
+            None => self.run_request(request, opts.variables.as_ref()).await,
+        };
+        let response = match outcome {
+            Ok(data) => serde_json::json!({ "gql": { "data": data } }),
+            Err(e) => serde_json::json!({
+                "gql": { "data": null, "errors": [{ "message": e.to_string() }] },
+            }),
+        };
+        to_js(&response)
+    }
 
-        if graphql.trim().is_empty() {
-            return Err(WasmError::Query("Empty mutation string".to_string()));
+    async fn run_request(
+        &self,
+        request: &str,
+        variables: Option<&RapidHashMap<String, serde_json::Value>>,
+    ) -> std::result::Result<serde_json::Value, QueryError> {
+        if request.trim().is_empty() {
+            return Err(QueryError::execution("Empty request string"));
         }
-
-        // Local writes are signed with the client's key; blocks arriving
-        // from peers never are.
-        let context = defra_core::RequestContext::default()
-            .with_signing(self.identity.as_ref().map(ClientIdentity::signing_config));
-        let result = self
+        let runner = self
             .runner
             .as_ref()
-            .ok_or(WasmError::NotInitialized)?
-            .for_request(context)
-            .execute_mutation_with_identity(graphql, self.caller())
-            .await;
-
-        match result {
-            Ok(data) => {
-                let response = serde_json::json!({
-                    "data": data,
-                    "errors": [],
-                });
-                to_js(&response)
+            .ok_or_else(|| QueryError::execution("client is not initialized"))?;
+        let operation =
+            parse_request_with_limits(request, variables, None, QueryLimits::default())?;
+        match operation {
+            ParsedOperation::Mutation { .. } => {
+                // Local writes are signed with the client's key; blocks
+                // arriving from peers never are.
+                let context = defra_core::RequestContext::default()
+                    .with_signing(self.identity.as_ref().map(ClientIdentity::signing_config));
+                runner
+                    .for_request(context)
+                    .execute_mutation_with_identity_and_vars(request, self.caller(), variables)
+                    .await
             }
-            Err(e) => Err(WasmError::Query(e.to_string())),
+            _ => {
+                runner
+                    .execute_query_with_identity_and_vars(request, self.caller(), variables)
+                    .await
+            }
         }
     }
 
@@ -425,7 +516,7 @@ impl DefraClient {
                 let schema = col.schema();
                 collections.push(CollectionInfo {
                     name: schema.name.clone(),
-                    schema_version_id: schema.version_id.clone(),
+                    collection_version_id: schema.version_id.clone(),
                     fields: schema.fields.iter().map(FieldInfo::from).collect(),
                 });
             }
@@ -505,9 +596,31 @@ fn build_runner(
     .with_acp(Arc::clone(document_acp))
 }
 
+/// Test shorthand over `execRequest`: the response with its `gql` layer
+/// peeled off, and a failed request as `Err`.
+#[cfg(test)]
+impl DefraClient {
+    pub(crate) async fn query(&self, request: &str) -> std::result::Result<JsValue, JsValue> {
+        let response: serde_json::Value =
+            crate::bindings::from_js(self.exec_request(request, JsValue::UNDEFINED).await?)
+                .map_err(JsValue::from)?;
+        let gql = &response["gql"];
+        match gql["errors"][0]["message"].as_str() {
+            Some(message) => Err(JsValue::from_str(message)),
+            None => to_js(&serde_json::json!({ "data": gql["data"], "errors": [] }))
+                .map_err(JsValue::from),
+        }
+    }
+
+    pub(crate) async fn mutate(&self, request: &str) -> std::result::Result<JsValue, JsValue> {
+        self.query(request).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bindings::from_js;
     use crypto::keys::{Key as _, PrivateKey as _};
     use identity::Identity as _;
     use wasm_bindgen_test::*;
@@ -566,13 +679,22 @@ mod tests {
 
     async fn create_one_document(client: &mut DefraClient) {
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
         client
             .mutate(r#"mutation { create_User(input: {name: "Alice"}) { _docID } }"#)
             .await
             .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_empty_transaction_id_is_an_error_not_a_trap() {
+        let client = DefraClient::create(test_config("txn_empty_id"))
+            .await
+            .unwrap();
+        assert!(client.txn_commit("").await.is_err());
+        assert!(client.txn_discard("").await.is_err());
     }
 
     #[wasm_bindgen_test]
@@ -653,7 +775,7 @@ mod tests {
     async fn concurrent_mutations_are_each_signed() {
         let (mut client, _) = client_with_identity("signing_concurrent").await;
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
 
@@ -683,7 +805,7 @@ mod tests {
         let (mut second, second_key) = client_with_identity("signing_two_second").await;
         for client in [&mut first, &mut second] {
             client
-                .add_schema("type User { name: String }")
+                .add_collection("type User { name: String }")
                 .await
                 .unwrap();
         }
@@ -731,7 +853,7 @@ mod tests {
 
         // And it signs: the seed is a whole key here, not just an identifier.
         client
-            .add_schema("type User { name: String }")
+            .add_collection("type User { name: String }")
             .await
             .unwrap();
         client.set_identity(&hex::encode(seed), "ed25519").unwrap();
@@ -791,6 +913,12 @@ mod tests {
         assert!(!client.closed);
     }
 
+    #[wasm_bindgen_test]
+    async fn a_snake_case_config_key_is_rejected() {
+        let config = js_sys::JSON::parse(r#"{"db_name":"test_snake_case"}"#).unwrap();
+        assert!(DefraClient::create(config).await.is_err());
+    }
+
     /// Tests run on the page's main thread, where browsers refuse synchronous
     /// access handles. Requiring them must fail the open rather than mount
     /// the mirror, and must leave nothing held that stops the same database
@@ -826,7 +954,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
         let mut changes = client.document_changes().unwrap();
@@ -847,10 +975,7 @@ mod tests {
             serde_wasm_bindgen::from_value(changes.next_batch().await.unwrap()).unwrap();
         let change = batch["changes"]
             .as_array()
-            .and_then(|all| {
-                all.iter()
-                    .find(|change| change["doc_id"] == doc_id.as_str())
-            })
+            .and_then(|all| all.iter().find(|change| change["docId"] == doc_id.as_str()))
             .unwrap_or_else(|| panic!("{doc_id} is not in {batch}"));
         assert_eq!(change["local"], true, "a write here is local: {batch}");
 
@@ -959,13 +1084,13 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_and_get_collections() {
-        let mut client = DefraClient::create(test_config("test_add_schema"))
+    async fn test_add_collection_and_get_collections() {
+        let mut client = DefraClient::create(test_config("test_add_collection"))
             .await
             .unwrap();
 
         let sdl = "type User { name: String, email: String }";
-        client.add_schema(sdl).await.unwrap();
+        client.add_collection(sdl).await.unwrap();
 
         let result = client.get_collections().unwrap();
         let collections: Vec<CollectionInfo> = serde_wasm_bindgen::from_value(result).unwrap();
@@ -975,16 +1100,16 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_invalid_sdl_fails() {
+    async fn test_add_collection_invalid_sdl_fails() {
         let mut client = DefraClient::create(test_config("test_bad_sdl"))
             .await
             .unwrap();
-        let result = client.add_schema("not valid graphql {{{{").await;
+        let result = client.add_collection("not valid graphql {{{{").await;
         assert!(result.is_err());
     }
 
     #[wasm_bindgen_test]
-    async fn test_add_schema_rejects_invalid_self_relation_primaries() {
+    async fn test_add_collection_rejects_invalid_self_relation_primaries() {
         let mut client = DefraClient::create(test_config("test_invalid_self_relations"))
             .await
             .unwrap();
@@ -1003,7 +1128,7 @@ mod tests {
                 }
             "#,
         ] {
-            let error = client.add_schema(sdl).await.unwrap_err();
+            let error = client.add_collection(sdl).await.unwrap_err();
             assert!(error
                 .as_string()
                 .unwrap()
@@ -1027,8 +1152,8 @@ mod tests {
             .unwrap();
 
         let sdl = "type Item { name: String }";
-        client.add_schema(sdl).await.unwrap();
-        let result = client.add_schema(sdl).await;
+        client.add_collection(sdl).await.unwrap();
+        let result = client.add_collection(sdl).await;
         assert!(result.is_err());
     }
 
@@ -1039,11 +1164,11 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Book { title: String }")
+            .add_collection("type Book { title: String }")
             .await
             .unwrap();
         client
-            .add_schema("type Author { name: String }")
+            .add_collection("type Author { name: String }")
             .await
             .unwrap();
 
@@ -1061,7 +1186,7 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Product { name: String, price: Int }")
+            .add_collection("type Product { name: String, price: Int }")
             .await
             .unwrap();
 
@@ -1077,7 +1202,7 @@ mod tests {
             .unwrap();
 
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
 
@@ -1092,7 +1217,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type User { name: String, age: Int }")
+            .add_collection("type User { name: String, age: Int }")
             .await
             .unwrap();
 
@@ -1127,7 +1252,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Person { name: String }")
+            .add_collection("type Person { name: String }")
             .await
             .unwrap();
 
@@ -1161,7 +1286,7 @@ mod tests {
             .await
             .unwrap();
         client
-            .add_schema("type Widget { label: String }")
+            .add_collection("type Widget { label: String }")
             .await
             .unwrap();
 
@@ -1186,14 +1311,14 @@ mod tests {
         {
             let mut client = DefraClient::create(test_config(db_name)).await.unwrap();
             client
-                .add_schema("type Task { title: String }")
+                .add_collection("type Task { title: String }")
                 .await
                 .unwrap();
             client
                 .mutate(r#"mutation { add_Task(input: {title: "Survive"}) { _docID } }"#)
                 .await
                 .unwrap();
-            // mutate_impl auto-persists, but explicit persist for clarity
+            // a mutation auto-persists, but explicit persist for clarity
             client.persist().await.unwrap();
             client.close().await.unwrap();
         }
@@ -1209,5 +1334,103 @@ mod tests {
             "Data should survive persist→close→reopen, got: {}",
             data_str
         );
+    }
+
+    #[wasm_bindgen_test]
+    async fn exec_request_wraps_data_in_gql() {
+        let mut client = DefraClient::create(test_config("exec_request_shape"))
+            .await
+            .unwrap();
+        client
+            .add_collection("type Note { text: String }")
+            .await
+            .unwrap();
+        let created: serde_json::Value = from_js(
+            client
+                .exec_request(
+                    r#"mutation { add_Note(input: {text: "hi"}) { text } }"#,
+                    JsValue::UNDEFINED,
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(created["gql"]["data"]["add_Note"][0]["text"], "hi");
+        assert!(created["gql"].get("errors").is_none());
+        let read: serde_json::Value = from_js(
+            client
+                .exec_request("{ Note { text } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["gql"]["data"]["Note"][0]["text"], "hi");
+    }
+
+    #[wasm_bindgen_test]
+    async fn exec_request_reports_failure_in_gql_errors() {
+        let client = DefraClient::create(test_config("exec_request_errors"))
+            .await
+            .unwrap();
+        let response: serde_json::Value = from_js(
+            client
+                .exec_request("{ Missing { name } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(response["gql"]["data"].is_null());
+        assert!(response["gql"]["errors"][0]["message"].is_string());
+    }
+
+    #[wasm_bindgen_test]
+    async fn exec_request_in_txn_is_invisible_outside_until_commit() {
+        let mut client = DefraClient::create(test_config("exec_request_txn"))
+            .await
+            .unwrap();
+        client
+            .add_collection("type Note { text: String }")
+            .await
+            .unwrap();
+        let id = client.txn_begin(false).await.unwrap();
+        let opts = js_sys::Object::new();
+        js_sys::Reflect::set(&opts, &"txnId".into(), &id.clone().into()).unwrap();
+        client
+            .exec_request(
+                r#"mutation { add_Note(input: {text: "a"}) { text } }"#,
+                opts.into(),
+            )
+            .await
+            .unwrap();
+        let outside: serde_json::Value = serde_wasm_bindgen::from_value(
+            client
+                .exec_request("{ Note { text } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(outside["gql"]["data"]["Note"], serde_json::json!([]));
+        client.txn_commit(&id).await.unwrap();
+        let after: serde_json::Value = serde_wasm_bindgen::from_value(
+            client
+                .exec_request("{ Note { text } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after["gql"]["data"]["Note"].as_array().unwrap().len(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    async fn exec_request_rejects_unsupported_options() {
+        let client = DefraClient::create(test_config("exec_request_opts"))
+            .await
+            .unwrap();
+        let opts = js_sys::Object::new();
+        js_sys::Reflect::set(&opts, &"operationName".into(), &"Q".into()).unwrap();
+        assert!(client
+            .exec_request("{ Note { text } }", opts.into())
+            .await
+            .is_err());
     }
 }

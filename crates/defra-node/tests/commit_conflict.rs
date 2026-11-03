@@ -1,13 +1,14 @@
 //! An explicit transaction that loses a write conflict at commit reports a
 //! typed, retryable conflict (#1994).
 
-use defra_node::{EmbeddedNode, QueryRequest};
+use defra_node::{Node, QueryRequest};
 use query::TransactionError;
 
-#[tokio::test]
-async fn losing_commit_reports_a_typed_conflict() {
-    let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Users { name: String }")
+#[test]
+fn losing_commit_reports_a_typed_conflict() {
+    workers::block_on(async {
+    let node = Node::builder().build().await.unwrap();
+    node.add_collection("type Users { name: String }")
         .await
         .unwrap();
     let created = node
@@ -37,4 +38,6 @@ async fn losing_commit_reports_a_typed_conflict() {
     assert!(matches!(error, TransactionError::Conflict(_)), "{error:?}");
     assert!(error.is_retryable());
     assert!(error.to_string().contains("transaction conflict"));
+})
+    .unwrap()
 }

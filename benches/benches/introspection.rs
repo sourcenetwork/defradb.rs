@@ -85,6 +85,7 @@ fn collections(count: usize) -> Vec<CollectionVersion> {
                         } else {
                             FieldKind::int()
                         },
+                        schema::CType::LwwRegister,
                     )
                 })
                 .collect();

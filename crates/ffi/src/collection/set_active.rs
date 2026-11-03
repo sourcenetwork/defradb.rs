@@ -21,27 +21,12 @@ pub unsafe extern "C" fn defra_collection_set_active(
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::CollectionPatch));
         let version_id = CollectionArgs::read(&opts).version.unwrap_or_default();
         let context = request.context();
-        match request.target.txn_id() {
-            None => {
-                let database = try_ffi!(request.database());
-                ffi_async_ok!(request.node(), {
-                    database
-                        .set_active_collection_version_as(&context, &version_id)
-                        .await
-                        .map_err(|e| e.to_string())
-                })
-            }
-            Some(txn_id) => {
-                let txn_id = txn_id.to_string();
-                let registry = try_ffi!(request.txn_registry());
-                ffi_async_ok!(caller, {
-                    registry
-                        .set_collection_active_in_txn_as(&context, &txn_id, &version_id, true)
-                        .await
-                        .map(drop)
-                        .map_err(|e| e.to_string())
-                })
-            }
-        }
+        let runner = try_ffi!(request.runner());
+        ffi_async_ok!(caller, {
+            runner
+                .set_active_collection_version_as(&context, &version_id)
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
 }

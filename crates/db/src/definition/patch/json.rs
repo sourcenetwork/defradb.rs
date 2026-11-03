@@ -22,24 +22,6 @@ pub enum JsonPatchError {
 
 pub type Result<T> = std::result::Result<T, JsonPatchError>;
 
-/// The collection a Go-style collection patch targets: the first segment of
-/// its first operation's path (`/Users/Fields/-` targets `Users`).
-pub fn patch_collection_name(patch: &Value) -> std::result::Result<String, String> {
-    let first_op = patch
-        .as_array()
-        .ok_or("patch must be a JSON array")?
-        .first()
-        .ok_or("patch array is empty")?;
-    let path = first_op
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or("first patch op missing 'path' field")?;
-    path.split('/')
-        .find(|segment| !segment.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "patch path has no collection name".to_string())
-}
-
 /// Set a value at a JSON Pointer path (RFC 6901).
 ///
 /// Navigates to the specified path and sets the value. Supports both object

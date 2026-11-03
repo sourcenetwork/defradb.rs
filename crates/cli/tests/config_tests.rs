@@ -49,6 +49,7 @@ fn cli_with_defaults() -> Cli {
         development: None,
         acp_node_enable: None,
         acp_document_type: None,
+        remote_dac_address: None,
         command: Command::Version(VersionArgs {
             format: "text".to_string(),
             full: false,
@@ -157,7 +158,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     cli.no_telemetry = Some(true);
     cli.development = Some(true);
     cli.acp_node_enable = Some(true);
-    cli.acp_document_type = Some("local".to_string());
+    cli.acp_document_type = Some(cli::config::AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
         cli.vera_address = Some("http://localhost:1317".to_string());
@@ -237,6 +238,7 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "development",
     "node-acp-enable",
     "document-acp-type",
+    "remote-dac-address",
 ];
 
 // `rootdir` selects the config file before Config exists, so it cannot be

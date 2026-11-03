@@ -38,7 +38,7 @@ async fn multi_layer_self_ref_relations_test(cluster: TestCluster) {
     client.schema_add(SCHEMA).expect("add schema");
 
     let collections: Vec<Value> = reqwest::get(format!(
-        "{}/api/v0/collections/versions",
+        "{}/api/v0/collections?get_inactive=true",
         cluster.api_url(0)
     ))
     .await

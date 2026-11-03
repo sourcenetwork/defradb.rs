@@ -43,7 +43,7 @@ async fn send_json(
     }
 }
 
-async fn add_schema(client: &Client, base_url: &str) {
+async fn add_collection(client: &Client, base_url: &str) {
     let response = client
         .post(format!("{base_url}/api/v0/collections"))
         .body("type Book { title: String }")
@@ -173,8 +173,8 @@ async fn go_rust_http_contract() {
     let go_url = cluster.api_url(1);
     let client = Client::new();
 
-    add_schema(&client, rust_url).await;
-    add_schema(&client, go_url).await;
+    add_collection(&client, rust_url).await;
+    add_collection(&client, go_url).await;
 
     let (rust_openapi, go_openapi) = compare_json(
         &client,

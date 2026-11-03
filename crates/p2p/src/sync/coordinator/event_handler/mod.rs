@@ -222,20 +222,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn reject_car_fetch(
         &self,
         peer_id: &PeerId,
+        root_cid: &cid::Cid,
         token: Option<T::ResponseToken>,
         error: Error,
     ) -> Error {
-        // CAR has no error reply type — send an empty response so the sender
-        // sees an explicit (parseable) rejection rather than a hung stream.
+        // Busy, not empty: the requester rotates now instead of charging this
+        // provider a stalled window. Zero bytes is the legacy fallback.
+        let reply = crate::sync::car::encode_car_busy(root_cid).unwrap_or_default();
         let send_result = if let Some(token) = token {
             self.runtime
                 .transport
-                .send_car_response_token(token, Vec::new())
+                .send_car_response_token(token, reply)
                 .await
         } else {
             self.runtime
                 .transport
-                .send_car_response(peer_id, Vec::new())
+                .send_car_response(peer_id, reply)
                 .await
         };
         if let Err(send_err) = send_result {
@@ -326,9 +328,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     )
                     .await)
             }
-            TransportEvent::CarFetchRequest { peer_id, token, .. } => {
+            TransportEvent::CarFetchRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
-                Err(self.reject_car_fetch(&peer_id, token, error).await)
+                Err(self
+                    .reject_car_fetch(&peer_id, &request.root_cid, token, error)
+                    .await)
             }
             TransportEvent::GossipMessage {
                 propagation_source, ..
@@ -336,7 +344,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             | TransportEvent::GossipRawMessage {
                 propagation_source, ..
             } => Err(Self::saturated_error(&propagation_source)),
-            TransportEvent::SEQueryRequest { peer_id, request } => {
+            TransportEvent::SEQueryRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply = crate::message::QuerySEArtifactsReply::error(
                     &request.message_id,
@@ -345,28 +357,36 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_se_query_response(&peer_id, reply)
+                    .send_se_query_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send SE query capacity nack");
                 }
                 Err(error)
             }
-            TransportEvent::ManageRequest { peer_id, request } => {
+            TransportEvent::ManageRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply =
                     crate::message::ManageReply::error(&request.message_id, AT_CAPACITY_MESSAGE);
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_manage_response(&peer_id, reply)
+                    .send_manage_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send management capacity nack");
                 }
                 Err(error)
             }
-            TransportEvent::ManageQueryRequest { peer_id, request } => {
+            TransportEvent::ManageQueryRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
                 let reply = crate::message::ManageQueryReply::error(
                     &request.message_id,
@@ -375,7 +395,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Err(send_error) = self
                     .runtime
                     .transport
-                    .send_manage_query_response(&peer_id, reply)
+                    .send_manage_query_response(&peer_id, token, reply)
                     .await
                 {
                     tracing::debug!(%peer_id, error = %send_error, "Failed to send management query capacity nack");
@@ -501,10 +521,24 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             TransportEvent::BitswapComplete {
                 query_id,
-                success,
-                error,
+                provider_busy: true,
+                ..
             } => {
-                self.handle_bitswap_complete(query_id, success, error)
+                self.handle_bitswap_provider_busy(query_id).await?;
+            }
+            TransportEvent::BitswapComplete {
+                query_id,
+                success,
+                cause,
+                error,
+                provider_busy: false,
+            } => {
+                let outcome = if success {
+                    Ok(())
+                } else {
+                    Err(cause.unwrap_or(crate::transport::FetchFailureCause::Error))
+                };
+                self.handle_bitswap_complete(query_id, outcome, error)
                     .await?;
             }
             TransportEvent::DocSyncRequest {
@@ -570,7 +604,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &peer_id,
                     "CarFetchRequest",
                 ) {
-                    return Err(self.reject_car_fetch(&peer_id, token, error).await);
+                    return Err(self
+                        .reject_car_fetch(&peer_id, &request.root_cid, token, error)
+                        .await);
                 }
                 self.handle_car_fetch_request(peer_id, request, token)
                     .await?;
@@ -581,6 +617,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 root_cid,
                 car_data,
             } => {
+                if crate::sync::car::is_car_busy(&car_data) {
+                    // A block-sync query hears busy in the transport's aggregate
+                    // completion instead, once every provider has answered.
+                    self.manager.diagnostics.record_car_busy_response();
+                    tracing::debug!(
+                        root_cid = %root_cid,
+                        peer_id = %peer_id,
+                        "Provider shed the CAR request as busy"
+                    );
+                    self.manager.rooted_car_completion_tracker().complete_with(
+                        root_cid,
+                        &peer_id,
+                        crate::sync::manager::FetchCompletion::ProviderBusy,
+                    );
+                    return Ok(());
+                }
                 let has_blocks =
                     !car_data.is_empty() && crate::sync::car::car_has_any_block(&car_data);
                 let has_notices = crate::sync::car::decode_car_oversized(&car_data)
@@ -595,7 +647,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             .rooted_car_completion_tracker()
                             .complete(root_cid, &peer_id, has_blocks);
                     }
-                    Some(car::CarIngestDisposition::Busy) => {
+                    Some(car::CarIngestDisposition::StorageContended) => {
                         self.manager
                             .rooted_car_completion_tracker()
                             .defer(root_cid, &peer_id);
@@ -621,10 +673,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     if has_blocks || has_notices {
                         match disposition {
                             Some(car::CarIngestDisposition::Completed) => {
-                                self.handle_bitswap_complete(query_id, has_blocks, None)
+                                let outcome = if has_blocks {
+                                    Ok(())
+                                } else {
+                                    Err(crate::transport::FetchFailureCause::NoBlocks)
+                                };
+                                self.handle_bitswap_complete(query_id, outcome, None)
                                     .await?;
                             }
-                            Some(car::CarIngestDisposition::Busy) => {
+                            Some(car::CarIngestDisposition::StorageContended) => {
                                 self.handle_bitswap_deferred(query_id).await?;
                             }
                             Some(car::CarIngestDisposition::SizeLimit(cid)) => {
@@ -633,7 +690,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             None => {
                                 self.handle_bitswap_complete(
                                     query_id,
-                                    false,
+                                    Err(crate::transport::FetchFailureCause::Error),
                                     result.as_ref().err().map(ToString::to_string),
                                 )
                                 .await?;
@@ -904,7 +961,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"value".to_vec(),
             }),
             vec![],
@@ -918,7 +975,7 @@ mod tests {
     fn create_composite_block(_doc_id: &str, field_name: &str, field_cid: Cid) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority: 1,
                 status: 1,
             }),

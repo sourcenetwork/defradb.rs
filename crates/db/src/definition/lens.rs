@@ -28,7 +28,7 @@ pub fn doc_to_lens_doc(doc: &Document) -> Option<LensDoc> {
 ///
 /// Preserves the original document's ID while replacing all other fields.
 pub fn lens_doc_to_doc(lens_doc: LensDoc, original_doc: &Document) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(original_doc.collection().clone());
 
     // Preserve original ID
     if let Some(id) = original_doc.id() {
@@ -38,7 +38,7 @@ pub fn lens_doc_to_doc(lens_doc: LensDoc, original_doc: &Document) -> Document {
     // Copy fields from lens doc (skip _docID as it's set via set_id)
     for (field_name, value) in lens_doc {
         if field_name != DOC_ID_FIELD {
-            doc.set(&field_name, value);
+            doc.set_unchecked(field_name, value.into());
         }
     }
 
@@ -54,7 +54,7 @@ pub fn doc_needs_migration(doc: &Document, target_version_id: &str, has_migratio
         return false;
     }
 
-    let doc_version = doc.schema_version_id();
+    let doc_version = doc.collection_version_id();
     let needs = doc.needs_migration(target_version_id);
 
     debug!(

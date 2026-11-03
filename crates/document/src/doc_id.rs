@@ -34,6 +34,19 @@ pub struct DocID {
 }
 
 impl DocID {
+    /// The `_docID` of a JSON object, if it has one.
+    pub fn from_json_str(json: &str) -> Result<Option<Self>> {
+        let object: serde_json::Map<String, serde_json::Value> = serde_json::from_str(json)?;
+        match object.get(crate::field::special::DOC_ID) {
+            None => Ok(None),
+            Some(serde_json::Value::String(id)) => Self::from_string(id).map(Some),
+            Some(other) => Err(Error::InvalidFieldValue {
+                field: crate::field::special::DOC_ID.to_string(),
+                message: format!("_docID must be a string, got: {}", other),
+            }),
+        }
+    }
+
     /// Create a new DocID v0 from a content CID.
     ///
     /// The UUID is generated using UUID v5 with the SDN namespace and the CID string.
