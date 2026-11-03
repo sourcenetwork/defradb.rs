@@ -5,6 +5,7 @@ mod common;
 mod delete;
 mod guard;
 mod key_owners;
+mod kms_release;
 mod race;
 mod read;
 mod schema;
