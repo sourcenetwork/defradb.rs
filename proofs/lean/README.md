@@ -34,6 +34,7 @@ The model proves:
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
 | `HttpClient.credentials_stay_with_their_origin` / `at_most_limit_plus_one_exchanges` / `endless_redirects_fail` / `same_origin_redirect_keeps_credentials` / `cross_origin_redirect_strips_credentials` | Across any chain of redirects, a credential from the request or the client's defaults is sent only to the request's own origin (scheme, host and port), a proxy credential only on its own hop; a request makes at most eleven exchanges. The witnesses `per_hop_defaults_leak`, `host_only_downgrade_leaks`, `host_only_port_leaks` and `unlimited_runs_past_the_limit` show each guard is needed. | `crates/net/src/http/client.rs` |
 | `HttpClient.BodyDeadline.ends_after_timeout` / `at_most_one_timeout` / `deadline_wins_over_a_ready_piece` / `never_waits_past_the_deadline` / `no_timeout_before_the_deadline` / `no_limit_no_timeout` | A body stream gives one timeout once the limit passes, even with a piece ready, then only its end; `old_reads_after_timeout` and `late_reads_past_the_deadline` are the code before each fix. | `crates/net/src/http/response.rs` |
+| `RetrySchedule.restart_rung_le_one` / `restart_never_later` / `restart_within_first_rung` / `restart_respects_backpressure` / `bump_climbs` | A delivery returns a peer's retry clock to the first rung at most, never later than its deadline, and never before the receiver's backpressure deadline; a failed pass climbs one rung. | `crates/storage/src/stores/retry_info.rs` |
 | `TxnAdmission.embedder_admits_every` / `byIdentity_admits_iff` / `byIdentity_turns_away_stranger` / `admits_beginner` / `default_is_byIdentity` | An embedder registry lets every request into its transactions; an identity registry, the default, lets in exactly the identity that began one; the beginner always gets in. | `crates/db/src/txn/registry/mod.rs` |
 | `ProviderHealth.rank_perm` / `rank_keeps_healthy_source_first` / `rank_all_healthy` / `next_delay_in_range` / `stale_starts_over` / `forget_keeps_fresh` / `forget_drops_stale` | Ranking a root's fetch providers only reorders them and keeps a healthy announcer first; a fast-failure cool-down stays within 2..30 s, starts over once stale, and pruning drops exactly the stale entries. | `crates/p2p/src/sync/coordinator/provider_health.rs` |
 | `LocalFetchPermit.released_before_send` / `release_preserves_queue` | A locally complete fetch returns its peer permit before waiting to send its merge event, without changing queue occupancy. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs` |
@@ -75,6 +76,11 @@ Retry ladder (`RetrySchedule.Ladder`):
 - `RetrySchedule.cap_mem`, `cap_positive`: `[propext]`
 - `RetrySchedule.cap_follows_ladder`, `cap_repeats_last`: `[propext, Quot.sound]`
 - `RetrySchedule.default_accepted`: `[propext, Quot.sound]`
+
+Retry clock after a delivery (`RetrySchedule.Delivery`):
+
+- `RetrySchedule.restart_rung_le_one`, `restart_never_later`, `restart_within_first_rung`, `restart_respects_backpressure`: `[propext, Quot.sound]`
+- `RetrySchedule.bump_climbs`: *(no axioms)*
 
 Convergence:
 
