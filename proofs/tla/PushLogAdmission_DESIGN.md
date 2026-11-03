@@ -65,6 +65,16 @@ The model gives heads a `Parent` relation, a priority and a sender scope, and a
   head eventually merges. Fairness is scheduler-level only: the pusher keeps sending
   something, the hub keeps answering something, the fetch pool keeps completing
   something. No head is promised a turn of its own.
+- `INV_NackImpliesUnregistered` — **a nack implies the hub holds no registration for the
+  block.** The sender parks the hub on a nack and demotes its queued pushes, so a nack of
+  a head the hub already owns costs the sender for nothing. The ack guard
+  (`assert_pushlog_left_durable_state`) can only break this for a head registered on its
+  durable record alone (`process_block_inner`, no in-memory entry): the hub's view of its
+  durable records (`PersistedView`) learns of a commit when the store's receipt-ordered
+  events go out, and an earlier commit's hook on the same store holds them back past the
+  reply. `GuardMode = "Committed"` accepts the record the store committed for the push
+  (`Processed::DurablyRegistered`); `GuardMode = "View"` reads only the view (`Publish`
+  is when it learns of the record) and nacks a head whose record is durable.
 
 ## Abstractions
 
@@ -85,10 +95,11 @@ The model gives heads a `Parent` relation, a priority and a sender scope, and a
 
 | Config | Knobs | Heads | Verdict | Meaning |
 |--------|-------|-------|---------|---------|
-| `MC_PushLogAdmission_Green.cfg` | `NackOnFull`, `Parent` | 3 independent, 1 slot | GREEN | W1 fix: overflow nacks; both invariants + liveness hold |
-| `MC_PushLogAdmission_Red_SuccessOnFull.cfg` | `SuccessOnFull`, `Parent` | 3 independent, 1 slot | RED | overflow acks success → `INV_SuccessImpliesRegisteredOrMerged` violated |
-| `MC_PushLogAdmission_Green_Siblings.cfg` | `NackOnFull`, `Parent` | base + 2 siblings, one scope, 2 slots | GREEN | F1 fix: each sibling keeps its registration; `INV_AckedHeadReachable` + liveness hold |
-| `MC_PushLogAdmission_Red_PriorityCover.cfg` | `NackOnFull`, `Priority` | base + 2 siblings, one scope, 2 slots | RED | old rule: sibling 3 retires sibling 2 (or 2 is covered by 3) → `INV_AckedHeadReachable` violated |
+| `MC_PushLogAdmission_Green.cfg` | `NackOnFull`, `Parent`, `Committed` | 3 independent, 1 slot | GREEN | W1 fix: overflow nacks; a nack never hits a registered head; the invariants + liveness hold |
+| `MC_PushLogAdmission_Red_SuccessOnFull.cfg` | `SuccessOnFull`, `Parent`, `Committed` | 3 independent, 1 slot | RED | overflow acks success → `INV_SuccessImpliesRegisteredOrMerged` violated |
+| `MC_PushLogAdmission_Green_Siblings.cfg` | `NackOnFull`, `Parent`, `Committed` | base + 2 siblings, one scope, 2 slots | GREEN | F1 fix: each sibling keeps its registration; `INV_AckedHeadReachable` + liveness hold |
+| `MC_PushLogAdmission_Red_PriorityCover.cfg` | `NackOnFull`, `Priority`, `Committed` | base + 2 siblings, one scope, 2 slots | RED | old rule: sibling 3 retires sibling 2 (or 2 is covered by 3) → `INV_AckedHeadReachable` violated |
+| `MC_PushLogAdmission_Red_ViewGuard.cfg` | `NackOnFull`, `Parent`, `View` | 3 independent, 1 slot | RED | the guard reads only the view: a head registered on its durable record alone is nacked before the view shows the record (`INV_NackImpliesUnregistered`) |
 
 ## Conformance fence
 

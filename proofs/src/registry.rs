@@ -743,6 +743,20 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A success reply means the head is merged or registered, and a nack
+        // means it is not registered: the sender parks the hub on a nack. A
+        // head registered on its durable record alone is acknowledged on the
+        // record the store committed, since the view of the durable records
+        // learns of a commit in receipt order, which an earlier commit's hook
+        // holds back past the reply.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_SuccessImpliesRegisteredOrMerged / INV_NackImpliesUnregistered / EventuallyAllMerged: the PushLog ack contract",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_pushlog_with_provider_evidence, assert_pushlog_left_durable_state, process_block_inner, Processed; crates/p2p/src/sync/pending_store/store.rs register; crates/p2p/src/sync/pending_store/view.rs PersistedView::registered",
+        model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull,Red_ViewGuard}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A second PushLog for a CID already being processed joins that
         // processing instead of being nacked: it waits, bounded by a deadline,
         // looks again once the owner lets go, and either acks a block already
