@@ -13,6 +13,7 @@
 //! This matches Go's architecture where p2p calls db.Merge().
 
 mod bitswap;
+mod estimates;
 mod join;
 mod pending_dag;
 mod pushlog;
@@ -87,6 +88,9 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
+
+    /// How much of the pending map each source peer holds, over minutes.
+    pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
 
     /// Maps Bitswap QueryId → root CID for tracking completions.
     pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
@@ -221,6 +225,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
+            pending_occupancy: crate::sync::arbitration::PendingOccupancy::default(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),

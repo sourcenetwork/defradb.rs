@@ -1385,6 +1385,24 @@ mod tests {
 
         let status = coordinator.sync_status().await;
         assert_eq!(status.pending_dag_retry_dispatched, 1);
+        let occupancy = &status.pending_dag_peer_occupancy;
+        assert_eq!(occupancy.len(), 1, "the dispatch pass sampled occupancy");
+        assert_eq!(
+            (occupancy[0].peer.as_str(), occupancy[0].held),
+            ("peer-1", 1)
+        );
+        assert_eq!(occupancy[0].occupancy_q8, 256);
+        assert_eq!(status.pending_dag_attempt_ewma_median_ms, None);
+        let json = serde_json::to_value(&status).expect("status serializes");
+        for field in [
+            "pending_dag_attempt_ewma_median_ms",
+            "pending_dag_attempt_ewma_max_ms",
+            "pending_dag_no_progress_median_ppm",
+            "pending_dag_tie_reorders",
+            "pending_dag_peer_occupancy",
+        ] {
+            assert!(json.get(field).is_some(), "{field} is exported");
+        }
         let next_retry_ms = status
             .next_pending_retry_in_ms
             .expect("incomplete pending DAG must report a due time");

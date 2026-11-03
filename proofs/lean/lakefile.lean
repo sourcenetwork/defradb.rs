@@ -146,3 +146,6 @@ lean_lib TxnAdmission where
 
 @[default_target]
 lean_lib HttpClient where
+
+@[default_target]
+lean_lib Arbitration where

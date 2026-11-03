@@ -492,6 +492,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         merge_continuation: false,
                         storage_blocker: None,
                         origin: crate::sync::manager::pending::PendingOrigin::Push,
+                        estimates: crate::sync::arbitration::RootEstimates::default(),
                     },
                 );
                 // Report the limit that actually tripped so the nack and its

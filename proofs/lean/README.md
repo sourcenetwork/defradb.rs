@@ -35,6 +35,9 @@ The model proves:
 | `HttpClient.BodyDeadline.ends_after_timeout` / `at_most_one_timeout` / `deadline_wins_over_a_ready_piece` / `never_waits_past_the_deadline` / `no_timeout_before_the_deadline` / `no_limit_no_timeout` | A body stream gives one timeout once the limit passes, even with a piece ready, then only its end; `old_reads_after_timeout` and `late_reads_past_the_deadline` are the code before each fix. | `crates/net/src/http/response.rs` |
 | `TxnAdmission.embedder_admits_every` / `byIdentity_admits_iff` / `byIdentity_turns_away_stranger` / `admits_beginner` / `default_is_byIdentity` | An embedder registry lets every request into its transactions; an identity registry, the default, lets in exactly the identity that began one; the beginner always gets in. | `crates/db/src/txn/registry/mod.rs` |
 | `ProviderHealth.rank_perm` / `rank_keeps_healthy_source_first` / `rank_all_healthy` / `next_delay_in_range` / `stale_starts_over` / `forget_keeps_fresh` / `forget_drops_stale` | Ranking a root's fetch providers only reorders them and keeps a healthy announcer first; a fast-failure cool-down stays within 2..30 s, starts over once stale, and pruning drops exactly the stale entries. | `crates/p2p/src/sync/coordinator/provider_health.rs` |
+| `Arbitration.roll_le_bound` / `troll_le_bound` / `record_first` / `troll_full` / `iter_monotone_up` / `iter_stays_below` / `decay_geometric` / `troll_decay_up` / `troll_decay_down` / `dither_mean` / `expected_useful_le` | The arbitration estimators stay within what they were fed (no overflow), take their first sample as is, approach a steady input without overshoot, decay geometrically (per sample, or by `2^(-Δt/H)` per unit of time), move by their exact share on average under the dither (so a sub-unit share never freezes them), and the expected time to a useful fetch is at most 64 fetches' cost. | `crates/p2p/src/sync/arbitration/` |
+| `Arbitration.bucket_order_any_score` / `bucket_apart_keeps_order` / `inversion_within_bucket` / `same_score_keeps_due_order` / `rearmed_root_goes_behind` | Ordering due roots by (1 s bucket, score, due time) keeps bucket order for any score: a root is passed only by roots due less than one bucket after it (`ACT_AttemptsStartInDueOrder` at bucket resolution), and a root re-armed a backoff of at least a bucket still queues behind (`ACT_EndedAttemptQueuesBehind`). | `crates/p2p/src/sync/arbitration/due_order.rs` |
+| `Arbitration.table_is_floor` / `table_decreasing` / `table_wraps` / `weight_le_one` / `weight_full_after_silence` / `weight_zero_gap` / `weight_first_ms` and the side conditions on the constants | The Q16 weight table is exactly `⌊65536 · 2^(-i/64)⌋` and falls step by step, the interpolated Q32 weight never exceeds one, a long silence starts the estimate over, a zero gap (a clock gone backwards) moves nothing and a 1 ms gap already moves something; the side conditions hold on the values `Conformance.lean` binds to the Rust constants. | `crates/p2p/src/sync/arbitration/{mod,ewma}.rs` |
 
 `#print axioms` status checked with Lean 4.18:
 
@@ -54,6 +57,13 @@ Provider ranking (`ProviderHealth.Ranking`):
 
 - `ProviderHealth.rank_perm`, `rank_keeps_healthy_source_first`, `stale_starts_over`, `forget_keeps_fresh`, `forget_drops_stale`: `[propext]`
 - `ProviderHealth.rank_all_healthy`, `next_delay_in_range`: `[propext, Classical.choice, Quot.sound]`
+
+DAG fetch arbitration (`Arbitration`, 48 theorems):
+
+- `table_shape`, `table_is_floor` (by `decide +kernel`), `table_decreasing`, `table_wraps`, `weight_le_one`, `weight_first_ms`, `packed_word_fits`, `ppm_fits_value`, `troll_product_fits`, `expected_useful_fits`, `timestamp_lasts`, `tie_bucket_le_backoff_floor`, `useful_floor_is_one_64th`, `occupancy_half_life_ticks`, `lex_keeps_due_order`, `bucket_order_any_score`, `same_score_keeps_due_order`: *(no axioms)*
+- `div_mono`, `record_first`, `expected_useful_le`: `[propext]`
+- `keep_mono`, `div_add_le`, `share_le`, `share_ge`, `troll_full`, `sum_shift`, `dither_mean`, `decay_step`, `decay_geometric`, `weight_full_after_silence`, `weight_zero_gap`, `bucket_keeps_order`, `inversion_within_quantum`, `rearmed_root_goes_behind`, `bucket_apart_keeps_order`, `inversion_within_bucket`: `[propext, Quot.sound]`
+- `roll_between_up`, `roll_between_down`, `roll_le_bound`, `troll_between_up`, `troll_between_down`, `troll_le_bound`, `troll_decay_up`, `troll_decay_down`, `iter_stays_below`, `iter_monotone_up`, `decay_step_up`, `decay_step_down`: `[propext, Classical.choice, Quot.sound]`
 
 Transaction admission (`TxnAdmission.Key`): every theorem depends on no axioms.
 

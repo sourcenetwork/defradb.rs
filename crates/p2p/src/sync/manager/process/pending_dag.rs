@@ -9,6 +9,7 @@ use cid::Cid;
 use blockstore::Blockstore;
 
 use crate::error::{Error, Result};
+use crate::sync::arbitration::AttemptSample;
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
 use crate::sync::manager::pending::{
@@ -77,7 +78,10 @@ impl PendingDagLease {
     /// the root it admitted last, brings it back once the others had a turn:
     /// durable roots past the cap take turns instead of the first ones in key
     /// order holding the map for good.
-    pub(crate) fn finish_attempt(&self, preempted: bool) {
+    ///
+    /// `sample` feeds the root's estimates and nothing else: the re-arm is the
+    /// same whatever it says.
+    pub(crate) fn finish_attempt(&self, preempted: bool, sample: AttemptSample) {
         let now = crate::rt::time::Instant::now();
         let durable = self.persisted.contains(&self.root_cid);
         let rotates = durable
@@ -103,6 +107,7 @@ impl PendingDagLease {
                 } else {
                     dag.next_retry_at.max(now + retry_backoff(dag.dispatches))
                 };
+                dag.estimates.observe(sample);
             }
         });
         if rotates {
@@ -652,6 +657,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         merge_continuation: true,
                         storage_blocker: None,
                         origin: PendingOrigin::LocalContinuation,
+                        estimates: crate::sync::arbitration::RootEstimates::default(),
                     },
                 );
             }
@@ -760,6 +766,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 .cmp(&right.next_retry_at)
                 .then_with(|| left_cid.to_bytes().cmp(&right_cid.to_bytes()))
         });
+        self.observe_dispatch_pass(now, &due);
         due
     }
 
@@ -1125,6 +1132,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 merge_continuation: false,
                 storage_blocker: None,
                 origin: PendingOrigin::Restored,
+                estimates: crate::sync::arbitration::RootEstimates::default(),
             };
 
             let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {

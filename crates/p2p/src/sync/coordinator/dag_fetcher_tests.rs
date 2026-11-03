@@ -116,6 +116,8 @@ struct TestTransport {
     disconnected_peers: Arc<Atom<Vec<String>>>,
     empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
     busy_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    /// Every selective query from this index on is answered busy.
+    busy_from_batch: Arc<AtomOption<(usize, crate::sync::manager::BlockSyncCompletionTracker)>>,
     force_rooted_sync: Arc<AtomicBool>,
     fetch_stats: Arc<Atom<Vec<crate::transport::PeerFetchStats>>>,
     /// Providers that fail every selective query after a delay.
@@ -178,6 +180,7 @@ impl TestTransport {
             disconnected_peers: Arc::new(Atom::new(Vec::new())),
             empty_car_answer: Arc::new(AtomOption::none()),
             busy_car_answer: Arc::new(AtomOption::none()),
+            busy_from_batch: Arc::new(AtomOption::none()),
             force_rooted_sync: Arc::new(AtomicBool::new(false)),
             fetch_stats: Arc::new(Atom::new(Vec::new())),
             refusing_providers: Arc::new(rapid_map()),
@@ -217,6 +220,16 @@ impl TestTransport {
 
     fn set_busy_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
         self.busy_car_answer.store_some(tracker);
+    }
+
+    /// Serve the first `from` selective queries, then answer every later one
+    /// busy: a provider that delivers and then sheds.
+    fn set_busy_from_batch(
+        &self,
+        from: usize,
+        tracker: crate::sync::manager::BlockSyncCompletionTracker,
+    ) {
+        self.busy_from_batch.store_some((from, tracker));
     }
 
     fn set_force_rooted_sync(&self) {
@@ -539,6 +552,12 @@ impl P2PTransport for TestTransport {
         }) {
             completion.size_limit(query_id, cid);
             return Ok(query_id);
+        }
+        if let Some((from, completion)) = self.busy_from_batch.load().map(|busy| busy.clone()) {
+            if call_index >= from {
+                completion.provider_busy(query_id);
+                return Ok(query_id);
+            }
         }
         if let Some(completion) = providers
             .first()

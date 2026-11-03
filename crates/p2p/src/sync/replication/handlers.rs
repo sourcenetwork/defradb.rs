@@ -152,7 +152,7 @@ where
 
         let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
-            let end = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
+            let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
                 blockstore,
                 event_tx,
@@ -162,7 +162,7 @@ where
                 diagnostics,
             )
             .await;
-            attempt.finish_clock_attempt(end);
+            attempt.finish_clock_attempt(end, sample);
         });
 
         return ReplicationResult::DagFetchStarted { root_cid };
