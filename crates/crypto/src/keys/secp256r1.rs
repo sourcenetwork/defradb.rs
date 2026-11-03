@@ -7,8 +7,10 @@
 //! - Public keys: 33 bytes (compressed) or 65 bytes (uncompressed)
 //! - Signatures: DER-encoded ECDSA signatures
 
-use p256::ecdsa::{signature::DigestSigner, Signature, SigningKey, VerifyingKey};
-use p256::EncodedPoint;
+use p256::ecdsa::{
+    signature::hazmat::{PrehashSigner, PrehashVerifier},
+    Signature, SigningKey, VerifyingKey,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -104,14 +106,15 @@ impl Key for Secp256r1PrivateKey {
 
 impl PrivateKey for Secp256r1PrivateKey {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-
-        let signature: Signature = self.key.sign_digest(hasher);
+        let digest = Sha256::digest(data);
+        let signature: Signature = self
+            .key
+            .sign_prehash(&digest)
+            .map_err(|e| crypto_error(format!("secp256r1 signing failed: {}", e)))?;
 
         // Normalize S to low-S form for compatibility with Go verifiers and
         // to prevent signature malleability (ECDSA signatures are malleable without this).
-        let signature = signature.normalize_s().unwrap_or(signature);
+        let signature = signature.normalize_s();
 
         Ok(signature.to_der().as_bytes().to_vec())
     }
@@ -153,10 +156,7 @@ impl Secp256r1PublicKey {
             return Err(crypto_error("secp256r1 public key cannot be empty"));
         }
 
-        // EncodedPoint handles both compressed (33) and uncompressed (65) formats
-        let point = EncodedPoint::from_bytes(bytes)
-            .map_err(|e| crypto_error(format!("invalid secp256r1 public key encoding: {}", e)))?;
-        let key = VerifyingKey::from_encoded_point(&point)
+        let key = VerifyingKey::from_sec1_bytes(bytes)
             .map_err(|_| crypto_error("invalid secp256r1 public key: not on curve"))?;
 
         Ok(Self::from_verifying_key(key))
@@ -168,7 +168,7 @@ impl Secp256r1PublicKey {
     }
 
     fn from_verifying_key(key: VerifyingKey) -> Self {
-        let raw_bytes = key.to_encoded_point(true).as_bytes().to_vec();
+        let raw_bytes = key.to_sec1_point(true).as_bytes().to_vec();
         Self { key, raw_bytes }
     }
 }
@@ -217,23 +217,16 @@ impl<'de> Deserialize<'de> for Secp256r1PublicKey {
 
 impl PublicKey for Secp256r1PublicKey {
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<bool> {
-        use p256::ecdsa::signature::DigestVerifier;
-
         // Parse DER-encoded signature
         let sig = Signature::from_der(signature)
             .map_err(|e| crypto_error(format!("invalid secp256r1 DER signature: {}", e)))?;
 
         // Normalize S to low-S form for compatibility with various signers
-        let sig = sig.normalize_s().unwrap_or(sig);
+        let sig = sig.normalize_s();
 
-        // Hash the message with SHA-256 first
-        // Go's ecdsa.Sign takes a pre-computed hash, so we must also pre-hash
-        // and use verify_digest (DigestVerifier) to match Go behavior
-        let digest = Sha256::new_with_prefix(data);
-
-        // Verify signature using pre-hashed digest
+        let digest = Sha256::digest(data);
         self.key
-            .verify_digest(digest, &sig)
+            .verify_prehash(&digest, &sig)
             .map(|_| true)
             .map_err(|e| crypto_error(format!("secp256r1 signature verification failed: {}", e)))
     }
@@ -241,7 +234,7 @@ impl PublicKey for Secp256r1PublicKey {
     fn did(&self) -> Result<String> {
         // Use uncompressed format (65 bytes) for DID generation to match Go implementation
         // Go uses ecdhPubKey.Bytes() which produces the full [0x04 | x | y] format
-        let uncompressed = self.key.to_encoded_point(false);
+        let uncompressed = self.key.to_sec1_point(false);
         crate::did::create_did_key(KeyType::Secp256r1, uncompressed.as_bytes())
     }
 }
@@ -252,7 +245,7 @@ impl PublicKey for Secp256r1PublicKey {
 pub fn secp256r1_private_key_to_xy(private_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let signing_key = SigningKey::from_slice(private_bytes)
         .map_err(|e| crypto_error(format!("invalid secp256r1 private key: {}", e)))?;
-    let point = signing_key.verifying_key().to_encoded_point(false);
+    let point = signing_key.verifying_key().to_sec1_point(false);
     let x = point
         .x()
         .ok_or_else(|| crypto_error("secp256r1: missing x coordinate"))?
