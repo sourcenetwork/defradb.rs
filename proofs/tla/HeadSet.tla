@@ -8,11 +8,11 @@
 \* once, even after it is superseded. HeadPublication.tla models that protocol.
 \*
 \* THE MECHANISM. A collection's head set is the set of blocks in its DAG that no
-\* other block names as a parent. `write_collection_block` maintains it by:
-\*   1. scanning the head prefix to read the current heads (collection.rs:27-53),
-\*   2. writing a new block whose parents are exactly those heads (:73),
-\*   3. writing the new head key (:91),
-\*   4. DELETING every old head key it observed (:96-100).
+\* other block names as a parent. `write_collection_block` used to maintain it by:
+\*   1. scanning the head prefix to read the current heads,
+\*   2. writing a new block whose parents are exactly those heads,
+\*   3. writing the new head key,
+\*   4. DELETING every old head key it observed.
 \*
 \* Step 4 is the whole subject of this model. Two transactions that run
 \* concurrently both observe the same old head and both delete it. That is a
@@ -37,7 +37,7 @@
 \* not merely its throughput.
 \*
 \* ONE KNOB:
-\*   Strategy = "EagerDelete" - the tree as it stands: a writer deletes every head
+\*   Strategy = "EagerDelete" - the former tree: a writer deletes every head
 \*                              it observed. Two concurrent writers write the same
 \*                              delete, so one aborts.                      [RED]
 \*            = "Derived"     - a writer only ever writes keys derived from its OWN

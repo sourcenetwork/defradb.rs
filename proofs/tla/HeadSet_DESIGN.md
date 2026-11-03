@@ -22,10 +22,12 @@ Step 4 was the subject. Two transactions that scanned before either committed
 hold the same `old_head_keys` and issue the same delete. That is a write-write
 conflict on one key.
 
-Step 4 is gone. The tree now writes a supersede marker per parent
-(`crates/db/src/block/heads.rs::record_supersedes`) and derives the head set on
-read (`live_collection_heads`), with
-`crates/db/src/merge/merge_handler/collection.rs` doing the same for a
+Step 4 is gone. A writer now merges blind operands into the collection's one
+head-set key (`crates/db/src/block/heads.rs::publish_collection_block`): an
+`add` for its own block and a `supersede` per parent, folded by the operator in
+`crates/storage/src/backends/regolith/merge/head_set.rs`. A reader takes the
+set with one point read (`live_collection_heads`), and
+`crates/db/src/merge/merge_handler/collection.rs` does the same for a
 replicated block.
 
 The store regolith replaced carried a conflict tracker with an explicit
@@ -93,41 +95,28 @@ wrong tips would fail it.
 
 ## Reclamation
 
-Nothing deletes a superseded head key on the write path any more, so without a
-sweep the headstore grows one key per mutation and every append scans all of
-them. That is the real cost of the design on a device with a small memory
-budget, and it is why `prune_superseded_heads` exists.
+The code no longer sweeps. A `supersede` operand sends a live name to absent
+when the head-set operator folds it, so one key holds a collection's set and it
+grows with its live tips and held-ahead parents, not with history.
 
-The sweep runs in a transaction of its own. That is not a detail: it writes keys
-another sweep would also write, so it is the one path here that can conflict.
-Folding it into an append would put the shared write back on the path that must
-not have one. Losing the race costs nothing, because the head set is a function
-of the markers and the next pass repeats the work.
-
-`DB::maybe_prune_collection_heads` amortizes it over `HEAD_PRUNE_INTERVAL`
-appends, which holds the backlog at a small constant per collection rather than
-letting it track history length. The interval is a policy number chosen here,
-not a parity constant: Go deletes inline and has nothing to reclaim.
-
-`Prune` in the model covers the safety question, which is whether reclaiming
-changes what a reader sees. `prune_preserves_derivedHeads` is the same statement
-in Lean, and it carries `isSuperseded s b` as a hypothesis, so it says nothing
-about sweeping a live head.
+`Prune` in the model is the reclamation the earlier marker design ran as a sweep
+in a transaction of its own. It covers the safety question, which is whether
+reclaiming changes what a reader sees. `prune_preserves_derivedHeads` is the
+same statement in Lean, and it carries `isSuperseded s b` as a hypothesis, so it
+says nothing about sweeping a live head.
 
 ## What the model does not cover
 
 * **Unbounded growth.** The model has a fixed finite block set, so it can show
-  that reclaiming is safe but not that reclaiming keeps up. That the backlog
-  stays bounded rests on the amortization interval and on every branchable
-  mutation passing through
-  `write_branchable_collection_block`; it is asserted by
-  `crates/db/tests/block/heads.rs::a_bounded_pass_reports_what_it_left`, which
-  is a convergence test rather than a proof.
-* **Orphan markers.** A sweep that commits between another writer's scan and its
-  commit leaves a marker whose parent has no head key. The sweep retains it on
-  purpose, because a block replicated ahead of its parent is indistinguishable
-  from an orphan. It is bounded by how often that interleaving happens, not by
-  history length, and the GREEN model reaches the state and stays correct in it.
+  that reclaiming is safe but not that a set stays small. That rests on the
+  operator's fold and on every branchable mutation passing through
+  `write_branchable_collection_block`.
+* **Held-ahead parents.** A parent superseded before its own head arrives is
+  held ahead until its `add` consumes it, because a block replicated ahead of
+  its parent is indistinguishable from an orphan. One whose head never arrives
+  stays; that is bounded by how often it happens, not by history length. The
+  model's orphan markers are the same state, and the GREEN model reaches it and
+  stays correct in it.
 * **Merge-path siblings.** Siblings also arise from P2P replication applying
   remote blocks. That path goes through the merge handler, which performs the
   same transition, and convergence itself is covered by the convergence models.

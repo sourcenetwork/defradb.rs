@@ -3,13 +3,14 @@
 \* PushLogAdmission.tla: that module fixes the hub's REPLY decision at capacity (#1088
 \* W1, kept here as HubOverflowNack); this one asks what survives a hub CRASH after an
 \* honest success reply. Abstracts crates/p2p/src/sync/manager/process/pushlog.rs
-\* (insert_pending_dag) plus the pusher's persisted retry ladder.
+\* (process_block_inner: try_insert_pending_dag, then the pending store's register)
+\* plus the pusher's persisted retry ladder.
 \*
 \* THE MECHANISM: an inbound PushLog with missing links is registered in the hub's
 \* bounded in-memory pending-DAG map and success-acked; the pusher then deletes its
 \* persisted retry record (terminal - it never re-pushes unless an unrelated later
-\* update arrives). Registrations are process-local today: a hub crash after the ack
-\* leaves the pusher holding nothing to retry and the hub holding nothing to complete.
+\* update arrives). Registrations were process-local before #1099: a hub crash after the ack
+\* left the pusher holding nothing to retry and the hub holding nothing to complete.
 \* Silent, permanent loss - the restart-shaped twin of #1088 M1.
 \*
 \* THE FIX: registrations are also persisted at admission time; on restart the durable
@@ -18,7 +19,7 @@
 \* One knob:
 \*   RecoveryMode = "Persist"      - HubAdmit persists alongside the in-memory
 \*                                   registration; Restore re-loads after a crash. [GREEN]
-\*                = "ProcessLocal" - current behavior: registrations die with the
+\*                = "ProcessLocal" - pre-#1099 behavior: registrations die with the
 \*                                   process. [RED]
 \*
 \* Abstractions: as in PushLogAdmission, docs are the unit and "the pusher" is the
