@@ -15,6 +15,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 mod acked_pending_ttl;
 #[path = "../../../../tests/unit/durable_only_repush.rs"]
 mod durable_only_repush;
+#[path = "../../../../tests/unit/sibling_durable_repush.rs"]
+mod sibling_durable_repush;
 
 #[path = "../../../../tests/unit/estimators_observe_only.rs"]
 mod estimators_observe_only;
