@@ -149,8 +149,9 @@ impl ManagedP2PSystem {
         self.replicator_push_options.load()
     }
 
-    /// Stops the transport, then clears the process's signing identities, as
-    /// the FFI node's close does.
+    /// Stops the transport, then clears every signing identity in the
+    /// process, other nodes' included. [`Node::shutdown`](crate::Node::shutdown)
+    /// stops the transport and leaves them alone.
     pub async fn shutdown(&self) {
         self.shutdown.stop().await;
         defra_core::signing::clear_identity_store();

@@ -61,4 +61,6 @@ pub use get::defra_document_get;
 pub use update::defra_document_update;
 
 #[cfg(test)]
+mod signing_tests;
+#[cfg(test)]
 mod tests;

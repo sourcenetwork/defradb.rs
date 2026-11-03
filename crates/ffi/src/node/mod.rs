@@ -6,14 +6,16 @@ mod sanitized;
 mod transport;
 
 #[cfg(test)]
+mod startup_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
 
-use kovan::AtomOption;
+use kovan::{Atom, AtomOption};
 
 use crate::ffi_entry;
-use crate::state::{NodeState, P2PState, NODES, TXNS};
+use crate::state::{NodeIdentity, NodeState, P2PState, NODES, TXNS};
 use crate::target::{resolve_node, ERR_INVALID_HANDLE};
 use crate::try_ffi;
 use crate::types::{DefraNewNodeResult, DefraResult, NodeInitOptions};
@@ -116,10 +118,10 @@ pub(crate) async fn build_node_state(
             .p2p_system()
             .cloned()
             .map(|system| Arc::new(P2PState::new(system))),
-        node_identity_did: node
-            .node_identity_did()
-            .map(str::to_owned)
-            .map_or_else(AtomOption::none, AtomOption::some),
+        node_identity: Atom::new(
+            node.node_identity_did()
+                .map(|did| NodeIdentity::hold(did.to_owned())),
+        ),
         signing_enabled,
         query_limits: node.query_limits(),
         se_encryption_key: searchable_encryption_key
@@ -172,12 +174,13 @@ pub extern "C" fn defra_node_close(node_ptr: usize) -> DefraResult {
         };
 
         // The node's own shutdown stops its tasks and transport and closes the
-        // database; the P2P system's also clears the signing identities FFI
-        // registered, and the event bus is FFI's to close.
+        // database, and the event bus is FFI's to close. The signing store is
+        // process-wide and other nodes still use it, so the node gives back
+        // only its own hold on its identity's key.
+        if let Some(identity) = &*state.node_identity.swap(None) {
+            identity.release();
+        }
         let result = crate::helpers::block_on(rt, async {
-            if let Some(p2p) = state.p2p.as_ref() {
-                p2p.system.shutdown().await;
-            }
             let closed = state._node.shutdown().await;
             state.event_bus.close();
             closed.map_err(|error| format!("failed to close database: {}", error))

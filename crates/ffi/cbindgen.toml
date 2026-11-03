@@ -6,8 +6,10 @@ header = """
 /*
  * DefraDB C API - generated header.
  *
- * The functions follow Go DefraDB's cbindings (libdefradb.h) call for call,
- * named defra_<noun>_<verb>. A call that works on a store takes a handle
+ * The functions cover the calls of Go DefraDB's cbindings (libdefradb.h),
+ * named defra_<noun>_<verb>. Names and types are prefixed and
+ * NodeInitOptions adds fields after Go's, so this header is not a drop-in
+ * for libdefradb.h. A call that works on a store takes a handle
  * naming a node or one of its transactions, and an identity handle naming
  * the caller (0 for none). Free every result a call returns with its free
  * function: defra_result_free, or defra_new_<kind>_result_free.

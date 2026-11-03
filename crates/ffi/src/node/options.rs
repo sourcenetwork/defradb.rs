@@ -178,19 +178,12 @@ unsafe fn vera(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfi
     let required = |value: Option<String>, name: &str| {
         value.ok_or_else(|| format!("{} is required for remote document ACP", name))
     };
-    let signer_key = match options.vera_signer_key.is_null() || options.vera_signer_key_len == 0 {
-        true => return Err("vera_signer_key is required for remote document ACP".to_string()),
-        false if options.vera_signer_key_len > MAX_PRIVATE_KEY_LEN => {
-            return Err(format!(
-                "vera_signer_key_len {} exceeds maximum {}",
-                options.vera_signer_key_len, MAX_PRIVATE_KEY_LEN
-            ))
-        }
-        // SAFETY: non-null and bounded above; the caller guarantees the
-        // buffer is valid for its stated length.
-        false => std::slice::from_raw_parts(options.vera_signer_key, options.vera_signer_key_len)
-            .to_vec(),
-    };
+    let mut signer_key = key_bytes(
+        options.vera_signer_key,
+        options.vera_signer_key_len,
+        "vera_signer_key",
+    )?
+    .ok_or_else(|| "vera_signer_key is required for remote document ACP".to_string())?;
     Ok(defra_node::DocumentAcpConfig::Vera(
         defra_node::VeraConfig {
             grpc_address: required(
@@ -202,7 +195,7 @@ unsafe fn vera(options: &NodeInitOptions) -> Result<defra_node::DocumentAcpConfi
                 "remote_dac_comet_rpc_address",
             )?,
             chain_id: required(non_empty(options.vera_chain_id), "vera_chain_id")?,
-            signer_key,
+            signer_key: std::mem::take(&mut *signer_key),
         },
     ))
 }

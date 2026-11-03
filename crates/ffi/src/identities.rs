@@ -113,37 +113,37 @@ pub extern "C" fn defra_identity_did(identity_ptr: usize) -> DefraResult {
     }
 }
 
-/// Releases an identity handle. Releasing the null handle, or one already
-/// released, does nothing.
+/// Releases an identity handle and its hold on the identity's private key,
+/// which leaves memory once no other handle or node holds it. Releasing the
+/// null handle, or one already released, does nothing.
 #[no_mangle]
 pub extern "C" fn defra_identity_free(identity_ptr: usize) {
     ffi_entry! {
-        IDENTITIES.remove(identity_ptr);
+        IDENTITIES.release(identity_ptr);
     }
 }
 
 /// Returns the node's public identity as JSON, `{"PublicKey": ..., "DID":
-/// ...}`, for a node or a transaction on it. A node without an identity
+/// ...}`, for a node or a transaction on it: the one it started with, or the
+/// one `defra_node_set_identity` gave it since. A node without an identity
 /// answers with a message saying so.
 #[no_mangle]
 pub extern "C" fn defra_node_identity(node_ptr: usize) -> DefraResult {
     ffi_entry! {
         let node = try_ffi!(resolve_target(node_ptr)).node();
-        let identity = NODES
-            .get(node, |state| state.database.node_identity())
-            .flatten();
-        let Some(identity) = identity else {
+        let Some(did) = NODES.get(node, |state| state.identity_did()).flatten() else {
             return DefraResult::success("Node has no identity assigned to it.");
         };
-        match identity::Identity::did(identity.as_ref()) {
-            Ok(did) => DefraResult::success(
-                serde_json::json!({
-                    "PublicKey": hex::encode(identity.public_key_bytes()),
-                    "DID": did.to_string(),
-                })
-                .to_string(),
-            ),
-            Err(error) => DefraResult::error(format!("failed to derive DID: {}", error)),
-        }
+        // An identity a bearer token stands for has no public key here.
+        let public_key = defra_core::signing::get_identity(&did)
+            .map(|config| config.public_key_hex.clone())
+            .unwrap_or_default();
+        DefraResult::success(
+            serde_json::json!({
+                "PublicKey": public_key,
+                "DID": did,
+            })
+            .to_string(),
+        )
     }
 }

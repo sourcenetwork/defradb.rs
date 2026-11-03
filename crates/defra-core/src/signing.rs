@@ -14,6 +14,13 @@ use crate::thread_bounds::MaybeBoxFuture;
 use rapidhash::fast::RandomState;
 use zeroize::Zeroize;
 
+mod identity_store;
+
+pub use identity_store::{
+    clear_identity_store, find_remote_signer_did, get_identity, hold_identity, release_identity,
+    retain_identity, store_identity,
+};
+
 #[cfg(any(test, feature = "ambient"))]
 pub use crate::ambient::{
     get_broadcast_creator_did, get_request_bearer_token, get_signing_config,
@@ -342,37 +349,6 @@ impl SigningConfig {
     }
 }
 
-/// Global identity store mapping DID → SigningConfig.
-/// When create_identity() generates a keypair, we store it here so that
-/// exec_request() can look up the signing key from just a DID string.
-static IDENTITY_STORE: OnceCell<HopscotchMap<String, SigningConfig, RandomState>> = OnceCell::new();
-
-fn identity_store() -> &'static HopscotchMap<String, SigningConfig, RandomState> {
-    IDENTITY_STORE.get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
-}
-
-/// Store a signing config for a DID.
-pub fn store_identity(did: &str, config: SigningConfig) {
-    identity_store().insert(did.to_string(), config);
-}
-
-/// Retrieve stored signing config for a DID.
-pub fn get_identity(did: &str) -> Option<SigningConfig> {
-    identity_store().get(did)
-}
-
-/// Find a registered DID backed by a remote signer.
-///
-/// This is used by HTTP request handling when the authenticated caller DID has no
-/// locally registered signing identity. In Orbis-backed deployments, the node
-/// should fall back to the remote signer identity rather than a local `--identity`
-/// secp256k1 key, so create mutations still go through the signing gate.
-pub fn find_remote_signer_did() -> Option<String> {
-    identity_store()
-        .iter()
-        .find_map(|(did, config)| config.has_remote_signer().then_some(did))
-}
-
 /// Resolve signing config for a request identity when signing is enabled.
 ///
 /// When an explicit identity DID is provided, uses that identity's signing config
@@ -418,11 +394,6 @@ pub fn resolve_signing_config_with_flag(
             }
         }
     }
-}
-
-/// Clear all stored identities (for node cleanup).
-pub fn clear_identity_store() {
-    identity_store().clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -611,6 +582,65 @@ mod tests {
 
             let resolved = find_remote_signer_did().expect("remote signer DID should resolve");
             assert_eq!(resolved, "did:key:remote");
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_last_hold_on_an_identity_removes_its_key() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:held";
+            hold_identity(did, make_config("first"));
+            hold_identity(did, make_config("second"));
+
+            release_identity(did);
+            assert!(get_identity(did).is_some(), "one hold remains");
+            release_identity(did);
+            assert!(get_identity(did).is_none(), "no hold remains");
+            assert!(
+                !retain_identity(did),
+                "a released identity has no key to retain"
+            );
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_retained_identity_outlives_the_hold_it_was_taken_from() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:retained";
+            hold_identity(did, make_config("held"));
+            assert!(retain_identity(did));
+
+            release_identity(did);
+            assert!(get_identity(did).is_some());
+            release_identity(did);
+            assert!(get_identity(did).is_none());
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_pinned_identity_survives_its_holds() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:pinned";
+            store_identity(did, make_config("pinned"));
+            assert!(retain_identity(did));
+            release_identity(did);
+            release_identity(did);
+            assert!(get_identity(did).is_some());
 
             clear_identity_store();
         })

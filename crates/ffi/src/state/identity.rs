@@ -24,8 +24,9 @@ pub struct IdentityState {
 }
 
 impl IdentityState {
-    /// The state of `identity`, also registered in the signing store under
+    /// The state of `identity`, which holds its key in the signing store under
     /// its DID, which is how a request names the identity that signs it.
+    /// [`IdentityRegistry::release`] gives the hold back.
     pub fn register(identity: &RawIdentity) -> Result<Self, String> {
         let did = identity
             .did()
@@ -41,7 +42,7 @@ impl IdentityState {
         let public_key_bytes = identity.public_key_bytes();
         let public_key_hex = hex::encode(&public_key_bytes);
 
-        defra_core::signing::store_identity(
+        defra_core::signing::hold_identity(
             &did,
             SigningConfig {
                 key_type,
@@ -86,9 +87,39 @@ impl IdentityRegistry {
         self.identities.get(&handle)
     }
 
-    /// Remove and return an identity.
-    pub fn remove(&self, handle: IdentityHandle) -> Option<Arc<IdentityState>> {
-        self.identities.remove(&handle)
+    /// Releases a handle and gives back its hold on the identity's key, which
+    /// leaves the signing store once no other handle or node holds it.
+    pub fn release(&self, handle: IdentityHandle) {
+        let Some(state) = self.identities.remove(&handle) else {
+            return;
+        };
+        if state.key_type.is_some() {
+            defra_core::signing::release_identity(&state.did);
+        }
+    }
+}
+
+/// A node's signing identity: its DID, and whether the node holds that DID's
+/// key in the signing store, so freeing the identity's handle leaves the node
+/// able to sign.
+#[derive(Clone)]
+pub struct NodeIdentity {
+    pub did: String,
+    held: bool,
+}
+
+impl NodeIdentity {
+    /// `did`, with a hold on its key when the signing store has one.
+    pub fn hold(did: String) -> Self {
+        let held = defra_core::signing::retain_identity(&did);
+        Self { did, held }
+    }
+
+    /// Gives back the node's hold on the key.
+    pub fn release(&self) {
+        if self.held {
+            defra_core::signing::release_identity(&self.did);
+        }
     }
 }
 

@@ -222,7 +222,7 @@ fn store(
         callback,
     );
 
-    defra_core::signing::store_identity(
+    defra_core::signing::hold_identity(
         &did,
         defra_core::signing::SigningConfig {
             key_type,

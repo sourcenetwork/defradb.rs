@@ -19,4 +19,6 @@ pub use nac::{
 };
 
 #[cfg(test)]
+mod nac_tests;
+#[cfg(test)]
 mod tests;

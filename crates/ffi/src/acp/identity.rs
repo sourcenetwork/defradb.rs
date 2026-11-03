@@ -3,7 +3,7 @@
 
 use std::ffi::c_char;
 
-use crate::state::{IdentityState, IDENTITIES, NODES};
+use crate::state::{IdentityState, NodeIdentity, IDENTITIES, NODES};
 use crate::target::{non_empty, resolve_identity, resolve_node};
 use crate::types::{DefraNewIdentityResult, DefraResult};
 use crate::{ffi_entry, try_ffi};
@@ -50,9 +50,9 @@ pub extern "C" fn defra_node_set_identity(node_ptr: usize, identity_ptr: usize) 
         let node = try_ffi!(resolve_node(node_ptr));
         let did = try_ffi!(resolve_identity(identity_ptr));
         let updated = NODES.get(node, |state| {
-            match &did {
-                Some(did) => state.node_identity_did.store_some(did.clone()),
-                None => state.node_identity_did.store_none(),
+            let replaced = state.node_identity.swap(did.clone().map(NodeIdentity::hold));
+            if let Some(identity) = &*replaced {
+                identity.release();
             }
             state.sync_replicator_push_options()
         });

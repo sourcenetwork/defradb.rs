@@ -75,3 +75,6 @@ fn close(id: &str) {
         node.event_bus.unsubscribe(state.event_sub_id);
     });
 }
+
+#[cfg(test)]
+mod tests;

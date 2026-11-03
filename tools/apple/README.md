@@ -73,8 +73,10 @@ The generated C module is named after `FRAMEWORK_NAME` and defaults to `DefraFFI
 
 ## C API Surface
 
-The FFI follows Go DefraDB's cbindings (`libdefradb.h`) call for call, named
-`defra_<noun>_<verb>`. Every call that works on a store takes a handle naming
+The FFI covers the calls of Go DefraDB's cbindings (`libdefradb.h`), named
+`defra_<noun>_<verb>`. It matches Go's API, not its ABI: names and types are
+prefixed (`DefraResult` for Go's `Result`), and `NodeInitOptions` adds fields
+after Go's, so code built against Go's header needs these names. Every call that works on a store takes a handle naming
 a node, or one of its transactions, and an identity handle naming the caller
 (`0` for none). Results are `DefraResult` structs (`status`, `value`,
 `error`); free each one with `defra_result_free`, and the node, transaction

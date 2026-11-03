@@ -136,3 +136,25 @@ fn node_access_control_enabled_at_startup_admits_only_its_owner_and_grantees() {
     defra_identity_free(owner);
     defra_identity_free(stranger);
 }
+
+#[test]
+fn a_document_relationship_needs_a_collection_the_node_has() {
+    let owner = identity();
+    let node = node_with(local_options());
+    let collection = cstr("Missing");
+    let doc = cstr("bae-00000000-0000-0000-0000-000000000000");
+    let relation = cstr("viewer");
+    let actor = cstr(&ok(defra_identity_did(identity())));
+    err(unsafe {
+        defra_acp_dac_relationship_add(
+            node,
+            owner,
+            collection.as_ptr(),
+            doc.as_ptr(),
+            relation.as_ptr(),
+            actor.as_ptr(),
+        )
+    });
+    close(node);
+    defra_identity_free(owner);
+}

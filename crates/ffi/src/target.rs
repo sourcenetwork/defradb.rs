@@ -138,3 +138,16 @@ pub(crate) fn split_comma_separated(value: &str) -> Vec<String> {
         value.split(',').map(str::to_string).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::split_comma_separated;
+
+    #[test]
+    fn a_comma_separated_list_splits_on_every_comma() {
+        assert!(split_comma_separated("").is_empty());
+        assert_eq!(split_comma_separated("User"), ["User"]);
+        assert_eq!(split_comma_separated("User,Post"), ["User", "Post"]);
+        assert_eq!(split_comma_separated("User,,Post"), ["User", "", "Post"]);
+    }
+}

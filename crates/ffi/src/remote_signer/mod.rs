@@ -21,6 +21,8 @@ mod callback;
 mod pending;
 mod register;
 #[cfg(test)]
+mod registration_tests;
+#[cfg(test)]
 mod tests;
 
 use std::ffi::CString;

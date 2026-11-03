@@ -11,18 +11,15 @@ mod txn;
 
 use std::sync::Arc;
 
-use kovan::AtomOption;
+use kovan::{Atom, AtomOption};
 use storage::RegolithStore;
 use zeroize::Zeroizing;
 
 use blockstore::DefraBlockstore;
 
-pub use identity::{IdentityHandle, IdentityRegistry, IdentityState, IDENTITIES};
+pub use identity::{IdentityHandle, IdentityRegistry, IdentityState, NodeIdentity, IDENTITIES};
 pub use p2p::P2PState;
-pub use registry::{
-    graphql_subscriptions, nodes, GraphQLSubscriptionRegistry, GraphQLSubscriptionsAccess,
-    NodeRegistry, NodesAccess, GRAPHQL_SUBSCRIPTIONS, NODES,
-};
+pub use registry::{GraphQLSubscriptionRegistry, NodeRegistry, GRAPHQL_SUBSCRIPTIONS, NODES};
 pub use txn::{TxnHandle, TxnRegistry, TxnState, TXNS};
 
 /// Type alias for the database type used in FFI.
@@ -64,9 +61,10 @@ pub struct NodeState {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     /// P2P state (optional - not all nodes have P2P enabled).
     pub p2p: Option<Arc<P2PState>>,
-    /// Node identity DID (set when signing is enabled).
-    /// Used as fallback identity for signing blocks when no explicit identity is provided.
-    pub node_identity_did: AtomOption<String>,
+    /// The node's identity (set when signing is enabled), with the node's
+    /// hold on its key. Used as fallback identity for signing blocks when no
+    /// explicit identity is provided.
+    pub node_identity: Atom<Option<NodeIdentity>>,
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
@@ -81,7 +79,8 @@ pub struct NodeState {
 impl NodeState {
     /// The node's default signing identity DID, if one is configured.
     pub fn identity_did(&self) -> Option<String> {
-        self.node_identity_did.load().map(|did| did.to_string())
+        self.node_identity
+            .peek(|identity| identity.as_ref().map(|identity| identity.did.clone()))
     }
 
     pub fn replicator_push_options(&self) -> defra_node::ReplicatorPushOptions {
@@ -90,10 +89,7 @@ impl NodeState {
                 .se_encryption_key
                 .load()
                 .map(|key| Zeroizing::new(key.to_vec())),
-            se_identity_pubkey: self
-                .node_identity_did
-                .load()
-                .map(|identity| identity.as_bytes().to_vec()),
+            se_identity_pubkey: self.identity_did().map(String::into_bytes),
         }
     }
 

@@ -224,7 +224,9 @@ impl Default for CollectionOptions {
 ///
 /// Go's NodeInitOptions struct, field for field: an all-zero struct (null
 /// strings, zero numbers) is the default node, and every opt-out is a
-/// `disable_` flag. The fields after Go's are this implementation's own.
+/// `disable_` flag. The fields after Go's are this implementation's own, so
+/// the struct is larger than Go's: a caller passes this header's struct,
+/// never one laid out by Go's `defra_structs.h`.
 ///
 /// Go's Badger options name the store regolith replaced, so they are named
 /// for the store here (`store_file_size`, `store_encryption_key`). A Go
@@ -331,7 +333,7 @@ pub struct NodeInitOptions {
     /// Vera secp256k1 signer key bytes (raw 32-byte private key).
     pub vera_signer_key: *const u8,
     /// Length of `vera_signer_key` in bytes.
-    pub vera_signer_key_len: usize,
+    pub vera_signer_key_len: c_int,
     /// P2P transport: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
     /// Optional iroh relay URL.

@@ -1,8 +1,12 @@
 //! DefraDB's C API.
 //!
-//! The exports follow Go DefraDB's `cbindings` (`libdefradb.h`) call for
-//! call, named `defra_<noun>_<verb>` after the Go file that defines each one
-//! (`collection_add.go` is `defra_collection_add`). Like Go's, a call that
+//! The exports cover the calls of Go DefraDB's `cbindings`
+//! (`libdefradb.h`), each named `defra_<noun>_<verb>` after the Go file that
+//! defines it (`collection_add.go` is `defra_collection_add`). The API, not
+//! the ABI: the names and types are prefixed (`DefraResult`, not Go's
+//! `Result`), and [`types::NodeInitOptions`] adds fields after Go's, so a
+//! program built against Go's header does not link or run against this
+//! library unchanged. Like Go's, a call that
 //! works on a store takes one handle naming a node or one of its open
 //! transactions, and an identity handle naming the caller (0 for none); it
 //! answers with a [`types::DefraResult`] the caller frees with
@@ -132,9 +136,15 @@ macro_rules! ffi_async_ok {
 }
 
 #[cfg(test)]
+mod abi_tests;
+#[cfg(test)]
+mod api_refusal_tests;
+#[cfg(test)]
 mod api_tests;
 #[cfg(test)]
 mod identities_tests;
+#[cfg(test)]
+mod identity_keys_tests;
 #[cfg(test)]
 mod negative_tests;
 #[cfg(test)]

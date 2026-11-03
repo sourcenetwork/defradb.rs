@@ -5,3 +5,6 @@ mod import;
 
 pub use export::defra_backup_export;
 pub use import::defra_backup_import;
+
+#[cfg(test)]
+mod tests;

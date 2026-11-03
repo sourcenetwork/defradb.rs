@@ -17,4 +17,6 @@ pub use set_active::defra_collection_set_active;
 pub use truncate::{defra_collection_truncate, defra_collection_truncate_with_filter};
 
 #[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
 mod tests;
