@@ -3,9 +3,10 @@
 //! Every row names the Rust constant that sets a value and the model
 //! constants that stand for it. An `Exact` model site restates the value, in
 //! the unit the Rust initializer uses; a `Scaled` site takes a smaller instance
-//! of it, so only its declaration is checked. `every_constant_agrees` fails
-//! when the Rust initializer, an exact model site or this table disagree, or a
-//! named model constant is gone: change all three together.
+//! of it, so only its declaration in a `CONSTANT`/`CONSTANTS` list is checked,
+//! comments excluded. `every_constant_agrees` fails when the Rust initializer,
+//! an exact model site or this table disagree, or a scaled model constant is no
+//! longer declared: change all three together.
 
 /// A value, in the unit its Rust initializer is written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +23,8 @@ pub enum Model {
     /// `file` defines `name` as exactly this value: a Lean `def`, a TLC
     /// config `name = v` or a TLA+ `name == v`.
     Exact(&'static str, &'static str),
-    /// `file` declares `name` and checks a smaller instance of the value.
+    /// `file` declares `name` in a `CONSTANT`/`CONSTANTS` list and checks a
+    /// smaller instance of the value.
     Scaled(&'static str, &'static str),
 }
 
@@ -38,7 +40,6 @@ pub struct Constant {
 use std::fs;
 use std::path::Path;
 
-use crate::anchor::has_word;
 use Model::{Exact, Scaled};
 use Value::{Count, List, Millis, Secs};
 
@@ -340,6 +341,74 @@ fn model_definition<'a>(source: &'a str, file: &str, name: &str) -> Option<&'a s
     })
 }
 
+/// TLA+ source with `\*` line comments and `(* *)` block comments removed.
+fn without_comments(source: &str) -> String {
+    let mut text = String::with_capacity(source.len());
+    let mut depth = 0usize;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('(', Some('*')) => {
+                chars.next();
+                depth += 1;
+            }
+            ('*', Some(')')) if depth > 0 => {
+                chars.next();
+                depth -= 1;
+            }
+            ('\\', Some('*')) if depth == 0 => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        text.push(c);
+                        break;
+                    }
+                }
+            }
+            _ if depth == 0 => text.push(c),
+            _ => {}
+        }
+    }
+    text
+}
+
+/// Whether a TLA+ module lists `name` in a `CONSTANT` or `CONSTANTS`
+/// declaration.
+fn declares_constant(source: &str, name: &str) -> bool {
+    let text = without_comments(source);
+    let mut tokens = Vec::new();
+    let mut word = String::new();
+    for c in text.chars().chain(['\n']) {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        if !word.is_empty() {
+            tokens.push(std::mem::take(&mut word));
+        }
+        if !c.is_whitespace() {
+            tokens.push(c.to_string());
+        }
+    }
+    let mut at = 0;
+    while at < tokens.len() {
+        let keyword = matches!(tokens[at].as_str(), "CONSTANT" | "CONSTANTS");
+        at += 1;
+        if !keyword {
+            continue;
+        }
+        while let Some(declared) = tokens.get(at) {
+            if declared == name {
+                return true;
+            }
+            if tokens.get(at + 1).map(String::as_str) != Some(",") {
+                break;
+            }
+            at += 2;
+        }
+    }
+    false
+}
+
 /// Every way the code, a restating model or this table disagree; empty when
 /// they agree.
 pub fn disagreements(root: &Path) -> Vec<String> {
@@ -377,9 +446,9 @@ pub fn disagreements(root: &Path) -> Vec<String> {
                     }
                 }
                 Scaled(file, name) => {
-                    if !has_word(&read(file), name) {
+                    if !declares_constant(&read(file), name) {
                         drift.push(format!(
-                            "{name}, scaling {}, is not in {file}",
+                            "{name}, scaling {}, is not a CONSTANT of {file}",
                             constant.name
                         ));
                     }
@@ -430,5 +499,22 @@ mod tests {
         assert_eq!(model_definition(cfg, "x.cfg", "InitCut"), Some(" 2"));
         let tla = "Window == 3\n";
         assert_eq!(model_definition(tla, "x.tla", "Window"), Some(" 3"));
+    }
+
+    #[test]
+    fn a_scaled_constant_must_be_declared() {
+        let declared = "CONSTANTS\n  Window,  \\* the window\n  Fast\nASSUME Fast < Window\n";
+        assert!(declares_constant(declared, "Window"));
+        assert!(declares_constant(declared, "Fast"));
+        assert!(declares_constant("CONSTANT Deadline\n", "Deadline"));
+        assert!(declares_constant("CONSTANTS N , Cap\n", "Cap"));
+        for refused in [
+            "CONSTANTS FastCost\n\\* Fast is FAST_REFUSAL\nASSUME FastCost > 0\n",
+            "CONSTANTS (* Fast, *) FastCost\n",
+            "CONSTANTS Window\nFast == 1\n",
+            "VARIABLES Fast\n",
+        ] {
+            assert!(!declares_constant(refused, "Fast"), "{refused}");
+        }
     }
 }

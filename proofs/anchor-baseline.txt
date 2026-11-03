@@ -10,9 +10,15 @@
 # vera.rs                               -> proofs/survey/vera.md
 # p2p_doc_pusher.rs                     -> proofs/survey/cli.md
 # defradb.rs                            -> the repository name, not a source file
+# no_such_module.rs, no_such_sibling.rs -> proofs/src/anchor.rs break-test fixtures
+# coop.rs                               -> nuclei's own source (its cooperative budget),
+#                                          cited by proofs/tla/PgWire.tla (#2337)
 claim.rs
+coop.rs
 defradb.rs
 delegate.rs
+no_such_module.rs
+no_such_sibling.rs
 vera.rs
 p2p_doc_pusher.rs
 subagent_request.rs
