@@ -65,6 +65,9 @@ impl PendingDagLease {
 
     /// The fetch attempt ended and gave its slot back: the root is due again
     /// one backoff from now, so roots that waited during the attempt go first.
+    /// An attempt `preempted` at its quantum while still making progress is
+    /// due again at once instead: behind every root already due, with no
+    /// backoff, since it did not fail.
     ///
     /// A root with a durable record that has had
     /// `PENDING_ROTATE_AFTER_DISPATCHES` dispatches without merging instead
@@ -74,7 +77,7 @@ impl PendingDagLease {
     /// the root it admitted last, brings it back once the others had a turn:
     /// durable roots past the cap take turns instead of the first ones in key
     /// order holding the map for good.
-    pub(crate) fn finish_attempt(&self) {
+    pub(crate) fn finish_attempt(&self, preempted: bool) {
         let now = n0_future::time::Instant::now();
         let durable = self.persisted.contains(&self.root_cid);
         let rotates = durable
@@ -95,7 +98,11 @@ impl PendingDagLease {
             if rotates {
                 pending.remove(&self.root_cid);
             } else if let Some(dag) = pending.get_mut(&self.root_cid) {
-                dag.next_retry_at = dag.next_retry_at.max(now + retry_backoff(dag.dispatches));
+                dag.next_retry_at = if preempted {
+                    now
+                } else {
+                    dag.next_retry_at.max(now + retry_backoff(dag.dispatches))
+                };
             }
         });
         if rotates {

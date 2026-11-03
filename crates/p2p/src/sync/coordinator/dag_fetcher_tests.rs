@@ -10,6 +10,8 @@ mod dag_fetch_depth;
 mod dag_fetch_logs;
 #[path = "../../../tests/unit/durable_overflow_rotation.rs"]
 mod durable_overflow_rotation;
+#[path = "../../../tests/unit/productive_quantum.rs"]
+mod productive_quantum;
 #[path = "../../../tests/unit/provider_ranking.rs"]
 mod provider_ranking;
 #[path = "../../../tests/unit/restart_slot_fairness.rs"]
@@ -125,6 +127,8 @@ struct TestTransport {
     >,
     closure_provider: Arc<AtomOption<Arc<DefraBlockstore<RegolithStore>>>>,
     closure_rounds: Arc<Atom<Vec<(u32, usize)>>>,
+    /// When non-zero, a served selective block lands this long after it was asked for.
+    drip_delay_nanos: Arc<AtomicU64>,
 }
 
 impl TestTransport {
@@ -178,7 +182,15 @@ impl TestTransport {
             refusing_providers: Arc::new(rapid_map()),
             closure_provider: Arc::new(AtomOption::none()),
             closure_rounds: Arc::new(Atom::new(Vec::new())),
+            drip_delay_nanos: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Serve every selective block `delay` after it is asked for: a provider
+    /// that keeps delivering, slowly.
+    fn set_drip_delay(&self, delay: Duration) {
+        self.drip_delay_nanos
+            .store(delay.as_nanos() as u64, Ordering::SeqCst);
     }
 
     /// Serve depth-cut syncs from `provider` the way the iroh responder does.
@@ -616,6 +628,25 @@ impl P2PTransport for TestTransport {
             .iter()
             .all(|peer| self.dead_providers.contains_key(peer.as_str()));
         if all_dead {
+            return Ok(query_id);
+        }
+        let drip = Duration::from_nanos(self.drip_delay_nanos.load(Ordering::SeqCst));
+        if !drip.is_zero() {
+            let blockstore = Arc::clone(&self.blockstore);
+            let blocks: Vec<(Cid, Vec<u8>)> = missing
+                .iter()
+                .filter_map(|cid| {
+                    self.selective_blocks
+                        .get(cid)
+                        .map(|data| (*cid, data.clone()))
+                })
+                .collect();
+            n0_future::task::spawn(async move {
+                n0_future::time::sleep(drip).await;
+                for (cid, data) in blocks {
+                    blockstore.put(&cid, &data).await.unwrap();
+                }
+            });
             return Ok(query_id);
         }
         for cid in missing {
