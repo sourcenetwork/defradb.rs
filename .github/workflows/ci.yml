@@ -770,6 +770,8 @@ jobs:
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
+      # A failing scenario shows its in-process nodes' P2P trace.
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       # basic holds legacy tests and one testo module, txn_context.
       TESTO: >-
         --test acp_scenarios --test backup_scenarios --test collection

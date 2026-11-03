@@ -6216,6 +6216,7 @@ dependencies = [
  "tempfile",
  "testo",
  "thiserror 2.0.21",
+ "tracing-subscriber",
  "vera",
  "vera-client",
  "vera-domain",
