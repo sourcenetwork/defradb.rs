@@ -138,7 +138,7 @@ deny = [
         "test-infra", "tokio-native-tls", "tokio-rustls", "tokio-stream", "tokio-tungstenite",
         "tokio-util", "tokio-websockets", "tower", "vera-backend", "vera-client",
         "vera-consensus", "vera-executor", "vera-harness", "vera-jsonrpc", "vera-node",
-        "vera-test-infra",
+        "vera-test-infra", "wasm-bindgen-futures",
     ] },
 ]
 highlight = "lowest-version"
