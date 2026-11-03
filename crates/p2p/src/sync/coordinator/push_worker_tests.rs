@@ -166,6 +166,68 @@ async fn slow_peer_does_not_starve_healthy_peers() {
     backlog.close();
 }
 
+/// Audit F24: with the default pool (8 workers, 4 per peer) two replicators
+/// whose sends never answer hold every worker until their first sends time
+/// out. A timed-out peer is then parked, and the unreachable peers together
+/// stay within one peer's cap, so the healthy peer drains right after that
+/// first timeout instead of a few jobs per timeout.
+#[tokio::test(start_paused = true)]
+async fn two_stalled_replicators_do_not_starve_healthy_peer() {
+    use crate::sync::{
+        DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+        DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
+    };
+
+    const WRITES: u8 = 50;
+    let backlog = PushBacklog::new(
+        DEFAULT_PUSH_QUEUE_CAPACITY,
+        DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+        DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+        DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+    );
+    let transport = TestTransport::new(Vec::new())
+        .with_stalled_peer("dead-1")
+        .with_stalled_peer("dead-2");
+    let (context, mut failures) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        DEFAULT_PUSH_SEND_TIMEOUT,
+    );
+    tokio::spawn(async move { while failures.recv().await.is_some() {} });
+    let shutdown = SyncShutdownHandle::new(4);
+    spawn_push_workers(context, &shutdown);
+    tokio::task::yield_now().await;
+
+    let started = n0_future::time::Instant::now();
+    for write in 0..WRITES {
+        for peer in ["dead-1", "dead-2", "healthy"] {
+            assert_eq!(
+                backlog.try_enqueue(job(peer, &[write])).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+    }
+
+    let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+    loop {
+        let healthy_sent = transport
+            .sent()
+            .iter()
+            .filter(|push| push.peer_id == "healthy")
+            .count();
+        if healthy_sent == usize::from(WRITES) {
+            break;
+        }
+        assert!(
+            started.elapsed() <= limit,
+            "two stalled replicators starved the healthy peer: {healthy_sent}/{WRITES} sent after {:?}",
+            started.elapsed()
+        );
+        n0_future::time::sleep(Duration::from_millis(100)).await;
+    }
+    backlog.close();
+}
+
 /// A stalled send fails via the send timeout, frees the worker, and lands
 /// in the persisted retry ladder through the failure channel.
 #[tokio::test]
