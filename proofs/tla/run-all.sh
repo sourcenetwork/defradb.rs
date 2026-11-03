@@ -533,6 +533,10 @@ RUNS=(
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller
+  "MC_EdgeCompletion_Green.cfg EdgeCompletion.tla GREEN" # abort, stop and finish in any order: every completion says how it ended
+  "MC_EdgeCompletion_Red_NoMap.cfg EdgeCompletion.tla RED" # the code before: a cut-off by the runtime's stop says Cancelled (INV_StopSaysClosed)
+  "MC_EdgeCompletion_Red_CancelBeforeFlag.cfg EdgeCompletion.tla RED" # the handle cancels before it records its abort: its own abort reads as the stop (INV_AbortSaysCancelled)
+  "MC_EdgeCompletion_Red_CancelBeforeStopMark.cfg EdgeCompletion.tla RED" # the runtime ends its tasks before its stopped mark: the cut-off says Cancelled (INV_StopSaysClosed)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
