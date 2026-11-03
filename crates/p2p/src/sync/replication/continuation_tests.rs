@@ -831,3 +831,81 @@ async fn a_local_continuation_ends_on_a_non_terminal_skip() {
     assert!(!blockstore.is_merged(&root).await.unwrap());
     coordinator.shutdown().await;
 }
+
+/// A push for a root that only has a local continuation must not ride on it:
+/// the continuation has no durable record and ends with its turn. The push
+/// registers the root as its own durable obligation before it is
+/// acknowledged, so a later turn that skips leaves the head owned.
+#[tokio::test(start_paused = true)]
+async fn a_push_of_a_continued_root_is_registered_before_its_ack() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "pulled").await;
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
+    let (coordinator, mut events) = restart(blockstore.clone(), pending.clone()).await;
+    let handler = YieldThenWait::default();
+    let config = ReplicationConfig::default();
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "pulled".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert_eq!(coordinator.pending_dag_count(), 1, "the yield continues");
+
+    let root_data = blockstore.get(&root).await.unwrap().unwrap();
+    coordinator
+        .manager()
+        .process_pushlog(
+            &crate::message::PushLogBroadcast::new(
+                "pulled".to_string(),
+                bytes::Bytes::from(root.to_bytes()),
+                "col1".to_string(),
+                "creator".to_string(),
+                root_data,
+            ),
+            Some("source"),
+            false,
+            None,
+        )
+        .await
+        .expect("the push is acknowledged");
+
+    // The next merge turn of the root skips without a terminal outcome.
+    let mut skipped = false;
+    for _ in 0..8 {
+        tokio::time::advance(crate::sync::manager::pending::PENDING_RETRY_BASE).await;
+        dispatch(&coordinator);
+        let results =
+            ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+        if matches!(
+            results.as_slice(),
+            [ReplicationResult::Skipped {
+                terminal: false,
+                ..
+            }]
+        ) {
+            skipped = true;
+            break;
+        }
+    }
+    assert!(skipped, "the root's next merge turn skips");
+    assert!(!blockstore.is_merged(&root).await.unwrap());
+    assert_eq!(
+        pending.load_all().await.unwrap().len(),
+        1,
+        "the acknowledged head keeps a durable record"
+    );
+    assert_eq!(coordinator.pending_dag_count(), 1, "and its pending entry");
+    coordinator.shutdown().await;
+}

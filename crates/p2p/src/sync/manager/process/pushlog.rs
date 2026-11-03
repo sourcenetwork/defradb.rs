@@ -418,8 +418,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // that durable registration. Do not let a relay or another
             // collection-authorized peer replace its recovery provider, reset
             // its backoff, or rewrite its authorization metadata merely by
-            // replaying the same signed head bytes.
-            if let Some(existing) = self.pending_dag_snapshot(cid) {
+            // replaying the same signed head bytes. A local continuation owns
+            // nothing for a sender: the push registers the root itself below,
+            // replacing that entry, before it is acknowledged.
+            if let Some(existing) = self.pending_dag_snapshot(cid).filter(|dag| {
+                dag.origin != crate::sync::manager::pending::PendingOrigin::LocalContinuation
+            }) {
                 return self
                     .extend_registered_root(
                         cid,
