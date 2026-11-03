@@ -34,6 +34,13 @@ pub(super) const MAX_FREE_REFUSALS: usize = 11;
 /// 30s fetch window is the dominant wait, not the backoff itself.
 const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 
+/// How long a clock-dispatched attempt that keeps making progress may hold its
+/// fetch slot. Past it the attempt ends at its next window boundary, keeping
+/// every block it fetched, and its root is due again at once, behind every
+/// root already due: a provider that trickles blocks cannot hold a slot for
+/// as long as its DAG takes.
+pub(super) const CLOCK_ATTEMPT_QUANTUM: Duration = Duration::from_secs(60);
+
 /// Shed attempts a reply-driven fetch retries in place: rides out a momentary
 /// saturation without hammering a saturated hub. A clock-dispatched fetch
 /// defers at once and its root's backoff paces the retry.
