@@ -14,12 +14,14 @@
 \* root's retry deadline passes).
 \*
 \* What must never happen:
-\*   - a root that is due and waiting for a slot is passed by a root that
-\*     became due after it (INV_ReadyRootsServedInOrder): otherwise, after a
-\*     restart, catch-up roots retrying in place can hold every slot and
-\*     starve each newly acknowledged head;
+\*   - an attempt starts for any root but the oldest due root that can run
+\*     (ACT_AttemptsStartInDueOrder), or an attempt ends with its root due
+\*     ahead of a root that waited (ACT_EndedAttemptQueuesBehind): together, a
+\*     root waiting for a slot is never passed by one that became due after
+\*     it. Otherwise, after a restart, catch-up roots retrying can hold every
+\*     slot and starve each newly acknowledged head;
 \*   - an acknowledged head leaves the receiver while nobody else still owns
-\*     it (INV_ExpiryKeepsOwner): a wall-clock TTL would drop acknowledged
+\*     it (ACT_AckedRootLeavesOwned): a wall-clock TTL would drop acknowledged
 \*     heads whose senders have already forgotten them;
 \* and what must eventually happen: every acknowledged head whose provider
 \* serves it is fetched and merged (LIVE_AckedRootMerged). A head whose
@@ -34,7 +36,24 @@
 \*
 \* This module adds the dispatch layer to SyncOwnership.tla without changing
 \* it: every SyncOwnership step runs here too, followed by the bookkeeping
-\* of the clock's queue.
+\* of the clock's queue. Every variable it adds is state the code holds; the
+\* properties are stated over that state, as invariants or as properties of
+\* each step, and nothing is recorded only to state them.
+\*
+\* Variables and the code state each one is (crates/p2p/src/sync):
+\*   dueOrder  the pending roots whose PendingDag::next_retry_at (manager/pending.rs:81)
+\*             has passed, in next_retry_at order: what due_pending_dag_retries
+\*             (manager/process/pending_dag.rs:722) returns. next_retry_at is kept by
+\*             its order, the only thing the code reads from it.
+\*   backoff   the pending roots whose next_retry_at is still ahead: set by
+\*             try_claim_pending_dag_dispatch (pending_dag.rs:562) and
+\*             PendingDagLease::finish_attempt (pending_dag.rs:80). Which of them passes
+\*             next is left open (BecomeDue), so every order of deadlines is explored.
+\*   tries     the attempt a root's fetch task is on: the loop index of poll_fetch_dag
+\*             (coordinator/dag_fetcher.rs:206), 0 when no task runs.
+\* SyncOwnership's flights is the fetch reservation (SyncShutdownHandle's
+\* pending_dag_fetch_tasks, coordinator/mod.rs) and pending the durable
+\* records (PersistedView, pending_store/view.rs:27).
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each)
@@ -74,15 +93,12 @@ ASSUME CutoffMode \in {"Quantum", "Unbounded"}
 ASSUME FlightMode = "SingleFlight"
 
 VARIABLES
-  dueOrder,   \* the clock's due queue: roots whose next_retry_at has passed, in next_retry_at order
-  readyOrder, \* due roots without a fetch, in the order they became able to run
-  backoff,    \* roots waiting for their next_retry_at
-  tries,      \* [Roots -> 0..MaxAttempts], attempts the current fetch of a root has started
-  overtaken,  \* roots that waited for a slot while a root behind them started an attempt
-  expired     \* acknowledged roots the wall clock dropped
+  dueOrder, \* roots whose next_retry_at has passed, in next_retry_at order
+  backoff,  \* roots whose next_retry_at is still ahead
+  tries     \* [Roots -> 0..MaxAttempts], the attempt a root's fetch task is on
 
 \* The variables this module adds.
-dvars == <<dueOrder, readyOrder, backoff, tries, overtaken, expired>>
+dvars == <<dueOrder, backoff, tries>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, dvars>>
 
@@ -97,6 +113,8 @@ AsSeq(S) == CHOOSE f \in [1..Cardinality(S) -> S] :
 Before(q, r) == IF r \in Members(q)
                 THEN {q[i] : i \in 1..((CHOOSE k \in 1..Len(q) : q[k] = r) - 1)}
                 ELSE Members(q)
+\* Whether r comes ahead of q in q's sequence s (both in it).
+Ahead(s, r, q) == r \in Members(s) /\ q \in Members(s) /\ r \in Before(s, q)
 
 \* A root the clock could hand a slot to if one were free: pending, servable,
 \* with a reachable provider that owns its DAG, and no fetch running.
@@ -117,13 +135,7 @@ QueueStep ==
       claimed == {r \in Roots : flights[r] = 0 /\ flights'[r] > 0}
       \* Still-pending roots whose fetch gave its slot back in this step.
       released == {r \in pending' : flights[r] > 0 /\ flights'[r] = 0}
-      \* ClaimTime only: released roots whose deadline passed while they ran.
-      overdue == released \cap Members(dueOrder)
   IN
-  \* A root becomes ready (due, with no fetch) when it is acknowledged, when
-  \* its deadline passes while it waits (BecomeDue), or, under ClaimTime, when
-  \* its attempt ends after its deadline already passed.
-  /\ readyOrder' = Without(readyOrder, removed \cup claimed) \o AsSeq(added \cup overdue)
   \* An acknowledged root is due at once (next_retry_at = now); a claimed root
   \* leaves the due queue until its next deadline passes.
   /\ dueOrder' = Without(dueOrder, removed \cup claimed) \o AsSeq(added)
@@ -133,12 +145,9 @@ QueueStep ==
   /\ tries' = [r \in Roots |-> IF r \in claimed THEN 1
                                ELSE IF r \in released \cup removed THEN 0
                                ELSE tries[r]]
-  \* A claimed root passes every root that became ready before it and still waits.
-  /\ overtaken' = overtaken \cup
-                    UNION {Before(readyOrder, r) \cap {q \in Roots : Eligible(q)} : r \in claimed}
 
-\* A SyncOwnership step followed by the bookkeeping; the wall clock is idle.
-W(A) == A /\ QueueStep /\ UNCHANGED expired
+\* A SyncOwnership step followed by the bookkeeping.
+W(A) == A /\ QueueStep
 
 \* The clock claims a slot only for a due root, and only for the oldest due
 \* root that could take one: a root in backoff is not due, so a root that
@@ -148,7 +157,6 @@ WClaim(s, v) ==
   /\ ClaimFetch(s, v)
   /\ \A q \in Before(dueOrder, <<s, v>>) : ~Eligible(q)
   /\ QueueStep
-  /\ UNCHANGED expired
 
 \* A failed attempt gives the slot back. Under WholeTask only the last of the
 \* task's attempts does; the earlier ones retry in place (below). A trickling
@@ -158,7 +166,6 @@ WFail(s, v) ==
   /\ FailFetchBeforeWaiter(s, v)
   /\ (AttemptMode = "PerAttempt" \/ tries[<<s, v>>] >= MaxAttempts)
   /\ QueueStep
-  /\ UNCHANGED expired
 
 \* A completed fetch, which a provider that never serves never gives, and a
 \* trickling one never gives within the horizon of this model.
@@ -186,10 +193,8 @@ Preempt(s, v) ==
   /\ ContendedIngest(s, v)
   \* Due now, behind every root that was due before it.
   /\ dueOrder' = Append(Without(dueOrder, {<<s, v>>}), <<s, v>>)
-  /\ readyOrder' = Append(Without(readyOrder, {<<s, v>>}), <<s, v>>)
   /\ backoff' = backoff \ {<<s, v>>}
   /\ tries' = [tries EXCEPT ![<<s, v>>] = 0]
-  /\ UNCHANGED <<overtaken, expired>>
 
 \* The root's next_retry_at passes and the root is due again. AttemptEnd sets
 \* that deadline when the attempt ends, so only a root with no fetch running
@@ -203,10 +208,8 @@ BecomeDue(s, v) ==
   \* It is due now, behind every root that was due before it.
   /\ backoff' = backoff \ {<<s, v>>}
   /\ dueOrder' = Append(dueOrder, <<s, v>>)
-  \* It can run at once unless an attempt is still running.
-  /\ readyOrder' = IF flights[<<s, v>>] = 0 THEN Append(readyOrder, <<s, v>>) ELSE readyOrder
   \* Nothing else changes.
-  /\ UNCHANGED <<vars, tries, overtaken, expired>>
+  /\ UNCHANGED <<vars, tries>>
 
 \* WholeTask only: a failed attempt keeps its slot, sleeps, and starts the next
 \* attempt without asking the clock, ahead of every root that is waiting.
@@ -220,10 +223,8 @@ RetryInPlace(s, v) ==
   /\ tries[<<s, v>>] < MaxAttempts
   \* The next attempt starts.
   /\ tries' = [tries EXCEPT ![<<s, v>>] = @ + 1]
-  \* Every root waiting for a slot was ready before this attempt and is passed.
-  /\ overtaken' = overtaken \cup {q \in Members(readyOrder) : Eligible(q)}
   \* Nothing else changes: the slot stays with this root.
-  /\ UNCHANGED <<vars, dueOrder, readyOrder, backoff, expired>>
+  /\ UNCHANGED <<vars, dueOrder, backoff>>
 
 \* WallClockTtl only: the TTL drops an acknowledged root that has not been
 \* fetched yet, whether or not it was ever given a slot.
@@ -245,8 +246,6 @@ Expire(s, v) ==
   /\ flights' = [flights EXCEPT ![<<s, v>>] = 0]
   /\ drained' = drained \ {<<s, v>>}
   /\ lostCompletions' = lostCompletions \ {<<s, v>>}
-  \* Record the drop.
-  /\ expired' = expired \cup {<<s, v>>}
   \* The sender's state and the rest of the receiver are untouched.
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, serveAuth, serveScopes,
                  ready, mergeFlights, terminalFlights, fetchExhausted, mergedV,
@@ -259,20 +258,15 @@ Expire(s, v) ==
 WCrash ==
   /\ Crash
   /\ dueOrder' = AsSeq(pending')
-  /\ readyOrder' = AsSeq(pending')
   /\ backoff' = {}
   /\ tries' = [r \in Roots |-> 0]
-  /\ UNCHANGED <<overtaken, expired>>
 
-\* Nothing queued, no attempts, nothing passed, nothing dropped.
+\* Nothing pending, so nothing due or waiting, and no fetch task.
 WInit ==
   /\ Init
   /\ dueOrder = <<>>
-  /\ readyOrder = <<>>
   /\ backoff = {}
   /\ tries = [r \in Roots |-> 0]
-  /\ overtaken = {}
-  /\ expired = {}
 
 \* Every SyncOwnership action, with the claim, the failure, the completion and
 \* the restart replaced by their dispatch-aware forms, plus the deadline, the
@@ -312,7 +306,7 @@ WSpec == WInit /\ [][WNext]_allVars
 \* (strong fairness on some WComplete). Reachability alone does not give it:
 \* a provider can answer busy, or stall, every time. Dead and Trickle
 \* providers never complete here; their heads stay owned
-\* (INV_ExpiryKeepsOwner), and LIVE_AckedRootMerged promises them nothing.
+\* (ACT_AckedRootLeavesOwned), and LIVE_AckedRootMerged promises them nothing.
 WFairSpec ==
   /\ WSpec
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : WClaim(s, v))
@@ -330,11 +324,8 @@ WFairSpec ==
 INV_DispatchTypeOK ==
   /\ TypeOK
   /\ dueOrder \in Seq(Roots)
-  /\ readyOrder \in Seq(Roots)
   /\ backoff \subseteq Roots
   /\ tries \in [Roots -> 0..MaxAttempts]
-  /\ overtaken \subseteq Roots
-  /\ expired \subseteq Roots
 
 \* Promise: a pending root with no fetch running is either due or waiting out
 \* its backoff, never both and never neither, so no root is lost to the clock.
@@ -348,11 +339,27 @@ Owned(r) ==
   \/ r[1] \in dirty
   \/ \E u \in inflight \cup pending : u[1] = r[1] /\ u[2] >= r[2]
 
-\* Promise: a due root waiting for a slot is never passed by one that became due after it.
-INV_ReadyRootsServedInOrder == overtaken = {}
+\* Promise: an attempt starts only for the oldest due root that can run. An
+\* attempt started any other way (the next one inside a task that kept its
+\* slot) passes every root that is due and waiting.
+ACT_AttemptsStartInDueOrder ==
+  [][\A r \in Roots :
+       tries'[r] > tries[r] =>
+         \A q \in Members(dueOrder) \ {r} :
+           Eligible(q) => (r \in Members(dueOrder) /\ q \notin Before(dueOrder, r))]_allVars
 
-\* Promise: an acknowledged head never leaves the receiver while nobody else owns it.
-INV_ExpiryKeepsOwner == \A r \in expired : Owned(r)
+\* Promise: when an attempt ends, its root is not due ahead of a root that was
+\* already waiting for a slot: the roots that waited during the attempt go
+\* first. A restart restores every root due at once and is not an attempt end.
+ACT_EndedAttemptQueuesBehind ==
+  [][crashed' = crashed =>
+       \A r \in Roots :
+         (flights[r] > 0 /\ flights'[r] = 0 /\ r \in pending') =>
+           \A q \in Members(dueOrder) \ {r} : Eligible(q) => ~Ahead(dueOrder', r, q)]_allVars
+
+\* Promise: an acknowledged head leaves the receiver only while someone else
+\* still owns it (the merge, the sender's marker, a hint or a newer head).
+ACT_AckedRootLeavesOwned == [][\A r \in pending \ pending' : Owned(r)']_allVars
 
 \* Promise: every acknowledged head whose provider serves is merged, whatever
 \* never-serving or trickling heads hold the slots.

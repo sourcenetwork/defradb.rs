@@ -585,7 +585,7 @@ pub const PROPERTIES: &[Property] = &[
         // providers' heads are kept but promised no merge, and do not block
         // the others.
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_ReadyRootsServedInOrder / INV_ExpiryKeepsOwner / LIVE_AckedRootMerged (assumes an eventually serving provider)",
+        name: "ACT_AttemptsStartInDueOrder / ACT_EndedAttemptQueuesBehind / ACT_AckedRootLeavesOwned / LIVE_AckedRootMerged (assumes an eventually serving provider)",
         axis: Tla,
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
         model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Green_Dispatch_Trickle,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl,Red_UnboundedProductive}.cfg",
@@ -593,7 +593,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // The durable store can hold more acknowledged roots than the
-        // in-memory map. A root that spent its dispatches gives its entry up
+        // in-memory map. A root that had its dispatches gives its entry up
         // while a durable root waits (its record stays), and the resync sweep
         // resumes after the root it admitted last, so never-serving roots
         // restored first cannot hold the map for good. A local pull-sync
