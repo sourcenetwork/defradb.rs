@@ -89,6 +89,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Connect fallback race | TLA+ | net |
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
+| Server drain | TLA+ | net, pg-compat, edge |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

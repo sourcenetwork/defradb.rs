@@ -1195,6 +1195,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A server's connections are tasks the drain waits for: a request in
+        // flight when shutdown begins finishes and is answered, a connection
+        // looks at closing only between requests, and the drain's deadline
+        // stops what is left.
+        family: "Server drain",
+        name: "INV_NoDropBeforeDeadline / INV_NoNewWorkWhenClosing / LIVE_ServerReturns: a request in flight is only stopped at the drain's deadline, no request starts once closing began, the server returns",
+        axis: Tla,
+        anchor: "crates/net/src/server.rs serve, until_closing; crates/net/src/rt.rs Executor::execute; crates/pg-compat/src/lib.rs PgServer::run; crates/pg-compat/src/wire/process.rs serve; crates/edge/src/handle.rs Scope::drain",
+        model_ref: "MC_ServerDrain_{Green,Red_Service,Red_CheckInside,Red_NoCheck,Red_NoDeadline}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A node checks its config before it opens anything, hands
         // its retry ladder to every retry site of either transport, stops a
         // host whose listen failed, enables NAC owned by the node identity,
