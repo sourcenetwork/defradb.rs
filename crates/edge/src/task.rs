@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -36,6 +37,7 @@ struct Running<T> {
     timer: Option<Timer>,
     submitted: Instant,
     limit: Duration,
+    aborted: AtomicBool,
 }
 
 impl<T> Task<T> {
@@ -51,6 +53,7 @@ impl<T> Task<T> {
                 timer: None,
                 submitted: Instant::now(),
                 limit: shared.deadline,
+                aborted: AtomicBool::new(false),
             }),
         }
     }
@@ -69,6 +72,7 @@ impl<T> Task<T> {
     /// [`EdgeError::Cancelled`].
     pub fn abort(&self) {
         if let Some(running) = &self.running {
+            running.aborted.store(true, Ordering::Relaxed);
             running.join.abort();
         }
     }
@@ -89,7 +93,14 @@ impl<T> Future for Task<T> {
             return Poll::Ready(Err(EdgeError::Closed));
         };
         if let Poll::Ready(joined) = Pin::new(&mut running.join).poll(cx) {
-            return Poll::Ready(joined.and_then(|outcome| outcome));
+            let cut_off = matches!(joined, Err(EdgeError::Cancelled))
+                && running.shared.is_stopped()
+                && !running.aborted.load(Ordering::Relaxed);
+            return Poll::Ready(if cut_off {
+                Err(EdgeError::Closed)
+            } else {
+                joined.and_then(|outcome| outcome)
+            });
         }
         if running.limit == Duration::MAX && !running.shared.is_stopped() {
             return Poll::Pending;

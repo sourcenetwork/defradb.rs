@@ -37,10 +37,12 @@ fn a_scope_stops_and_drains_on_its_own() {
     assert_eq!(poll_once(edge.closing()), Poll::Pending);
 
     // The runtime's own drain still counts the scope's stuck work, which
-    // is dropped once woken.
+    // the shutdown then drops without anything waking it.
     assert_eq!(runtime.shutdown().unwrap().remaining, 1);
-    drop(_hold);
-    assert!(set_soon(&stopped), "the woken task is dropped");
+    assert!(
+        set_soon(&stopped),
+        "the stuck task is dropped by the shutdown"
+    );
 }
 
 #[test]

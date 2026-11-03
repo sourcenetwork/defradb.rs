@@ -31,12 +31,14 @@ fn shutdown_stops_accepting_drains_then_stops_the_rest() {
     let drained = runtime.shutdown().unwrap();
 
     // Stop accepting woke the closing watcher, which finished within the
-    // drain; the stuck task outlived it, and is dropped once woken.
+    // drain; the stuck task outlived the drain, so it counts as remaining,
+    // and the shutdown then dropped it without anything waking it.
     assert_eq!(drained.remaining, 1);
     assert!(finished.load(Ordering::SeqCst));
-    assert!(!stopped.load(Ordering::SeqCst));
-    drop(_hold);
-    assert!(set_soon(&stopped), "the woken task is dropped");
+    assert!(
+        set_soon(&stopped),
+        "the stuck task is dropped by the shutdown"
+    );
     assert!(edge.is_closed());
     assert_eq!(
         poll_once(edge.spawn(async { 1 })),

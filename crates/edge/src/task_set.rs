@@ -44,7 +44,9 @@ where
     }
 
     /// How the next task of the set to end ended, or `None` when the set
-    /// holds none. Dropping the wait loses no task.
+    /// holds none. A task the runtime's shutdown cut off ends as
+    /// [`EdgeError::Closed`], one stopped by [`abort_all`](Self::abort_all)
+    /// as [`EdgeError::Cancelled`]. Dropping the wait loses no task.
     pub async fn join_next(&mut self) -> Option<Result<T, EdgeError>> {
         self.tasks.next().await
     }

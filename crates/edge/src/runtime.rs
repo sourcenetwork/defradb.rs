@@ -16,7 +16,8 @@ use crate::platform::Owner;
 /// [`EdgeConfig::stop`] for blocking work, then drop the runtime on its own
 /// owner thread, outside any async context. A [`Service`](crate::Service)
 /// stops once the runtime stops accepting; a task still waiting after the
-/// drain is dropped when it is woken, or once nothing can wake it. Dropping an `EdgeRuntime`
+/// drain is dropped by the shutdown, awake or not, and its waiter gets
+/// [`EdgeError::Closed`]. Dropping an `EdgeRuntime`
 /// starts the same shutdown without waiting for it. Natively the runtime is
 /// a nuclei runtime; on wasm32 it is the browser's event loop, where nothing
 /// is dropped.

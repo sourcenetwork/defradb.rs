@@ -53,9 +53,9 @@ impl Drop for DropFlag {
     }
 }
 
-/// Whether `flag` is set within a few seconds. A task woken after its
-/// runtime stopped is dropped by whichever thread holds its shard's inbox,
-/// which may be another thread, just after the wake returns.
+/// Whether `flag` is set within a few seconds. A task still held when its
+/// runtime stops is dropped by the shutdown on a runtime thread, which may
+/// finish just after the shutdown call returns on a loaded machine.
 fn set_soon(flag: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut backoff = Duration::from_millis(1);
