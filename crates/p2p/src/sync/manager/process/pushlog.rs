@@ -179,8 +179,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     }
 
     /// Hold the ack contract for a block that carries a document head: success
-    /// means it is merged, registered as pending, or covered by a newer head
-    /// already durable for the same sender scope. The sender stops retrying on
+    /// means it is merged, registered as pending (in memory or by its durable
+    /// record alone), or covered by a newer head already durable for the same
+    /// sender scope. The sender stops retrying on
     /// success, and only those states leave something on this side to finish
     /// the work, so acking without one loses the update for good, silently,
     /// because nothing failed.
@@ -201,7 +202,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let AnnouncedBlockKind::Head(head_priority) = announced_block_kind(&msg.block) else {
             return Ok(());
         };
-        if self.is_pending_dag_recovery_registered(cid) {
+        if self.is_pending_dag_owned(cid) {
             return Ok(());
         }
         if self.scope_head_is_covered_by_current(

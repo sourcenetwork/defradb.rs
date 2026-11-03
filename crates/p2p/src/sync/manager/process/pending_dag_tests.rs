@@ -13,6 +13,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 
 #[path = "../../../../tests/unit/acked_pending_ttl.rs"]
 mod acked_pending_ttl;
+#[path = "../../../../tests/unit/durable_only_repush.rs"]
+mod durable_only_repush;
 
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
