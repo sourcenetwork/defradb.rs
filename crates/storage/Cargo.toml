@@ -19,6 +19,7 @@ schema = { path = "../schema" }
 regolith.workspace = true
 # The worker pool: each worker's regolith queues, detached callbacks.
 workers = { path = "../workers" }
+kovan.workspace = true
 bytes.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 

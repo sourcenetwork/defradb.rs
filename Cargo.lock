@@ -12119,6 +12119,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.17",
  "hex",
+ "kovan 0.2.2",
  "proptest",
  "rapidhash",
  "regolith 0.2.3",
