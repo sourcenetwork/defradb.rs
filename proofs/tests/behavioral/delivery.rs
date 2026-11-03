@@ -15,9 +15,9 @@ mod cluster;
 
 use crate::support;
 use cluster::{
-    addr, churn, connect, count, create, eventually, fetches_in_flight_to, heads, heads_acked_by,
-    holds, is_connected, markers_for, peer_id, pending_from, replicate, row, set, start,
-    sync_status, COLLECTION, START_TIMEOUT,
+    addr, churn, connect, create, eventually, fetches_in_flight_to, heads, heads_acked_by, holds,
+    is_connected, markers_for, peer_id, pending_from, replicate, row, set, start, sync_status,
+    COLLECTION, START_TIMEOUT,
 };
 use defra_harness::{DefraClient, TestCluster, Throttle};
 use std::time::{Duration, Instant};
@@ -32,8 +32,13 @@ const THROTTLE_STOP: Duration = Duration::from_secs(25);
 /// `p2p::PENDING_RECOVERY_WORST_CASE_SECS`: how long a pending head may wait
 /// for its fetch once the receiver has capacity for it.
 const DELIVERY_BOUND: Duration = Duration::from_secs(60);
+/// How soon an unthrottled sender sees its head acknowledged, so a late
+/// delivery is the receiver's.
+const ACK_BOUND: Duration = Duration::from_secs(5);
 const DEFAULT_FETCH_SLOTS: u64 = 4;
 const TTL_SECS: u64 = 20;
+/// How long B holds the head's only provider paused: past the TTL.
+const PAUSE: Duration = Duration::from_secs(TTL_SECS + 10);
 
 const SOURCE: usize = 0;
 const PEER: usize = 1;
@@ -44,18 +49,19 @@ const SIBLING_DOCS: usize = 10;
 /// back and fetching that history from it. From before the hub returns, the
 /// catch-up node runs 100 ms in every 25 s: its connection stays up and every
 /// fetch window sees it, but a window is too short to serve a whole history,
-/// so its fetches do not finish on their own. The desktop only authors: it does not subscribe, so it
-/// neither receives nor forwards the catch-up history, and nothing queues
-/// ahead of its own heads.
+/// so its fetches do not finish on their own. The load is the catch-up node's
+/// replicator replay alone, so every fetch to it is a clock-owned one. The
+/// desktop only authors: it does not subscribe, so it neither receives nor
+/// forwards the catch-up history, and nothing queues ahead of its own heads.
 struct CatchUp {
     docs: Vec<String>,
     throttle: Throttle,
 }
 
 /// Bring the hub back under catch-up load and return once the catch-up node's
-/// roots fill the hub's `fetch_slots`: as many are registered as there are
-/// slots, and as many fetches to it are in flight as its per-peer share allows
-/// (one slot fewer).
+/// roots fill the hub's `fetch_slots`: as many of them are pending on the hub
+/// as there are slots, and as many fetches to it are in flight as its per-peer
+/// share allows (one slot fewer).
 async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64) -> CatchUp {
     cluster
         .client(DESKTOP)
@@ -102,50 +108,71 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
         let _ = cluster.client(HUB).p2p_connect(&[catchup_addr.as_str()]);
     }
 
-    let hub = cluster.client(HUB);
-    let ids = docs.clone();
-    tokio::task::spawn_blocking(move || {
-        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
-        let _ = hub.p2p_document_sync(COLLECTION, &ids);
-    });
-
     let per_peer = fetch_slots.saturating_sub(1).max(1);
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         let pending = pending_from(cluster, HUB, &catchup_peer).await;
-        let durable = count(&sync_status(cluster, HUB).await, "persisted_pending_dags");
         let in_flight = fetches_in_flight_to(cluster, HUB, &catchup_peer).await;
-        if pending.max(durable) >= fetch_slots && in_flight >= per_peer {
+        if pending >= fetch_slots && in_flight >= per_peer {
             break;
         }
         assert!(
             Instant::now() < deadline,
             "the catch-up load never filled the hub's {fetch_slots} fetch slots (pending from it \
-             {pending}, durable {durable}, in flight to it {in_flight}): the scenario cannot hold capacity"
+             {pending}, in flight to it {in_flight}): the scenario cannot hold capacity. \
+             hub sync status: {}",
+            sync_status(cluster, HUB).await
         );
-        nuclei::time::sleep(Duration::from_secs(1)).await;
+        nuclei::time::sleep(Duration::from_millis(250)).await;
     }
     CatchUp { docs, throttle }
+}
+
+/// Wait until the desktop's pushes acked by the hub pass `before` and it owes
+/// the hub nothing.
+async fn wait_for_ack(cluster: &TestCluster, hub_peer: &str, before: u64, within: Duration) {
+    let deadline = Instant::now() + within;
+    while heads_acked_by(cluster, DESKTOP, hub_peer).await <= before
+        || markers_for(cluster, DESKTOP, hub_peer).await > 0
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the hub did not acknowledge the desktop's head within {within:?}: the push is \
+             delayed before the hub's fetch slots matter"
+        );
+        nuclei::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// A: a hub restarted under catch-up load still delivers a new document from
 /// an unthrottled desktop within the bound.
 #[nuclei::test(threads = 2)]
-#[ignore = "expected red until stalled catch-up fetches stop holding every fetch slot (#2548); run with --ignored"]
 async fn hub_restart_under_catchup_delivers_new_doc_within_bound() {
-    let mut cluster = start(3, |builder| builder).await;
-    let load = hub_restarted_under_catchup(&mut cluster, DEFAULT_FETCH_SLOTS).await;
-    let (hub, desktop) = (cluster.client(HUB), cluster.client(DESKTOP));
+    edge::compat(async move {
+        let mut cluster = start(3, |builder| builder).await;
+        let hub_peer = peer_id(&cluster, HUB);
+        let load = hub_restarted_under_catchup(&mut cluster, DEFAULT_FETCH_SLOTS).await;
+        let (hub, desktop) = (cluster.client(HUB), cluster.client(DESKTOP));
 
+    let acked_before = heads_acked_by(&cluster, DESKTOP, &hub_peer).await;
     let x = create(&desktop, "x");
     let written = Instant::now();
-    let delivered = eventually(DELIVERY_BOUND, || holds(&hub, &desktop, &x)).await;
+    wait_for_ack(&cluster, &hub_peer, acked_before, ACK_BOUND).await;
+    let acked = written.elapsed();
+    let delivered = eventually(DELIVERY_BOUND.saturating_sub(written.elapsed()), || {
+        holds(&hub, &desktop, &x)
+    })
+    .await;
     assert!(
         delivered,
-        "the desktop's new document was not on the hub {:?} after it was written; \
-         the catch-up node's fetches held every slot. hub sync status: {}",
+        "the hub acknowledged the desktop's new document but did not hold it {:?} after it \
+         was written; the catch-up node's fetches held every slot. hub sync status: {}",
         written.elapsed(),
         sync_status(&cluster, HUB).await
+    );
+    eprintln!(
+        "A: x acked {acked:?} and delivered {:?} after it was written",
+        written.elapsed()
     );
 
         load.throttle
@@ -167,9 +194,10 @@ async fn hub_restart_under_catchup_delivers_new_doc_within_bound() {
 
 /// B: a head the hub acknowledged and then held past the pending-DAG TTL is
 /// still delivered, and its sender never has to send it again. The hub has one
-/// fetch slot and a 20 s TTL, so the catch-up load holds the head past it.
+/// fetch slot, held by the catch-up load when the head is acknowledged; the
+/// desktop, the head's only provider, is then paused for longer than the
+/// hub's 20 s TTL, so no fetch of it can finish before the TTL passes.
 async fn acked_head_past_pending_ttl(restart_hub: bool) {
-    let ttl = Duration::from_secs(TTL_SECS);
     let ttl_flag = TTL_SECS.to_string();
     let mut cluster = start(3, |builder| {
         builder.with_node_extra_rust_args(
@@ -189,71 +217,59 @@ async fn acked_head_past_pending_ttl(restart_hub: bool) {
 
     let acked_before = heads_acked_by(&cluster, DESKTOP, &hub_peer).await;
     let x = create(&desktop, "x");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while heads_acked_by(&cluster, DESKTOP, &hub_peer).await <= acked_before
-        || markers_for(&cluster, DESKTOP, &hub_peer).await > 0
-    {
-        assert!(
-            Instant::now() < deadline,
-            "the hub never acknowledged the desktop's head"
-        );
-        nuclei::time::sleep(Duration::from_millis(250)).await;
-    }
-    let acked = Instant::now();
-
+    wait_for_ack(&cluster, &hub_peer, acked_before, Duration::from_secs(30)).await;
+    let want = support::commit_cids(&desktop, &x);
+    cluster.pause_node(DESKTOP).expect("pause the desktop");
+    let paused = Instant::now();
     let hub = cluster.client(HUB);
-    let held_until = acked + 3 * ttl;
-    while Instant::now() < held_until {
-        assert_eq!(
-            markers_for(&cluster, DESKTOP, &hub_peer).await,
-            0,
-            "the desktop owes the hub its head again: the ack did not stand"
-        );
-        assert!(
-            acked.elapsed() >= ttl || !holds(&hub, &desktop, &x),
-            "the hub delivered the head {:?} after acking it, inside the {TTL_SECS} s TTL: \
-             the catch-up load did not hold the fetch slot, so the scenario never crossed the TTL",
-            acked.elapsed()
-        );
-        nuclei::time::sleep(Duration::from_secs(1)).await;
-    }
+    assert_ne!(
+        support::commit_cids(&hub, &x),
+        want,
+        "the hub fetched the head before its provider paused: the catch-up load did not hold \
+         the fetch slot, so the scenario never crosses the TTL"
+    );
+    load.throttle
+        .release()
+        .await
+        .expect("release the catch-up node");
+    nuclei::time::sleep(PAUSE.saturating_sub(paused.elapsed())).await;
 
     if restart_hub {
         cluster
             .restart_node(HUB, START_TIMEOUT)
             .await
             .expect("restart the hub");
-        connect(&cluster, HUB, DESKTOP);
     }
-    load.throttle
-        .release()
-        .await
-        .expect("release the catch-up node");
+    cluster.resume_node(DESKTOP).expect("resume the desktop");
+    let resumed = Instant::now();
+    connect(&cluster, HUB, DESKTOP);
     if restart_hub {
         connect(&cluster, HUB, CATCHUP);
     }
 
     let hub = cluster.client(HUB);
-    let bound = ttl + Duration::from_secs(60) + Duration::from_secs(30);
-    let released = Instant::now();
-    while !holds(&hub, &desktop, &x) {
+    let bound = Duration::from_secs(TTL_SECS) + DELIVERY_BOUND + Duration::from_secs(30);
+    while support::commit_cids(&hub, &x) != want {
         assert_eq!(
             markers_for(&cluster, DESKTOP, &hub_peer).await,
             0,
             "the desktop owes the hub its head again: the ack did not stand"
         );
         assert!(
-            released.elapsed() < bound,
+            resumed.elapsed() < bound,
             "the hub acknowledged the desktop's head and did not deliver it within {bound:?} \
-             of fetch capacity returning; nobody owes it any more. hub sync status: {}",
+             of its provider resuming; nobody owes it any more. hub sync status: {}",
             sync_status(&cluster, HUB).await
         );
         nuclei::time::sleep(Duration::from_millis(250)).await;
     }
+    eprintln!(
+        "B: x delivered {:?} after its provider resumed",
+        resumed.elapsed()
+    );
 }
 
 #[nuclei::test(threads = 2)]
-#[ignore = "expected red until an acked head stops expiring and a held slot is released per attempt (#2548): it can wait out the bound behind a slot held across attempts; run with --ignored"]
 async fn acked_head_past_pending_ttl_is_delivered() {
     edge::compat(async move {
         acked_head_past_pending_ttl(false).await;
