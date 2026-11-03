@@ -1295,6 +1295,11 @@ mod tests {
     /// from anything above the transport unless the adapter passes it through.
     #[nuclei::test]
     async fn allow_peer_authorizes_a_peer_refused_by_the_allowlist() {
+        // The endpoints' trace, shown only when the test fails: the dial below has timed out on CI.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("iroh=debug,noq=info,p2p=debug,defra_p2p_adapter=debug")
+            .with_test_writer()
+            .try_init();
         let key_a = load_or_generate_secret_key(None).await.expect("key a");
         let key_b = load_or_generate_secret_key(None).await.expect("key b");
         let (command_tx_a, _events_a, _replicators_a, _task_a) =

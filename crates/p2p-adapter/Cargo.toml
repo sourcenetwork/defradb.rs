@@ -61,6 +61,7 @@ crypto = { path = "../crypto" }
 data-encoding = "2"
 futures.workspace = true
 iroh.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 nuclei.workspace = true

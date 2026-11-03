@@ -4095,6 +4095,7 @@ dependencies = [
  "storage",
  "thiserror 2.0.21",
  "tracing",
+ "tracing-subscriber",
  "web-time",
  "workers",
  "zeroize",
