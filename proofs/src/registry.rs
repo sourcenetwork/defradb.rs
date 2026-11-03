@@ -609,14 +609,16 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A hub that merges an upstream head forwards it to its own
         // replicators before the merge discharges the upstream pending
-        // record; a forward that fails leaves the root unmarked and owed.
-        // The witness is the p2p crate's forward_tests, outside this
-        // conformance binary's harness.
+        // record; a forward that fails leaves the root unmarked, and any
+        // terminal step for a root the database holds and the hub has not
+        // marked forwards it, in the same process or after a restart. The
+        // witnesses are the p2p crate's forward_tests and the db crate's
+        // restart re-drive tests, outside this conformance binary's harness.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_ForwardObligationOwned / LIVE_EventualDownstreamCurrency: the downstream marker is durable before the upstream discharge",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/replication/handlers.rs forward_merged, handle_block_received, process_merge_batch; crates/p2p/src/sync/manager/process/owed_forward.rs; crates/p2p/src/sync/replication/forward_tests.rs",
-        model_ref: "MC_SyncOwnership_{Green,Green_Liveness_Doc,Red_DischargeBeforeForward}.cfg",
+        anchor: "crates/p2p/src/sync/replication/handlers.rs forward_merged, forward_owed, handle_block_received, process_merge_batch; crates/defra-core/src/merge.rs MergeOutcome::skip_reason_is_applied; crates/p2p/src/sync/replication/forward_tests.rs; crates/db/tests/merge/head_publication.rs",
+        model_ref: "MC_SyncOwnership_{Green,Green_Liveness_Doc,Red_DischargeBeforeForward,Red_OwedInMemory}.cfg",
         tiers: &[Boundary],
     },
     Property {

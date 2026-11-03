@@ -26,7 +26,8 @@
 \*                    "BusyExhaustion" | "ShedAsStall"
 \*   PendingMode = "ScopeCurrent" | "EveryRoot"
 \*   MergeMode = "SerializedBatch" | "ParallelWriters" |
-\*               "DuplicateTerminal" | "DischargeBeforeForward"
+\*               "DuplicateTerminal" | "DischargeBeforeForward" |
+\*               "OwedInMemory"
 \*
 \* A scope is either a document or a branchable collection.  A monotonically
 \* increasing version abstracts the current composite/collection head CID;
@@ -62,12 +63,16 @@
 \* these. What must never happen: the hub holds a merged head its downstream
 \* replicator lacks while nothing durable, and no running handler, still owes
 \* it (INV_ForwardObligationOwned). Green registers the downstream marker in
-\* the terminal step, before the discharge, so a re-drive of an already
-\* merged root forwards too. Red DischargeBeforeForward discharges first and
-\* leaves the forward to the handler, which a crash forgets.
+\* the terminal step, before the discharge, for every root the hub has merged
+\* and not yet marked, so a re-drive of an already merged root forwards too,
+\* in the same process or after a restart. Red DischargeBeforeForward
+\* discharges first and leaves the forward to the handler, which a crash
+\* forgets. Red OwedInMemory forwards in the terminal step, but only a root
+\* the running process remembers merging, which a crash also forgets.
 \* Rust: crates/p2p/src/sync/replication/handlers.rs forward_merged,
-\* handle_block_received, process_merge_batch;
-\* crates/p2p/src/sync/manager/process/owed_forward.rs;
+\* forward_owed, handle_block_received, process_merge_batch;
+\* crates/defra-core/src/merge.rs MergeOutcome::skip_reason_is_applied;
+\* crates/db/src/merge/redriven_sink.rs;
 \* crates/p2p/src/sync/manager/process/mod.rs mark_as_merged, discharge_merged;
 \* crates/p2p/src/sync/coordinator/broadcast.rs push_to_replicators_with_creator.
 EXTENDS Naturals, FiniteSets
@@ -115,7 +120,7 @@ ASSUME CompletionMode \in {"LatchedDrain", "EdgeTriggered", "WorkerSaturated",
                             "ShedAsStall"}
 ASSUME PendingMode \in {"ScopeCurrent", "EveryRoot"}
 ASSUME MergeMode \in {"SerializedBatch", "ParallelWriters", "DuplicateTerminal",
-                       "DischargeBeforeForward"}
+                       "DischargeBeforeForward", "OwedInMemory"}
 
 VARIABLES
   localV,        \* [Scopes -> 0..MaxV], current sender head
@@ -137,7 +142,7 @@ VARIABLES
   lostCompletions, \* SUBSET Roots, transport completion edges no owner can observe
   mergedV,       \* [Scopes -> 0..MaxV], current receiver head
   crashed,       \* BOOLEAN, one receiver crash/restart has happened
-  fwdDue,        \* SUBSET Roots, merged heads a running hub handler still has to forward (lost on crash)
+  fwdDue,        \* SUBSET Roots, merged heads only the running hub process remembers it owes a forward (lost on crash)
   fwdDirty,      \* SUBSET Scopes, the hub's durable scope markers for its own downstream replicator
   downV          \* [Scopes -> 0..MaxV], the head the hub's downstream replicator holds
 
@@ -604,10 +609,12 @@ CompleteMerge(s, v) ==
   /\ ready' = ready \ {<<s, v>>}
   /\ mergeFlights' = [mergeFlights EXCEPT ![<<s, v>>] = 0]
   \* Red DischargeBeforeForward: the handler that ran this merge still has to
-  \* forward the head after its cleanup, and only this running process
-  \* remembers that. Green forwards in the terminal step instead, so nothing
-  \* volatile is left owing.
-  /\ fwdDue' = IF MergeMode = "DischargeBeforeForward"
+  \* forward the head after its cleanup. Red OwedInMemory: the terminal step
+  \* forwards a head only while the process remembers merging it. Either way
+  \* only this running process remembers the debt. Green forwards in the
+  \* terminal step for any merged, unmarked root, so nothing volatile is left
+  \* owing.
+  /\ fwdDue' = IF MergeMode \in {"DischargeBeforeForward", "OwedInMemory"}
                THEN fwdDue \cup {<<s, v>>}
                ELSE fwdDue
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
@@ -620,25 +627,36 @@ CompleteMerge(s, v) ==
 \* The terminal step is also the hub's forward. Green: the hub's own
 \* replicators get their durable scope markers here, before CompleteTerminal
 \* may discharge the upstream record (forward_merged runs before
-\* mark_as_merged). Every route to this step forwards: a fresh merge, a
-\* re-drive after a failed forward (the owed set), and a re-drive after a
-\* restart (the merge runs again). A forward that fails is this step not
-\* happening yet: the record stays and the clock re-drives the root.
+\* mark_as_merged). The step's guard is what the handler checks durably: the
+\* database holds the head (a merge, or a terminal skip that
+\* skip_reason_is_applied accepts) and the root is not marked merged (a root
+\* in pending; the mark discharges it). So every route to this step
+\* forwards: a fresh merge, and an "already merged" re-drive in the same
+\* process or after a restart. A forward that fails is this step not
+\* happening yet: the root stays unmarked, the record stays, and the clock
+\* re-drives it.
 \* Red DischargeBeforeForward: this step forwards nothing; the handler does
 \* it after the discharge (ForwardAfterDischarge), if it is still running.
+\* Red OwedInMemory: this step forwards only a root in fwdDue, the in-memory
+\* owed set, which Crash empties.
 ClaimTerminal(s, v) ==
   /\ <<s, v>> \in pending
   /\ mergedV[s] >= v
   /\ terminalFlights[<<s, v>>] <
        (IF MergeMode = "DuplicateTerminal" THEN 2 ELSE 1)
   /\ terminalFlights' = [terminalFlights EXCEPT ![<<s, v>>] = @ + 1]
-  \* Green records the downstream marker for the scope; red records nothing.
-  /\ fwdDirty' = IF MergeMode = "DischargeBeforeForward"
+  \* Green records the downstream marker for the scope; red records nothing,
+  \* or, for OwedInMemory, only for a root the process remembers.
+  /\ fwdDirty' = IF \/ MergeMode = "DischargeBeforeForward"
+                    \/ MergeMode = "OwedInMemory" /\ <<s, v>> \notin fwdDue
                  THEN fwdDirty
                  ELSE fwdDirty \cup {s}
+  /\ fwdDue' = IF MergeMode = "OwedInMemory"
+               THEN fwdDue \ {<<s, v>>}
+               ELSE fwdDue
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, mergeFlights,
-                 fetchExhausted, lostCompletions, mergedV, crashed, fwdDue, downV>>
+                 fetchExhausted, lostCompletions, mergedV, crashed, downV>>
 
 CompleteTerminal(s, v) ==
   /\ terminalFlights[<<s, v>>] > 0
@@ -709,6 +727,8 @@ ForwardAfterDischarge(s, v) ==
 \* there the failure comes before the terminal step, which simply has not
 \* happened yet.)
 ForwardFail(s, v) ==
+  \* Only the red order forwards after the discharge.
+  /\ MergeMode = "DischargeBeforeForward"
   \* A running handler still owes this head a forward.
   /\ <<s, v>> \in fwdDue
   \* It stops owing it and leaves no marker behind.
@@ -903,7 +923,8 @@ LIVE_EventualReceiverQuiescence == <>[](pending = {})
 \* something the hub keeps: its durable downstream marker for the scope, the
 \* upstream pending record of that head or of a newer one, or a running
 \* handler that has yet to forward it. Red DischargeBeforeForward breaks this
-\* when a crash or a failed forward falls after the discharge.
+\* when a crash or a failed forward falls after the discharge; Red
+\* OwedInMemory when a crash falls between the merge and the terminal step.
 INV_ForwardObligationOwned ==
   \A s \in Scopes :
     downV[s] < mergedV[s] =>
