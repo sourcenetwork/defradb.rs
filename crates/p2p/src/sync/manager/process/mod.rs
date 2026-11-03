@@ -122,6 +122,11 @@ pub struct SyncManager<B: Blockstore> {
     /// Resync invocation counter; every Nth sweep skips the steady-state
     /// early-exit so store/set desyncs from rare races self-heal.
     pub(super) pending_resync_tick: std::sync::atomic::AtomicUsize,
+
+    /// The durable root the last resync sweep admitted. The next sweep
+    /// resumes after it in key order, so roots past the in-memory cap take
+    /// turns instead of the first keys being admitted every time.
+    pub(super) pending_resync_cursor: kovan::Atom<Option<Cid>>,
 }
 
 /// Every Nth resync is a forced full sweep (see `pending_resync_tick`).
@@ -230,6 +235,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
+            pending_resync_cursor: kovan::Atom::new(None),
         };
 
         (manager, event_rx)

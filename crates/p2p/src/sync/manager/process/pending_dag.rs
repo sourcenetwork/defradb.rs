@@ -13,8 +13,11 @@ use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
 use crate::sync::manager::pending::{
     retry_backoff, PendingDag, PendingDagRegistry, PendingOrigin, SharedPendingDags,
+    PENDING_ROTATE_AFTER_DISPATCHES,
 };
-use crate::sync::pending_store::{PersistedPendingDag, PersistedQuarantinedDag, Registration};
+use crate::sync::pending_store::{
+    PersistedPendingDag, PersistedQuarantinedDag, PersistedView, Registration,
+};
 
 use super::SyncManager;
 
@@ -26,10 +29,21 @@ impl Drop for PendingResyncInFlight<'_> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct PendingDagLease {
     root_cid: Cid,
-    pending: Arc<crate::sync::manager::pending::SharedPendingDags>,
+    pending: Arc<SharedPendingDags>,
+    persisted: Arc<PersistedView>,
+    max_pending_dags: usize,
+    max_per_peer: usize,
+}
+
+impl std::fmt::Debug for PendingDagLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingDagLease")
+            .field("root_cid", &self.root_cid)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PendingDagLease {
@@ -51,13 +65,45 @@ impl PendingDagLease {
 
     /// The fetch attempt ended and gave its slot back: the root is due again
     /// one backoff from now, so roots that waited during the attempt go first.
+    ///
+    /// A root with a durable record that has had
+    /// `PENDING_ROTATE_AFTER_DISPATCHES` dispatches without merging instead
+    /// gives its in-memory entry up when it holds a contended place (the map
+    /// is full, or its source peer is at its quota) while a durable root has
+    /// no entry. Its record stays, and the resync sweep, which resumes after
+    /// the root it admitted last, brings it back once the others had a turn:
+    /// durable roots past the cap take turns instead of the first ones in key
+    /// order holding the map for good.
     pub(crate) fn finish_attempt(&self) {
         let now = n0_future::time::Instant::now();
+        let durable = self.persisted.contains(&self.root_cid);
+        let rotates = durable
+            && self.pending.read(|pending| {
+                pending.get(&self.root_cid).is_some_and(|dag| {
+                    dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
+                        && (pending.len() >= self.max_pending_dags
+                            || dag.source_peer.as_deref().is_some_and(|peer| {
+                                pending.source_count(peer) >= self.max_per_peer
+                            }))
+                }) && self.persisted.len()
+                    > pending
+                        .keys()
+                        .filter(|root| self.persisted.contains(root))
+                        .count()
+            });
         self.pending.update(|pending| {
-            if let Some(dag) = pending.get_mut(&self.root_cid) {
+            if rotates {
+                pending.remove(&self.root_cid);
+            } else if let Some(dag) = pending.get_mut(&self.root_cid) {
                 dag.next_retry_at = dag.next_retry_at.max(now + retry_backoff(dag.dispatches));
             }
         });
+        if rotates {
+            tracing::debug!(
+                root_cid = %self.root_cid,
+                "Durable pending root gave its in-memory slot to a waiting one; its record stays"
+            );
+        }
     }
 }
 
@@ -140,6 +186,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         PendingDagLease {
             root_cid,
             pending: Arc::clone(&self.pending_dags),
+            persisted: Arc::clone(&self.persisted),
+            max_pending_dags: self.max_pending_dags,
+            max_per_peer: self.max_pending_dags_per_peer(),
         }
     }
     /// Get the pending DAGs count (for testing/monitoring).
@@ -884,10 +933,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Reconcile the in-memory pending map against the durable registrations
     /// (#1099): drop records whose roots merged, and re-register + re-drive
     /// every unmerged record with no live in-memory entry. Runs at startup
-    /// (restore) and as the single-flight sweep behind peer connects, so a
-    /// registration whose in-memory entry was TTL-evicted is recovered
-    /// without a restart. Roots that no longer fit under `max_pending_dags`
-    /// keep their record for the next sweep. Returns the count re-driven.
+    /// (restore), periodically and as the single-flight sweep behind peer
+    /// connects, so a registration whose in-memory entry gave its slot up
+    /// (`PendingDagLease::finish_attempt`) is recovered without a restart.
+    /// Roots that no longer fit under `max_pending_dags` keep their record
+    /// for the next sweep, which resumes after the root this one admitted
+    /// last. Returns the count re-driven.
     pub async fn resync_persisted_pending_dags(&self) -> usize {
         let Some(store) = self.pending_store() else {
             return 0;
@@ -952,8 +1003,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if records.is_empty() {
             return 0;
         }
+        let records = self.records_after_resync_cursor(records);
 
         let mut restored = 0usize;
+        let mut last_admitted = None;
         for (root_cid, mut record) in records {
             let now = Instant::now();
             let live = self
@@ -1105,12 +1158,31 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
             }
             restored += 1;
+            last_admitted = Some(root_cid);
+        }
+        if last_admitted.is_some() {
+            self.pending_resync_cursor.store(last_admitted);
         }
 
         if restored > 0 {
             tracing::info!(restored, "restored persisted pending DAG registrations");
         }
         restored
+    }
+
+    /// The records in key order (the store's), starting after the root the
+    /// previous sweep admitted last and wrapping around.
+    fn records_after_resync_cursor(
+        &self,
+        mut records: Vec<(Cid, PersistedPendingDag)>,
+    ) -> Vec<(Cid, PersistedPendingDag)> {
+        records.sort_by_cached_key(|(root, _)| root.to_string());
+        if let Some(cursor) = self.pending_resync_cursor.load_clone() {
+            let cursor = cursor.to_string();
+            let start = records.partition_point(|(root, _)| root.to_string() <= cursor);
+            records.rotate_left(start);
+        }
+        records
     }
 
     /// Quarantine a terminally-rejected pending-DAG root (#1128).

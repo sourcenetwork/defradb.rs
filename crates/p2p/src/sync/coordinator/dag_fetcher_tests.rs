@@ -8,6 +8,8 @@ mod car_size_retry;
 mod dag_fetch_depth;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
+#[path = "../../../tests/unit/durable_overflow_rotation.rs"]
+mod durable_overflow_rotation;
 #[path = "../../../tests/unit/provider_ranking.rs"]
 mod provider_ranking;
 #[path = "../../../tests/unit/restart_slot_fairness.rs"]
