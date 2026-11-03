@@ -58,6 +58,8 @@ fn default_start_args() -> StartArgs {
         p2p_rate_limit_rate: None,
         p2p_max_doc_sync_request_doc_ids: None,
         p2p_max_pending_dags: None,
+        p2p_max_concurrent_dag_fetches: None,
+        p2p_pending_dag_ttl_secs: None,
         p2p_rebroadcast_on_merge: None,
         p2p_push_queue_capacity: None,
         p2p_push_queue_byte_capacity: None,
@@ -191,6 +193,8 @@ fn test_apply_to_config_all_flags() {
         p2p_rate_limit_rate: Some(4.5),
         p2p_max_doc_sync_request_doc_ids: Some(64),
         p2p_max_pending_dags: Some(7),
+        p2p_max_concurrent_dag_fetches: Some(2),
+        p2p_pending_dag_ttl_secs: Some(20),
         p2p_rebroadcast_on_merge: Some(true),
         p2p_push_queue_capacity: Some(48),
         p2p_push_queue_byte_capacity: Some(4096),
@@ -231,6 +235,8 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.net.p2p_rate_limit_rate, 4.5);
     assert_eq!(config.net.p2p_max_doc_sync_request_doc_ids, 64);
     assert_eq!(config.net.p2p_max_pending_dags, 7);
+    assert_eq!(config.net.p2p_max_concurrent_dag_fetches, 2);
+    assert_eq!(config.net.p2p_pending_dag_ttl_secs, 20);
     assert!(config.net.p2p_rebroadcast_on_merge);
     assert_eq!(config.net.p2p_push_queue_capacity, 48);
     assert_eq!(config.net.p2p_push_queue_byte_capacity, 4096);
@@ -383,6 +389,8 @@ const P2P_START_FLAGS: &[&str] = &[
     "p2p-rate-limit-rate",
     "p2p-max-doc-sync-request-doc-ids",
     "p2p-max-pending-dags",
+    "p2p-max-concurrent-dag-fetches",
+    "p2p-pending-dag-ttl-secs",
     "p2p-rebroadcast-on-merge",
     "p2p-push-queue-capacity",
     "p2p-push-queue-byte-capacity",

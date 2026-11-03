@@ -123,7 +123,8 @@
 \*   coordinator/dag_context.rs  DagFetchContext::finish_clock_attempt (only a clock-dispatched fetch re-arms)
 \*   manager/process/pending_dag.rs  try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt,
 \*                                   due_pending_dag_retries (next_retry_at order, due roots only)
-\*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires)
+\*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires, after
+\*                       SyncConfig::pending_dag_ttl, default PENDING_DAG_TTL)
 \* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs,
 \*   tests/unit/productive_quantum.rs, tests/unit/dispatch_merge_fifo.rs.
 \*

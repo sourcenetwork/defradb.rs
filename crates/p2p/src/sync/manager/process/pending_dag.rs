@@ -180,10 +180,11 @@ pub struct PendingDagFetchFailure {
 fn evict_expired_pending_dags(
     pending: &mut crate::sync::manager::pending::PendingDagRegistry,
     now: Instant,
+    ttl: std::time::Duration,
 ) -> Vec<(Cid, PendingDag)> {
     let expired: Vec<_> = pending
         .iter()
-        .filter(|(_, dag)| dag.is_expired(now))
+        .filter(|(_, dag)| dag.is_expired(now, ttl))
         .map(|(cid, dag)| (*cid, PendingDag::clone(dag)))
         .collect();
 
@@ -344,12 +345,16 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Drop every entry past its TTL, counting each in the diagnostics.
     fn evict_expired(&self) {
         let now = Instant::now();
-        if !self.pending_dags.read(|pending| pending.has_expired(now)) {
+        let ttl = self.pending_dag_ttl;
+        if !self
+            .pending_dags
+            .read(|pending| pending.has_expired(now, ttl))
+        {
             return;
         }
         let expired = self
             .pending_dags
-            .update(|pending| evict_expired_pending_dags(pending, now));
+            .update(|pending| evict_expired_pending_dags(pending, now, ttl));
         self.trace_expired(expired.iter().map(|(root, _)| root));
         for _ in &expired {
             self.diagnostics.record_pending_dag_expired();
@@ -558,8 +563,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         let max_per_peer = self.max_pending_dags_per_peer();
         let registered = dag.is_recovery_registered;
+        let ttl = self.pending_dag_ttl;
         let (admission, depth, expired) = self.pending_dags.update(|pending| {
-            let expired = evict_expired_pending_dags(pending, Instant::now());
+            let expired = evict_expired_pending_dags(pending, Instant::now(), ttl);
 
             let scope_decision = pending.scope_head_decision(root_cid, parents, &dag);
             let superseded_root = match scope_decision {
@@ -883,8 +889,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Record the attempt (and capture the incremented value) in the same
         // update so concurrent retries observe monotonic attempt counts.
         let now = Instant::now();
+        let ttl = self.pending_dag_ttl;
         let (pending_info, expired) = self.pending_dags.update(|pending| {
-            let mut expired = evict_expired_pending_dags(pending, now);
+            let mut expired = evict_expired_pending_dags(pending, now, ttl);
             let entry = match expired.iter().position(|(cid, _)| cid == root_cid) {
                 Some(own) => Some(PendingDagRetryEntry::Expired(expired.swap_remove(own).1)),
                 None => pending.get_mut(root_cid).map(|dag| {
@@ -1071,11 +1078,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if !forced {
             let roots: Vec<Cid> = self.persisted.roots();
             let now = Instant::now();
+            let ttl = self.pending_dag_ttl;
             let all_live = !roots.is_empty()
                 && self.pending_dags.read(|pending| {
-                    roots
-                        .iter()
-                        .all(|root| pending.get(root).is_some_and(|dag| !dag.is_expired(now)))
+                    roots.iter().all(|root| {
+                        pending
+                            .get(root)
+                            .is_some_and(|dag| !dag.is_expired(now, ttl))
+                    })
                 });
             if all_live {
                 return 0;
@@ -1123,11 +1133,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let mut restored = 0usize;
         let mut waiting = 0usize;
         let mut last_admitted = None;
+        let ttl = self.pending_dag_ttl;
         for (place, root_cid, mut record) in records {
             let now = Instant::now();
             let live = self
                 .pending_dags
-                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now)));
+                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now, ttl)));
             match live {
                 Some(true) => continue,
                 Some(false) => {
@@ -1137,7 +1148,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     self.pending_dags.update(|pending| {
                         if pending
                             .get(&root_cid)
-                            .is_some_and(|dag| dag.is_expired(now))
+                            .is_some_and(|dag| dag.is_expired(now, ttl))
                         {
                             pending.remove(&root_cid);
                         }

@@ -23,7 +23,7 @@ mod head_provider;
 mod head_scope;
 mod manager;
 
-pub use manager::pending::PENDING_RECOVERY_WORST_CASE_SECS;
+pub use manager::pending::{PENDING_DAG_TTL, PENDING_RECOVERY_WORST_CASE_SECS};
 mod merge;
 mod peer_state;
 pub mod pending_store;
