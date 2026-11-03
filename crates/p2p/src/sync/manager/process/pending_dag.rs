@@ -36,6 +36,17 @@ impl PendingDagLease {
             .read(|pending| pending.contains_key(&self.root_cid))
     }
 
+    /// Count an attempt that ended with the DAG still incomplete, returning
+    /// how many such attempts the root has made, or `None` once the root has
+    /// left the map.
+    pub(crate) fn record_incomplete_attempt(&self) -> Option<u32> {
+        self.pending.update(|pending| {
+            let dag = pending.get_mut(&self.root_cid)?;
+            dag.incomplete_attempts = dag.incomplete_attempts.saturating_add(1);
+            Some(dag.incomplete_attempts)
+        })
+    }
+
     /// The fetch attempt ended and gave its slot back: the root is due again
     /// one backoff from now, so roots that waited during the attempt go first.
     pub(crate) fn schedule_next_attempt(&self) {
@@ -544,6 +555,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         last_fetch_error: None,
                         next_retry_at: next,
                         dispatches: 0,
+                        incomplete_attempts: 0,
                         merge_continuation: true,
                         storage_blocker: None,
                     },
@@ -995,6 +1007,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 last_fetch_error: None,
                 next_retry_at: n0_future::time::Instant::now(),
                 dispatches: 0,
+                incomplete_attempts: 0,
                 merge_continuation: false,
                 storage_blocker: None,
             };

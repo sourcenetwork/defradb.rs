@@ -113,7 +113,8 @@ enum FetchAttemptOutcome {
 ///
 /// A fetch the per-root retry clock dispatched makes one attempt and returns:
 /// the clock owns that root's retries and backoff, and a slot held through
-/// retries would keep every other due root waiting behind it.
+/// retries would keep every other due root waiting behind it. Such a root is
+/// reported exhausted once per `MAX_FETCH_ATTEMPTS` incomplete attempts.
 ///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
@@ -294,11 +295,33 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         return;
     }
 
+    // A clock-dispatched fetch made one attempt. Its root has used up a fetch
+    // budget, and is reported exhausted, once every MAX_FETCH_ATTEMPTS
+    // incomplete attempts: the attempts a reply-driven fetch makes in place.
+    let attempts = if context.is_clock_owned() {
+        match context.record_incomplete_attempt() {
+            Some(attempts) if attempts.is_multiple_of(MAX_FETCH_ATTEMPTS) => attempts,
+            Some(attempts) => {
+                debug!(
+                    root_cid = %root_cid,
+                    attempts,
+                    remaining_count,
+                    "DAG fetch incomplete; the per-root clock retries it after its backoff"
+                );
+                return;
+            }
+            None => return,
+        }
+    } else {
+        MAX_FETCH_ATTEMPTS
+    };
+
     diagnostics.record_pending_dag_fetch_exhausted();
     log_exhausted(
         &root_cid,
         &context,
         remaining_count,
+        attempts,
         &providers,
         &last_failures,
         diagnostics.dag_fetch_logs(),

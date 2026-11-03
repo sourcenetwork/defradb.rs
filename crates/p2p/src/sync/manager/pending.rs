@@ -65,6 +65,9 @@ pub struct PendingDag {
     pub next_retry_at: n0_future::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
+    /// Clock-dispatched fetch attempts that ended with this root's DAG still
+    /// incomplete; every `MAX_FETCH_ATTEMPTS`-th is reported as exhaustion.
+    pub incomplete_attempts: u32,
     /// Committed merge work yielded with a locally ready DAG. Never persisted:
     /// restart/TTL recovery must validate local availability again.
     pub merge_continuation: bool,
