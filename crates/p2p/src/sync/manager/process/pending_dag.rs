@@ -200,6 +200,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
     }
 
+    /// Whether this side owns the root's recovery: its in-memory entry is
+    /// registered, or a durable record holds it while it has no entry (it gave
+    /// its entry up past the cap, or the node restarted). Either backs a
+    /// success reply.
+    pub(super) fn is_pending_dag_owned(&self, root_cid: &Cid) -> bool {
+        self.is_pending_dag_recovery_registered(root_cid) || self.persisted.contains(root_cid)
+    }
+
     pub(super) fn is_pending_dag_recovery_registered(&self, root_cid: &Cid) -> bool {
         self.pending_dags.read(|pending| {
             pending
