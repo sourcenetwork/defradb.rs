@@ -4,21 +4,26 @@
 \* receiver is now the only one who remembers the head. The receiver's
 \* per-root retry clock hands roots to a small pool of fetch slots (FetchCap).
 \* Fetches can fail, the receiver can restart, and new heads keep arriving.
+\* A root whose attempt ended waits out a backoff before it is due again,
+\* and some providers never serve at all.
 \*
 \* Who acts: the sender (writes and hints), the receiver's clock (claims a
 \* slot for the oldest due root), each fetch (one attempt, which completes or
-\* fails), the merge writer, a one-shot restart, and the wall clock.
+\* fails), the merge writer, a one-shot restart, and the wall clock (a
+\* root's retry deadline passes).
 \*
 \* What must never happen:
-\*   - a root that is waiting for a slot is passed by a root that became ready
-\*     after it (INV_ReadyRootsServedInOrder): otherwise, after a restart,
-\*     catch-up roots retrying in place can hold every slot and starve each
-\*     newly acknowledged head;
+\*   - a root that is due and waiting for a slot is passed by a root that
+\*     became due after it (INV_ReadyRootsServedInOrder): otherwise, after a
+\*     restart, catch-up roots retrying in place can hold every slot and
+\*     starve each newly acknowledged head;
 \*   - an acknowledged head leaves the receiver while nobody else still owns
 \*     it (INV_ExpiryKeepsOwner): a wall-clock TTL would drop acknowledged
 \*     heads whose senders have already forgotten them;
-\* and what must eventually happen: every acknowledged head is fetched and
-\* merged (LIVE_AckedRootMerged), while its provider stays reachable.
+\* and what must eventually happen: every acknowledged head whose provider
+\* serves it eventually is fetched and merged (LIVE_AckedRootMerged). A head
+\* whose provider never serves (Dead) is kept but not promised a merge, and
+\* it does not keep the other heads from theirs.
 \*
 \* This module adds the dispatch layer to SyncOwnership.tla without changing
 \* it: every SyncOwnership step runs here too, followed by the bookkeeping
@@ -28,16 +33,19 @@
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each)
 \*   coordinator/dag_fetcher.rs  poll_fetch_dag (a clock-owned fetch makes one attempt)
 \*   replication/handlers.rs  handle_dag_needs_fetch (the slot comes back; the clock re-arms the root)
-\*   manager/process/pending_dag.rs  PendingDagLease::finish_attempt, due_pending_dag_retries
+\*   coordinator/dag_context.rs  DagFetchContext::finish_clock_attempt (only a clock-dispatched fetch re-arms)
+\*   manager/process/pending_dag.rs  try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt,
+\*                                   due_pending_dag_retries (next_retry_at order, due roots only)
 \*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires)
 \* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs.
 EXTENDS SyncOwnership, Sequences
 
 CONSTANTS
   AttemptMode, \* "PerAttempt": a fetch gives its slot back after one attempt | "WholeTask": the bug, it keeps the slot through every attempt
-  RearmMode,   \* "AttemptEnd": a root is due again from the end of its attempt | "ClaimTime": the bug, its next due time is fixed when it is claimed
+  RearmMode,   \* "AttemptEnd": a root's next deadline is set when its attempt ends | "ClaimTime": the bug, it is fixed when the root is claimed
   ExpiryMode,  \* "AckRetained": an acknowledged root never expires | "WallClockTtl": the bug, a TTL may drop it at any time
-  MaxAttempts  \* attempts one fetch task makes before it gives up (MAX_FETCH_ATTEMPTS)
+  MaxAttempts, \* attempts one fetch task makes before it gives up (MAX_FETCH_ATTEMPTS)
+  Dead         \* scopes whose provider never serves a fetch: it answers busy, stalls or is gone, for good
 
 \* Each knob takes one of its named values.
 ASSUME AttemptMode \in {"PerAttempt", "WholeTask"}
@@ -47,18 +55,21 @@ ASSUME RearmMode \in {"AttemptEnd", "ClaimTime"}
 ASSUME ExpiryMode \in {"AckRetained", "WallClockTtl"}
 \* A fetch task makes at least one attempt.
 ASSUME MaxAttempts \in Nat /\ MaxAttempts >= 1
+\* Never-serving providers belong to some of the scopes.
+ASSUME Dead \subseteq Scopes
 \* One fetch owner per root: the claim and the queue below assume it.
 ASSUME FlightMode = "SingleFlight"
 
 VARIABLES
-  dueOrder,   \* the clock's queue: pending roots in next_retry_at order
-  readyOrder, \* pending roots without a slot, in the order they became able to run
+  dueOrder,   \* the clock's due queue: roots whose next_retry_at has passed, in next_retry_at order
+  readyOrder, \* due roots without a fetch, in the order they became able to run
+  backoff,    \* roots waiting for their next_retry_at
   tries,      \* [Roots -> 0..MaxAttempts], attempts the current fetch of a root has started
   overtaken,  \* roots that waited for a slot while a root behind them started an attempt
   expired     \* acknowledged roots the wall clock dropped
 
 \* The variables this module adds.
-dvars == <<dueOrder, readyOrder, tries, overtaken, expired>>
+dvars == <<dueOrder, readyOrder, backoff, tries, overtaken, expired>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, dvars>>
 
@@ -93,15 +104,18 @@ QueueStep ==
       claimed == {r \in Roots : flights[r] = 0 /\ flights'[r] > 0}
       \* Still-pending roots whose fetch gave its slot back in this step.
       released == {r \in pending' : flights[r] > 0 /\ flights'[r] = 0}
+      \* ClaimTime only: released roots whose deadline passed while they ran.
+      overdue == released \cap Members(dueOrder)
   IN
-  \* A root becomes able to run when acknowledged or when its fetch ends.
-  /\ readyOrder' = Without(readyOrder, removed \cup claimed) \o AsSeq(added \cup released)
-  \* AttemptEnd queues a root again when its attempt ends; ClaimTime queues it
-  \* again the moment it is claimed, so it already sits ahead of every root
-  \* acknowledged while its attempt ran.
-  /\ dueOrder' = IF RearmMode = "AttemptEnd"
-                 THEN Without(dueOrder, removed \cup claimed) \o AsSeq(added \cup released)
-                 ELSE Without(dueOrder, removed \cup claimed) \o AsSeq(added \cup claimed)
+  \* A root becomes ready (due, with no fetch) when it is acknowledged, when
+  \* its deadline passes while it waits (BecomeDue), or, under ClaimTime, when
+  \* its attempt ends after its deadline already passed.
+  /\ readyOrder' = Without(readyOrder, removed \cup claimed) \o AsSeq(added \cup overdue)
+  \* An acknowledged root is due at once (next_retry_at = now); a claimed root
+  \* leaves the due queue until its next deadline passes.
+  /\ dueOrder' = Without(dueOrder, removed \cup claimed) \o AsSeq(added)
+  \* The claim arms the root's next deadline; a retired root waits for nothing.
+  /\ backoff' = (backoff \cup claimed) \ removed
   \* A claim starts attempt one; a released or retired root has no attempt.
   /\ tries' = [r \in Roots |-> IF r \in claimed THEN 1
                                ELSE IF r \in released \cup removed THEN 0
@@ -113,8 +127,11 @@ QueueStep ==
 \* A SyncOwnership step followed by the bookkeeping; the wall clock is idle.
 W(A) == A /\ QueueStep /\ UNCHANGED expired
 
-\* The clock claims a slot only for the oldest due root that could take one.
+\* The clock claims a slot only for a due root, and only for the oldest due
+\* root that could take one: a root in backoff is not due, so a root that
+\* became due later can go before it.
 WClaim(s, v) ==
+  /\ <<s, v>> \in Members(dueOrder)
   /\ ClaimFetch(s, v)
   /\ \A q \in Before(dueOrder, <<s, v>>) : ~Eligible(q)
   /\ QueueStep
@@ -127,6 +144,28 @@ WFail(s, v) ==
   /\ (AttemptMode = "PerAttempt" \/ tries[<<s, v>>] >= MaxAttempts)
   /\ QueueStep
   /\ UNCHANGED expired
+
+\* A completed fetch, which a provider that never serves never gives.
+WComplete(s, v) ==
+  /\ s \notin Dead
+  /\ W(CompleteFetch(s, v))
+
+\* The root's next_retry_at passes and the root is due again. AttemptEnd sets
+\* that deadline when the attempt ends, so only a root with no fetch running
+\* becomes due; ClaimTime fixed it at the claim, so it can pass while the
+\* attempt still runs, and the root is ready the moment the attempt ends.
+BecomeDue(s, v) ==
+  \* The root is waiting out its backoff.
+  /\ <<s, v>> \in backoff
+  \* Under AttemptEnd its deadline runs from the end of its attempt.
+  /\ RearmMode = "ClaimTime" \/ flights[<<s, v>>] = 0
+  \* It is due now, behind every root that was due before it.
+  /\ backoff' = backoff \ {<<s, v>>}
+  /\ dueOrder' = Append(dueOrder, <<s, v>>)
+  \* It can run at once unless an attempt is still running.
+  /\ readyOrder' = IF flights[<<s, v>>] = 0 THEN Append(readyOrder, <<s, v>>) ELSE readyOrder
+  \* Nothing else changes.
+  /\ UNCHANGED <<vars, tries, overtaken, expired>>
 
 \* WholeTask only: a failed attempt keeps its slot, sleeps, and starts the next
 \* attempt without asking the clock, ahead of every root that is waiting.
@@ -143,7 +182,7 @@ RetryInPlace(s, v) ==
   \* Every root waiting for a slot was ready before this attempt and is passed.
   /\ overtaken' = overtaken \cup {q \in Members(readyOrder) : Eligible(q)}
   \* Nothing else changes: the slot stays with this root.
-  /\ UNCHANGED <<vars, dueOrder, readyOrder, expired>>
+  /\ UNCHANGED <<vars, dueOrder, readyOrder, backoff, expired>>
 
 \* WallClockTtl only: the TTL drops an acknowledged root that has not been
 \* fetched yet, whether or not it was ever given a slot.
@@ -174,17 +213,29 @@ Expire(s, v) ==
   \* The queues drop it too.
   /\ QueueStep
 
+\* The restart: the resync sweep restores every durable root due at once, in
+\* the sweep's order, with no fetch and no backoff.
+WCrash ==
+  /\ Crash
+  /\ dueOrder' = AsSeq(pending')
+  /\ readyOrder' = AsSeq(pending')
+  /\ backoff' = {}
+  /\ tries' = [r \in Roots |-> 0]
+  /\ UNCHANGED <<overtaken, expired>>
+
 \* Nothing queued, no attempts, nothing passed, nothing dropped.
 WInit ==
   /\ Init
   /\ dueOrder = <<>>
   /\ readyOrder = <<>>
+  /\ backoff = {}
   /\ tries = [r \in Roots |-> 0]
   /\ overtaken = {}
   /\ expired = {}
 
-\* Every SyncOwnership action, with the claim and the failure replaced by
-\* their dispatch-aware forms, plus the in-place retry and the TTL.
+\* Every SyncOwnership action, with the claim, the failure, the completion and
+\* the restart replaced by their dispatch-aware forms, plus the deadline, the
+\* in-place retry and the TTL.
 WNext ==
   \/ \E s \in Scopes : W(Update(s)) \/ W(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
@@ -192,28 +243,39 @@ WNext ==
        \/ W(ProcessRegister(s, v)) \/ W(ProcessNack(s, v))
        \/ W(SameRootReannounce(s, v))
        \/ W(OfferQualifiedAlternate(s, v)) \/ W(AddQualifiedAlternate(s, v))
-       \/ WClaim(s, v) \/ WFail(s, v) \/ RetryInPlace(s, v) \/ Expire(s, v)
+       \/ WClaim(s, v) \/ WFail(s, v) \/ BecomeDue(s, v)
+       \/ RetryInPlace(s, v) \/ Expire(s, v)
        \/ W(ContendedIngest(s, v)) \/ W(ProviderShed(s, v))
        \/ W(StarveTransportCompletion(s, v)) \/ W(StarveRecoveryServe(s, v))
        \/ W(StarveRecoveryAuthorization(s, v))
-       \/ W(CompleteFetch(s, v)) \/ W(ClaimMerge(s, v))
+       \/ WComplete(s, v) \/ W(ClaimMerge(s, v))
        \/ W(CompleteMerge(s, v)) \/ W(ClaimTerminal(s, v))
        \/ W(CompleteTerminal(s, v))
-  \/ W(Crash)
+  \/ WCrash
   \/ W(Terminating)
 
 \* Safety runs.
 WSpec == WInit /\ [][WNext]_allVars
 
 \* Liveness runs: once a head is acknowledged only the receiver acts on it, so
-\* only the receiver is fair: the clock claims, and every root's fetch, merge
-\* and cleanup eventually run when they keep being possible. Sender fairness
-\* is SyncOwnership's own liveness configs. Failures, retries in place, the
-\* TTL and the restart are never forced.
+\* only the receiver is fair: the clock claims, deadlines pass, every attempt
+\* ends (each window is bounded), and every root's merge eventually runs when
+\* it keeps being possible. Sender fairness is SyncOwnership's own liveness
+\* configs. Failures, retries in place, the TTL and the restart are never
+\* forced.
+\*
+\* The one environment assumption: a provider that is not Dead eventually
+\* serves a fetch that keeps being attempted (strong fairness on WComplete).
+\* Reachability alone does not give it: a provider can answer busy, or stall,
+\* every time. For a Dead provider nothing is assumed: its attempts only
+\* fail, its root stays owned (INV_ExpiryKeepsOwner) and is retried at the
+\* backoff cap, and LIVE_AckedRootMerged promises it nothing.
 WFairSpec ==
   WSpec /\ \A s \in Scopes :
     /\ SF_allVars(\E v \in 1..MaxV : WClaim(s, v))
-    /\ SF_allVars(\E v \in 1..MaxV : W(CompleteFetch(s, v)))
+    /\ WF_allVars(\E v \in 1..MaxV : BecomeDue(s, v))
+    /\ WF_allVars(\E v \in 1..MaxV : WFail(s, v))
+    /\ SF_allVars(\E v \in 1..MaxV : WComplete(s, v))
     /\ SF_allVars(\E v \in 1..MaxV : W(ClaimMerge(s, v)))
     /\ SF_allVars(\E v \in 1..MaxV : W(CompleteMerge(s, v)))
 
@@ -222,9 +284,15 @@ INV_DispatchTypeOK ==
   /\ TypeOK
   /\ dueOrder \in Seq(Roots)
   /\ readyOrder \in Seq(Roots)
+  /\ backoff \subseteq Roots
   /\ tries \in [Roots -> 0..MaxAttempts]
   /\ overtaken \subseteq Roots
   /\ expired \subseteq Roots
+
+\* Promise: a pending root with no fetch running is either due or waiting out
+\* its backoff, never both and never neither, so no root is lost to the clock.
+INV_DueOrBackoff ==
+  \A r \in pending : flights[r] = 0 => ((r \in backoff) # (r \in Members(dueOrder)))
 
 \* Someone still owns head r: it merged, the sender keeps its scope marker, a
 \* hint for it or a newer head is in flight, or the receiver owes it or a newer head.
@@ -233,12 +301,13 @@ Owned(r) ==
   \/ r[1] \in dirty
   \/ \E u \in inflight \cup pending : u[1] = r[1] /\ u[2] >= r[2]
 
-\* Promise: a root waiting for a slot is never passed by one that became ready after it.
+\* Promise: a due root waiting for a slot is never passed by one that became due after it.
 INV_ReadyRootsServedInOrder == overtaken = {}
 
 \* Promise: an acknowledged head never leaves the receiver while nobody else owns it.
 INV_ExpiryKeepsOwner == \A r \in expired : Owned(r)
 
-\* Promise: every acknowledged head is eventually merged.
-LIVE_AckedRootMerged == \A r \in Roots : (r \in pending) ~> (mergedV[r[1]] >= r[2])
+\* Promise: every acknowledged head whose provider eventually serves is merged.
+LIVE_AckedRootMerged ==
+  \A r \in Roots : r[1] \notin Dead => ((r \in pending) ~> (mergedV[r[1]] >= r[2]))
 ====
