@@ -11,7 +11,7 @@ use tracing::{debug, error, warn};
 
 use super::dag_context::DagFetchContext;
 use super::dag_fetcher::BLOCK_SYNC_COMPLETION_WATCHDOG;
-use super::dag_retry::{ProviderRotation, MAX_FETCH_ATTEMPTS};
+use super::dag_retry::ProviderRotation;
 use super::fetch_failures::{FetchFailures, WindowFailure};
 use crate::sync::manager::log_throttle::{
     DagFetchLogThrottles, ExhaustionTallies, ExhaustionTally, LogAdmission, LogThrottle,
@@ -114,6 +114,7 @@ pub(super) fn log_exhausted(
     root_cid: &Cid,
     context: &DagFetchContext,
     remaining_count: usize,
+    attempts: u32,
     providers: &ProviderRotation,
     failures: &FetchFailures,
     logs: &DagFetchLogThrottles,
@@ -136,7 +137,7 @@ pub(super) fn log_exhausted(
         doc_id = %context.doc_id,
         collection_id = %context.collection_id,
         remaining_count,
-        attempts = MAX_FETCH_ATTEMPTS,
+        attempts,
         provider_count = providers.len(),
         providers = ?providers.peers(),
         "DAG fetch failed after exhausting retries and providers"

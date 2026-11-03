@@ -119,6 +119,14 @@ impl DagFetchContext {
         self.pending_lease.is_some()
     }
 
+    /// Count a clock-dispatched attempt that left the DAG incomplete; see
+    /// `PendingDagLease::record_incomplete_attempt`.
+    pub(crate) fn record_incomplete_attempt(&self) -> Option<u32> {
+        self.pending_lease
+            .as_ref()
+            .and_then(crate::sync::manager::PendingDagLease::record_incomplete_attempt)
+    }
+
     pub(crate) fn is_current(&self) -> bool {
         self.pending_lease
             .as_ref()
