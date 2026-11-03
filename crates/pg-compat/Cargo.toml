@@ -57,5 +57,8 @@ futures = { workspace = true }
 # Hashing
 rapidhash.workspace = true
 
+[dev-dependencies]
+edge = { path = "../edge", features = ["testing"] }
+
 [lints]
 workspace = true

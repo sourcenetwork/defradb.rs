@@ -1,12 +1,18 @@
 //! A connection's life: SSL and GSS requests refused (the server speaks
 //! plain TCP) and the startup, all within one time limit, then each
 //! frontend message handed to pgwire's handlers, with pgwire's state
-//! machine and error recovery, until either side closes the connection.
+//! machine and error recovery, until either side closes the connection or
+//! the server's edge stops accepting: then a connection waiting for its
+//! next message closes at once, one handling a message finishes it (a copy,
+//! until it ends) and closes.
 
+use std::future::Future;
 use std::io;
+use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::time::Duration;
 
+use edge::Edge;
 use futures::SinkExt;
 use nuclei::time::{timeout_at, Instant};
 use pgwire::api::auth::StartupHandler;
@@ -28,12 +34,14 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const TLS_HANDSHAKE: u8 = 0x16;
 
 /// Serves one client connection with `handlers` until either side closes
-/// it. A client that starts TLS directly is closed at once: this server
-/// speaks plain TCP.
+/// it, or `edge` stops accepting and the message in progress is done. A
+/// client that starts TLS directly is closed at once: this server speaks
+/// plain TCP.
 pub async fn serve<H>(
     socket: nuclei::net::TcpStream,
     peer: std::net::SocketAddr,
     handlers: H,
+    edge: Edge,
 ) -> io::Result<()>
 where
     H: PgWireServerHandlers,
@@ -41,7 +49,13 @@ where
     socket.get_ref().set_nodelay(true)?;
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut first = [0u8; 1];
-    let Ok(peeked) = timeout_at(deadline, socket.peek(&mut first)).await else {
+    let mut closing = pin!(edge.closing());
+    let Some(Ok(peeked)) = unless_closing(
+        closing.as_mut(),
+        timeout_at(deadline, socket.peek(&mut first)),
+    )
+    .await
+    else {
         return Ok(());
     };
     if peeked? == 1 && first[0] == TLS_HANDSHAKE {
@@ -51,6 +65,8 @@ where
         socket,
         peer,
         deadline,
+        &edge,
+        closing,
         handlers.startup_handler(),
         handlers.simple_query_handler(),
         handlers.extended_query_handler(),
@@ -62,10 +78,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run<A, Q, EQ, C, CR, E>(
+async fn run<G, A, Q, EQ, C, CR, E>(
     socket: nuclei::net::TcpStream,
     peer: std::net::SocketAddr,
     deadline: Instant,
+    edge: &Edge,
+    mut closing: Pin<&mut G>,
     startup: Arc<A>,
     simple: Arc<Q>,
     extended: Arc<EQ>,
@@ -74,6 +92,7 @@ async fn run<A, Q, EQ, C, CR, E>(
     errors: Arc<E>,
 ) -> io::Result<()>
 where
+    G: Future<Output = ()>,
     A: StartupHandler,
     Q: SimpleQueryHandler,
     EQ: ExtendedQueryHandler,
@@ -83,7 +102,12 @@ where
     E: ErrorHandler,
 {
     let mut connection = Connection::<EQ::Statement>::new(socket, peer);
-    let Ok(negotiated) = timeout_at(deadline, refuse_ssl(&mut connection)).await else {
+    let Some(Ok(negotiated)) = unless_closing(
+        closing.as_mut(),
+        timeout_at(deadline, refuse_ssl(&mut connection)),
+    )
+    .await
+    else {
         return Ok(());
     };
     if !negotiated? {
@@ -97,10 +121,18 @@ where
             PgWireConnectionState::AwaitingStartup
                 | PgWireConnectionState::AuthenticationInProgress
         );
+        let copying = matches!(connection.state(), PgWireConnectionState::CopyInProgress(_));
         let message = if starting {
-            timeout_at(deadline, connection.next()).await.ok().flatten()
-        } else {
+            unless_closing(closing.as_mut(), timeout_at(deadline, connection.next()))
+                .await
+                .and_then(Result::ok)
+                .flatten()
+        } else if copying {
             connection.next().await
+        } else {
+            unless_closing(closing.as_mut(), connection.next())
+                .await
+                .flatten()
         };
         let Some(Ok(message)) = message else {
             return Ok(());
@@ -126,6 +158,24 @@ where
         if connection.is_closed() {
             return Ok(());
         }
+        if edge.is_closed()
+            && !matches!(connection.state(), PgWireConnectionState::CopyInProgress(_))
+        {
+            connection.close().await?;
+            return Ok(());
+        }
+    }
+}
+
+/// `work`'s output, or `None` once `closing` completes first.
+async fn unless_closing<G, T>(closing: Pin<&mut G>, work: impl Future<Output = T>) -> Option<T>
+where
+    G: Future<Output = ()>,
+{
+    let mut closing = closing;
+    nuclei::select! {
+        output = work => Some(output),
+        () = closing.as_mut() => None,
     }
 }
 

@@ -7,9 +7,10 @@ mod types;
 pub mod wire;
 
 use std::net::SocketAddr;
+use std::pin::pin;
 use std::sync::Arc;
 
-use edge::Edge;
+use edge::{Edge, TaskSet};
 use nuclei::net::TcpListener;
 use query::{CollectionProvider, QueryExecutor};
 use tracing::{error, info};
@@ -54,7 +55,10 @@ impl PgServer {
         self.address
     }
 
-    /// Run the PG wire protocol server, accepting connections in a loop.
+    /// Runs the PG wire protocol server, accepting connections until its
+    /// edge stops accepting. Each connection finishes the message in
+    /// progress and closes, an idle one at once, and the server returns once
+    /// they have.
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(self.address).await?;
         info!(
@@ -62,18 +66,26 @@ impl PgServer {
             self.address
         );
 
+        let mut connections = TaskSet::new(self.edge.clone());
+        let mut closing = pin!(self.edge.closing());
         loop {
-            let (socket, peer) = listener.accept().await?;
+            let accepted = nuclei::select! {
+                accepted = listener.accept() => accepted,
+                Some(_) = connections.join_next() => continue,
+                () = closing.as_mut() => break,
+            };
+            let (socket, peer) = accepted?;
             info!("PG connection from {}", peer);
 
             let factory = self.factory.clone();
-            self.edge
-                .spawn_service(async move {
-                    if let Err(e) = wire::serve(socket, peer, factory).await {
-                        error!("PG connection error from {}: {}", peer, e);
-                    }
-                })
-                .detach();
+            let edge = self.edge.clone();
+            connections.spawn(async move {
+                if let Err(e) = wire::serve(socket, peer, factory, edge).await {
+                    error!("PG connection error from {}: {}", peer, e);
+                }
+            });
         }
+        while connections.join_next().await.is_some() {}
+        Ok(())
     }
 }
