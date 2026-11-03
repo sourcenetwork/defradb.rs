@@ -60,6 +60,33 @@ impl Drop for Finished {
     }
 }
 
+/// Reports, when dropped before [`Self::registered`], a committed write whose
+/// task never registered its markers: P2P stopped first and refused or
+/// aborted it, and no marker owes its head.
+struct Unregistered {
+    doc_id: String,
+    collection_id: String,
+    registered: bool,
+}
+
+impl Unregistered {
+    fn registered(mut self) {
+        self.registered = true;
+    }
+}
+
+impl Drop for Unregistered {
+    fn drop(&mut self) {
+        if !self.registered {
+            tracing::error!(
+                doc_id = %self.doc_id,
+                collection_id = %self.collection_id,
+                "Committed transaction has no P2P marker: P2P stopped before its broadcast ran"
+            );
+        }
+    }
+}
+
 impl<B, T> TxnBroadcaster for SyncTxnBroadcaster<B, T>
 where
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
@@ -69,6 +96,11 @@ where
         let mine = Arc::new(Event::new());
         let previous = Arc::clone(&*self.last.swap(Arc::clone(&mine)));
         let finished = Finished(mine);
+        let unregistered = Unregistered {
+            doc_id: event.doc_id.clone(),
+            collection_id: event.collection_id.clone(),
+            registered: false,
+        };
         let sync = Arc::clone(&self.sync);
         // A task skipped at shutdown is dropped here with `done` and
         // `finished`, so neither its transaction nor the next write waits.
@@ -76,6 +108,7 @@ where
             .spawn_background_task("ordered_transaction_broadcast", async move {
                 previous.wait().await;
                 broadcast(&sync, event).await;
+                unregistered.registered();
                 drop(done);
                 drop(finished);
             });

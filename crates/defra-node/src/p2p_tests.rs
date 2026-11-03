@@ -2367,4 +2367,103 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
         .unwrap()
 }
 
+/// A write admitted around shutdown either is refused before it commits or
+/// commits while P2P still records its durable head marker. HTTP writes run
+/// on one kept-alive connection, which outlives the accept loop, while the
+/// sender of a live replicator shuts down; none may answer "committed batch
+/// has undurable P2P head markers".
+#[cfg(feature = "http")]
+#[test]
+fn shutdown_refuses_or_marks_every_write_admitted_around_it() {
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        threads: std::num::NonZeroUsize::new(4),
+        thread_name: "defra-node-shutdown-writes".to_string(),
+        ..edge::EdgeConfig::default()
+    })
+    .expect("start the test network runtime");
+    let network = runtime.edge().clone();
+    network
+        .block_on(async {
+            init_tracing();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind HTTP");
+            let address = listener.local_addr().expect("HTTP address");
+            let sender = std::sync::Arc::new(
+                Node::builder()
+                    .with_edge(network.clone())
+                    .with_p2p(test_p2p_config())
+                    .with_http(crate::HttpConfig::with_listener(listener).expect("HTTP config"))
+                    .build()
+                    .await
+                    .expect("build sender"),
+            );
+            let receiver = Node::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build receiver");
+            for node in [&*sender, &receiver] {
+                node.add_collection("type Note { text: String }")
+                    .await
+                    .expect("add schema");
+            }
+            install_one_way_replicator(&sender, &receiver, &["Note"]).await;
+
+            let client = net::http::Client::builder(network.clone())
+                .pool_max_idle_per_host(1)
+                .build()
+                .expect("HTTP client");
+            let url = format!("http://{address}/api/v0/graphql");
+            let write = move |n: usize| {
+                let client = client.clone();
+                let url = url.clone();
+                async move {
+                    let body = serde_json::json!({
+                        "query": format!(r#"mutation {{ add_Note(input: {{text: "w{n}"}}) {{ _docID }} }}"#)
+                    });
+                    match client.post(&url).json(&body).send().await {
+                        Ok(response) => Some((response.status(), response.text().await.unwrap_or_default())),
+                        Err(_) => None,
+                    }
+                }
+            };
+            let (status, body) = write(0).await.expect("a write before shutdown");
+            assert!(status.is_success() && !body.contains("errors"), "{status} {body}");
+
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer = network.spawn({
+                let stop = std::sync::Arc::clone(&stop);
+                async move {
+                    let (mut committed, mut refused, mut undurable) = (0usize, 0usize, Vec::new());
+                    let mut n = 1;
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        match write(n).await {
+                            Some((status, body)) if body.contains("undurable") => {
+                                undurable.push(format!("{status} {body}"))
+                            }
+                            Some((status, body)) if status.is_success() && !body.contains("errors") => {
+                                committed += 1
+                            }
+                            _ => refused += 1,
+                        }
+                        n += 1;
+                    }
+                    (committed, refused, undurable)
+                }
+            });
+
+            sender.shutdown().await.unwrap();
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            let (committed, refused, undurable) = writer.await.expect("writer task");
+
+            assert!(
+                undurable.is_empty(),
+                "writes committed without a durable head marker (committed {committed}, refused {refused}): {undurable:?}"
+            );
+            assert!(refused > 0, "no write was refused after shutdown stopped admitting requests");
+            receiver.shutdown().await.unwrap();
+        })
+        .unwrap();
+    runtime.shutdown().expect("stop the test network runtime");
+}
+
 mod acknowledgment;

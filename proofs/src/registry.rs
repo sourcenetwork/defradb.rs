@@ -548,6 +548,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A transactional write's markers are registered after its commit;
+        // the commit returns only once that registration ran, and P2P stops
+        // only after the writes the node admitted drained.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_AckedWriteOwned — a head its writer was told committed stays owed until merged",
+        axis: Tla,
+        anchor: "crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/db/src/event/emission.rs register_update_event_callback; crates/defra-node/src/lib.rs Node::shutdown",
+        model_ref: "MC_SyncOwnership_{Green_MarkerHandoff,Red_UndrainedMarker}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LIVE_EventualCurrency / LIVE_EventualReceiverQuiescence — document scope",
         axis: Tla,
@@ -1252,12 +1263,14 @@ pub const PROPERTIES: &[Property] = &[
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
-        // a thread of its own instead of the caller.
+        // a thread of its own instead of the caller. Requests and in-process
+        // writes stop and drain before P2P, so every admitted write registers
+        // its head marker.
         family: "Node shutdown order",
-        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, every admitted write is marked, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
-        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted}.cfg",
         tiers: &[Boundary],
     },
     Property {

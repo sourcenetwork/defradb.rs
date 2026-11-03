@@ -91,6 +91,16 @@ impl<'a, E: crate::QueryExecutor + ?Sized> TransactionGuard<'a, E> {
         })
     }
 
+    /// Take ownership of `handle`, a transaction already begun for the
+    /// request `context` serves: dropping the returned guard abandons it.
+    pub fn adopt(executor: &'a E, context: RequestContext, handle: TransactionHandle) -> Self {
+        Self {
+            executor,
+            context: Some(context),
+            handle: Some(handle),
+        }
+    }
+
     /// Execute a query within this transaction, in the context it was begun
     /// in.
     pub async fn execute(&self, request: crate::QueryRequest) -> crate::QueryResponse {
