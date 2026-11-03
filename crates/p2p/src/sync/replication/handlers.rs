@@ -97,9 +97,8 @@ fn recovered_metadata_error(cid: Cid, details: impl Into<String>) -> Replication
 /// optional gossip rebroadcast, which remains disabled in production for
 /// stage 3. The replicators' durable markers must exist before the root is
 /// marked merged, because the mark discharges the root's upstream pending
-/// record; a forward that fails leaves the root owed, and its caller leaves
-/// it unmarked for the receiver clock to re-drive. Returns the failure's
-/// result, if the forward failed.
+/// record; a forward that fails leaves the root unmarked, so the receiver
+/// clock re-drives it. Returns the failure's result, if the forward failed.
 async fn forward_merged<B, T>(
     coordinator: &SyncCoordinator<B, T>,
     cid: Cid,
@@ -115,7 +114,7 @@ where
     if collection_id.is_empty() {
         return None;
     }
-    match coordinator
+    coordinator
         .push_to_replicators_with_creator(
             &cid,
             block_data,
@@ -124,21 +123,26 @@ where
             (!creator.is_empty()).then_some(creator),
         )
         .await
-    {
-        Ok(()) => {
-            coordinator.manager().forward_settled(&cid);
-            None
-        }
-        Err(error) => {
-            coordinator.manager().owe_forward(cid);
-            Some(ReplicationResult::MergedButBroadcastFailed {
-                cid,
-                doc_id: doc_id.to_string(),
-                collection_id: collection_id.to_string(),
-                broadcast_error: error.to_string(),
-            })
-        }
-    }
+        .err()
+        .map(|error| ReplicationResult::MergedButBroadcastFailed {
+            cid,
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            broadcast_error: error.to_string(),
+        })
+}
+
+/// Whether a terminal skip still owes the root's forward: the database holds
+/// the root, and the root is not marked merged. The mark follows a durable
+/// forward, so such a root may have merged here, in this process or before a
+/// restart, without its forward. An unreadable merged bit counts as owed.
+async fn forward_owed<B, T>(coordinator: &SyncCoordinator<B, T>, cid: &Cid, reason: &str) -> bool
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    MergeOutcome::skip_reason_is_applied(reason)
+        && !matches!(coordinator.is_merged(cid).await, Ok(true))
 }
 
 /// Forward a root merged here, then mark it merged. Returns the failure's
@@ -524,7 +528,7 @@ where
         }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
             if terminal {
-                let failed = if coordinator.manager().forward_owed(&cid) {
+                let failed = if forward_owed(coordinator, &cid, &reason).await {
                     forward_then_mark(
                         coordinator,
                         cid,
@@ -646,7 +650,7 @@ fn already_merged_result(cid: Cid, doc_id: &str, collection_id: &str) -> Replica
         cid,
         doc_id: doc_id.to_string(),
         collection_id: collection_id.to_string(),
-        reason: "already merged".to_string(),
+        reason: MergeOutcome::ALREADY_MERGED.to_string(),
         terminal: true,
     }
 }
@@ -896,9 +900,11 @@ where
         let result_index = batch_result_start + index;
         let forward = match &results[result_index] {
             ReplicationResult::Merged { .. } => true,
-            ReplicationResult::Skipped { terminal: true, .. } => {
-                coordinator.manager().forward_owed(&block.cid)
-            }
+            ReplicationResult::Skipped {
+                terminal: true,
+                reason,
+                ..
+            } => forward_owed(coordinator, &block.cid, reason).await,
             _ => continue,
         };
         if forward {
