@@ -401,6 +401,36 @@ impl Sweep {
         self.markers_for(PEER).await
     }
 
+    /// Reports one live push of `doc` to the failure recorder, as a push
+    /// worker does, and returns the marker generation it recorded.
+    async fn live_push(&self, doc: &str, generation: Option<u64>, acked: bool) -> Option<u64> {
+        let (durable_tx, recorded) = nuclei::sync::oneshot::channel();
+        super::record_failure(
+            &self.peerstore,
+            p2p::sync::PushFailure {
+                peer_id: PEER.to_string(),
+                doc_id: doc.to_string(),
+                collection_id: "collection-a".to_string(),
+                cid: format!("{doc}-head"),
+                head_priority: 1,
+                create_retry: generation.is_some() && !acked,
+                initial_registration: false,
+                retry_after: None,
+                admission_only: false,
+                acknowledged: acked,
+                marker_generation: generation,
+                durable_tx: Some(durable_tx),
+            },
+        )
+        .await;
+        recorded.await.ok().flatten()
+    }
+
+    /// The marker generation `doc`'s live push carries once its head is registered.
+    async fn register_live(&self, doc: &str) -> u64 {
+        self.live_push(doc, None, false).await.unwrap()
+    }
+
     async fn markers_for(&self, peer: &str) -> Vec<String> {
         let mut docs: Vec<String> = self
             .peerstore
@@ -640,5 +670,53 @@ async fn a_pass_that_delivered_documents_returns_the_peer_to_the_first_rung() {
     assert!(
         due_in <= RETRY_INTERVALS_SECS[0],
         "the receiver took two documents but the peer stays on the escalated rung: due in {due_in} s"
+    );
+}
+
+/// A live acknowledgement is a delivery: the receiver that took it has refuted
+/// the escalation an earlier replay timeout charged, so a push that fails after
+/// it is replayed at the first rung, not behind the rest of the ladder.
+#[nuclei::test(start_paused = true)]
+async fn a_live_ack_returns_an_escalated_peer_to_the_first_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    let escalated = sweep.seconds_until_due().await;
+    assert!(
+        escalated > RETRY_INTERVALS_SECS[0],
+        "the replay timeout did not escalate the peer: due in {escalated} s"
+    );
+
+    let delivered = sweep.register_live("delivered").await;
+    sweep.live_push("delivered", Some(delivered), true).await;
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.remaining_markers().await, ["fresh", "slow"]);
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[0],
+        "the peer acknowledged a live push, yet the push that failed after it waits behind the escalated rung: due in {due_in} s"
+    );
+}
+
+/// Without a delivery a failed live push is no evidence the peer is back: it
+/// waits the rung the peer earned, so a peer that is down is not retried at the
+/// first rung on every local write.
+#[nuclei::test(start_paused = true)]
+async fn a_failed_live_push_alone_keeps_the_escalated_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    let rung = sweep.retry_info().await.num_retries;
+
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.retry_info().await.num_retries, rung);
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in > RETRY_INTERVALS_SECS[0],
+        "a failed live push with no delivery pulled a silent peer back to the first rung: due in {due_in} s"
     );
 }
