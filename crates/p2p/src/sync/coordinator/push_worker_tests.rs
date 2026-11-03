@@ -64,6 +64,7 @@ fn test_context_with_admission(
         failure_tx: Arc::new(AtomOption::some(tx)),
         send_timeout,
         peer_state: Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        head_provider: Arc::new(crate::sync::NoOpHeadProvider),
     });
     (context, rx)
 }
