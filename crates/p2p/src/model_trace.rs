@@ -158,14 +158,28 @@ struct Record<'a> {
     event: Event<'a>,
 }
 
-/// Logs one event with the wall-clock time it happened at, which orders it
-/// against the other nodes' events.
-pub fn emit(event: Event<'_>) {
-    let mt = web_time::SystemTime::now()
+/// The wall-clock time that orders an event against the other nodes'
+/// events, in nanoseconds since the epoch; 0 when this build records none.
+pub fn now() -> u64 {
+    if !ENABLED {
+        return 0;
+    }
+    web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |since| {
             u64::try_from(since.as_nanos()).unwrap_or(u64::MAX)
-        });
+        })
+}
+
+/// Logs one event with the time it happened at.
+pub fn emit(event: Event<'_>) {
+    emit_at(now(), event);
+}
+
+/// Logs one event that took effect at `mt`, before it was logged: a push
+/// is decided where its record becomes visible and logged once its reply is
+/// final, and the steps the record enables must sort after it.
+pub fn emit_at(mt: u64, event: Event<'_>) {
     if let Ok(line) = serde_json::to_string(&Record { mt, event }) {
         tracing::info!(target: TARGET, "{line}");
     }

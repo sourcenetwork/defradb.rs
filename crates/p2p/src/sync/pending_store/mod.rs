@@ -168,7 +168,10 @@ pub enum Admission {
     /// The root holds a record: a new one, one that took over the slot of the
     /// parent it retired as its sender scope's current head, or its own
     /// rewritten.
-    Registered,
+    Registered {
+        /// The parent this root retired as its sender scope's current head.
+        retired: Option<Cid>,
+    },
     /// Every slot is held: nothing was written.
     AtCapacity,
     /// The root's announcing peer holds its share: nothing was written.
