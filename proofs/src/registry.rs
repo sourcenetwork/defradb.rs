@@ -576,16 +576,19 @@ pub const PROPERTIES: &[Property] = &[
         // root is due again a backoff after that attempt ends, and an
         // acknowledged head never expires, so after a restart catch-up roots
         // cannot hold every slot while acknowledged heads wait or expire. The
-        // model claims only due roots (next_retry_at passed). The liveness leg
-        // assumes a provider that is not Dead eventually serves a fetch that
-        // keeps being attempted (strong fairness on WComplete): reachability
-        // alone does not exclude a provider that answers busy for ever, and a
-        // Dead provider's head is kept but promised no merge.
+        // model claims only due roots (next_retry_at passed), and a productive
+        // attempt gives its slot back at its quantum. Fairness is the
+        // scheduler's only: no root has dispatch fairness of its own. The
+        // liveness leg assumes a fetch that can complete eventually does
+        // (strong fairness on some WComplete): reachability alone does not
+        // exclude a provider that answers busy for ever. Dead and Trickle
+        // providers' heads are kept but promised no merge, and do not block
+        // the others.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_ReadyRootsServedInOrder / INV_ExpiryKeepsOwner / LIVE_AckedRootMerged (assumes an eventually serving provider)",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
-        model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl}.cfg",
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
+        model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Green_Dispatch_Trickle,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl,Red_UnboundedProductive}.cfg",
         tiers: &[Boundary],
     },
     Property {
