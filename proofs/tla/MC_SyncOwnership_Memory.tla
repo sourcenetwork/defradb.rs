@@ -182,7 +182,8 @@ MNack(s, v) ==
   /\ serveAuth' = serveAuth \ {<<s, v>>}
   /\ UNCHANGED <<localV, dirty, payloadLedger, pending, originBound, qualifiedOffers,
                  qualifiedProvider, serveScopes, flights, drained, ready, mergeFlights,
-                 terminalFlights, fetchExhausted, lostCompletions, mergedV, crashed>>
+                 terminalFlights, fetchExhausted, lostCompletions, mergedV, crashed,
+                 fwdVars>>
   /\ UNCHANGED mvars
 
 \* The clock claims the oldest due entry that can take the slot

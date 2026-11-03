@@ -249,7 +249,7 @@ Expire(s, v) ==
   \* The sender's state and the rest of the receiver are untouched.
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, serveAuth, serveScopes,
                  ready, mergeFlights, terminalFlights, fetchExhausted, mergedV,
-                 crashed>>
+                 crashed, fwdVars>>
   \* The queues drop it too.
   /\ QueueStep
 
