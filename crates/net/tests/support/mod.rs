@@ -14,9 +14,8 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use net::tls::{ServerConfig, TlsAcceptor};
 
-/// How many `/slow` requests the test server started answering.
-#[allow(dead_code, reason = "only the server tests wait on it")]
-pub static SLOW_STARTED: AtomicUsize = AtomicUsize::new(0);
+/// How long a test waits for the server to start on a request.
+const START_LIMIT: Duration = Duration::from_secs(10);
 
 /// What the test server answers, by path:
 /// - `/echo`: the request body, with its method in `x-method`;
@@ -27,7 +26,10 @@ pub static SLOW_STARTED: AtomicUsize = AtomicUsize::new(0);
 ///   in the query, or to `/method`;
 /// - `/method`: the request's method;
 /// - `/authorization`: the request's `Authorization` header, or nothing.
-async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
+async fn answer(
+    request: Request<Incoming>,
+    slow_started: Arc<AtomicUsize>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
     let query = request.uri().query().unwrap_or("").to_owned();
@@ -48,7 +50,7 @@ async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Inf
             .body(Full::new(body)),
         "/query" => Response::builder().body(Full::new(Bytes::from(query))),
         "/slow" => {
-            SLOW_STARTED.fetch_add(1, Ordering::SeqCst);
+            slow_started.fetch_add(1, Ordering::SeqCst);
             nuclei::time::sleep(Duration::from_secs(2)).await;
             Response::builder().body(Full::new(Bytes::from_static(b"late")))
         }
@@ -74,32 +76,63 @@ async fn answer(request: Request<Incoming>) -> Result<Response<Full<Bytes>>, Inf
     Ok(response.expect("a valid test response"))
 }
 
-/// Starts the test server; it runs until the test's runtime ends.
+/// Starts the test server on the shared test runtime, where it runs until
+/// the process ends.
 #[allow(dead_code, reason = "the server tests start their own")]
 pub async fn start(tls: Option<Arc<ServerConfig>>) -> SocketAddr {
-    let (address, server) = serve_on(tls, edge::testing::edge()).await;
-    server.detach();
-    address
+    let served = serve_on(tls, edge::testing::edge()).await;
+    drop(served.task);
+    served.address
 }
 
-/// Starts the test server with its connections on `edge`, and the task that
-/// serves until `edge` stops accepting and the connections end.
-pub async fn serve_on(
-    tls: Option<Arc<ServerConfig>>,
-    edge: edge::Edge,
-) -> (SocketAddr, nuclei::Task<io::Result<()>>) {
+/// A test server started by [`serve_on`].
+pub struct Served {
+    pub address: SocketAddr,
+    /// Serves until its edge stops accepting and its connections end.
+    pub task: edge::Task<io::Result<()>>,
+    slow_started: Arc<AtomicUsize>,
+}
+
+impl Served {
+    /// Completes once the server started answering a `/slow` request.
+    #[allow(dead_code, reason = "only the server tests wait on it")]
+    pub async fn slow_request_started(&self) {
+        nuclei::time::timeout(START_LIMIT, async {
+            let mut wait = Duration::from_millis(1);
+            while self.slow_started.load(Ordering::SeqCst) == 0 {
+                nuclei::time::sleep(wait).await;
+                wait = (wait * 2).min(Duration::from_millis(50));
+            }
+        })
+        .await
+        .expect("the slow request reaches the server");
+    }
+}
+
+/// Starts the test server as a task of `edge`, whose connections run there
+/// too.
+pub async fn serve_on(tls: Option<Arc<ServerConfig>>, edge: edge::Edge) -> Served {
     let listener = nuclei::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the test listener binds");
     let address = listener.get_ref().local_addr().expect("a local address");
     let acceptor = tls.map(TlsAcceptor::from);
-    let server = nuclei::spawn(net::server::serve(
-        listener,
-        acceptor,
-        tower::service_fn(answer),
-        edge,
-    ));
-    (address, server)
+    let slow_started = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&slow_started);
+    let service = tower::service_fn(move |request| answer(request, Arc::clone(&counter)));
+    let task = edge
+        .spawn(net::server::serve(
+            listener,
+            acceptor,
+            service,
+            edge.clone(),
+        ))
+        .within(Duration::MAX);
+    Served {
+        address,
+        task,
+        slow_started,
+    }
 }
 
 /// A self-signed certificate for `localhost`, the server configuration

@@ -16,7 +16,7 @@ use hyper_util::client::legacy;
 use tower_service::Service;
 
 use crate::connect::Connector;
-use crate::rt::{Executor, Timer};
+use crate::rt::{ClientExecutor, Inflight, Timer, Tracked};
 use crate::tls::{ClientTls, TlsConnector};
 use crate::BoxError;
 
@@ -125,7 +125,8 @@ impl Endpoint {
             connect_timeout: self.connect_timeout,
             proxies: None,
         };
-        let client = legacy::Client::builder(Executor::new(self.edge))
+        let inflight = Inflight::default();
+        let client = legacy::Client::builder(ClientExecutor::new(self.edge, inflight.clone()))
             .timer(Timer)
             .pool_timer(Timer)
             .http2_only(true)
@@ -138,6 +139,7 @@ impl Endpoint {
             .ok_or_else(|| Error::Endpoint(format!("{}: a host is needed", self.uri)))?;
         Ok(Channel {
             client,
+            inflight,
             connector,
             inner: Arc::new(Origin {
                 uri: self.uri,
@@ -152,6 +154,7 @@ impl Endpoint {
 /// An HTTP/2 channel to one endpoint; cloning shares its connections.
 pub struct Channel<B> {
     client: legacy::Client<Connector, B>,
+    inflight: Inflight,
     connector: Connector,
     inner: Arc<Origin>,
 }
@@ -167,6 +170,7 @@ impl<B> Clone for Channel<B> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
+            inflight: self.inflight.clone(),
             connector: self.connector.clone(),
             inner: Arc::clone(&self.inner),
         }
@@ -179,9 +183,9 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Response = Response<Incoming>;
+    type Response = Response<Tracked<Incoming>>;
     type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Response<Incoming>, Error>> + Send>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Response<Tracked<Incoming>>, Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
@@ -189,6 +193,7 @@ where
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
         let client = self.client.clone();
+        let busy = self.inflight.begin();
         let origin = Arc::clone(&self.inner);
         Box::pin(async move {
             let endpoint = origin.uri.to_string();
@@ -215,10 +220,12 @@ where
                 }
                 None => calling.await,
             };
-            answered.map_err(|error| Error::Call {
-                endpoint,
-                source: Box::new(error),
-            })
+            answered
+                .map(|response| response.map(|body| Tracked::new(body, busy)))
+                .map_err(|error| Error::Call {
+                    endpoint,
+                    source: Box::new(error),
+                })
         })
     }
 }

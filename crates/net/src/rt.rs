@@ -6,13 +6,16 @@ use std::fmt;
 use std::future::Future;
 use std::io;
 use std::io::IoSlice;
-use std::pin::Pin;
+use std::pin::{pin, Pin};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::time::{Duration, Instant};
 
 use edge::Edge;
 use futures_io::{AsyncRead, AsyncWrite};
 use hyper::rt::ReadBufCursor;
+use regolith::sync::Notify;
 
 /// The most one read takes: one of the buffer classes nuclei's driver reads
 /// ahead into, a whole TLS record's plaintext, and a default-size HTTP/2
@@ -114,11 +117,10 @@ where
     }
 }
 
-/// Spawns hyper's background work (a connection, an HTTP/2 stream) as a
-/// detached task on the network edge it was given. Each runs as long as the
-/// client or server it belongs to holds its connection, or until the edge
-/// stops accepting, so an idle pooled connection never holds up the edge's
-/// shutdown.
+/// Spawns hyper's background work for a server (an HTTP/2 stream) as a task
+/// of the network edge it was given. The edge's drain waits for it, bounded
+/// by the drain's deadline, so a stream in flight finishes when the server
+/// stops accepting.
 #[derive(Debug, Clone)]
 pub struct Executor {
     edge: Edge,
@@ -135,7 +137,125 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     fn execute(&self, future: F) {
-        self.edge.spawn_service(future).detach();
+        drop(self.edge.spawn(future));
+    }
+}
+
+/// The requests a client has in flight: each from the moment it is sent to
+/// the end of its response, dropped or read. Cloning shares the count.
+#[derive(Debug, Clone, Default)]
+pub struct Inflight(Arc<Open>);
+
+#[derive(Debug, Default)]
+struct Open {
+    count: AtomicUsize,
+    ended: Notify,
+}
+
+impl Inflight {
+    /// One more request in flight, until the guard is dropped.
+    pub fn begin(&self) -> Busy {
+        self.0.count.fetch_add(1, Ordering::SeqCst);
+        Busy(Arc::clone(&self.0))
+    }
+
+    /// Completes once no request is in flight.
+    async fn idle(&self) {
+        loop {
+            let ended = self.0.ended.notified();
+            if self.0.count.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            ended.await;
+        }
+    }
+}
+
+/// A request in flight. Dropping it, when its response ended however it
+/// ended, tells the client's connection drivers the request is over.
+#[derive(Debug)]
+pub struct Busy(Arc<Open>);
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        if self.0.count.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.0.ended.notify_waiters();
+        }
+    }
+}
+
+/// Spawns hyper's background work for a client (a connection driver, the
+/// pool's idle sweep) as a task of the network edge it was given. Once the
+/// edge stops accepting, a driver goes on while any request of the client is
+/// in flight, so its response completes, and ends when none is: an idle
+/// pooled connection never holds up the edge's shutdown.
+#[derive(Debug, Clone)]
+pub struct ClientExecutor {
+    edge: Edge,
+    inflight: Inflight,
+}
+
+impl ClientExecutor {
+    pub fn new(edge: Edge, inflight: Inflight) -> Self {
+        Self { edge, inflight }
+    }
+}
+
+impl<F> hyper::rt::Executor<F> for ClientExecutor
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    fn execute(&self, future: F) {
+        let closing = self.edge.closing();
+        let inflight = self.inflight.clone();
+        drop(self.edge.spawn(async move {
+            let mut driver = pin!(future);
+            nuclei::select! {
+                () = driver.as_mut() => return,
+                () = closing => {}
+            }
+            nuclei::select! {
+                () = driver.as_mut() => {}
+                () = inflight.idle() => {}
+            }
+        }));
+    }
+}
+
+/// A response body that keeps its request in flight until the body is
+/// dropped.
+#[derive(Debug)]
+pub struct Tracked<B> {
+    body: B,
+    _busy: Busy,
+}
+
+impl<B> Tracked<B> {
+    pub fn new(body: B, busy: Busy) -> Self {
+        Self { body, _busy: busy }
+    }
+}
+
+impl<B> http_body::Body for Tracked<B>
+where
+    B: http_body::Body + Unpin,
+{
+    type Data = B::Data;
+    type Error = B::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.body.size_hint()
     }
 }
 

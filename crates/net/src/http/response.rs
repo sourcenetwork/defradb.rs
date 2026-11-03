@@ -16,6 +16,7 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use super::Error;
+use crate::rt::Busy;
 
 /// An HTTP response. The body is read once, by one of the reading methods.
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub struct Response {
     url: Url,
     body: Incoming,
     deadline: Option<Instant>,
+    busy: Busy,
 }
 
 impl Response {
@@ -33,6 +35,7 @@ impl Response {
         response: http::Response<Incoming>,
         url: Url,
         deadline: Option<Instant>,
+        busy: Busy,
     ) -> Self {
         let (parts, body) = response.into_parts();
         Self {
@@ -42,6 +45,7 @@ impl Response {
             url,
             body,
             deadline,
+            busy,
         }
     }
 
@@ -132,6 +136,7 @@ impl Response {
                 .deadline
                 .map(|at| Box::pin(nuclei::time::sleep_until(at))),
             url: self.url,
+            _busy: self.busy,
         }
     }
 }
@@ -143,6 +148,7 @@ pub struct BytesStream {
     body: Option<Incoming>,
     sleep: Option<Pin<Box<Sleep>>>,
     url: Url,
+    _busy: Busy,
 }
 
 impl Stream for BytesStream {

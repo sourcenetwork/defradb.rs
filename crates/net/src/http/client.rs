@@ -21,14 +21,15 @@ use super::response::{within, Response};
 use super::url::IntoUrl;
 use super::Error;
 use crate::connect::Connector;
-use crate::rt::{Executor, Timer};
+use crate::rt::{Busy, ClientExecutor, Inflight, Timer};
 use crate::tls::{Certificate, ClientTls, TlsConnector, Version};
 
 /// How many redirects a request follows before it fails.
 const REDIRECT_LIMIT: usize = 10;
 
 /// An HTTP client: a pool of connections on nuclei sockets, each driven by
-/// a task of the network edge it was built on, HTTP/2 where the server
+/// a task of the network edge it was built on (which, once the edge stops
+/// accepting, goes on until the client's requests in flight are over), HTTP/2 where the server
 /// negotiates it, TLS with the system's root certificates, the system's
 /// proxies, and redirects followed. Cloning shares the pool.
 #[derive(Clone)]
@@ -38,6 +39,7 @@ pub struct Client {
 
 struct Inner {
     hyper: legacy::Client<Connector, Full<Bytes>>,
+    inflight: Inflight,
     timeout: Option<Duration>,
     default_headers: HeaderMap,
     proxies: Option<Arc<Matcher>>,
@@ -113,15 +115,21 @@ impl Client {
             .or(self.inner.timeout)
             .map(|limit| Instant::now() + limit);
         let url = parts.url.clone();
-        within(deadline, &url, self.follow(parts, deadline)).await?
+        let busy = self.inner.inflight.begin();
+        within(deadline, &url, self.follow(parts, deadline, busy)).await?
     }
 
-    async fn follow(&self, mut parts: Parts, deadline: Option<Instant>) -> Result<Response, Error> {
+    async fn follow(
+        &self,
+        mut parts: Parts,
+        deadline: Option<Instant>,
+        busy: Busy,
+    ) -> Result<Response, Error> {
         for _ in 0..=REDIRECT_LIMIT {
             let response = self.exchange(&parts).await?;
             match redirect(&parts, &response)? {
                 Some(next) => parts = next,
-                None => return Ok(Response::new(response, parts.url, deadline)),
+                None => return Ok(Response::new(response, parts.url, deadline, busy)),
             }
         }
         Err(Error::TooManyRedirects {
@@ -290,7 +298,8 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             proxies: proxies.clone(),
         };
-        let hyper = legacy::Client::builder(Executor::new(self.edge))
+        let inflight = Inflight::default();
+        let hyper = legacy::Client::builder(ClientExecutor::new(self.edge, inflight.clone()))
             .timer(Timer)
             .pool_timer(Timer)
             .pool_idle_timeout(self.pool_idle_timeout)
@@ -299,6 +308,7 @@ impl ClientBuilder {
         Client {
             inner: Arc::new(Inner {
                 hyper,
+                inflight,
                 timeout: self.timeout,
                 default_headers: self.default_headers,
                 proxies,
