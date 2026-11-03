@@ -542,6 +542,10 @@ RUNS=(
   "MC_ServerDrain_Red_CheckInside.cfg ServerDrain.tla RED" # closing looked at inside a request cuts it off (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_NoCheck.cfg ServerDrain.tla RED" # closing never looked at: new requests while draining (INV_NoNewWorkWhenClosing)
   "MC_ServerDrain_Red_NoDeadline.cfg ServerDrain.tla RED" # no deadline: a hung request keeps the server from returning (LIVE_ServerReturns)
+  "MC_DocTopicIngress_Green.cfg DocTopicIngress.tla GREEN" # updates queued past an unsubscribe are dropped, followed ones applied
+  "MC_DocTopicIngress_Red_NoCheck.cfg DocTopicIngress.tla RED" # the code before (#2545): an update after the unsubscribe is applied (INV_NoApplyAfterUnsubscribe)
+  "MC_DocTopicIngress_Red_OwnSet.cfg DocTopicIngress.tla RED" # the handler checks a set the unsubscribe never clears (INV_NoApplyAfterUnsubscribe)
+  "MC_DocTopicIngress_Red_NoCollection.cfg DocTopicIngress.tla RED" # a followed collection does not admit the document's topic (INV_FollowedApplies)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

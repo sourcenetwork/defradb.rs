@@ -396,6 +396,10 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             access_mode,
             replicators,
             gossip_direction_filtered: std::sync::atomic::AtomicU64::new(0),
+            followed_documents: Arc::new(super::FollowedDocuments::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            gossip_unfollowed_dropped: std::sync::atomic::AtomicU64::new(0),
         },
         subscriptions: SyncSubscriptionState {
             collections: super::subscriptions::CollectionSubscriptions::new(
@@ -3051,6 +3055,10 @@ async fn gossip_controlled_mode_allows_document_topic() {
     let peer = random_peer_id();
     let (coordinator, _events) =
         create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
@@ -3058,9 +3066,66 @@ async fn gossip_controlled_mode_allows_document_topic() {
 
     assert!(
         !matches!(&result, Err(Error::AccessDenied { .. })),
-        "gossip on a subscribed document topic must be accepted, got {:?}",
+        "gossip on a followed document topic must be accepted, got {:?}",
         result
     );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 0);
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_document_topic_dropped_after_document_unfollowed() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
+    coordinator.access.followed_documents.remove("doc1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        matches!(&result, Ok(())),
+        "a late message for an unfollowed document is dropped without error, got {:?}",
+        result
+    );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 1);
+}
+
+#[nuclei::test(threads = 0)]
+async fn gossip_document_topic_accepted_when_collection_subscribed() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let (coordinator, _events) =
+        create_test_coordinator(AccessMode::Controlled, replicators, peer_state);
+    coordinator
+        .subscriptions
+        .collections
+        .insert_live("collection1");
+
+    let result = coordinator
+        .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))
+        .await;
+
+    assert!(
+        !matches!(&result, Err(Error::AccessDenied { .. })),
+        "a subscribed collection keeps its document-topic updates, got {:?}",
+        result
+    );
+    assert_eq!(unfollowed_dropped(&coordinator).await, 0);
+}
+
+async fn unfollowed_dropped(coordinator: &SyncCoordinator<TestBlockstore, NoopTransport>) -> u64 {
+    coordinator
+        .sync_status()
+        .await
+        .gossip_unfollowed_dropped_total
 }
 
 #[nuclei::test(threads = 0)]
@@ -3199,6 +3264,10 @@ async fn gossip_document_topic_allows_outbound_replicator_target() {
         .create_replicator(&peer, vec!["collection1".to_string()], false)
         .await
         .unwrap();
+    coordinator
+        .access
+        .followed_documents
+        .insert("doc1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event_on_topic(peer, "doc1", "collection1"))

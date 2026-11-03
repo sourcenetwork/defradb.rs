@@ -282,6 +282,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     access_mode,
                     replicators,
                     gossip_direction_filtered: AtomicU64::new(0),
+                    followed_documents: Arc::new(super::FollowedDocuments::with_hasher(
+                        rapidhash::fast::RandomState::default(),
+                    )),
+                    gossip_unfollowed_dropped: std::sync::atomic::AtomicU64::new(0),
                 },
                 subscriptions: SyncSubscriptionState {
                     collections,

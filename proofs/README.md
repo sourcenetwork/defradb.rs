@@ -90,6 +90,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Server drain | TLA+ | net, pg-compat, edge |
+| Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

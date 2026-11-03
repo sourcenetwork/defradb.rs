@@ -479,7 +479,9 @@ impl Node {
 
         let mut restored_doc_ids = RapidHashSet::new();
         if let Ok(doc_ids) = restore_peerstore.load_documents().await {
+            let followed = coordinator.followed_documents();
             for doc_id in &doc_ids {
+                followed.insert(doc_id.clone(), ());
                 let _ = handle
                     .subscribe(p2p::topics::DefraTopic::document(doc_id))
                     .await;

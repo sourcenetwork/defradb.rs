@@ -346,7 +346,12 @@ where
 
     let restore_peerstore = Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries);
     restore_libp2p_replicators(&handle, &restore_peerstore).await;
-    let restored_doc_ids = restore_libp2p_documents(&handle, &restore_peerstore).await;
+    let restored_doc_ids = restore_libp2p_documents(
+        &handle,
+        &restore_peerstore,
+        &coordinator.followed_documents(),
+    )
+    .await;
 
     let replicator_push_options = ReplicatorPushOptionsState::default();
     let adapter = P2PAdapter::with_full_context(

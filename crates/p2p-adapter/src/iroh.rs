@@ -104,6 +104,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         nac_checker: Arc<dyn db::NodeAccessChecker>,
     ) -> Self {
         let network = coordinator.network();
+        let tracked_documents = coordinator.followed_documents();
         Self {
             transport,
             sync_coordinator: Some(coordinator),
@@ -112,7 +113,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents,
             nac_checker: Some(nac_checker),
             network,
         }
@@ -194,7 +195,6 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
     }
 
     pub fn set_initial_tracked_documents(&self, docs: RapidHashSet<String>) {
-        self.tracked_documents.clear();
         self.tracked_documents
             .extend(docs.into_iter().map(|doc_id| (doc_id, ())));
     }
@@ -979,11 +979,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         })?;
 
         for doc_id in &doc_ids {
+            self.tracked_documents.insert(doc_id.clone(), ());
             let topic = DefraTopic::document(doc_id);
             if let Err(error) = self.transport.subscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to subscribe to topic for document");
             }
-            self.tracked_documents.insert(doc_id.clone(), ());
         }
 
         if let Some(ref pusher) = self.doc_pusher {
@@ -1006,11 +1006,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         })?;
 
         for doc_id in &doc_ids {
+            self.tracked_documents.remove(doc_id);
             let topic = DefraTopic::document(doc_id);
             if let Err(error) = self.transport.unsubscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to unsubscribe from topic for document");
             }
-            self.tracked_documents.remove(doc_id);
         }
 
         if let Some(ref pusher) = self.doc_pusher {

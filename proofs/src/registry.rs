@@ -1207,6 +1207,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // An update on a document's topic is applied only while the node
+        // follows the document or its collection: an unsubscribe clears the
+        // set the gossip handler reads before it returns, so updates queued or
+        // sent after it are dropped.
+        family: "Document topic ingress",
+        name: "INV_NoApplyAfterUnsubscribe / INV_FollowedApplies: no update is applied after the document's unsubscribe returned unless its collection is followed, and none taken while followed is dropped",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/p2p/src/sync/coordinator/access.rs is_followed_document; crates/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/p2p-adapter/src/iroh.rs P2PAdapter::add_documents, remove_documents; crates/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
+        model_ref: "MC_DocTopicIngress_{Green,Red_NoCheck,Red_OwnSet,Red_NoCollection}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A node checks its config before it opens anything, hands
         // its retry ladder to every retry site of either transport, stops a
         // host whose listen failed, enables NAC owned by the node identity,

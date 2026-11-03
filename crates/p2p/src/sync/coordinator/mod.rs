@@ -159,6 +159,9 @@ pub struct SyncStatus {
     /// Gossip messages rejected because an unsubscribed sender was configured
     /// only as an outbound replicator target.
     pub gossip_direction_filtered_total: u64,
+    /// Document-topic gossip messages dropped because the document is no
+    /// longer followed.
+    pub gossip_unfollowed_dropped_total: u64,
     pub pending_dags: usize,
     pub pending_dag_capacity: usize,
     pub pending_dag_high_water: u64,
@@ -864,7 +867,17 @@ pub(super) struct SyncAccessState {
 
     /// Gossip messages rejected by the receive-side direction guard.
     pub(super) gossip_direction_filtered: AtomicU64,
+
+    /// Documents this node follows on their document topics.
+    pub(super) followed_documents: Arc<FollowedDocuments>,
+
+    /// Document-topic gossip messages dropped because the document is no
+    /// longer followed.
+    pub(super) gossip_unfollowed_dropped: AtomicU64,
 }
+
+/// A set of document IDs.
+pub type FollowedDocuments = kovan_map::HopscotchMap<String, (), rapidhash::fast::RandomState>;
 
 /// Subscription and document head support state for the coordinator.
 pub(super) struct SyncSubscriptionState<T>
@@ -976,6 +989,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             gossip_direction_filtered_total: self
                 .access
                 .gossip_direction_filtered
+                .load(Ordering::Relaxed),
+            gossip_unfollowed_dropped_total: self
+                .access
+                .gossip_unfollowed_dropped
                 .load(Ordering::Relaxed),
             pending_dags: self.manager.pending_dag_count(),
             pending_dag_capacity: self.manager.max_pending_dags(),
