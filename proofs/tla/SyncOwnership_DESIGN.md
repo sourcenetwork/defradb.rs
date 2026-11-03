@@ -203,14 +203,17 @@ holds, and `DeliverDownstream` abstracts C's instance of this same protocol
 in `pending` and B's downstream marker must overlap: `ClaimTerminal` records
 the marker before `CompleteTerminal` discharges the record. In Rust,
 `replication/handlers.rs` `forward_merged` registers B's replicator markers
-before `mark_as_merged` discharges the pending record. Every route to the
-terminal step forwards first: a fresh merge, a re-drive after a forward that
-failed in this process (the root stays unmarked and in the owed set of
-`manager/process/owed_forward.rs`, because the database answers its second
-merge with an in-process "already merged" skip), and a re-drive after a
-restart (the database merges the root again). A forward that fails is the
-terminal step not having happened: the root stays unmarked, its record stays,
-and the receiver clock re-drives it.
+before `mark_as_merged` discharges the pending record. The terminal step's
+guard is what the handler checks durably (`forward_owed`): the database holds
+the root, because it merged it or answers a terminal skip that
+`MergeOutcome::skip_reason_is_applied` accepts, and the root's merged bit is
+unset. The bit is set only after a durable forward, so every route to the
+terminal step forwards first: a fresh merge, and an "already merged" re-drive
+in the same process or after a restart (the database answers from its durable
+head publication, not by merging again). The re-driven-merge sink in
+`db/src/merge/redriven_sink.rs` keeps the same order. A forward that fails is
+the terminal step not having happened: the root stays unmarked, its record
+stays, and the receiver clock re-drives it.
 
 `MergeMode = "DischargeBeforeForward"` is the order this replaced:
 `mark_as_merged` first, then the forward from the still-running handler
@@ -219,6 +222,12 @@ after the discharge (`ForwardFail`: shutdown, an unreadable replicator list,
 or a recorder that cannot make the marker durable), or a re-drive that finds
 the root already merged after a crash, each leaves a head C lacks with nothing
 on B that still owes it.
+
+`MergeMode = "OwedInMemory"` keeps the forward before the mark but decides it
+from process memory: the terminal step forwards only a root the running
+process merged or failed to forward (`fwdDue`). A crash between the merge
+commit and the terminal step empties that memory, the re-drive gets the
+database's durable "already merged", and the root is discharged unforwarded.
 
 Reconnect is evidence that an existing sender scope marker is deliverable
 again, so the runtime moves that peer's existing marker schedule to "due now"
@@ -474,6 +483,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_ParallelMerge.cfg` | RED | frontend-selected parallel merge workers overlap independent receiver writers |
 | `MC_SyncOwnership_Red_DuplicateTerminal.cfg` | RED | two terminal observations concurrently delete the same durable pending root |
 | `MC_SyncOwnership_Red_DischargeBeforeForward.cfg` | RED | the hub discharges a merged head's upstream record before its downstream marker is durable; a failed forward or a crash between loses the head for the downstream replicator |
+| `MC_SyncOwnership_Red_OwedInMemory.cfg` | RED | the hub forwards in the terminal step only a root its running process remembers merging; a crash between the merge commit and the terminal step loses the head for the downstream replicator |
 | `MC_SyncOwnership_Red_EdgeTriggeredCompletion.cfg` | RED | a fast CAR failure is discarded before the fetch owner registers its completion waiter |
 | `MC_SyncOwnership_Red_WorkerSaturatedCompletion.cfg` | RED | saturated spawned workers stop draining the CAR completion required by an active fetch owner |
 | `MC_SyncOwnership_Red_SharedServeWorkers.cfg` | RED | slow ownership registration consumes every worker needed to serve receiver-owned CAR recovery |
