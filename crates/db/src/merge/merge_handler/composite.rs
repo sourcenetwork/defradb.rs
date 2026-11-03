@@ -142,7 +142,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // per-document guard for an already-merged block; the guarded re-check
         // below still covers the concurrent-first-delivery race.
         if self.merged_composites.contains_key(cid) {
-            return Ok(MergeOutcome::terminal_skip("already merged"));
+            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
         }
 
         let doc_id_str = match self.resolve_composite_doc_id(cid, block, depth).await {
@@ -318,7 +318,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     self.ensure_merge_depth(&cid, depth)?;
                     if self.has_merged_composite(&cid) {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
                     }
@@ -382,7 +382,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 } => {
                     if self.has_merged_composite(&cid) {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
                     }
@@ -405,7 +405,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        Ok(MergeOutcome::terminal_skip("already merged"))
+        Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED))
     }
 
     /// Merges one composite in its own transaction, with every key its
@@ -762,7 +762,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Err(MergeError::HistoryRequired);
         }
         if self.has_merged_composite(cid) || Self::has_batch_merged_composite(batch_merged, cid) {
-            return Ok(MergeOutcome::terminal_skip("already merged"));
+            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
         }
 
         // Every composite in a valid ancestry belongs to the root document;
@@ -805,7 +805,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         || Self::has_batch_merged_composite(batch_merged, &cid)
                     {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
                     }
@@ -819,7 +819,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await?
                     {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
                     }
@@ -881,7 +881,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         || Self::has_batch_merged_composite(batch_merged, &cid)
                     {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                            return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
                     }
@@ -913,7 +913,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        Ok(MergeOutcome::terminal_skip("already merged"))
+        Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED))
     }
 
     #[allow(clippy::too_many_arguments)]

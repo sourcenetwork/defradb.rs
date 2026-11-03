@@ -46,18 +46,11 @@ impl Recorder {
     }
 }
 
-/// The database's answers for one root: merged the first time this process
-/// sees it, then the in-process "already merged" skip.
+/// The database's answers for one root: merged the first time, then the
+/// "already merged" skip, in this process or after a restart, because the
+/// database answers from its durable head publication.
 struct HubMergeHandler {
-    calls: AtomicUsize,
-}
-
-impl HubMergeHandler {
-    fn new() -> Self {
-        Self {
-            calls: AtomicUsize::new(0),
-        }
-    }
+    applied: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -70,10 +63,10 @@ impl MergeHandler for HubMergeHandler {
         _block_data: &[u8],
         _metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            Ok(MergeOutcome::Merged)
+        if self.applied.swap(true, Ordering::SeqCst) {
+            Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED))
         } else {
-            Ok(MergeOutcome::terminal_skip("already merged"))
+            Ok(MergeOutcome::Merged)
         }
     }
 }
@@ -87,6 +80,7 @@ enum Path {
 struct Hub {
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     pending: Arc<PendingDagStore<RegolithStore>>,
+    applied: Arc<AtomicBool>,
     root: Cid,
 }
 
@@ -117,7 +111,15 @@ impl Hub {
         Self {
             blockstore,
             pending,
+            applied: Arc::new(AtomicBool::new(false)),
             root,
+        }
+    }
+
+    /// A merge handler over the hub's database, as one process builds it.
+    fn handler(&self) -> HubMergeHandler {
+        HubMergeHandler {
+            applied: self.applied.clone(),
         }
     }
 
@@ -202,7 +204,7 @@ async fn failed_hub_forward_keeps_the_upstream_obligation_until_a_redrive_forwar
         let hub = Hub::new().await;
         let recorder = Recorder::default();
         let coordinator = hub.start(&recorder).await;
-        let handler = HubMergeHandler::new();
+        let handler = hub.handler();
 
         recorder.failing.store(true, Ordering::SeqCst);
         let first = hub.drive(&coordinator, &handler, path).await;
@@ -234,7 +236,7 @@ async fn hub_forward_cut_by_shutdown_is_forwarded_after_restart() {
         let recorder = Recorder::default();
         let coordinator = hub.start(&recorder).await;
         coordinator.shutdown().await;
-        let first = hub.drive(&coordinator, &HubMergeHandler::new(), path).await;
+        let first = hub.drive(&coordinator, &hub.handler(), path).await;
         assert!(
             matches!(first, ReplicationResult::MergedButBroadcastFailed { .. }),
             "{path:?}: {first:?}"
@@ -244,7 +246,7 @@ async fn hub_forward_cut_by_shutdown_is_forwarded_after_restart() {
         drop(coordinator);
 
         let restarted = hub.start(&recorder).await;
-        hub.drive(&restarted, &HubMergeHandler::new(), path).await;
+        hub.drive(&restarted, &hub.handler(), path).await;
         assert!(
             recorder.markers() > 0,
             "{path:?}: the restarted hub discharged the root without a downstream marker"
