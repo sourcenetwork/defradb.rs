@@ -53,7 +53,8 @@ CONSTANTS
   Parent,      \* [Heads -> SUBSET Heads]: the heads each head links as parents
   Prio,        \* [Heads -> Nat]: each head's priority
   ScopeOf,     \* [Heads -> scopes]: each head's sender scope
-  Cap,         \* pending-DAG capacity (SyncConfig::max_pending_dags)
+  Cap,         \* admission capacity: SyncConfig::max_pending_dags with no durable store; with one, the
+               \* durable tier (a full map admits on the record alone, MC_SyncOwnership_Memory)
   ReplyMode,   \* "NackOnFull" | "SuccessOnFull"
   CoverRule    \* "Parent" | "Priority"
 
