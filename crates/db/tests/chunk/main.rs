@@ -2,6 +2,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod delete;
 mod guard;
 mod key_owners;
 mod race;

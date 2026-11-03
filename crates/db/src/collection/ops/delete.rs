@@ -163,8 +163,8 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Names are deduplicated. Name resolution happens up-front: if any name
     /// is unknown, no deletion is performed. Validation (no documents, no
-    /// orphan child versions outside the batch) is delegated to
-    /// `delete_collection_versions_batch`.
+    /// orphan child versions outside the batch, the `@chunk` rules) is
+    /// delegated to `delete_collection_versions_batch`.
     pub async fn delete_collections_as(
         &self,
         context: &defra_core::RequestContext,
@@ -183,36 +183,10 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let mut seen_names = rapidhash::RapidHashSet::new();
-        let mut unique_names: Vec<String> = names
+        let unique_names: Vec<String> = names
             .into_iter()
             .filter(|n| seen_names.insert(n.clone()))
             .collect();
-        // A parent's `@chunk` collections go with it.
-        for name in unique_names.clone() {
-            let Some(col) = self.get_collection(&name)? else {
-                continue;
-            };
-            for chunked in &col.schema().chunked_fields {
-                let chunks = chunked.collection(&name);
-                if self.get_collection(&chunks)?.is_some() && seen_names.insert(chunks.clone()) {
-                    unique_names.push(chunks);
-                }
-            }
-        }
-
-        for name in &unique_names {
-            let col = self
-                .get_collection(name)?
-                .ok_or_else(|| Error::CollectionNotFound(name.clone()))?;
-            if let Some(source) = &col.schema().chunk_of {
-                if !unique_names.contains(&source.collection)
-                    && self.get_collection(&source.collection)?.is_some()
-                {
-                    return Err(Error::DeleteGeneratedCollection(name.clone()));
-                }
-            }
-        }
-
         let mut version_ids: Vec<String> = Vec::new();
         let mut seen_versions = rapidhash::RapidHashSet::new();
 
