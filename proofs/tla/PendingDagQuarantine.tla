@@ -6,15 +6,14 @@
 \* merge is retried and DETERMINISTICALLY REJECTED on the block's own
 \* content (e.g. a unique-index violation) rather than failing transiently.
 \* Abstracts crates/db/src/merge/merge_handler/composite.rs
-\* (UniqueConstraintViolation -> MergeOutcome::Rejected, composite.rs:261-284;
-\* MergeOutcome::Rejected itself at crates/p2p/src/sync/merge.rs:89-97),
+\* (UniqueConstraintViolation -> MergeOutcome::Rejected; MergeOutcome::Rejected
+\* itself in crates/defra-core/src/merge.rs),
 \* crates/p2p/src/sync/replication/handlers.rs (Ok(MergeOutcome::Rejected)
-\* -> quarantine_pending_dag, handlers.rs:353-362) and
+\* -> quarantine_pending_dag, handle_block_received and process_merge_batch) and
 \* crates/p2p/src/sync/manager/process/pending_dag.rs
 \* (quarantine_pending_dag's write-quarantine-record-BEFORE-delete-live-record
-\* ordering, pending_dag.rs:838-880, and the resync sweep's is_quarantined
-\* skip that keeps a quarantined root out of re-registration,
-\* pending_dag.rs:712-723).
+\* ordering, and the is_quarantined skip in resync_persisted_pending_dags_inner
+\* that keeps a quarantined root out of re-registration).
 \*
 \* THE MECHANISM: a registered pending-DAG root is re-driven by a sweep
 \* (retry clock, resync, peer reconnect - the trigger is irrelevant here).
@@ -88,11 +87,11 @@ Init ==
 
 Bumped(d) == IF attempts[d] < MaxAttempts THEN attempts[d] + 1 ELSE attempts[d]
 
-\* A poison doc's sweep is always a rejection (composite.rs:261-284: the
+\* A poison doc's sweep is always a rejection (composite.rs: the
 \* unique-index check is a function of already-committed data, not of retry
 \* timing - every replay reaches the same verdict). Quarantine and
-\* QuarantineTransient both dispose it correctly (handlers.rs:353-362 ->
-\* pending_dag.rs:838-880); RetryForever leaves it registered forever -
+\* QuarantineTransient both dispose it correctly (handlers.rs ->
+\* quarantine_pending_dag); RetryForever leaves it registered forever -
 \* the #1128 bug this model exists to catch.
 SweepPoisonReject(p) ==
   /\ p \in PoisonDocs

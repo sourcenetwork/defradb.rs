@@ -40,7 +40,7 @@ CONSTANTS
   MaxDrops,       \* how many times the network may drop a connection
   MaxForgets,     \* how many times gossip may drop the healthy peer
   ForgetBound,    \* "Bounded" (MaxForgets holds) | "Unbounded" (gossip may drop it forever)
-  PathMode,       \* "SharedMux" (gossip rides our connection) | "OwnConnection" (today: gossip dials its own)
+  PathMode,       \* "SharedMux" (gossip rides our connection) | "OwnConnection" (former design: gossip dials its own)
   RecheckMode,    \* "Recheck" (admission checked again once connected) | "None"
   ForgetMode,     \* "DropSender" (gossip forgets a peer, connection stays) | "CloseConnection"
   LegacyMode      \* "Answer" (an older-mux connection answers gossip's ask) | "Silent"

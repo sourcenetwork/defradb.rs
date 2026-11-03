@@ -51,23 +51,24 @@ supersedes it.
 
 ## Source anchors
 
-The derived strategy is what the tree implements; the eager one is kept here
-only so the model can show what it costs.
+The derived strategy is what the tree implements, as one merged head-set key
+per collection; the eager one is kept here only so the model can show what it
+costs.
 
 Rust (`crates/db`, this worktree):
-* `src/block/heads.rs` `live_collection_heads` is `derivedHeads`. It walks the
-  head prefix and the marker prefix together rather than testing each head, so
-  the query is one pass over each range and holds neither.
-* `src/block/heads.rs` `record_supersedes` is the `supersedes` half of
-  `applyDerived`, and `src/block/builder/collection.rs:89-92` writes the head
-  key, which is the other half.
-* `src/block/builder/collection.rs:19` reads the heads, and `:46`
-  `Block::new(payload, col_heads, links)` records them as the block's parents.
-  Modeled by `Block.parents`, the relation the derived strategy reads instead
-  of re-deriving by deletion.
-* `src/block/heads.rs` `prune_superseded_heads` is `applyPrune`. It deletes a
-  head key and the markers against it in one transaction, which is what
-  `prune_markersOnly_resurrects` says it must.
+* `src/block/heads.rs` `live_collection_heads` is `derivedHeads`: one point read
+  of the set, whose value the head-set operator
+  (`crates/storage/src/backends/regolith/merge/head_set.rs`) has folded.
+* `src/block/heads.rs` `publish_collection_block` is `applyDerived`: one blind
+  merge holding an `add` for the new block, the head-key half, and a
+  `supersede` per parent, the `supersedes` half.
+* `src/block/builder/collection.rs` `write_collection_block_with_inputs` reads
+  the set, and `Block::new(payload, col_heads, links)` records its live heads as
+  the block's parents. Modeled by `Block.parents`, the relation the derived
+  strategy reads instead of re-deriving by deletion.
+* `applyPrune` has no separate path: the operator's fold drops a superseded
+  name and its supersede together, which is what `prune_markersOnly_resurrects`
+  says it must.
 * `src/merge/merge_handler/collection.rs` applies the same transition to a
   replicated block, so two peers pushing siblings do not collide either.
 
