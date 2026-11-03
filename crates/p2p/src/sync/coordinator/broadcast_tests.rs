@@ -74,6 +74,11 @@ impl TestTransport {
         self
     }
 
+    /// Later sends to this peer complete; sends already stalled stay stalled.
+    pub(in crate::sync::coordinator) fn unstall_peer(&self, peer: &str) {
+        self.stalled_peers.remove(peer);
+    }
+
     pub(in crate::sync::coordinator) fn with_sign_failures(self, count: usize) -> Self {
         self.sign_failures_remaining.store(count, Ordering::Relaxed);
         self

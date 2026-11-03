@@ -14,7 +14,9 @@
 //!   starve healthy peers.
 //! - a peer whose send failed on transport is parked, and until it answers
 //!   again it shares one `per_peer_active_cap` with every other such peer, so
-//!   any number of dead peers hold the workers of one slow peer at most.
+//!   any number of dead peers hold the workers of one slow peer at most. Its
+//!   queued jobs move to the retry ledger only when a probe (a job started
+//!   after the park's cooldown ran out) fails on transport too.
 //! - every admission has an explicit outcome; rejection is counted and the
 //!   caller reports it to the persisted retry ladder. Nothing is silently
 //!   dropped and no waiting task is allocated.
@@ -68,6 +70,8 @@ pub struct PushJobSpec {
     pub marker_generation: Option<u64>,
     key: JobKey,
     version: HeadVersion,
+    /// Set when the job was started as a probe: its peer's unreachable spell.
+    probe_of: Option<u64>,
 }
 
 impl PushJobSpec {
@@ -109,6 +113,7 @@ impl PushJobSpec {
                 priority,
                 cid: root_cid,
             },
+            probe_of: None,
         }
     }
 
@@ -190,9 +195,10 @@ pub enum JobCompletion {
 struct PeerCooldown {
     until: Instant,
     consecutive: u32,
-    /// The last send failed on transport. The entry outlives `until` and keeps
-    /// the peer within the unreachable peers' shared cap until it answers again.
-    unreachable: bool,
+    /// The unreachable spell the peer is in: its last send failed on transport
+    /// and it has not answered since. The entry outlives `until` and keeps the
+    /// peer within the unreachable peers' shared cap until it answers again.
+    unreachable: Option<u64>,
 }
 
 #[derive(Default)]
@@ -212,6 +218,8 @@ struct Inner {
     /// per-CID cooldown gave each distinct CID its own fresh burst and provided
     /// essentially no protection (defradb#1112).
     peer_cooldowns: RapidHashMap<String, PeerCooldown>,
+    /// Numbers each new unreachable spell (`PeerCooldown::unreachable`).
+    unreachable_spells: u64,
     queued_items: usize,
     queued_bytes: usize,
     active_jobs: usize,
@@ -368,6 +376,8 @@ enum Command {
     },
     ParkPeerUnreachable {
         peer_key: String,
+        probe_of: Option<u64>,
+        reply: oneshot::Sender<Vec<PushJobSpec>>,
     },
     PeerAnswered {
         peer_key: String,
@@ -469,15 +479,23 @@ impl PushBacklog {
         });
     }
 
-    /// Park a peer whose send got no reply (timeout or lost connection).
+    /// Park the peer of a job whose send got no reply (timeout or lost
+    /// connection), returning the queued jobs to hand to the retry ledger.
     ///
     /// The cooldown escalates while sends keep failing, and once it elapses
     /// the peer's jobs count against the one `per_peer_active_cap` that every
     /// unreachable peer shares, until a reply arrives (`record_peer_answered`).
-    pub(crate) fn park_peer_unreachable(&self, peer_id: &PeerId) {
+    /// The queued jobs are returned only when `job` was a probe of the peer's
+    /// current unreachable spell, so a peer that answers right after one failed
+    /// round keeps its queue live.
+    pub(crate) async fn park_peer_unreachable(&self, job: &PushJobSpec) -> Vec<PushJobSpec> {
+        let (reply, jobs) = oneshot::channel();
         self.commands.send(Command::ParkPeerUnreachable {
-            peer_key: peer_id.to_string(),
+            peer_key: job.peer_id.to_string(),
+            probe_of: job.probe_of,
+            reply,
         });
+        jobs.await.unwrap_or_default()
     }
 
     /// The peer replied to a send, so it is no longer treated as unreachable.
@@ -622,7 +640,14 @@ impl BacklogOwner {
                 peer_key,
                 retry_after,
             } => self.park_peer(peer_key, retry_after, false),
-            Command::ParkPeerUnreachable { peer_key } => self.park_peer(peer_key, None, true),
+            Command::ParkPeerUnreachable {
+                peer_key,
+                probe_of,
+                reply,
+            } => {
+                let jobs = self.park_peer_unreachable(peer_key, probe_of);
+                let _ = reply.send(jobs);
+            }
             Command::PeerAnswered { peer_key } => self.peer_answered(&peer_key),
             Command::TakeQueuedForPeer { peer_key, reply } => {
                 let jobs = self.take_queued_for_peer(&peer_key);
@@ -836,6 +861,18 @@ impl BacklogOwner {
             .map(|cooldown| cooldown.consecutive)
             .unwrap_or(0)
             .saturating_add(1);
+        let current_spell = inner
+            .peer_cooldowns
+            .get(&peer_key)
+            .and_then(|cooldown| cooldown.unreachable);
+        let spell = match (unreachable, current_spell) {
+            (false, _) => None,
+            (true, Some(spell)) => Some(spell),
+            (true, None) => {
+                inner.unreachable_spells = inner.unreachable_spells.wrapping_add(1);
+                Some(inner.unreachable_spells)
+            }
+        };
         let shift = (consecutive - 1).min(PEER_CAPACITY_COOLDOWN_MAX_SHIFT);
         let base = self
             .limits
@@ -860,11 +897,33 @@ impl BacklogOwner {
             PeerCooldown {
                 until,
                 consecutive,
-                unreachable,
+                unreachable: spell,
             },
         );
         if !unreachable {
             inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
+        }
+    }
+
+    /// Only a failed probe of the peer's current unreachable spell demotes its
+    /// queue: the failures of the round that started the spell do not.
+    fn park_peer_unreachable(
+        &mut self,
+        peer_key: String,
+        probe_of: Option<u64>,
+    ) -> Vec<PushJobSpec> {
+        let failed_probe = probe_of.is_some()
+            && self
+                .inner
+                .peer_cooldowns
+                .get(&peer_key)
+                .and_then(|cooldown| cooldown.unreachable)
+                == probe_of;
+        self.park_peer(peer_key.clone(), None, true);
+        if failed_probe {
+            self.take_queued_for_peer(&peer_key)
+        } else {
+            Vec::new()
         }
     }
 
@@ -873,7 +932,7 @@ impl BacklogOwner {
             .inner
             .peer_cooldowns
             .get(peer_key)
-            .is_some_and(|cooldown| cooldown.unreachable)
+            .is_some_and(|cooldown| cooldown.unreachable.is_some())
         {
             self.inner.peer_cooldowns.remove(peer_key);
         }
@@ -912,7 +971,7 @@ impl BacklogOwner {
         let unreachable_active: usize = inner
             .peer_cooldowns
             .iter()
-            .filter(|(_, cooldown)| cooldown.unreachable)
+            .filter(|(_, cooldown)| cooldown.unreachable.is_some())
             .filter_map(|(peer_key, _)| inner.active.get(peer_key))
             .sum();
         for _ in 0..inner.ready.len() {
@@ -929,6 +988,7 @@ impl BacklogOwner {
             }
             // A saturated receiver parks ALL of its work, not just the CID that
             // was rejected (defradb#1112).
+            let mut probe_of = None;
             if let Some(cooldown) = inner.peer_cooldowns.get(&peer_key) {
                 if cooldown.until > now {
                     next_wake = Some(match next_wake {
@@ -940,18 +1000,23 @@ impl BacklogOwner {
                 }
                 // Unreachable peers together stay within one peer's cap; a
                 // job_done wakes the waiters again.
-                if !cooldown.unreachable {
-                    inner.peer_cooldowns.remove(&peer_key);
-                } else if unreachable_active >= per_peer_active_cap {
-                    inner.ready.push_back(peer_key);
-                    continue;
+                match cooldown.unreachable {
+                    None => {
+                        inner.peer_cooldowns.remove(&peer_key);
+                    }
+                    Some(_) if unreachable_active >= per_peer_active_cap => {
+                        inner.ready.push_back(peer_key);
+                        continue;
+                    }
+                    Some(spell) => probe_of = Some(spell),
                 }
             }
             let queue = inner
                 .queues
                 .get_mut(&peer_key)
                 .expect("ready peer has a queue");
-            let job = queue.pop_front().expect("ready peer queue is non-empty");
+            let mut job = queue.pop_front().expect("ready peer queue is non-empty");
+            job.probe_of = probe_of;
             if queue.is_empty() {
                 inner.queues.remove(&peer_key);
             } else {
@@ -1247,25 +1312,21 @@ mod tests {
                     );
                 }
             }
-        }
-        for peer in ["dead-a", "dead-b", "dead-c"] {
-            backlog.park_peer_unreachable(&PeerId::new(peer.to_string()));
-        }
-        let cooling = backlog
-            .snapshot()
-            .await
-            .per_peer
-            .iter()
-            .filter(|peer| peer.cooldown_remaining_ms > 0)
-            .count();
-        assert_eq!(cooling, 3);
-        crate::rt::time::advance(Duration::from_secs(60)).await;
-
-        assert_eq!(
-            drain_eligible(&backlog).await,
-            ["dead-a", "dead-b", "healthy", "healthy"]
-        );
-        assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 0);
+            for peer in ["dead-a", "dead-b", "dead-c"] {
+                assert!(backlog
+                    .park_peer_unreachable(&job(peer, b"0"))
+                    .await
+                    .is_empty());
+            }
+            let cooling = backlog
+                .snapshot()
+                .await
+                .per_peer
+                .iter()
+                .filter(|peer| peer.cooldown_remaining_ms > 0)
+                .count();
+            assert_eq!(cooling, 3);
+            nuclei::time::advance(Duration::from_secs(60)).await;
 
             assert_eq!(
                 drain_eligible(&backlog).await,
@@ -1279,6 +1340,49 @@ mod tests {
                 .job_done(&job("dead-a", b"1"), JobCompletion::Succeeded)
                 .await;
             assert_eq!(drain_eligible(&backlog).await, ["dead-a", "dead-b"]);
+            backlog.close();
+        })
+    }
+
+    /// A failed round parks an unreachable peer and keeps its queue. A failed
+    /// probe of the same spell hands the queue to the ledger, and a probe of a
+    /// spell a reply has ended does not.
+    #[test]
+    fn only_a_failed_probe_demotes_an_unreachable_peer() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(64, usize::MAX, 4, 8, edge.clone());
+            for seed in [b"1", b"2", b"3", b"4", b"5", b"6"] {
+                assert_eq!(
+                    backlog.try_enqueue(job("peer", seed)).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+            let first = backlog.next_job().await.unwrap();
+            assert!(backlog.park_peer_unreachable(&first).await.is_empty());
+            backlog.job_done(&first, JobCompletion::Failed).await;
+            nuclei::time::advance(Duration::from_secs(60)).await;
+
+            let answered = backlog.next_job().await.unwrap();
+            let stale_probe = backlog.next_job().await.unwrap();
+            backlog.record_peer_answered(&answered.peer_id);
+            backlog.job_done(&answered, JobCompletion::Succeeded).await;
+            let reachable = backlog.next_job().await.unwrap();
+            assert!(backlog.park_peer_unreachable(&reachable).await.is_empty());
+            backlog.job_done(&reachable, JobCompletion::Failed).await;
+            assert!(backlog.park_peer_unreachable(&stale_probe).await.is_empty());
+            backlog.job_done(&stale_probe, JobCompletion::Failed).await;
+            nuclei::time::advance(Duration::from_secs(60)).await;
+
+            let probe = backlog.next_job().await.unwrap();
+            let demoted: Vec<_> = backlog
+                .park_peer_unreachable(&probe)
+                .await
+                .into_iter()
+                .map(|job| job.doc_id)
+                .collect();
+            assert_eq!(demoted, [job("peer", b"6").doc_id]);
+            backlog.job_done(&probe, JobCompletion::Failed).await;
+            assert_eq!(backlog.snapshot().await.queued_items, 0);
             backlog.close();
         })
     }
