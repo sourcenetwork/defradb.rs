@@ -129,6 +129,7 @@ jobs:
               cargo clippy -p defra-node --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
+              cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -334,6 +335,8 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
+          cargo build -p cli --profile super-dev --features iroh,model-trace
+          cp target/super-dev/defra artifacts/ci/defra-trace
       - uses: actions/upload-artifact@v4
         with:
           name: defra-ci-binaries
@@ -514,15 +517,27 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - run: chmod +x target/ci/defra target/ci/defra-iroh target/ci/defra-trace
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Replay recorded P2P delivery runs through TLC
+        env:
+          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defra-trace
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
+          -- --ignored model_trace::
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: conformance-e2e-logs${{ matrix.io.suffix }}
-          path: target/e2e/**/logs/*.log
+          path: |
+            target/e2e/**/logs/*.log
+            target/model-trace/**
           retention-days: 7
           if-no-files-found: ignore
 

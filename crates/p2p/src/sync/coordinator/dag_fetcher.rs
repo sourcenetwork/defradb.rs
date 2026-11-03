@@ -201,6 +201,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             providers = ?providers.peers(),
             "Deferring pending DAG fetch until a qualified provider reconnects"
         );
+        trace_stall(&context, root_cid);
         return (FetchTaskEnd::Settled, AttemptSample::Skipped);
     }
 
@@ -251,12 +252,18 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             if !context.is_current() {
                 return (FetchTaskEnd::Settled, sample);
             }
+            trace_permits_taken(&context, root_cid);
             let started = Instant::now();
             let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref())
                 .with_quantum(context.is_clock_owned());
             let outcome =
                 fetch_dag_attempt(&transport, &blockstore, root_cid, &context, &mut state).await;
             sample = attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed());
+            if !context.is_clock_owned() {
+                crate::model_trace!(PullEnd {
+                    provider: context.source_peer.as_str(),
+                });
+            }
             if outcome != FetchAttemptOutcome::ProviderBusy || busy_retries == 0 {
                 break outcome;
             }
@@ -281,11 +288,13 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Incomplete(remaining, failures) => {
                 remaining_count = remaining;
                 last_failures = failures;
+                trace_stall(&context, root_cid);
             }
             FetchAttemptOutcome::Deferred => {
                 diagnostics.record_pending_dag_fetch_deferred_contention();
@@ -293,12 +302,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     root_cid = %root_cid,
                     "CAR ingest coalesced behind a storage owner; deferring to the per-root clock"
                 );
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::ProviderBusy => {
                 diagnostics.record_pending_dag_fetch_deferred_busy();
                 debug!(root_cid = %root_cid, providers = ?providers.peers(),
                     "A provider shed the fetch as busy and none delivered; deferring to the per-root clock");
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Preempted => {
@@ -307,6 +318,11 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     quantum_secs = CLOCK_ATTEMPT_QUANTUM.as_secs(),
                     "DAG fetch still making progress at its quantum; giving its slot back"
                 );
+                if context.is_clock_owned() {
+                    crate::model_trace!(Preempt {
+                        head: root_cid.to_string(),
+                    });
+                }
                 return (FetchTaskEnd::Preempted, sample);
             }
         }
@@ -378,6 +394,31 @@ fn attempt_sample(
             progressed,
         },
         FetchAttemptOutcome::Deferred | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
+    }
+}
+
+/// Records the permits a fetch just took: a clock dispatch's attempt, or an
+/// advisory pull.
+fn trace_permits_taken(context: &DagFetchContext, root_cid: Cid) {
+    if context.is_clock_owned() {
+        crate::model_trace!(Acquire {
+            head: root_cid.to_string(),
+        });
+    } else {
+        crate::model_trace!(PullStart {
+            provider: context.source_peer.as_str(),
+        });
+    }
+}
+
+/// Records a clock-owned attempt that ended without the DAG; its slot goes
+/// back and the root is due after a backoff.
+fn trace_stall(context: &DagFetchContext, root_cid: Cid) {
+    if context.is_clock_owned() {
+        crate::model_trace!(Stall {
+            head: root_cid.to_string(),
+            end: crate::model_trace::StallEnd::Backoff,
+        });
     }
 }
 
@@ -629,6 +670,11 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                 missing_count = missing.len(),
                 "CAR fetch was partial, falling through to selective block fetch"
             );
+            if context.is_clock_owned() {
+                crate::model_trace!(Progress {
+                    head: root_cid.to_string(),
+                });
+            }
         }
     }
 

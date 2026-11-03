@@ -349,8 +349,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
         let expired = self
             .pending_dags
-            .update(|pending| evict_expired_pending_dags(pending, now).len());
-        for _ in 0..expired {
+            .update(|pending| evict_expired_pending_dags(pending, now));
+        for (root, _) in &expired {
+            crate::model_trace!(Expire {
+                head: root.to_string(),
+                removed: self.pending_store().is_none(),
+            });
             self.diagnostics.record_pending_dag_expired();
         }
     }
@@ -889,6 +893,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let info = match info {
             PendingDagRetryEntry::Current(info) => info,
             PendingDagRetryEntry::Expired(info) => {
+                crate::model_trace!(Expire {
+                    head: root_cid.to_string(),
+                    removed: self.pending_store().is_none(),
+                });
                 self.diagnostics.record_pending_dag_expired();
                 tracing::warn!(
                     root_cid = %root_cid,
@@ -1248,6 +1256,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     continue;
                 }
             };
+            crate::model_trace!(Resync {
+                head: root_cid.to_string(),
+            });
             if let Some((old_root, _)) = superseded {
                 // Both records survived the restart, so deleting the older
                 // one after the newer one is live cannot create an ownership

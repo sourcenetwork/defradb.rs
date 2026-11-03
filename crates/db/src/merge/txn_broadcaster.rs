@@ -146,17 +146,24 @@ where
         {
             tracing::error!(%error, %doc_id, %collection_id, "Committed transaction has an undurable P2P document marker");
         }
-    } else if let Err(error) = sync
-        .push_to_replicators_with_creator(
-            &doc_cid,
-            &doc_block,
-            &doc_id,
-            &collection_id,
-            creator_ref,
-        )
-        .await
-    {
-        tracing::error!(%error, %doc_id, %collection_id, "Committed transaction has an undurable P2P document marker");
+    } else {
+        p2p::model_trace!(Commit {
+            doc: &doc_id,
+            head: doc_cid.to_string(),
+            parents: p2p::model_trace::parents_of(&doc_block),
+        });
+        if let Err(error) = sync
+            .push_to_replicators_with_creator(
+                &doc_cid,
+                &doc_block,
+                &doc_id,
+                &collection_id,
+                creator_ref,
+            )
+            .await
+        {
+            tracing::error!(%error, %doc_id, %collection_id, "Committed transaction has an undurable P2P document marker");
+        }
     }
     if let Some((col_cid, col_block)) = collection_block.as_ref() {
         if let Err(error) = sync

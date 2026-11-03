@@ -199,6 +199,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         creator_override: Option<&str>,
     ) -> Result<()> {
         let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
         self.admit_replicator_push(PendingPush {
             cid: *cid,
             block: Bytes::copy_from_slice(block),
@@ -222,6 +227,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let mut unregistered = Vec::new();
         for job in &mut jobs {
             let Some(generation) = report_observed_head(&self.runtime.failure_tx, job).await else {
+                crate::model_trace!(RegFail {
+                    doc: &push.doc_id,
+                    receiver: job.peer_id.as_str(),
+                    head: push.cid.to_string(),
+                    dropped: Vec::new(),
+                });
                 self.runtime.push_backlog.record_head_hint_failure(
                     crate::sync::push_backlog::HeadHintFailureReason::Local,
                 );
@@ -237,6 +248,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 ));
                 continue;
             };
+            crate::model_trace!(Register {
+                doc: &push.doc_id,
+                receiver: job.peer_id.as_str(),
+                head: push.cid.to_string(),
+            });
             job.marker_generation = Some(generation);
         }
 

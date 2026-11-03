@@ -90,6 +90,22 @@ fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
     }
 }
 
+/// Records how the receiver decided a pushed head that retired nothing.
+fn trace_admit(
+    msg: &PushLogBroadcast,
+    sender_peer: Option<&str>,
+    cid: &Cid,
+    outcome: crate::model_trace::Outcome,
+) {
+    crate::model_trace!(Admit {
+        doc: &msg.doc_id,
+        sender: sender_peer,
+        head: cid.to_string(),
+        outcome,
+        superseded: Vec::new(),
+    });
+}
+
 impl<B: Blockstore + 'static> SyncManager<B> {
     /// The handler holds its lane slot and the CID guard, so it never waits
     /// for room in the merge loop's channel: a full channel drops the report.
@@ -200,7 +216,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             },
         };
 
-        let processed = self
+        let decided = match self
             .process_block_inner(
                 &cid,
                 msg,
@@ -209,10 +225,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 explicit_replay_authorization,
                 recovery_provider_evidenced,
             )
-            .await?;
-
-        self.assert_pushlog_left_durable_state(&cid, msg, sender_peer, processed)
             .await
+        {
+            Ok(processed) => {
+                self.assert_pushlog_left_durable_state(&cid, msg, sender_peer, processed)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        if decided.is_err() {
+            trace_admit(msg, sender_peer, &cid, crate::model_trace::Outcome::Nacked);
+        }
+        decided
     }
 
     /// Hold the ack contract for a block that carries a document head: success
@@ -287,6 +311,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             Ok(true) => {
                 self.diagnostics.record_already_merged_fast_path();
                 tracing::debug!(cid = %cid, doc_id = %msg.doc_id, "Block already merged, skipping");
+                trace_admit(msg, sender_peer, cid, crate::model_trace::Outcome::Merged);
                 return Ok(Processed::Shown);
             }
             Ok(false) => {
@@ -435,6 +460,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     collection_id = %msg.collection_id,
                     "Head merged while awaiting durable pending registration"
                 );
+                trace_admit(msg, sender_peer, cid, crate::model_trace::Outcome::Merged);
                 return Ok(Processed::Shown);
             }
 
@@ -448,6 +474,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             if let Some(existing) = self.pending_dag_snapshot(cid).filter(|dag| {
                 dag.origin != crate::sync::manager::pending::PendingOrigin::LocalContinuation
             }) {
+                trace_admit(msg, sender_peer, cid, crate::model_trace::Outcome::Covered);
                 return self
                     .extend_registered_root(
                         cid,
@@ -465,6 +492,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     announced_source_peer = ?sender_peer,
                     "Incoming root is durably receiver-owned; retaining its recovery provider"
                 );
+                trace_admit(msg, sender_peer, cid, crate::model_trace::Outcome::Covered);
                 return Ok(Processed::Shown);
             }
 
@@ -675,9 +703,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 if matches!(self.is_merged(cid).await, Ok(true)) {
                     self.discharge_merged(cid).await;
+                    trace_admit(msg, sender_peer, cid, crate::model_trace::Outcome::Merged);
                     return Ok(Processed::Shown);
                 }
             }
+            crate::model_trace!(Admit {
+                doc: &msg.doc_id,
+                sender: sender_peer,
+                head: cid.to_string(),
+                outcome: crate::model_trace::Outcome::Registered,
+                superseded: superseded
+                    .iter()
+                    .map(|(root, _)| root.to_string())
+                    .collect(),
+            });
             if resident {
                 self.mark_pending_dag_recovery_registered(cid, inserted_at);
             }
