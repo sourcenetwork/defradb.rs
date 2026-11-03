@@ -65,16 +65,23 @@ ASSUME RegisterMode = "Durable"
 
 VARIABLES
   mem,     \* acknowledged roots with an in-memory entry (pushed or restored)
+  turns,   \* roots in memory with no fetch running, in the order they became claimable
   spent,   \* roots in memory with an attempt that failed since they were admitted
   cursor,  \* position in KeyOrder of the root the last resync admitted (0: none yet)
   conts,   \* local pull-sync continuations, each holding an in-memory entry
   stopped  \* roots whose last continuation turn ended without yielding again
 
 \* The variables this module adds.
-mvars == <<mem, spent, cursor, conts, stopped>>
+mvars == <<mem, turns, spent, cursor, conts, stopped>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, mvars>>
 
+\* The roots a sequence holds.
+Members(q) == {q[i] : i \in 1..Len(q)}
+\* A sequence with the roots of S left out, the rest in order.
+Without(q, S) == SelectSeq(q, LAMBDA r : r \notin S)
+\* The roots ahead of r in q.
+Before(q, r) == {q[i] : i \in 1..((CHOOSE k \in 1..Len(q) : q[k] = r) - 1)}
 \* The roots of a finite set as a sequence, in one fixed order.
 AsSeq(S) == CHOOSE f \in [1..Cardinality(S) -> S] :
               \A i, j \in 1..Cardinality(S) : i # j => f[i] # f[j]
@@ -96,11 +103,20 @@ Start == IF OverflowMode = "Rotate" THEN cursor ELSE 0
 Rank(r) == IF Position(r) > Start THEN Position(r) - Start
            ELSE Position(r) + Len(KeyOrder) - Start
 
+\* A root the clock could hand the slot to: servable, with a provider, and no
+\* fetch running.
+CanClaim(r) ==
+  /\ r \in pending
+  /\ (r \in serveAuth \/ r[1] \in serveScopes)
+  /\ HasQualifiedProvider(r)
+  /\ flights[r] = 0
+
 \* A SyncOwnership step that does not admit anything: memory forgets what the
 \* step retired.
 M(A) ==
   /\ A
   /\ mem' = mem \cap pending'
+  /\ turns' = SelectSeq(turns, LAMBDA r : r \in pending')
   /\ spent' = spent \cap pending'
   /\ UNCHANGED <<cursor, conts, stopped>>
 
@@ -112,6 +128,7 @@ MRegister(s, v) ==
   /\ LET added == pending' \ pending
          retired == pending \ pending'
      IN /\ mem' = (mem \ retired) \cup added
+        /\ turns' = Without(turns, retired) \o AsSeq(added)
         /\ conts' = conts \ added
         /\ Cardinality(mem' \cup conts') <= MemBound
         /\ spent' = spent \ retired
@@ -137,11 +154,15 @@ MNack(s, v) ==
                  terminalFlights, fetchExhausted, lostCompletions, mergedV, crashed>>
   /\ UNCHANGED mvars
 
-\* The clock claims only a root it holds in memory.
+\* The clock claims only a root it holds in memory, and the first of them in
+\* turn that it can: the due order of MC_SyncOwnership_Dispatch, without its
+\* deadlines.
 MClaim(s, v) ==
-  /\ <<s, v>> \in mem
+  /\ <<s, v>> \in Members(turns)
+  /\ \A q \in Before(turns, <<s, v>>) : ~CanClaim(q)
   /\ ClaimFetch(s, v)
-  /\ UNCHANGED mvars
+  /\ turns' = Without(turns, {<<s, v>>})
+  /\ UNCHANGED <<mem, spent, cursor, conts, stopped>>
 
 \* An attempt ends without the DAG: it failed, was shed as busy, or deferred
 \* behind a local storage owner. Every dispatch counts toward the budget, as
@@ -149,13 +170,15 @@ MClaim(s, v) ==
 MFail(s, v) ==
   /\ FailFetchBeforeWaiter(s, v) \/ ProviderShed(s, v) \/ ContendedIngest(s, v)
   /\ spent' = spent \cup ({<<s, v>>} \cap mem)
+  /\ turns' = IF <<s, v>> \in mem THEN Append(turns, <<s, v>>) ELSE turns
   /\ UNCHANGED <<mem, cursor, conts, stopped>>
 
 \* A completed fetch, which a provider that never serves never gives.
 MComplete(s, v) ==
   /\ s \notin Dead
   /\ CompleteFetch(s, v)
-  /\ UNCHANGED mvars
+  /\ turns' = IF <<s, v>> \in mem THEN Append(turns, <<s, v>>) ELSE turns
+  /\ UNCHANGED <<mem, spent, cursor, conts, stopped>>
 
 \* At the end of an attempt a root that spent its dispatches gives its entry
 \* up, keeping its durable record, when the map is full and a durable root
@@ -172,6 +195,7 @@ Yield(s, v) ==
   /\ Cardinality(Held) >= MemBound
   \* The entry goes; the durable record (pending) stays.
   /\ mem' = mem \ {<<s, v>>}
+  /\ turns' = Without(turns, {<<s, v>>})
   /\ spent' = spent \ {<<s, v>>}
   /\ UNCHANGED <<vars, cursor, conts, stopped>>
 
@@ -183,6 +207,7 @@ Resync ==
   /\ Cardinality(Held) < MemBound
   /\ LET r == CHOOSE q \in Waiting : \A p \in Waiting : Rank(q) <= Rank(p)
      IN /\ mem' = mem \cup {r}
+        /\ turns' = Append(turns, r)
         /\ spent' = spent \ {r}
         /\ cursor' = IF OverflowMode = "Rotate" THEN Position(r) ELSE cursor
   /\ UNCHANGED <<vars, conts, stopped>>
@@ -196,7 +221,7 @@ PullYield(s, v) ==
   /\ Cardinality(Held) < MemBound
   /\ conts' = conts \cup {<<s, v>>}
   /\ stopped' = stopped \ {<<s, v>>}
-  /\ UNCHANGED <<vars, mem, spent, cursor>>
+  /\ UNCHANGED <<vars, mem, turns, spent, cursor>>
 
 \* A continuation's next turn ends without yielding again: it merged, or it
 \* skipped or failed with no terminal outcome. EndOnStop removes the entry
@@ -206,13 +231,14 @@ ContinuationStop(s, v) ==
   /\ <<s, v>> \in conts
   /\ conts' = IF ContinuationMode = "EndOnStop" THEN conts \ {<<s, v>>} ELSE conts
   /\ stopped' = stopped \cup {<<s, v>>}
-  /\ UNCHANGED <<vars, mem, spent, cursor>>
+  /\ UNCHANGED <<vars, mem, turns, spent, cursor>>
 
 \* The restart: memory, the cursor and every continuation are gone; the
 \* durable roots stay, and from now on the map holds MemCap entries.
 MCrash ==
   /\ Crash
   /\ mem' = {}
+  /\ turns' = <<>>
   /\ spent' = {}
   /\ cursor' = 0
   /\ conts' = {}
@@ -222,6 +248,7 @@ MCrash ==
 MInit ==
   /\ Init
   /\ mem = {}
+  /\ turns = <<>>
   /\ spent = {}
   /\ cursor = 0
   /\ conts = {}
@@ -251,29 +278,30 @@ MNext ==
 \* Safety runs.
 MSpec == MInit /\ [][MNext]_allVars
 
-\* Liveness runs: only the receiver is fair, as in MC_SyncOwnership_Dispatch.
-\* The clock claims, every attempt ends, the sweep runs, a spent root gives
-\* its entry up when it keeps being able to, merges run, and a continuation's
-\* next turn comes. Pull-sync merges, failures, nacks, the cleanup after a
-\* merge and the restart are never forced: neither promise needs them. The environment assumption is the dispatch
-\* model's: a provider that is not Dead eventually serves a fetch that keeps
-\* being attempted (strong fairness on MComplete).
+\* Liveness runs: only the receiver is fair, and only at the scheduler, as in
+\* MC_SyncOwnership_Dispatch: the clock claims whenever it can (in turn), the
+\* sweep runs, a spent root gives its entry up when one keeps being able to,
+\* merges run, and a continuation's next turn comes. Per root there is only a
+\* timer: an attempt's windows end. Pull-sync merges, failures, nacks, the
+\* cleanup after a merge and the restart are never forced: neither promise
+\* needs them. The environment assumption is the dispatch model's: a fetch
+\* that can complete eventually does (strong fairness on some MComplete).
 MFairSpec ==
   /\ MSpec
   /\ SF_allVars(Resync)
-  /\ \A s \in Scopes :
-       /\ SF_allVars(\E v \in 1..MaxV : MClaim(s, v))
-       /\ WF_allVars(\E v \in 1..MaxV : MFail(s, v))
-       /\ SF_allVars(\E v \in 1..MaxV : MComplete(s, v))
-       /\ SF_allVars(\E v \in 1..MaxV : Yield(s, v))
-       /\ SF_allVars(\E v \in 1..MaxV : M(ClaimMerge(s, v)))
-       /\ SF_allVars(\E v \in 1..MaxV : M(CompleteMerge(s, v)))
-       /\ WF_allVars(\E v \in 1..MaxV : ContinuationStop(s, v))
+  /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : MClaim(s, v))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : MComplete(s, v))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : Yield(s, v))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : M(ClaimMerge(s, v)))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : M(CompleteMerge(s, v)))
+  /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : ContinuationStop(s, v))
+  /\ \A s \in Scopes : WF_allVars(\E v \in 1..MaxV : MFail(s, v))
 
 \* Promise: the added variables keep their shapes, on top of SyncOwnership's.
 INV_MemoryTypeOK ==
   /\ TypeOK
   /\ mem \subseteq Roots
+  /\ turns \in Seq(mem)
   /\ spent \subseteq mem
   /\ cursor \in 0..Len(KeyOrder)
   /\ conts \subseteq Roots

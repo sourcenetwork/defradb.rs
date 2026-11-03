@@ -375,6 +375,8 @@ RUNS=(
   "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root retakes the slot ahead of roots acked during its attempt (INV_ReadyRootsServedInOrder)
   "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (INV_ExpiryKeepsOwner)
   "MC_SyncOwnership_Green_Dispatch_DeadProvider.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a provider that never serves keeps its head but does not stop the other head from merging
+  "MC_SyncOwnership_Green_Dispatch_Trickle.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a trickling attempt gives its slot back at its quantum; the other head still merges
+  "MC_SyncOwnership_Red_UnboundedProductive.cfg MC_SyncOwnership_Dispatch.tla RED" # no quantum: a trickling attempt holds the only slot for good (LIVE_AckedRootMerged)
   "MC_SyncOwnership_Green_Memory.cfg MC_SyncOwnership_Memory.tla GREEN" # durable roots past the in-memory cap take turns; a local continuation ends when it stops yielding
   "MC_SyncOwnership_Red_RetainedOverflow.cfg MC_SyncOwnership_Memory.tla RED" # a never-serving restored root holds the only entry for good (LIVE_DurableRootMerged)
   "MC_SyncOwnership_Red_KeyOrderResync.cfg MC_SyncOwnership_Memory.tla RED" # the sweep restarts at the first key and re-admits the root that gave its entry up (LIVE_DurableRootMerged)

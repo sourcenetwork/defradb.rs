@@ -206,8 +206,9 @@ Read this before trusting a verdict; it states the model's honest reach.
 - **Environment assumptions (encoded, not proven):** `ProviderAvailable` (a fetch needs a
   reachable holder of the block); **eventual connectivity** + fair head rediscovery for
   the convergence liveness results; weak fairness on protocol actions; an **eventually
-  serving provider** (strong fairness on a completed fetch) for the SyncOwnership
-  dispatch and memory liveness results, whose `Dead` providers get no merge promise.
+  serving provider** (strong fairness on some completed fetch) for the SyncOwnership
+  dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
+  merge promise. Those results give fairness to the scheduler only, never to a root.
 - **Crypto boundary (KMS):** ECIES is abstracted — a node can use an envelope iff it is
   the intended recipient. Real ECIES/IND-CCA security is assumed, not modeled.
 - **Float counter divergence (proven, real):** IEEE-754 addition is not associative, so

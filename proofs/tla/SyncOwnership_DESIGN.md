@@ -244,23 +244,38 @@ their scope markers on the success reply.
 - `Dead` names the scopes whose provider never serves a fetch: it answers
   busy, stalls or is gone, for good. `WComplete` never fires for them; their
   attempts only fail.
+- `Trickle` names the scopes whose provider serves slowly but productively:
+  every window delivers a block (`TrickleWindow`), so the attempt never
+  stalls, but the DAG outlasts any quantum. `CutoffMode = "Quantum"`: such an
+  attempt gives its slot back at `CLOCK_ATTEMPT_QUANTUM` (`Preempt`), keeping
+  what it fetched, and its root is due again at once, behind every root
+  already due (`FetchTaskEnd::Preempted`, `finish_attempt(preempted)`).
+  `"Unbounded"`, the rule before, ends an attempt only on a window without
+  progress, so a trickling attempt keeps its slot as long as its DAG takes.
 
 The checks use two documents, one fetch slot, `MaxV = 1` and one restart. The
-liveness run makes only the receiver fair: once a head is acknowledged no
-sender action is needed to merge it. Deadlines pass (weak fairness on
-`BecomeDue`) and every attempt ends (weak fairness on `WFail`: each window is
-bounded).
+liveness run makes only the receiver fair, and only at the scheduler level:
+the clock dispatches whenever some due root can take a slot (weak fairness
+on some `WClaim`), and merges and their cleanup run. No root, scope or job
+has dispatch fairness of its own: which root goes next is the due order's
+choice, so per-root progress has to follow from FIFO, the quantum and
+rotation. Granting it per root is the assumption that would hide a slot held
+for ever. Per root there are only timers: a deadline passes (`BecomeDue`),
+an attempt's windows end (`WFail`: each window is bounded), a quantum ends
+(`Preempt`).
 
 `LIVE_AckedRootMerged` rests on one environment assumption, stated as strong
-fairness on `WComplete`: a provider that is not `Dead` eventually serves a
-fetch that keeps being attempted. Reachability alone does not give it, since
-a reachable provider can answer busy every time. The assumption is a
-`Boundary` in `proofs/src/registry.rs`. For a `Dead` provider nothing is
-assumed: its head stays owned (`INV_ExpiryKeepsOwner`) and is retried at the
-backoff cap, but no merge is promised. `MC_SyncOwnership_Green_Dispatch_DeadProvider`
-checks that such a head does not stop the other one from merging; with the
-liveness property unrestricted it fails, which is why the assumption is
-needed.
+fairness on some `WComplete`: a fetch that can complete eventually does.
+Reachability alone does not give it, since a reachable provider can answer
+busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
+`Dead` and `Trickle` providers never complete in the model. Their heads stay
+owned (`INV_ExpiryKeepsOwner`) and keep being retried, but
+`LIVE_AckedRootMerged` promises them nothing; it promises that they do not
+stop the other heads from merging. `MC_SyncOwnership_Green_Dispatch_DeadProvider`
+and `MC_SyncOwnership_Green_Dispatch_Trickle` check that; with the property
+unrestricted, the dead-provider check fails, which is why the assumption is
+needed. `MC_SyncOwnership_Red_UnboundedProductive` drops the quantum: a
+trickling root claims the only slot and d2 is never dispatched.
 
 ## In-memory pending map
 
@@ -301,7 +316,9 @@ the next pull or push of the head starts the merge again.
 
 The checks use two documents (`d1` dead and first in key order, `d2` also
 pulled), `MaxV = 1`, one fetch slot, a map of one after the restart, and the
-dispatch model's fairness and environment assumption.
+dispatch model's scheduler-level fairness and environment assumption. Claims
+follow `turns`, the order in which in-memory roots became claimable, so no
+root needs claim fairness of its own here either.
 
 ## Checked properties
 
@@ -417,6 +434,8 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_BusyExhaustion.cfg` | RED | a useful CAR coalesced behind an existing shared-CID storage owner is misclassified as terminal provider exhaustion instead of returning to the paced root clock |
 | `MC_SyncOwnership_Green_Dispatch.cfg` | GREEN | one attempt per fetch slot, its next deadline from its end, acknowledged heads kept: due roots go in order and every acknowledged head merges across a restart |
 | `MC_SyncOwnership_Green_Dispatch_DeadProvider.cfg` | GREEN | the same with `d1`'s provider never serving: `d1`'s head is kept, `d2`'s still merges |
+| `MC_SyncOwnership_Green_Dispatch_Trickle.cfg` | GREEN | the same with `d1`'s provider trickling: `d1`'s attempt gives its slot back at its quantum and `d2`'s head still merges |
+| `MC_SyncOwnership_Red_UnboundedProductive.cfg` | RED | no quantum: `d1`'s trickling attempt never ends, holds the only slot, and `d2` is never dispatched (`LIVE_AckedRootMerged`) |
 | `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and retries ahead of a head acknowledged while it held the slot |
 | `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root retakes the slot ahead of heads acknowledged during its attempt |
 | `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker |

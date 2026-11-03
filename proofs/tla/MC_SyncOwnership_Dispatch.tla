@@ -5,7 +5,8 @@
 \* per-root retry clock hands roots to a small pool of fetch slots (FetchCap).
 \* Fetches can fail, the receiver can restart, and new heads keep arriving.
 \* A root whose attempt ended waits out a backoff before it is due again,
-\* and some providers never serve at all.
+\* some providers never serve at all, and some serve slowly: every window
+\* delivers a block, but the DAG outlasts any wait we would accept.
 \*
 \* Who acts: the sender (writes and hints), the receiver's clock (claims a
 \* slot for the oldest due root), each fetch (one attempt, which completes or
@@ -21,9 +22,15 @@
 \*     it (INV_ExpiryKeepsOwner): a wall-clock TTL would drop acknowledged
 \*     heads whose senders have already forgotten them;
 \* and what must eventually happen: every acknowledged head whose provider
-\* serves it eventually is fetched and merged (LIVE_AckedRootMerged). A head
-\* whose provider never serves (Dead) is kept but not promised a merge, and
-\* it does not keep the other heads from theirs.
+\* serves it is fetched and merged (LIVE_AckedRootMerged). A head whose
+\* provider never serves (Dead) or only trickles (Trickle) is kept but not
+\* promised a merge here, and it does not keep the other heads from theirs:
+\* a trickling attempt gives its slot back at its quantum (Preempt).
+\* Fairness is the scheduler's only: the clock dispatches whenever it can and
+\* some fetch that can complete eventually does. No root gets fairness of its
+\* own for dispatch; its turn follows from the due order. Per root there are
+\* only timers: its deadline passes, its attempt's windows end, its quantum
+\* ends.
 \*
 \* This module adds the dispatch layer to SyncOwnership.tla without changing
 \* it: every SyncOwnership step runs here too, followed by the bookkeeping
@@ -31,13 +38,15 @@
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each)
-\*   coordinator/dag_fetcher.rs  poll_fetch_dag (a clock-owned fetch makes one attempt)
+\*   coordinator/dag_fetcher.rs  poll_fetch_dag (a clock-owned fetch makes one attempt,
+\*                                ended at CLOCK_ATTEMPT_QUANTUM while still progressing)
 \*   replication/handlers.rs  handle_dag_needs_fetch (the slot comes back; the clock re-arms the root)
 \*   coordinator/dag_context.rs  DagFetchContext::finish_clock_attempt (only a clock-dispatched fetch re-arms)
 \*   manager/process/pending_dag.rs  try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt,
 \*                                   due_pending_dag_retries (next_retry_at order, due roots only)
 \*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires)
-\* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs.
+\* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs,
+\*   tests/unit/productive_quantum.rs.
 EXTENDS SyncOwnership, Sequences
 
 CONSTANTS
@@ -45,7 +54,9 @@ CONSTANTS
   RearmMode,   \* "AttemptEnd": a root's next deadline is set when its attempt ends | "ClaimTime": the bug, it is fixed when the root is claimed
   ExpiryMode,  \* "AckRetained": an acknowledged root never expires | "WallClockTtl": the bug, a TTL may drop it at any time
   MaxAttempts, \* attempts one fetch task makes before it gives up (MAX_FETCH_ATTEMPTS)
-  Dead         \* scopes whose provider never serves a fetch: it answers busy, stalls or is gone, for good
+  Dead,        \* scopes whose provider never serves a fetch: it answers busy, stalls or is gone, for good
+  Trickle,     \* scopes whose provider delivers a block every window, but whose DAG outlasts any quantum
+  CutoffMode   \* "Quantum": a productive attempt gives its slot back at its quantum | "Unbounded": the bug, it keeps it
 
 \* Each knob takes one of its named values.
 ASSUME AttemptMode \in {"PerAttempt", "WholeTask"}
@@ -55,8 +66,10 @@ ASSUME RearmMode \in {"AttemptEnd", "ClaimTime"}
 ASSUME ExpiryMode \in {"AckRetained", "WallClockTtl"}
 \* A fetch task makes at least one attempt.
 ASSUME MaxAttempts \in Nat /\ MaxAttempts >= 1
-\* Never-serving providers belong to some of the scopes.
-ASSUME Dead \subseteq Scopes
+\* Never-serving and trickling providers belong to some of the scopes.
+ASSUME Dead \subseteq Scopes /\ Trickle \subseteq Scopes /\ Dead \cap Trickle = {}
+\* The cutoff knob takes one of its named values.
+ASSUME CutoffMode \in {"Quantum", "Unbounded"}
 \* One fetch owner per root: the claim and the queue below assume it.
 ASSUME FlightMode = "SingleFlight"
 
@@ -138,17 +151,45 @@ WClaim(s, v) ==
   /\ UNCHANGED expired
 
 \* A failed attempt gives the slot back. Under WholeTask only the last of the
-\* task's attempts does; the earlier ones retry in place (below).
+\* task's attempts does; the earlier ones retry in place (below). A trickling
+\* provider delivers every window, so its attempts never stall.
 WFail(s, v) ==
+  /\ s \notin Trickle
   /\ FailFetchBeforeWaiter(s, v)
   /\ (AttemptMode = "PerAttempt" \/ tries[<<s, v>>] >= MaxAttempts)
   /\ QueueStep
   /\ UNCHANGED expired
 
-\* A completed fetch, which a provider that never serves never gives.
+\* A completed fetch, which a provider that never serves never gives, and a
+\* trickling one never gives within the horizon of this model.
 WComplete(s, v) ==
-  /\ s \notin Dead
+  /\ s \notin Dead \cup Trickle
   /\ W(CompleteFetch(s, v))
+
+\* A trickling attempt's window delivers a block: progress, with nothing for
+\* the clock to act on. Without a quantum, the attempt goes on like this.
+TrickleWindow(s, v) ==
+  /\ s \in Trickle
+  /\ <<s, v>> \in pending
+  /\ flights[<<s, v>>] > 0
+  /\ UNCHANGED allVars
+
+\* Quantum only: an attempt still making progress reaches its quantum
+\* (CLOCK_ATTEMPT_QUANTUM). It gives its slot back at the next window
+\* boundary, keeping what it fetched, and its root is due again at once,
+\* behind every root already due (FetchTaskEnd::Preempted, finish_attempt).
+\* It is not a failure: no backoff, no exhaustion.
+Preempt(s, v) ==
+  /\ CutoffMode = "Quantum"
+  /\ s \in Trickle
+  \* The slot is released like a deferral: no exhaustion, the record stays.
+  /\ ContendedIngest(s, v)
+  \* Due now, behind every root that was due before it.
+  /\ dueOrder' = Append(Without(dueOrder, {<<s, v>>}), <<s, v>>)
+  /\ readyOrder' = Append(Without(readyOrder, {<<s, v>>}), <<s, v>>)
+  /\ backoff' = backoff \ {<<s, v>>}
+  /\ tries' = [tries EXCEPT ![<<s, v>>] = 0]
+  /\ UNCHANGED <<overtaken, expired>>
 
 \* The root's next_retry_at passes and the root is due again. AttemptEnd sets
 \* that deadline when the attempt ends, so only a root with no fetch running
@@ -235,7 +276,7 @@ WInit ==
 
 \* Every SyncOwnership action, with the claim, the failure, the completion and
 \* the restart replaced by their dispatch-aware forms, plus the deadline, the
-\* in-place retry and the TTL.
+\* trickling window, the quantum, the in-place retry and the TTL.
 WNext ==
   \/ \E s \in Scopes : W(Update(s)) \/ W(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
@@ -244,6 +285,7 @@ WNext ==
        \/ W(SameRootReannounce(s, v))
        \/ W(OfferQualifiedAlternate(s, v)) \/ W(AddQualifiedAlternate(s, v))
        \/ WClaim(s, v) \/ WFail(s, v) \/ BecomeDue(s, v)
+       \/ TrickleWindow(s, v) \/ Preempt(s, v)
        \/ RetryInPlace(s, v) \/ Expire(s, v)
        \/ W(ContendedIngest(s, v)) \/ W(ProviderShed(s, v))
        \/ W(StarveTransportCompletion(s, v)) \/ W(StarveRecoveryServe(s, v))
@@ -258,26 +300,31 @@ WNext ==
 WSpec == WInit /\ [][WNext]_allVars
 
 \* Liveness runs: once a head is acknowledged only the receiver acts on it, so
-\* only the receiver is fair: the clock claims, deadlines pass, every attempt
-\* ends (each window is bounded), and every root's merge eventually runs when
-\* it keeps being possible. Sender fairness is SyncOwnership's own liveness
-\* configs. Failures, retries in place, the TTL and the restart are never
-\* forced.
+\* only the receiver is fair, and only at the scheduler: the clock dispatches
+\* whenever it can, and merges and their cleanup run. No root has dispatch
+\* fairness of its own; which root goes next is the due order's choice. Per
+\* root there are only timers: a deadline passes, an attempt's windows end
+\* (each is bounded), a quantum ends. Sender fairness is SyncOwnership's own
+\* liveness configs. Failures, retries in place, the TTL and the restart are
+\* never forced.
 \*
-\* The one environment assumption: a provider that is not Dead eventually
-\* serves a fetch that keeps being attempted (strong fairness on WComplete).
-\* Reachability alone does not give it: a provider can answer busy, or stall,
-\* every time. For a Dead provider nothing is assumed: its attempts only
-\* fail, its root stays owned (INV_ExpiryKeepsOwner) and is retried at the
-\* backoff cap, and LIVE_AckedRootMerged promises it nothing.
+\* The one environment assumption: a fetch that can complete eventually does
+\* (strong fairness on some WComplete). Reachability alone does not give it:
+\* a provider can answer busy, or stall, every time. Dead and Trickle
+\* providers never complete here; their heads stay owned
+\* (INV_ExpiryKeepsOwner), and LIVE_AckedRootMerged promises them nothing.
 WFairSpec ==
-  WSpec /\ \A s \in Scopes :
-    /\ SF_allVars(\E v \in 1..MaxV : WClaim(s, v))
-    /\ WF_allVars(\E v \in 1..MaxV : BecomeDue(s, v))
-    /\ WF_allVars(\E v \in 1..MaxV : WFail(s, v))
-    /\ SF_allVars(\E v \in 1..MaxV : WComplete(s, v))
-    /\ SF_allVars(\E v \in 1..MaxV : W(ClaimMerge(s, v)))
-    /\ SF_allVars(\E v \in 1..MaxV : W(CompleteMerge(s, v)))
+  /\ WSpec
+  /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : WClaim(s, v))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : WComplete(s, v))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(ClaimMerge(s, v)))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(CompleteMerge(s, v)))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(ClaimTerminal(s, v)))
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(CompleteTerminal(s, v)))
+  /\ \A s \in Scopes :
+       /\ WF_allVars(\E v \in 1..MaxV : BecomeDue(s, v))
+       /\ WF_allVars(\E v \in 1..MaxV : WFail(s, v))
+       /\ WF_allVars(\E v \in 1..MaxV : Preempt(s, v))
 
 \* Promise: the added variables keep their shapes, on top of SyncOwnership's.
 INV_DispatchTypeOK ==
@@ -307,7 +354,8 @@ INV_ReadyRootsServedInOrder == overtaken = {}
 \* Promise: an acknowledged head never leaves the receiver while nobody else owns it.
 INV_ExpiryKeepsOwner == \A r \in expired : Owned(r)
 
-\* Promise: every acknowledged head whose provider eventually serves is merged.
+\* Promise: every acknowledged head whose provider serves is merged, whatever
+\* never-serving or trickling heads hold the slots.
 LIVE_AckedRootMerged ==
-  \A r \in Roots : r[1] \notin Dead => ((r \in pending) ~> (mergedV[r[1]] >= r[2]))
+  \A r \in Roots : r[1] \notin Dead \cup Trickle => ((r \in pending) ~> (mergedV[r[1]] >= r[2]))
 ====
