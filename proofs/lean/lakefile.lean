@@ -122,3 +122,6 @@ lean_lib RetrySchedule where
 
 @[default_target]
 lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib Arbitration where

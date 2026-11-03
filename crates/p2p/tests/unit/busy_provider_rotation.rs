@@ -302,3 +302,34 @@ async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
     assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 0);
     assert_eq!(snapshot.pending_dag_fetch_exhausted, 0);
 }
+
+/// An attempt whose rooted CAR delivered the root and whose descendants are
+/// then shed ends `ProviderBusy`, yet it advanced the root: its sample says so.
+#[tokio::test(start_paused = true)]
+async fn a_shed_attempt_that_delivered_first_still_counts_its_progress() {
+    let f = Fixture::new(&[], false).await;
+    f.transport.set_busy_from_batch(0, f.completions.clone());
+    let context = f.lone_context();
+    let mut providers = ProviderRotation::new(context.providers());
+    let mut state = ProviderFetchState::new(&mut providers, None, f.diagnostics.as_ref());
+    let (event_tx, _events) = mpsc::channel(1);
+    let started = Instant::now();
+
+    let outcome = fetch_dag_attempt(
+        &f.transport,
+        &f.blockstore,
+        &event_tx,
+        f.root,
+        &context,
+        &mut state,
+    )
+    .await;
+
+    assert_eq!(outcome, FetchAttemptOutcome::ProviderBusy);
+    assert!(f.blockstore.has(&f.root).await.unwrap());
+    assert!(!f.blockstore.has(&f.child).await.unwrap());
+    assert_eq!(
+        attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed()),
+        AttemptSample::Shed { progressed: true }
+    );
+}

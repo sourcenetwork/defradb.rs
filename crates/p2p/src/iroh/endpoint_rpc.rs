@@ -966,6 +966,9 @@ async fn request_car_response(
     };
 
     let outcome = car_reply_outcome(&car_data);
+    if reply_carried_blocks(&car_data) {
+        timer.carried_blocks();
+    }
     if event_tx
         .send(TransportEvent::CarFetchResponse {
             query_id: None,
@@ -1008,6 +1011,17 @@ fn car_reply_outcome(car_data: &[u8]) -> FetchOutcome {
     } else {
         FetchOutcome::Failed
     }
+}
+
+/// Whether a CAR reply delivered a block, for the provider's useful share: an
+/// empty, busy or header-only reply did not, and a size-limit notice did only
+/// when it also carries a block. `car_has_any_block` alone reads a body it
+/// cannot parse as carrying one.
+fn reply_carried_blocks(car_data: &[u8]) -> bool {
+    matches!(
+        car_reply_outcome(car_data),
+        FetchOutcome::Success | FetchOutcome::Partial
+    ) && crate::sync::car::car_has_any_block(car_data)
 }
 
 /// Try to fetch CAR blocks from a single provider.
@@ -1177,6 +1191,9 @@ async fn try_fetch_from_provider(
     // "none returned usable blocks" WARN is suppressed when every provider
     // replies empty (issue #858 review round 3).
     let has_blocks = crate::sync::car::car_has_any_block(&car_data);
+    if reply_carried_blocks(&car_data) {
+        timer.carried_blocks();
+    }
     let busy = crate::sync::car::is_car_busy(&car_data);
     let has_notices =
         crate::sync::car::decode_car_oversized(&car_data).is_ok_and(|notices| !notices.is_empty());
@@ -1427,14 +1444,37 @@ mod tests {
         use crate::sync::car::{encode_car, encode_car_response};
         let root = cid(b"root");
         assert_eq!(car_reply_outcome(&[]), FetchOutcome::Failed);
+        assert!(
+            !reply_carried_blocks(&[]),
+            "an empty reply delivered nothing"
+        );
         let header_only = encode_car(&[root], &[]).unwrap();
         assert_eq!(car_reply_outcome(&header_only), FetchOutcome::Failed);
+        assert!(!reply_carried_blocks(&header_only));
         let with_block = encode_car(&[root], &[(&root, b"block".as_slice())]).unwrap();
         assert_eq!(car_reply_outcome(&with_block), FetchOutcome::Success);
+        assert!(reply_carried_blocks(&with_block));
         let size_limited = encode_car_response(&[root], &[], &[(root, 1 << 30)]).unwrap();
         assert_eq!(car_reply_outcome(&size_limited), FetchOutcome::Partial);
+        assert!(!reply_carried_blocks(&size_limited));
+        let child = cid(b"child");
+        let size_limited_with_block = encode_car_response(
+            &[root],
+            &[(&root, b"block".as_slice())],
+            &[(child, 1 << 30)],
+        )
+        .unwrap();
+        assert_eq!(
+            car_reply_outcome(&size_limited_with_block),
+            FetchOutcome::Partial
+        );
+        assert!(
+            reply_carried_blocks(&size_limited_with_block),
+            "only a notice that carries a block feeds the useful share"
+        );
         let busy = crate::sync::car::encode_car_busy(&root).unwrap();
         assert_eq!(car_reply_outcome(&busy), FetchOutcome::Busy);
+        assert!(!reply_carried_blocks(&busy));
     }
 
     #[test]

@@ -108,6 +108,11 @@ impl ProviderRotation {
         self.busy.contains(self.current())
     }
 
+    /// Some provider delivered blocks during the current attempt.
+    pub(super) fn attempt_progressed(&self) -> bool {
+        self.attempt_progress
+    }
+
     pub(super) fn attempt_was_shed(&self) -> bool {
         !self.busy.is_empty() && !self.attempt_progress
     }

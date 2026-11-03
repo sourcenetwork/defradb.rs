@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+pub mod arbitration;
 mod broadcast_coalescer;
 mod broadcaster;
 pub(crate) mod car;
