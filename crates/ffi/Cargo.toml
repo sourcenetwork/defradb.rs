@@ -44,7 +44,6 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 serde_ipld_dagcbor.workspace = true
 serde_bytes.workspace = true
-base64.workspace = true
 
 # Memory zeroization for sensitive key material
 zeroize = "1"
