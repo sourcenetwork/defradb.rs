@@ -29,7 +29,7 @@ pending map; see *In-memory pending map* below.
 current composite or collection head CIDs with monotone versions.
 
 - `dirty` is the permitted sender durability: a set of scopes only.
-- `payloadLedger` is the current-main countermodel: sender durability contains
+- `payloadLedger` is the superseded-policy countermodel: sender durability contains
   a scope plus a particular CID/version.
 - `inflight` contains idempotent head hints.
 - `pending` is the receiver's bounded durable want queue (`Cap`). `FetchCap`

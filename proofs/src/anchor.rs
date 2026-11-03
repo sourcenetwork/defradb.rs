@@ -9,7 +9,7 @@
 //! repository and is not resolved. Symbols after a directory are not checked.
 //!
 //! A symbol resolves when each `::` part is a whole word in the file, or in
-//! the module the file roots (`x.rs` with `x/`, or any `mod.rs`).
+//! the module the file roots (`name.rs` with `name/`, or any `mod.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -217,7 +217,7 @@ fn append_sources(dir: &Path, text: &mut String) {
     }
 }
 
-pub(crate) fn has_word(text: &str, word: &str) -> bool {
+fn has_word(text: &str, word: &str) -> bool {
     let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
     text.match_indices(word).any(|(at, _)| {
         let before = text[..at].chars().next_back();
