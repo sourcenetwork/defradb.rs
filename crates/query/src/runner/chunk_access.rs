@@ -25,8 +25,12 @@ where
         let Some(source) = &chunks_col.chunk_of else {
             return Ok(false);
         };
-        let Ok(parent) = self.get_collection(&source.collection).await else {
-            return Ok(false);
+        let parent = match self.get_collection(&source.collection).await {
+            Ok(parent) => parent,
+            Err(error) => {
+                tracing::warn!(chunks = %chunks_col.name, %error, "chunk parent lookup failed");
+                return Ok(false);
+            }
         };
         let Some(chunked) = parent.chunked_field(&source.field_name) else {
             return Ok(false);
