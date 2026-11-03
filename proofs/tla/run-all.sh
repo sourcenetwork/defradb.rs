@@ -19,6 +19,8 @@ RUNS=(
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
   "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
+  "MC_ChunkRead_Red_NoGrantCheck.cfg ChunkRead.tla RED" # revoked reader still sees chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"

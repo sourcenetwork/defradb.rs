@@ -28,7 +28,8 @@
 \*   crates/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
 \*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
 \*   crates/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
-\*   crates/p2p-adapter/src/read_gate.rs    chunk block serving; crates/db/src/block/verify.rs block verify
+\*   crates/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
+\*   crates/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
 \* Merging text and list across peers is ChunkMerge.tla's job, not this one's.
 EXTENDS Naturals, FiniteSets
 
@@ -37,13 +38,17 @@ CONSTANTS
   CheckDeleted,  \* TRUE: a deleted article shows no chunks (the guard)
   CheckHash,     \* TRUE: the chunk's text is hashed again (the guard)
   MemoPerQuery,  \* TRUE: each query starts with no remembered decision (the guard)
-  CheckMerged    \* TRUE: a block's owner must be an article that has arrived (the guard)
+  CheckMerged,   \* TRUE: a block's owner must be an article that has arrived (the guard)
+  CheckGranted,  \* TRUE: the reader must be allowed to read the article (the guard)
+  CheckListed    \* TRUE: a chunk shows only if the article's current list names it (the guard)
 
 \* Writers edit at least once.
 ASSUME MaxEdits \in Nat \ {0}
 \* The four switches are yes-or-no.
 ASSUME CheckDeleted \in BOOLEAN /\ CheckHash \in BOOLEAN /\ MemoPerQuery \in BOOLEAN
 ASSUME CheckMerged \in BOOLEAN
+\* The last two switches are yes-or-no too.
+ASSUME CheckGranted \in BOOLEAN /\ CheckListed \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2"}
@@ -89,12 +94,15 @@ Now == [text |-> text, merged |-> merged, deleted |-> deleted, granted |-> grant
 
 \* The decision about the article from view v: may its chunks show, and which.
 Decide(v) ==
-  [ok |-> (v.merged /\ v.granted /\ (CheckDeleted => ~v.deleted)),  \* arrived, readable, live
+  [ok |-> (v.merged /\ (CheckGranted => v.granted) /\ (CheckDeleted => ~v.deleted)),  \* arrived, readable (with the guard), live
    hashes |-> ChunksOf(v.text),                          \* the chunks its text uses
    made |-> TRUE]                                        \* a decision exists now
 
 \* Whether a stored chunk passes the hash check.
 HashOK(c) == CheckHash => c.honest
+
+\* Whether decision d lists chunk c. Without the guard every stored chunk counts as listed.
+ListedOK(c, d) == CheckListed => c.hash \in d.hashes
 
 \* Whether serving a chunk's block is allowed: the owner is the article, which
 \* with the guard must have arrived. An article that hasn't arrived has no
@@ -172,7 +180,7 @@ Answer ==
   /\ LET d == IF memo.made THEN memo ELSE Decide(snap)  \* reuse or decide
      IN /\ memo' = d                                \* remember the decision
         /\ result' = {c \in snap.stored :           \* the stored chunks that
-             HashOK(c) /\ d.ok /\ c.hash \in d.hashes}  \* pass every check
+             HashOK(c) /\ d.ok /\ ListedOK(c, d)}  \* pass every check
   /\ phase' = "done"                                \* the query has answered
   /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, snap, leaked>>
 
