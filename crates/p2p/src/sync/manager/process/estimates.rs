@@ -68,7 +68,27 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     }
 }
 
+/// The middle value, or for an even count the mean of the two middle ones.
 fn median(values: &mut [u64]) -> Option<u64> {
     values.sort_unstable();
-    values.get(values.len() / 2).copied()
+    let upper = *values.get(values.len() / 2)?;
+    if values.len() % 2 == 1 {
+        return Some(upper);
+    }
+    let lower = values.get(values.len() / 2 - 1).copied().unwrap_or(upper);
+    Some(lower + (upper - lower) / 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::median;
+
+    #[test]
+    fn the_median_of_an_even_count_is_the_mean_of_its_middle_two() {
+        assert_eq!(median(&mut []), None);
+        assert_eq!(median(&mut [7]), Some(7));
+        assert_eq!(median(&mut [9, 1, 5]), Some(5));
+        assert_eq!(median(&mut [10, 2]), Some(6));
+        assert_eq!(median(&mut [u64::MAX, u64::MAX - 2]), Some(u64::MAX - 1));
+    }
 }

@@ -412,6 +412,35 @@ fn shed_and_fast_refused_attempts_never_feed_the_backoff_estimate() {
 }
 
 #[test]
+fn a_source_holding_entries_is_listed_before_its_first_tick() {
+    let occupancy = PendingOccupancy::default();
+    let mut held = RapidHashMap::new();
+    held.insert(Arc::<str>::from("early"), 3);
+    assert_eq!(
+        occupancy.snapshot(&held),
+        vec![PendingPeerOccupancy {
+            peer: "early".to_string(),
+            held: 3,
+            occupancy_q8: 3 * 256,
+        }]
+    );
+    occupancy.sample(0, &held);
+    held.insert(Arc::<str>::from("later"), 1);
+    let peers: Vec<_> = occupancy
+        .snapshot(&held)
+        .into_iter()
+        .map(|row| (row.peer, row.held, row.occupancy_q8))
+        .collect();
+    assert_eq!(
+        peers,
+        vec![
+            ("early".to_string(), 3, 3 * 256),
+            ("later".to_string(), 1, 256)
+        ]
+    );
+}
+
+#[test]
 fn occupancy_halves_in_about_177_seconds() {
     // occupancy_half_life_ticks
     let full = 100 * 256;

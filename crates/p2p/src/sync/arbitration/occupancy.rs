@@ -93,10 +93,19 @@ impl PendingOccupancy {
         }
     }
 
+    /// Every tracked source and every source holding entries now. A source
+    /// not sampled yet reads its held count, the sample its first tick will
+    /// take as is.
     pub(crate) fn snapshot(
         &self,
         held: &RapidHashMap<Arc<str>, usize>,
     ) -> Vec<PendingPeerOccupancy> {
+        let first_sample = |count: usize| {
+            u64::try_from(count)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(256)
+                .min(VALUE_MAX)
+        };
         let mut peers: Vec<PendingPeerOccupancy> = self
             .sources
             .iter()
@@ -106,6 +115,15 @@ impl PendingOccupancy {
                 peer: source.to_string(),
             })
             .collect();
+        for (source, count) in held {
+            if !self.sources.contains_key(source) {
+                peers.push(PendingPeerOccupancy {
+                    peer: source.to_string(),
+                    held: *count,
+                    occupancy_q8: first_sample(*count),
+                });
+            }
+        }
         peers.sort_by(|a, b| a.peer.cmp(&b.peer));
         peers
     }
