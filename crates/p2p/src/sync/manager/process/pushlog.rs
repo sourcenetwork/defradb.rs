@@ -61,6 +61,19 @@ impl AnnouncedBlockKind {
     }
 }
 
+/// What processing a pushed block left for its ack guard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Processed {
+    /// Whatever it left shows in the in-memory map, the view or the
+    /// blockstore.
+    Shown,
+    /// The store committed a durable record for a head with no in-memory
+    /// entry. The view learns of a commit in commit-receipt order, so a hook
+    /// of an earlier commit on the same store can keep the record out of it
+    /// until after the reply.
+    DurablyRegistered,
+}
+
 fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
     let Ok(block) = defra_core::Block::from_dag_cbor(bytes) else {
         return AnnouncedBlockKind::Descendant;
@@ -186,28 +199,30 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             },
         };
 
-        self.process_block_inner(
-            &cid,
-            msg,
-            sender_peer,
-            is_explicit_replicator,
-            explicit_replay_authorization,
-            recovery_provider_evidenced,
-        )
-        .await?;
+        let processed = self
+            .process_block_inner(
+                &cid,
+                msg,
+                sender_peer,
+                is_explicit_replicator,
+                explicit_replay_authorization,
+                recovery_provider_evidenced,
+            )
+            .await?;
 
-        self.assert_pushlog_left_durable_state(&cid, msg, sender_peer)
+        self.assert_pushlog_left_durable_state(&cid, msg, sender_peer, processed)
             .await
     }
 
     /// Hold the ack contract for a block that carries a document head: success
-    /// means it is merged or registered as pending (in memory or by its
-    /// durable record alone). A head that retired another linked it as a
-    /// parent, so the retired head stays reachable from a registration; no
-    /// head is acked on the strength of another's. The sender stops retrying
-    /// on success, and only those states leave something on this side to
-    /// finish the work, so acking without one loses the update for good,
-    /// silently, because nothing failed.
+    /// means it is merged or registered as pending (in memory, or by its
+    /// durable record alone: one the view shows, or the one the store
+    /// committed for this push, which the view may not show yet). A head that
+    /// retired another linked it as a parent, so the retired head stays
+    /// reachable from a registration; no head is acked on the strength of
+    /// another's. The sender stops retrying on success, and only those states
+    /// leave something on this side to finish the work, so acking without one
+    /// loses the update for good, silently, because nothing failed.
     ///
     /// A block that carries no head is exempt. A peer may push a field or a
     /// signature on its own, and storing it for a later root to use is the
@@ -221,11 +236,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         cid: &Cid,
         msg: &PushLogBroadcast,
         sender_peer: Option<&str>,
+        processed: Processed,
     ) -> Result<()> {
         if announced_block_kind(&msg.block) == AnnouncedBlockKind::Descendant {
             return Ok(());
         }
-        if self.is_pending_dag_owned(cid) {
+        if processed == Processed::DurablyRegistered || self.is_pending_dag_owned(cid) {
             return Ok(());
         }
         let merged = self
@@ -259,7 +275,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         is_explicit_replicator: bool,
         explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
         recovery_provider_evidenced: bool,
-    ) -> Result<()> {
+    ) -> Result<Processed> {
         // Check if already merged
         match self
             .blockstore
@@ -270,7 +286,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             Ok(true) => {
                 self.diagnostics.record_already_merged_fast_path();
                 tracing::debug!(cid = %cid, doc_id = %msg.doc_id, "Block already merged, skipping");
-                return Ok(());
+                return Ok(Processed::Shown);
             }
             Ok(false) => {
                 // Not merged, continue processing
@@ -368,7 +384,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 "Stored legacy dependency PushLog without treating it as a head"
             );
             self.retry_pending_dags_waiting_on(cid).await?;
-            return Ok(());
+            return Ok(Processed::Shown);
         }
 
         // Check for missing linked blocks at every depth of the reachable DAG.
@@ -400,7 +416,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             );
         }
 
-        {
+        let processed = {
             // Every unmerged success-acked head, including a complete-at-arrival
             // DAG, enters the same durable receiver clock. The clock emits the
             // merge work and keeps the registration until merge or quarantine
@@ -418,7 +434,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     collection_id = %msg.collection_id,
                     "Head merged while awaiting durable pending registration"
                 );
-                return Ok(());
+                return Ok(Processed::Shown);
             }
 
             // A root already owned by the receiver is idempotently covered by
@@ -439,7 +455,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         explicit_replay_authorization,
                         recovery_provider_evidenced,
                     )
-                    .await;
+                    .await
+                    .map(|()| Processed::Shown);
             }
             if self.persisted.contains(cid) {
                 tracing::debug!(
@@ -447,7 +464,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     announced_source_peer = ?sender_peer,
                     "Incoming root is durably receiver-owned; retaining its recovery provider"
                 );
-                return Ok(());
+                return Ok(Processed::Shown);
             }
 
             // A peer holds at most its share of the durable records, whichever
@@ -642,7 +659,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 if matches!(self.is_merged(cid).await, Ok(true)) {
                     self.discharge_merged(cid).await;
-                    return Ok(());
+                    return Ok(Processed::Shown);
                 }
             }
             if resident {
@@ -663,7 +680,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 resident,
                 "Pending DAG durably registered and left due for receiver clock"
             );
-        }
+            if resident {
+                Processed::Shown
+            } else {
+                Processed::DurablyRegistered
+            }
+        };
 
         // This head can also be a missing descendant of another registered
         // root. Advance that root's frontier after this head's own durable
@@ -678,7 +700,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             );
         }
 
-        Ok(())
+        Ok(processed)
     }
 
     /// A root this receiver owns, announced again: it keeps its provider and
@@ -1216,7 +1238,12 @@ pub(super) mod tests {
         let broadcast = make_broadcast("doc123", composite_cid, composite_block, "collection1");
 
         let outcome = manager
-            .assert_pushlog_left_durable_state(&composite_cid, &broadcast, Some("peer-1"))
+            .assert_pushlog_left_durable_state(
+                &composite_cid,
+                &broadcast,
+                Some("peer-1"),
+                Processed::Shown,
+            )
             .await;
 
         assert!(
