@@ -26,6 +26,17 @@ async fn chunked_db() -> Arc<DB<RegolithStore>> {
 
 /// Stores a chunk of `parent` the way a merge would, and returns its block's CID.
 async fn plant_chunk(db: &DB<RegolithStore>, parent: &str) -> cid::Cid {
+    let txn = db.new_txn(false).await.unwrap();
+    let block = plant_chunk_in(db, &txn, parent).await;
+    txn.commit().await.unwrap();
+    block
+}
+
+async fn plant_chunk_in(
+    db: &DB<RegolithStore>,
+    txn: &db::DbTxn<RegolithStore>,
+    parent: &str,
+) -> cid::Cid {
     let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
     let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {parent}"));
     let mut chunk = Document::from_json_str(
@@ -35,8 +46,6 @@ async fn plant_chunk(db: &DB<RegolithStore>, parent: &str) -> cid::Cid {
     .unwrap();
     chunk.set_id(chunk_id.clone());
     let block = generate_cid_from_bytes(chunk_id.to_string().as_bytes()).unwrap();
-
-    let txn = db.new_txn(false).await.unwrap();
     let systemstore = txn.systemstore().unwrap();
     let short_id = db::docid::map::next_doc_short_id(&systemstore)
         .await
@@ -53,7 +62,6 @@ async fn plant_chunk(db: &DB<RegolithStore>, parent: &str) -> cid::Cid {
         .await
         .unwrap();
     drop(systemstore);
-    txn.commit().await.unwrap();
     block
 }
 
@@ -115,11 +123,54 @@ fn a_chunk_whose_parent_has_not_arrived_has_no_block_owner() {
         let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
         let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {missing}")).to_string();
 
-        let parents = db::chunk::access::history_parents(&db, chunks_col.schema(), &[chunk_id])
-            .await
-            .unwrap();
+        let txn = db.new_txn(true).await.unwrap();
+        let parents =
+            db::chunk::access::history_parents(&db, &txn, chunks_col.schema(), &[chunk_id])
+                .await
+                .unwrap();
+        let _ = txn.discard();
 
         assert!(parents.is_empty(), "{parents:?}");
+    })
+    .unwrap()
+}
+
+#[test]
+fn chunk_parents_are_read_in_the_callers_transaction() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
+        let articles = db.get_collection("Article").unwrap().unwrap();
+        let parent = DocID::new_v0_from_seed("uncommitted parent").to_string();
+        let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {parent}")).to_string();
+
+        let txn = db.new_txn(false).await.unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let short_id = db::docid::map::next_doc_short_id(&systemstore)
+            .await
+            .unwrap();
+        db::docid::map::set_doc_id_mapping(
+            &systemstore,
+            articles.resolved_root_id(),
+            short_id,
+            &parent,
+        )
+        .await
+        .unwrap();
+        drop(systemstore);
+        plant_chunk_in(&db, &txn, &parent).await;
+
+        let parents = db::chunk::access::history_parents(
+            &db,
+            &txn,
+            chunks_col.schema(),
+            std::slice::from_ref(&chunk_id),
+        )
+        .await
+        .unwrap();
+        let _ = txn.discard();
+
+        assert_eq!(parents, vec![parent]);
     })
     .unwrap()
 }

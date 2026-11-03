@@ -18,6 +18,7 @@ use crate::txn::DbTxn;
 /// A chunk whose parent hasn't arrived has no owner, so it is refused, not served as public.
 pub async fn history_parents<S>(
     db: &DB<S>,
+    txn: &DbTxn<S>,
     chunks_col: &CollectionVersion,
     chunk_ids: &[String],
 ) -> Result<Vec<String>>
@@ -27,13 +28,8 @@ where
     let collection = db
         .get_collection(&chunks_col.name)?
         .ok_or_else(|| Error::CollectionNotFound(chunks_col.name.clone()))?;
-    let txn = db.new_txn(true).await?;
-    let found = match parents_of_chunks(&txn, &collection, chunk_ids).await {
-        Ok(parents) => merged(&txn, parents).await,
-        Err(error) => Err(error),
-    };
-    let _ = txn.discard();
-    found
+    let parents = parents_of_chunks(txn, &collection, chunk_ids).await?;
+    merged(txn, parents).await
 }
 
 /// `doc_ids` with each chunk replaced by its parent, whose permissions decide.
