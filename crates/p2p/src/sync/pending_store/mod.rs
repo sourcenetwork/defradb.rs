@@ -12,8 +12,8 @@
 //! sweep.
 //!
 //! Every transition is one engine transaction of the [`PendingDagStorage`]:
-//! registering a root, with the retirement of its sender scope's older root
-//! and a slot under the durable cap ([`slots`]); discharging it after a merge;
+//! registering a root, with the retirement of the parent it supersedes as its
+//! sender scope's current head and a slot under the durable cap ([`slots`]); discharging it after a merge;
 //! quarantining it; and the sweep that reads every record. Concurrent
 //! transitions that touch the same keys settle in the engine, so no lock
 //! orders them. Each one updates the [`PersistedView`], the in-memory view of
@@ -150,6 +150,9 @@ impl PersistedQuarantinedDag {
 #[derive(Debug, Clone, Copy)]
 pub struct Registration<'a> {
     pub root: Cid,
+    /// The heads `root` links as parents: it retires its scope's durable
+    /// current head only when that head is one of them.
+    pub parents: &'a [Cid],
     pub record: &'a PersistedPendingDag,
     /// Durable registrations allowed at once: the number of slots.
     pub capacity: usize,
@@ -159,11 +162,9 @@ pub struct Registration<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Admission {
     /// The root holds a record: a new one, one that took over the slot of the
-    /// older root of its sender scope it retired, or its own rewritten.
+    /// parent it retired as its sender scope's current head, or its own
+    /// rewritten.
     Registered,
-    /// A newer or equal head of the root's sender scope is durable already:
-    /// nothing was written, and that head carries this one forward.
-    Covered,
     /// Every slot is held: nothing was written.
     AtCapacity,
 }
@@ -174,9 +175,10 @@ pub enum Admission {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait PendingDagStorage: MaybeSendSync {
-    /// Registers a root: its record, the retirement of the older durable
-    /// root of its sender scope, and, for a root new to the store that
-    /// retires none, a free slot under the capacity.
+    /// Registers a root: its record, the retirement of its sender scope's
+    /// durable current head when the root links it as a parent, and, for a
+    /// root new to the store that retires none, a free slot under the
+    /// capacity.
     async fn register(
         &self,
         registration: Registration<'_>,

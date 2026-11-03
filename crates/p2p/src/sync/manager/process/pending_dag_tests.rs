@@ -402,22 +402,37 @@ async fn already_merged_reconciliation_retires_live_and_durable_obligation() {
 }
 
 #[test]
-fn newer_sender_scope_head_invalidates_the_old_fetch_lease() {
+fn a_scope_head_linking_the_current_one_invalidates_its_fetch_lease() {
     let manager = test_manager();
     let old_root = test_cid(40);
-    let new_root = test_cid(41);
+    let sibling_root = test_cid(41);
+    let new_root = test_cid(42);
     let mut old = pending_dag("doc", Instant::now());
     old.head_priority = Some(1);
     assert!(manager.insert_pending_dag(old_root, old));
     let old_lease = manager.pending_dag_lease(old_root);
     assert!(old_lease.is_current());
 
+    let mut sibling = pending_dag("doc", Instant::now());
+    sibling.head_priority = Some(2);
+    assert!(manager.insert_pending_dag(sibling_root, sibling));
+    assert!(
+        old_lease.is_current(),
+        "a head that does not link it retires nothing"
+    );
+
     let mut new = pending_dag("doc", Instant::now());
     new.head_priority = Some(2);
-    assert!(manager.insert_pending_dag(new_root, new));
-
-    assert!(!old_lease.is_current());
-    assert_eq!(manager.pending_dag_cids(), vec![new_root]);
+    assert!(matches!(
+        manager.try_insert_pending_dag(new_root, &[sibling_root], new),
+        PendingDagAdmission::Admitted { .. }
+    ));
+    assert!(old_lease.is_current());
+    let mut pending = manager.pending_dag_cids();
+    pending.sort_unstable();
+    let mut expected = vec![old_root, new_root];
+    expected.sort_unstable();
+    assert_eq!(pending, expected, "only the linked current head is retired");
 }
 
 #[test]
@@ -1226,25 +1241,28 @@ fn manager_at_global_cap() -> SyncManager<DefraBlockstore<RegolithStore>> {
     manager
 }
 
+/// A lower version of the scope is not thereby an ancestor of its current
+/// head: it may be a sibling the current head never fetches. It needs a slot
+/// of its own, so at the cap it is shed and the sender keeps its marker.
 #[tokio::test]
-async fn at_global_cap_a_head_covered_by_the_current_scope_head_is_acked() {
+async fn at_global_cap_an_older_scope_head_needs_its_own_slot() {
     let manager = manager_at_global_cap();
     let (leaf_cid, _) = lww_leaf("name");
     let (older_cid, older_bytes) = composite_node("name", leaf_cid, 1);
 
-    manager
+    let result = manager
         .process_pushlog(
             &broadcast("doc123", older_cid, older_bytes),
             Some("peer-1"),
             false,
             None,
         )
-        .await
-        .expect("a covered head consumes no slot and must not be shed");
+        .await;
+    assert!(matches!(result, Err(Error::PendingDagCapacity { max: 1 })));
     assert_eq!(manager.pending_dag_count(), 1);
     assert_eq!(
         manager.diagnostics().snapshot().pending_dag_capacity_shed,
-        0
+        1
     );
 }
 

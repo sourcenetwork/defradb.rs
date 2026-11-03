@@ -1,9 +1,9 @@
 //! PushLog processing and block storage.
 //!
 //! At the pending-DAG cap a push is acked only when it costs no new slot: a
-//! root already registered or persisted, a scope head that refreshes or
-//! supersedes the current root (which it evicts) or is covered by it, and a
-//! descendant a registered root awaits. Everything else is nacked so the
+//! root already registered or persisted, a scope head that refreshes the
+//! current root or links it as a parent (which it evicts), and a descendant a
+//! registered root awaits. Everything else is nacked so the
 //! sender retries. Descendants are not exempt as a class: anything that fails
 //! DAG-CBOR decode is reported `Descendant` by `announced_block_kind`, so a
 //! blanket exemption would admit unbounded CID-valid garbage past the cap
@@ -21,7 +21,6 @@ use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
 use crate::message::PushLogBroadcast;
-use crate::sync::head_scope::ScopeDecision;
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::pending::PendingDag;
@@ -30,17 +29,24 @@ use crate::ExplicitReplayAuthorization;
 
 use super::SyncManager;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum AnnouncedBlockKind {
-    Head(u64),
+    Head { priority: u64, parents: Vec<Cid> },
     Descendant,
 }
 
 impl AnnouncedBlockKind {
-    fn priority(self) -> Option<u64> {
+    fn priority(&self) -> Option<u64> {
         match self {
-            Self::Head(priority) => Some(priority),
+            Self::Head { priority, .. } => Some(*priority),
             Self::Descendant => None,
+        }
+    }
+
+    fn parents(&self) -> &[Cid] {
+        match self {
+            Self::Head { parents, .. } => parents,
+            Self::Descendant => &[],
         }
     }
 }
@@ -51,7 +57,10 @@ fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
     };
     match &block.delta {
         defra_core::CrdtDelta::Composite(_) | defra_core::CrdtDelta::Collection(_) => {
-            AnnouncedBlockKind::Head(block.delta.priority())
+            AnnouncedBlockKind::Head {
+                priority: block.delta.priority(),
+                parents: block.heads.unwrap_or_default(),
+            }
         }
         _ => AnnouncedBlockKind::Descendant,
     }
@@ -179,12 +188,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     }
 
     /// Hold the ack contract for a block that carries a document head: success
-    /// means it is merged, registered as pending (in memory or by its durable
-    /// record alone), or covered by a newer head already durable for the same
-    /// sender scope. The sender stops retrying on
-    /// success, and only those states leave something on this side to finish
-    /// the work, so acking without one loses the update for good, silently,
-    /// because nothing failed.
+    /// means it is merged or registered as pending (in memory or by its
+    /// durable record alone). A head that retired another linked it as a
+    /// parent, so the retired head stays reachable from a registration; no
+    /// head is acked on the strength of another's. The sender stops retrying
+    /// on success, and only those states leave something on this side to
+    /// finish the work, so acking without one loses the update for good,
+    /// silently, because nothing failed.
     ///
     /// A block that carries no head is exempt. A peer may push a field or a
     /// signature on its own, and storing it for a later root to use is the
@@ -199,19 +209,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         msg: &PushLogBroadcast,
         sender_peer: Option<&str>,
     ) -> Result<()> {
-        let AnnouncedBlockKind::Head(head_priority) = announced_block_kind(&msg.block) else {
-            return Ok(());
-        };
-        if self.is_pending_dag_owned(cid) {
+        if announced_block_kind(&msg.block) == AnnouncedBlockKind::Descendant {
             return Ok(());
         }
-        if self.scope_head_is_covered_by_current(
-            *cid,
-            sender_peer,
-            &msg.collection_id,
-            &msg.doc_id,
-            Some(head_priority),
-        ) {
+        if self.is_pending_dag_owned(cid) {
             return Ok(());
         }
         let merged = self
@@ -229,8 +230,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             collection_id = %msg.collection_id,
             source_peer = ?sender_peer,
             "PushLog processing reported success but left the block neither \
-             merged, pending, nor covered by a newer head; nacking so the \
-             sender retries"
+             merged nor pending; nacking so the sender retries"
         );
         Err(Error::PushLogNotDurable {
             cid: cid.to_string(),
@@ -271,23 +271,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let announced_block_kind = announced_block_kind(&msg.block);
         let head_priority = announced_block_kind.priority();
         // Shed only a genuinely new head that would consume a pending-DAG
-        // slot. A durably owned root and a head already superseded or covered
-        // within its sender scope each ack below without registering anything;
-        // a sender that reads the at-capacity nack as success would otherwise
-        // drop them for good. A descendant carries no such obligation of its
-        // own: `can_process_pushlog` admits it only while a registered root
-        // waits on it, so unawaited bytes stay inside the cap.
+        // slot. A durably owned root acks below without registering anything,
+        // and a head that links its scope's current root takes over that
+        // root's slot; a sender that reads the at-capacity nack as success
+        // would otherwise drop them for good. A descendant carries no such
+        // obligation of its own: `can_process_pushlog` admits it only while a
+        // registered root waits on it, so unawaited bytes stay inside the cap.
         if !self.can_process_pushlog(cid)
             && !self.persisted.contains(cid)
             && !self.scope_head_is_refresh_or_newer(
                 *cid,
-                sender_peer,
-                &msg.collection_id,
-                &msg.doc_id,
-                head_priority,
-            )
-            && !self.scope_head_is_covered_by_current(
-                *cid,
+                announced_block_kind.parents(),
                 sender_peer,
                 &msg.collection_id,
                 &msg.doc_id,
@@ -442,33 +436,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 return Ok(());
             }
-            if matches!(
-                self.persisted.scope_decision(
-                    *cid,
-                    sender_peer,
-                    &msg.collection_id,
-                    &msg.doc_id,
-                    head_priority,
-                ),
-                ScopeDecision::CoveredByCurrent
-            ) {
-                tracing::debug!(
-                    cid = %cid,
-                    doc_id = %msg.doc_id,
-                    collection_id = %msg.collection_id,
-                    source_peer = ?sender_peer,
-                    "Incoming head is covered by a newer durable sender/scope obligation"
-                );
-                return Ok(());
-            }
 
             // Track this DAG as pending (enforces TTL eviction, capacity, and
-            // current-head retirement for one sender/document-or-collection scope).
+            // the retirement of the scope's current head when this one links it).
             let inserted_at = Instant::now();
             let superseded = {
                 use super::pending_dag::PendingDagAdmission;
                 let admission = self.try_insert_pending_dag(
                     *cid,
+                    announced_block_kind.parents(),
                     PendingDag {
                         doc_id: msg.doc_id.clone(),
                         collection_id: msg.collection_id.clone(),
@@ -495,45 +471,32 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 // Report the limit that actually tripped so the nack and its
                 // WARN log agree (the global cap vs the smaller per-peer quota).
-                let rejected_max = match &admission {
-                    PendingDagAdmission::Admitted { .. }
-                    | PendingDagAdmission::CoveredByCurrent => None,
-                    PendingDagAdmission::GlobalCapacity => Some(self.max_pending_dags),
-                    PendingDagAdmission::PeerQuota { max_per_peer } => Some(*max_per_peer),
+                let admitted = match admission {
+                    PendingDagAdmission::Admitted { superseded } => Ok(*superseded),
+                    PendingDagAdmission::GlobalCapacity => Err(self.max_pending_dags),
+                    PendingDagAdmission::PeerQuota { max_per_peer } => Err(max_per_peer),
                 };
-                if let Some(max) = rejected_max {
-                    self.diagnostics.record_pending_dag_capacity_shed();
-                    // The block is stored but its DAG completion is not
-                    // tracked. This must surface as an error: a success reply
-                    // deletes the pusher's retry record, silently losing the
-                    // document. The reply seams map this typed error to the
-                    // at-capacity nack so the pusher retains and retries it.
-                    tracing::warn!(
-                        cid = %cid,
-                        doc_id = %msg.doc_id,
-                        collection_id = %msg.collection_id,
-                        source_peer = ?sender_peer,
-                        missing_count = missing.len(),
-                        max,
-                        max_per_peer = self.max_pending_dags_per_peer(),
-                        "Pending DAGs at capacity, rejecting PushLog DAG registration"
-                    );
-                    return Err(Error::PendingDagCapacity { max });
-                }
-                match admission {
-                    PendingDagAdmission::Admitted { superseded } => *superseded,
-                    PendingDagAdmission::CoveredByCurrent => {
-                        tracing::debug!(
+                match admitted {
+                    Ok(superseded) => superseded,
+                    Err(max) => {
+                        self.diagnostics.record_pending_dag_capacity_shed();
+                        // The block is stored but its DAG completion is not
+                        // tracked. This must surface as an error: a success
+                        // reply deletes the pusher's retry record, silently
+                        // losing the document. The reply seams map this typed
+                        // error to the at-capacity nack so the pusher retains
+                        // and retries it.
+                        tracing::warn!(
                             cid = %cid,
                             doc_id = %msg.doc_id,
                             collection_id = %msg.collection_id,
                             source_peer = ?sender_peer,
-                            "Incoming head is covered by the current durable sender/scope obligation"
+                            missing_count = missing.len(),
+                            max,
+                            max_per_peer = self.max_pending_dags_per_peer(),
+                            "Pending DAGs at capacity, rejecting PushLog DAG registration"
                         );
-                        return Ok(());
-                    }
-                    PendingDagAdmission::GlobalCapacity | PendingDagAdmission::PeerQuota { .. } => {
-                        unreachable!("handled above")
+                        return Err(Error::PendingDagCapacity { max });
                     }
                 }
             };
@@ -545,8 +508,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // Durable records outlive the map across a restart, so they carry
             // their own larger cap; at the cap the obligation is refused
             // (backpressure nack) while the pusher still owns retry state.
-            // The cap, the retirement of the older durable head of the
-            // sender scope and the record are one engine transaction.
+            // The cap, the retirement of the sender scope's durable current
+            // head when this one links it, and the record are one engine
+            // transaction.
             if let Some(store) = self.pending_store() {
                 let durable_cap = self.persisted_pending_capacity();
                 let record = PersistedPendingDag {
@@ -563,21 +527,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 };
                 let registration = Registration {
                     root: *cid,
+                    parents: announced_block_kind.parents(),
                     record: &record,
                     capacity: durable_cap,
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
                     Ok(Admission::Registered) => None,
-                    Ok(Admission::Covered) => {
-                        tracing::debug!(
-                            cid = %cid,
-                            doc_id = %msg.doc_id,
-                            collection_id = %msg.collection_id,
-                            source_peer = ?sender_peer,
-                            "Incoming head is covered by a newer durable sender/scope obligation"
-                        );
-                        Some(Ok(()))
-                    }
                     Ok(Admission::AtCapacity) => {
                         self.diagnostics.record_pending_dag_capacity_shed();
                         tracing::warn!(
@@ -586,7 +541,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                             durable_cap,
                             "Durable pending DAG registrations at capacity, rejecting PushLog DAG registration"
                         );
-                        Some(Err(Error::PendingDagCapacity { max: durable_cap }))
+                        Some(Error::PendingDagCapacity { max: durable_cap })
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -595,19 +550,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                             error = %error,
                             "Failed to persist pending DAG registration; nacking push"
                         );
-                        Some(Err(Error::Storage(format!(
+                        Some(Error::Storage(format!(
                             "failed to persist pending DAG registration: {error}"
-                        ))))
+                        )))
                     }
                 };
-                if let Some(outcome) = refusal {
+                if let Some(error) = refusal {
                     self.pending_dags.update(|pending| {
                         pending.remove(cid);
                         if let Some((old_root, old_dag)) = superseded.clone() {
                             pending.insert(old_root, old_dag);
                         }
                     });
-                    return outcome;
+                    return Err(error);
                 }
                 self.diagnostics
                     .observe_persisted_pending_dag_depth(self.persisted.len());
@@ -727,6 +682,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             let capacity = self.persisted_pending_capacity();
             let registration = Registration {
                 root: *cid,
+                parents: &[],
                 record: &record,
                 capacity,
             };
@@ -946,36 +902,104 @@ pub(super) mod tests {
         (cid, bytes)
     }
 
-    /// The third state that honours the contract: a head retired because a
-    /// newer one from the same sender scope is already registered. Nothing is
-    /// lost, the newer head carries the document forward, so nacking it
-    /// would put the sender in a retry loop over work already owned.
+    /// A head retires its scope's current head only when it links it as a
+    /// parent: fetching the new head fetches the old one, so the old one
+    /// stays reachable from a registration. A newer version that does not
+    /// link it retires nothing.
     #[tokio::test]
-    async fn a_head_superseded_by_a_newer_scope_head_is_acked() {
+    async fn a_head_retires_only_the_scope_head_it_links() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let peer_state = Arc::new(PeerStateTracker::new());
         let (manager, _events) = SyncManager::new(blockstore, peer_state, SyncConfig::default());
 
         let (old_root, old_bytes) = composite_with_priority(1, "old");
-        let (new_root, new_bytes) = composite_with_priority(2, "new");
-        let old = make_broadcast("doc123", old_root, old_bytes, "collection1");
-        let new = make_broadcast("doc123", new_root, new_bytes, "collection1");
+        let (new_root, new_bytes) = composite_over(2, "new", vec![old_root]);
+        let (unlinked_root, unlinked_bytes) = composite_with_priority(3, "unlinked");
+        for (root, bytes) in [
+            (old_root, old_bytes),
+            (new_root, new_bytes),
+            (unlinked_root, unlinked_bytes),
+        ] {
+            manager
+                .process_pushlog(
+                    &make_broadcast("doc123", root, bytes, "collection1"),
+                    Some("peer-1"),
+                    true,
+                    None,
+                )
+                .await
+                .expect("each head is acked");
+        }
 
-        manager
-            .process_pushlog(&old, Some("peer-1"), true, None)
-            .await
-            .expect("old head registers pending");
-        manager
-            .process_pushlog(&new, Some("peer-1"), true, None)
-            .await
-            .expect("newer head supersedes it");
-        assert_eq!(manager.pending_dag_cids(), vec![new_root]);
+        let mut pending = manager.pending_dag_cids();
+        pending.sort_unstable();
+        let mut expected = vec![new_root, unlinked_root];
+        expected.sort_unstable();
+        assert_eq!(
+            pending, expected,
+            "the linking head retires the old one; the unlinked one retires nothing"
+        );
+    }
 
-        manager
-            .assert_pushlog_left_durable_state(&old_root, &old, Some("peer-1"))
-            .await
-            .expect("the superseded head is covered, not lost");
+    fn composite_over(priority: u64, field_name: &str, parents: Vec<Cid>) -> (Cid, Vec<u8>) {
+        let (field_cid, _) = create_lww_block(field_name);
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema1".to_string(),
+                priority,
+                status: 1,
+            }),
+            parents,
+            vec![DAGLink::new(field_name, field_cid)],
+        );
+        let bytes = block.to_dag_cbor().expect("encode composite block");
+        let cid = block.generate_cid().expect("generate composite cid");
+        (cid, bytes)
+    }
+
+    /// Two heads of one document written concurrently on different peers
+    /// reach a hub, which forwards both under its own peer ID. Neither links
+    /// the other, so fetching one never fetches the other: each is its own
+    /// obligation, whatever their priorities and in either order.
+    #[tokio::test]
+    async fn sibling_heads_from_one_sender_are_both_retained() {
+        let (base, _) = composite_over(1, "base", vec![]);
+        let (left, left_bytes) = composite_over(2, "left", vec![base]);
+        let (right, right_bytes) = composite_over(2, "right", vec![base]);
+        let (higher, higher_bytes) = composite_over(3, "higher", vec![]);
+        let pairs = [
+            ((left, &left_bytes), (right, &right_bytes)),
+            ((right, &right_bytes), (left, &left_bytes)),
+            ((left, &left_bytes), (higher, &higher_bytes)),
+            ((higher, &higher_bytes), (left, &left_bytes)),
+        ];
+        for ((first, first_bytes), (second, second_bytes)) in pairs {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = Arc::new(DefraBlockstore::new(store, true));
+            let peer_state = Arc::new(PeerStateTracker::new());
+            let (manager, _events) =
+                SyncManager::new(blockstore, peer_state, SyncConfig::default());
+            for (root, bytes) in [(first, first_bytes), (second, second_bytes)] {
+                manager
+                    .process_pushlog(
+                        &make_broadcast("doc123", root, bytes.clone(), "collection1"),
+                        Some("hub"),
+                        true,
+                        None,
+                    )
+                    .await
+                    .expect("a sibling head is acked");
+            }
+            let mut pending = manager.pending_dag_cids();
+            pending.sort_unstable();
+            let mut expected = vec![first, second];
+            expected.sort_unstable();
+            assert_eq!(
+                pending, expected,
+                "an acked sibling head must stay registered until it merges"
+            );
+        }
     }
 
     /// The ack contract, checked at the boundary that answers the sender.

@@ -157,10 +157,23 @@ async fn register(
     record: &PersistedPendingDag,
     capacity: usize,
 ) -> Admission {
+    register_over(store, view, root, &[], record, capacity).await
+}
+
+/// Registers `root`, which links `parents`.
+async fn register_over(
+    store: &PendingDagStore<RegolithStore>,
+    view: &Arc<PersistedView>,
+    root: Cid,
+    parents: &[Cid],
+    record: &PersistedPendingDag,
+    capacity: usize,
+) -> Admission {
     store
         .register(
             Registration {
                 root,
+                parents,
                 record,
                 capacity,
             },
@@ -329,6 +342,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
                 .register(
                     Registration {
                         root,
+                        parents: &[],
                         record: &record,
                         capacity: 4,
                     },
@@ -343,7 +357,6 @@ async fn concurrent_registrations_never_exceed_the_cap() {
         match task.await.unwrap() {
             Admission::Registered => registered += 1,
             Admission::AtCapacity => {}
-            Admission::Covered => panic!("no root belongs to a scope"),
         }
     }
     assert_eq!(registered, 4);
@@ -351,19 +364,20 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     assert_eq!(view.len(), 4);
 }
 
-/// Within a sender scope the newer head retires the older one, takes over
-/// its slot even at the cap, and an older head that comes later is covered.
+/// Within a sender scope a head retires the current head it links as a
+/// parent and takes over its slot even at the cap. A head that does not link
+/// it, older or a sibling, keeps a record and a slot of its own.
 #[tokio::test]
-async fn a_newer_head_retires_the_older_one_and_takes_its_slot() {
+async fn a_head_retires_the_current_head_it_links_and_takes_its_slot() {
     let store = memory_store();
     let view = view();
-    let (old, new) = (cid(b"old"), cid(b"new"));
+    let (old, new, sibling) = (cid(b"old"), cid(b"new"), cid(b"sibling"));
     assert_eq!(
         register(&store, &view, old, &head(1), 1).await,
         Admission::Registered
     );
     assert_eq!(
-        register(&store, &view, new, &head(2), 1).await,
+        register_over(&store, &view, new, &[old], &head(2), 1).await,
         Admission::Registered
     );
     assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
@@ -371,42 +385,54 @@ async fn a_newer_head_retires_the_older_one_and_takes_its_slot() {
 
     assert_eq!(
         register(&store, &view, old, &head(1), 1).await,
-        Admission::Covered
+        Admission::AtCapacity,
+        "an older head the current one may not link needs a slot of its own"
     );
-    assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
-
-    assert!(store.remove(&new, &view).await.unwrap());
     assert_eq!(
-        register(&store, &view, old, &head(1), 1).await,
-        Admission::Registered,
-        "a discharged head leaves its scope without a current head"
+        register_over(&store, &view, sibling, &[old], &head(2), 3).await,
+        Admission::Registered
+    );
+    assert_eq!(
+        register(&store, &view, old, &head(1), 3).await,
+        Admission::Registered
+    );
+    assert_eq!(
+        sorted_roots(store.load_all().await.unwrap()),
+        sorted_roots(vec![(old, head(1)), (new, head(2)), (sibling, head(2))]),
+        "a sibling never retires the current head, and a lower head is never covered"
     );
 }
 
-/// Concurrent heads of one sender scope settle to the newest: the scope's
-/// durable head is read and written by every registration of the scope, so
-/// the engine orders them and the store never keeps an older head beside it.
+/// Concurrent siblings of one sender scope that all link its current head:
+/// the scope's durable head is read and written by every registration of the
+/// scope, so the engine orders them. The first to commit retires the parent;
+/// every sibling keeps its record, and a merge head that links them all
+/// retires only the current one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
+async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
     let store = Arc::new(memory_store().with_max_txn_retries(64));
     let view = view();
+    let base = cid(b"head-1");
     assert_eq!(
-        register(&store, &view, cid(b"head-1"), &head(1), 8).await,
+        register(&store, &view, base, &head(1), 9).await,
         Admission::Registered
     );
+    let siblings: Vec<Cid> = (2..10u32)
+        .map(|index| cid(format!("head-{index}").as_bytes()))
+        .collect();
     let mut tasks = Vec::new();
-    for priority in 2..10u64 {
+    for root in siblings.iter().copied() {
         let store = Arc::clone(&store);
         let view = Arc::clone(&view);
         tasks.push(tokio::spawn(async move {
-            let root = cid(format!("head-{priority}").as_bytes());
-            let record = head(priority);
+            let record = head(2);
             store
                 .register(
                     Registration {
                         root,
+                        parents: &[base],
                         record: &record,
-                        capacity: 8,
+                        capacity: 9,
                     },
                     &view,
                 )
@@ -415,11 +441,21 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
         }));
     }
     for task in tasks {
-        assert_ne!(task.await.unwrap(), Admission::AtCapacity);
+        assert_eq!(task.await.unwrap(), Admission::Registered);
     }
-    let newest = cid(b"head-9");
-    assert_eq!(store.load_all().await.unwrap(), vec![(newest, head(9))]);
-    assert_eq!(view.roots(), vec![newest]);
+    let mut expected = siblings.clone();
+    expected.sort();
+    assert_eq!(sorted_roots(store.load_all().await.unwrap()), expected);
+
+    let merge = cid(b"merge");
+    assert_eq!(
+        register_over(&store, &view, merge, &siblings, &head(3), 9).await,
+        Admission::Registered
+    );
+    let roots = sorted_roots(store.load_all().await.unwrap());
+    assert_eq!(roots.len(), siblings.len());
+    assert!(roots.contains(&merge) && !roots.contains(&base));
+    assert_eq!(view.len(), siblings.len());
 }
 
 /// A quarantine moves the root out of the live keyspace in one transaction,
