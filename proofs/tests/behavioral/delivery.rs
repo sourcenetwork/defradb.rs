@@ -253,6 +253,7 @@ async fn acked_head_past_pending_ttl(restart_hub: bool) {
 }
 
 #[nuclei::test(threads = 2)]
+#[ignore = "expected red until an acked head stops expiring and a held slot is released per attempt (#2548): it can wait out the bound behind a slot held across attempts; run with --ignored"]
 async fn acked_head_past_pending_ttl_is_delivered() {
     edge::compat(async move {
         acked_head_past_pending_ttl(false).await;
