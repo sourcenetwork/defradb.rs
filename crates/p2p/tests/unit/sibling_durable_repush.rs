@@ -111,3 +111,35 @@ async fn siblings_keep_their_records_and_a_rotated_sibling_is_acked_on_repush() 
     );
     assert_eq!(manager.pending_dag_cids(), vec![next]);
 }
+
+/// The resync sweep lets a durable root into a full map only when its block
+/// links the in-memory head of its scope, which it then replaces. A sibling
+/// of that head, newer or not, waits for an entry to free.
+#[tokio::test]
+async fn a_restored_root_fits_a_full_map_only_by_linking_its_scope_head() {
+    let manager = test_manager_with_config(SyncConfig {
+        max_pending_dags: 1,
+        ..Default::default()
+    });
+    let (base, _) = head_over("base", 1, vec![]);
+    let (current, _) = head_over("current", 2, vec![base]);
+    let (child, _) = head_over("child", 3, vec![current]);
+    let (sibling, _) = head_over("sibling", 3, vec![base]);
+
+    let mut entry = pending_dag_from("doc", Some("hub"), Instant::now());
+    entry.head_priority = Some(2);
+    assert!(manager.insert_pending_dag(current, entry));
+
+    let record = PersistedPendingDag {
+        doc_id: "doc".to_string(),
+        collection_id: "collection".to_string(),
+        head_priority: Some(3),
+        creator: "creator".to_string(),
+        source_peer: Some("hub".to_string()),
+        alternate_providers: Vec::new(),
+        is_explicit_replicator: false,
+        explicit_replay_authorization: None,
+    };
+    assert!(manager.restored_root_fits(child, &[current], &record));
+    assert!(!manager.restored_root_fits(sibling, &[base], &record));
+}

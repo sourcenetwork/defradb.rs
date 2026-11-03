@@ -212,6 +212,69 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
     }
 
+    /// A peer's share of the durable cap, as `max_pending_dags_per_peer` is
+    /// its share of the map: the durable registrations it may hold at once.
+    pub fn max_persisted_pending_per_peer(&self) -> usize {
+        (self.persisted_pending_capacity() / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
+    }
+
+    /// Whether registering this head durably keeps its peer within its
+    /// durable share: the head is its scope's durable current head or links
+    /// it as a parent, taking over its record, or the peer holds fewer records
+    /// than its share. The count is the view's, so registrations of one peer
+    /// that run at once can pass it together; the store's slots still bound
+    /// the total.
+    pub(super) fn durable_share_admits(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        self.persisted.refreshes_or_supersedes(
+            root_cid,
+            parents,
+            source_peer,
+            collection_id,
+            doc_id,
+            head_priority,
+        ) || self.persisted.source_count(source_peer) < self.max_persisted_pending_per_peer()
+    }
+
+    /// Whether a head the map has no place for can be acknowledged on a
+    /// durable record alone: a store is installed, has a free slot or the
+    /// head takes over its scope's, and the head's peer is within its share.
+    pub(super) fn admits_durable_only(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        self.pending_store().is_some()
+            && (self.persisted.len() < self.persisted_pending_capacity()
+                || self.persisted.refreshes_or_supersedes(
+                    root_cid,
+                    parents,
+                    source_peer,
+                    collection_id,
+                    doc_id,
+                    head_priority,
+                ))
+            && self.durable_share_admits(
+                root_cid,
+                parents,
+                source_peer,
+                collection_id,
+                doc_id,
+                head_priority,
+            )
+    }
+
     /// Whether this side owns the root's recovery for a sender: its pushed or
     /// restored entry is registered, or a durable record holds it while it
     /// has no entry (it gave its entry up past the cap, or the node
@@ -1036,6 +1099,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let records = self.records_after_resync_cursor(records);
 
         let mut restored = 0usize;
+        let mut waiting = 0usize;
         let mut last_admitted = None;
         for (root_cid, mut record) in records {
             let now = Instant::now();
@@ -1077,19 +1141,40 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 continue;
             }
 
-            let (missing, decoded_head_priority, parents): (Vec<Cid>, Option<u64>, Vec<Cid>) =
-                match self.blockstore.get(&root_cid).await {
-                    Ok(Some(data)) => {
-                        let block = defra_core::Block::from_dag_cbor(&data).ok();
-                        let priority = block.as_ref().map(|block| block.delta.priority());
-                        let parents = block.and_then(|block| block.heads).unwrap_or_default();
-                        let missing = find_all_missing_links(self.blockstore.as_ref(), &data)
-                            .await
-                            .unwrap_or_else(|_| vec![root_cid]);
-                        (missing, priority, parents)
-                    }
-                    _ => (vec![root_cid], None, Vec::new()),
-                };
+            // A root the map has no place for keeps its record for a later
+            // sweep without its block being read or its DAG walked: past the
+            // cap such roots are routine (heads acknowledged on their durable
+            // record alone). Only a root whose scope has an in-memory head it
+            // may replace is read, for the heads it links.
+            if !self.restored_root_may_fit(root_cid, &record) {
+                waiting += 1;
+                continue;
+            }
+
+            // The root block names the heads it links, which decide whether it
+            // takes over its scope's in-memory head.
+            let data = match self.blockstore.get(&root_cid).await {
+                Ok(Some(data)) => Some(data),
+                _ => None,
+            };
+            let block = data
+                .as_deref()
+                .and_then(|data| defra_core::Block::from_dag_cbor(data).ok());
+            let decoded_head_priority = block.as_ref().map(|block| block.delta.priority());
+            let parents = block.and_then(|block| block.heads).unwrap_or_default();
+
+            // A root that does not link that head waits too, its DAG unwalked.
+            if !self.restored_root_fits(root_cid, &parents, &record) {
+                waiting += 1;
+                continue;
+            }
+
+            let missing = match &data {
+                Some(data) => find_all_missing_links(self.blockstore.as_ref(), data)
+                    .await
+                    .unwrap_or_else(|_| vec![root_cid]),
+                None => vec![root_cid],
+            };
             let head_priority = decoded_head_priority.or(record.head_priority);
 
             // One-way upgrade for records written before scope-current
@@ -1192,10 +1277,61 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             self.pending_resync_cursor.store(last_admitted);
         }
 
+        if waiting > 0 {
+            tracing::debug!(
+                waiting,
+                max = self.max_pending_dags,
+                "Durable pending DAG roots wait for an in-memory entry"
+            );
+        }
         if restored > 0 {
             tracing::info!(restored, "restored persisted pending DAG registrations");
         }
         restored
+    }
+
+    /// Whether the map could take a durable root that has no entry, before its
+    /// block is read: `restored_root_fits` with no parents, or the root's
+    /// scope has an in-memory head, which the root replaces if it links it.
+    fn restored_root_may_fit(&self, root_cid: Cid, record: &PersistedPendingDag) -> bool {
+        self.restored_root_fits(root_cid, &[], record)
+            || self.pending_dags.read(|pending| {
+                pending.has_scope_head(
+                    root_cid,
+                    record.source_peer.as_deref(),
+                    &record.collection_id,
+                    &record.doc_id,
+                    record.head_priority,
+                )
+            })
+    }
+
+    /// Whether the map could take a durable root that has no entry: it has a
+    /// place and the root's peer is within its quota, or the root links the
+    /// in-memory head of its scope as a parent and replaces it. A record
+    /// written without a priority may replace one only once its block is
+    /// read, so it is let through.
+    fn restored_root_fits(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        record: &PersistedPendingDag,
+    ) -> bool {
+        record.head_priority.is_none()
+            || self.pending_dags.read(|pending| {
+                (pending.len() < self.max_pending_dags
+                    && record.source_peer.as_deref().is_none_or(|peer| {
+                        pending.source_count(peer) < self.max_pending_dags_per_peer()
+                    }))
+                    || pending.scope_head_is_refresh_or_newer(
+                        root_cid,
+                        parents,
+                        record.source_peer.as_deref(),
+                        &record.collection_id,
+                        &record.doc_id,
+                        record.head_priority,
+                    )
+            })
     }
 
     /// The records in key order (the store's), starting after the root the

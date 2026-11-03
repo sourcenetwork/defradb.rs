@@ -29,13 +29,15 @@ async fn pending_dags(hub_api: &str) -> u64 {
 
 /// With `MAX_PENDING_DAGS = 8` the per-peer quota is `max(8/4, 1) = 2`, well
 /// below the global cap. One noisy pusher floods head-only writes it never lets
-/// resolve (it is frozen), so it can occupy at most its 2-slot quota; a healthy
-/// pusher filling its own two-slot quota must still land every document.
+/// resolve (it is frozen), so it can occupy at most its 2-slot quota of the map
+/// (and its 8-record share of the durable store, the rest acknowledged on their
+/// records alone); a healthy pusher filling its own two-slot quota must still
+/// land every document.
 ///
 /// Anti-vacuity: only the noisy peer is active before the freeze, and the
 /// global cap (8) can never fill from a single peer capped at 2 — so any
-/// "Pending DAGs at capacity" rejection the hub logs is necessarily the
-/// per-peer quota, and the noisy peer's own backlog stays unmerged.
+/// "Pending DAGs at capacity" rejection the hub logs is necessarily a per-peer
+/// limit, and the noisy peer's own backlog stays unmerged.
 #[tokio::test]
 async fn per_peer_quota_prevents_noisy_pusher_starvation() {
     std::env::set_var("DEFRA_P2P_MAX_PENDING_DAGS", "8");

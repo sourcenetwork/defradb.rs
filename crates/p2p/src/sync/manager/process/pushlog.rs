@@ -1,6 +1,15 @@
 //! PushLog processing and block storage.
 //!
-//! At the pending-DAG cap a push is acked only when it costs no new slot: a
+//! A new head takes an entry in the bounded in-memory pending map and a
+//! durable record. When the map has no place for it and a durable store is
+//! installed, it takes the durable record alone and is acked; the resync sweep
+//! brings it into the map once an entry frees or a root that spent its
+//! dispatches gives one up. Each peer holds at most its share of the durable
+//! records (`max_persisted_pending_per_peer`): a head that would take its peer
+//! past it is nacked, as is one the full durable store has no slot for, so the
+//! sender keeps its marker. Without a store the map is the only tier.
+//!
+//! When neither tier has a place, a push is acked only when it costs no new slot: a
 //! root already registered or persisted, a scope head that refreshes the
 //! current root or links it as a parent (which it evicts), and a descendant a
 //! registered root awaits. Everything else is nacked so the
@@ -281,6 +290,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // would otherwise drop them for good. A descendant carries no such
         // obligation of its own: `can_process_pushlog` admits it only while a
         // registered root waits on it, so unawaited bytes stay inside the cap.
+        // A head the map has no place for still enters while a durable record
+        // alone can own it.
         if !self.can_process_pushlog(cid)
             && !self.persisted.contains(cid)
             && !self.scope_head_is_refresh_or_newer(
@@ -291,6 +302,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 &msg.doc_id,
                 head_priority,
             )
+            && !(announced_block_kind != AnnouncedBlockKind::Descendant
+                && self.admits_durable_only(
+                    *cid,
+                    announced_block_kind.parents(),
+                    sender_peer,
+                    &msg.collection_id,
+                    &msg.doc_id,
+                    head_priority,
+                ))
         {
             self.diagnostics.record_pending_dag_capacity_shed();
             tracing::warn!(
@@ -430,10 +450,38 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 return Ok(());
             }
 
+            // A peer holds at most its share of the durable records, whichever
+            // tier would hold this head: at its share the head is nacked and
+            // the sender keeps its marker.
+            if self.pending_store().is_some()
+                && !self.durable_share_admits(
+                    *cid,
+                    announced_block_kind.parents(),
+                    sender_peer,
+                    &msg.collection_id,
+                    &msg.doc_id,
+                    head_priority,
+                )
+            {
+                let max = self.max_persisted_pending_per_peer();
+                self.diagnostics.record_pending_dag_capacity_shed();
+                tracing::warn!(
+                    cid = %cid,
+                    doc_id = %msg.doc_id,
+                    collection_id = %msg.collection_id,
+                    source_peer = ?sender_peer,
+                    max_persisted_per_peer = max,
+                    "Pending DAGs at capacity, rejecting PushLog DAG registration"
+                );
+                return Err(Error::PendingDagCapacity { max });
+            }
+
             // Track this DAG as pending (enforces TTL eviction, capacity, and
             // the retirement of the scope's current head when this one links it).
+            // With a durable store, a head the map has no place for is
+            // registered on its record alone (`resident` false).
             let inserted_at = Instant::now();
-            let superseded = {
+            let (superseded, resident) = {
                 use super::pending_dag::PendingDagAdmission;
                 let admission = self.try_insert_pending_dag(
                     *cid,
@@ -464,32 +512,41 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 // Report the limit that actually tripped so the nack and its
                 // WARN log agree (the global cap vs the smaller per-peer quota).
-                let admitted = match admission {
-                    PendingDagAdmission::Admitted { superseded } => Ok(*superseded),
-                    PendingDagAdmission::GlobalCapacity => Err(self.max_pending_dags),
-                    PendingDagAdmission::PeerQuota { max_per_peer } => Err(max_per_peer),
+                let rejected_max = match &admission {
+                    PendingDagAdmission::Admitted { .. } => None,
+                    PendingDagAdmission::GlobalCapacity => Some(self.max_pending_dags),
+                    PendingDagAdmission::PeerQuota { max_per_peer } => Some(*max_per_peer),
                 };
-                match admitted {
-                    Ok(superseded) => superseded,
-                    Err(max) => {
-                        self.diagnostics.record_pending_dag_capacity_shed();
-                        // The block is stored but its DAG completion is not
-                        // tracked. This must surface as an error: a success
-                        // reply deletes the pusher's retry record, silently
-                        // losing the document. The reply seams map this typed
-                        // error to the at-capacity nack so the pusher retains
-                        // and retries it.
-                        tracing::warn!(
+                if let Some(max) = rejected_max.filter(|_| self.pending_store().is_none()) {
+                    self.diagnostics.record_pending_dag_capacity_shed();
+                    // The block is stored but its DAG completion is not
+                    // tracked. This must surface as an error: a success reply
+                    // deletes the pusher's retry record, silently losing the
+                    // document. The reply seams map this typed error to the
+                    // at-capacity nack so the pusher retains and retries it.
+                    tracing::warn!(
+                        cid = %cid,
+                        doc_id = %msg.doc_id,
+                        collection_id = %msg.collection_id,
+                        source_peer = ?sender_peer,
+                        missing_count = missing.len(),
+                        max,
+                        max_per_peer = self.max_pending_dags_per_peer(),
+                        "Pending DAGs at capacity, rejecting PushLog DAG registration"
+                    );
+                    return Err(Error::PendingDagCapacity { max });
+                }
+                match admission {
+                    PendingDagAdmission::Admitted { superseded } => (*superseded, true),
+                    PendingDagAdmission::GlobalCapacity | PendingDagAdmission::PeerQuota { .. } => {
+                        tracing::debug!(
                             cid = %cid,
                             doc_id = %msg.doc_id,
-                            collection_id = %msg.collection_id,
                             source_peer = ?sender_peer,
-                            missing_count = missing.len(),
-                            max,
-                            max_per_peer = self.max_pending_dags_per_peer(),
-                            "Pending DAGs at capacity, rejecting PushLog DAG registration"
+                            max = ?rejected_max,
+                            "Pending DAG map has no place; registering the head on its durable record alone"
                         );
-                        return Err(Error::PendingDagCapacity { max });
+                        (None, false)
                     }
                 }
             };
@@ -549,6 +606,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     }
                 };
                 if let Some(error) = refusal {
+                    if !resident {
+                        return Err(error);
+                    }
                     // Undo only what is still this registration's: its entry,
                     // unless another replaced it, and the head it retired, if
                     // that head kept its durable record and has no entry.
@@ -585,18 +645,22 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     return Ok(());
                 }
             }
-            self.mark_pending_dag_recovery_registered(cid, inserted_at);
+            if resident {
+                self.mark_pending_dag_recovery_registered(cid, inserted_at);
+            }
 
             // Registration ends after the durable obligation is made due.
             // The #1123 per-root clock is the sole fetch dispatcher: waiting
             // here to enqueue a DagNeedsFetch event retains the transport
             // reply behind merge/fetch work. A successful reply is already
             // honest because the durable record, not an in-flight fetch task,
-            // owns completion from this point.
+            // owns completion from this point. A root on its record alone
+            // waits for the resync sweep to give it an entry.
             tracing::debug!(
                 cid = %cid,
                 doc_id = %msg.doc_id,
                 collection_id = %msg.collection_id,
+                resident,
                 "Pending DAG durably registered and left due for receiver clock"
             );
         }
