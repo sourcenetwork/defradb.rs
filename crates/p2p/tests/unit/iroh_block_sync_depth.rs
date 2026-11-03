@@ -31,7 +31,7 @@ async fn block_sync_sends_the_receivers_depth_cut() {
                 tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
             let root = cid::Cid::new_v1(0x71, Code::Sha2_256.digest(b"block"));
             let serve_task = tokio::spawn(serve_capturing(provider_endpoint.clone(), root));
-            let cache = new_connection_cache(GossipHandle::new());
+            let cache = new_unmanaged_connection_cache(GossipHandle::new());
             let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
             let peer_map = Arc::new(SharedPeerMap::new());
             let provider = PeerId::new(provider_endpoint.id().to_string());
