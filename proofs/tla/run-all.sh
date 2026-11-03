@@ -144,6 +144,10 @@ RUNS=(
   "MC_RetryRegistrationFence_Red_NoEpoch.cfg RetryRegistrationFence.tla RED"
   "MC_RetryRegistrationFence_Red_NoOrder.cfg RetryRegistrationFence.tla RED"
   "MC_RetryRegistrationFence_Red_FanOutAbort.cfg RetryRegistrationFence.tla RED" # first rejected peer aborts the fan-out (INV_FanOutPeerLocal)
+  "MC_RetrySchedule_Green.cfg MC_RetrySchedule_Common.tla GREEN" # a live ack restarts the peer clock at the first rung; nothing without a delivery does
+  "MC_RetrySchedule_Red_KeepRung.cfg MC_RetrySchedule_Common.tla RED" # old rule: a live ack leaves the escalated clock (INV_DeliveredPeerDueAtFirstRung)
+  "MC_RetrySchedule_Red_RegisterRestarts.cfg MC_RetrySchedule_Common.tla RED" # a failed live push restarts the clock of a peer that keeps failing (INV_SilentPeerBacksOff)
+  "MC_RetrySchedule_Red_ActivateRestarts.cfg MC_RetrySchedule_Common.tla RED" # a reconnect restarts the clock of a peer that keeps failing (INV_SilentPeerBacksOff)
   "MC_CollectionVersionOCC_Green.cfg CollectionVersionOCC.tla GREEN" # schema-version dependency rejects stale writer
   "MC_CollectionVersionOCC_Red_NoValidation.cfg CollectionVersionOCC.tla RED" # stale schema-dependent write is admitted
   "MC_StatementAtomicity_Green.cfg StatementAtomicity.tla GREEN" # statement failure/cancellation restores only its staged effects before next op/commit

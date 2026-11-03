@@ -31,6 +31,7 @@ The model proves:
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
+| `RetrySchedule.restart_rung_le_one` / `restart_never_later` / `restart_within_first_rung` / `restart_respects_backpressure` / `bump_climbs` | A delivery returns a peer's retry clock to the first rung at most, never later than its deadline, and never before the receiver's backpressure deadline; a failed pass climbs one rung. | `crates/storage/src/stores/retry_info.rs` |
 | `ProviderHealth.rank_perm` / `rank_keeps_healthy_source_first` / `rank_all_healthy` / `next_delay_in_range` / `stale_starts_over` / `forget_keeps_fresh` / `forget_drops_stale` | Ranking a root's fetch providers only reorders them and keeps a healthy announcer first; a fast-failure cool-down stays within 2..30 s, starts over once stale, and pruning drops exactly the stale entries. | `crates/p2p/src/sync/coordinator/provider_health.rs` |
 | `Arbitration.roll_le_bound` / `troll_le_bound` / `record_first` / `troll_full` / `iter_monotone_up` / `iter_stays_below` / `decay_geometric` / `troll_decay_up` / `troll_decay_down` / `dither_mean` / `expected_useful_le` | The arbitration estimators stay within what they were fed (no overflow), take their first sample as is, approach a steady input without overshoot, decay geometrically (per sample, or by `2^(-Δt/H)` per unit of time), move by their exact share on average under the dither (so a sub-unit share never freezes them), and the expected time to a useful fetch is at most 64 fetches' cost. | `crates/p2p/src/sync/arbitration/` |
 | `Arbitration.bucket_order_any_score` / `bucket_apart_keeps_order` / `inversion_within_bucket` / `same_score_keeps_due_order` / `rearmed_root_goes_behind` | Ordering due roots by (1 s bucket, score, due time) keeps bucket order for any score: a root is passed only by roots due less than one bucket after it (`ACT_AttemptsStartInDueOrder` at bucket resolution), and a root re-armed a backoff of at least a bucket still queues behind (`ACT_EndedAttemptQueuesBehind`). | `crates/p2p/src/sync/arbitration/due_order.rs` |
@@ -56,6 +57,11 @@ Retry ladder (`RetrySchedule.Ladder`):
 - `RetrySchedule.cap_mem`, `cap_positive`: `[propext]`
 - `RetrySchedule.cap_follows_ladder`, `cap_repeats_last`: `[propext, Quot.sound]`
 - `RetrySchedule.default_accepted`: `[propext, Quot.sound]`
+
+Retry clock after a delivery (`RetrySchedule.Delivery`):
+
+- `RetrySchedule.restart_rung_le_one`, `restart_never_later`, `restart_within_first_rung`, `restart_respects_backpressure`: `[propext, Quot.sound]`
+- `RetrySchedule.bump_climbs`: *(no axioms)*
 
 Convergence:
 

@@ -464,6 +464,26 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // One retry clock per peer serves all of its markers. An acknowledged
+        // delivery returns it to the first rung, never later than it was; a
+        // new marker and a reconnect keep the rung, so a peer that keeps
+        // failing climbs the ladder however often local writes touch it.
+        family: "Retry input and marker fencing",
+        name: "INV_DeliveredPeerDueAtFirstRung / INV_SilentPeerBacksOff — a delivery restarts the peer clock, nothing else does",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule; crates/storage/src/stores/peerstore.rs PeerstoreRetryAttempt::{CompleteMarker, Reschedule, Restart, Activate}, RegisterScopeMarkerAttempt; crates/p2p-adapter/src/retry.rs run_retry_pass, record_failure",
+        model_ref: "MC_RetrySchedule_{Green,Red_KeepRung,Red_RegisterRestarts,Red_ActivateRestarts}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Retry input and marker fencing",
+        name: "restart_rung_le_one / restart_never_later / restart_within_first_rung / restart_respects_backpressure / bump_climbs",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule",
+        model_ref: "RetrySchedule (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Collection schema-version OCC",
         name: "INV_NoStaleSchemaWrite — a writer cannot commit against an obsolete structural version",
         axis: Tla,

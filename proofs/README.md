@@ -54,7 +54,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
 | DiskANN back-edges in place | Lean | db-index (vector) |
-| Retry input and marker fencing | TLA+ | db, query, storage, p2p, p2p-adapter |
+| Retry input and marker fencing | TLA+ & Lean | db, query, storage, p2p, p2p-adapter |
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |
 | Peer connection observation | TLA+ / Lean | p2p |
@@ -279,6 +279,15 @@ each replicator. `INV_FanOutPeerLocal` requires that a gone, re-incarnated,
 covered or failed peer is decided on its own, and that every registered peer
 is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
 finite model does not verify the Rust implementation.
+
+`RetrySchedule.tla` models the one retry clock a sender keeps per peer. An
+acknowledged delivery returns it to the first rung, never later than it was, so
+a push that fails after a live acknowledgement is not left behind the rung an
+outage charged; a new marker and a reconnect keep the rung, so a peer that keeps
+failing still climbs the ladder. Its negative variants keep the escalated clock
+after a delivery, or restart it on a new marker or a reconnect.
+`RetrySchedule.Delivery` proves the restart's arithmetic in Lean. Time is
+abstract and which marker a bounded pass reaches first is out of scope.
 
 The adapter-owned `Ssi.tla` and `SsiRange.tla` families and their eight TLC
 configurations are retired. They modeled the removed `ConflictTracker`, including
