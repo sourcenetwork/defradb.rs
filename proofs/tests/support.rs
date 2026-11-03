@@ -31,6 +31,19 @@ pub fn release_binary() -> BinarySource {
     BinarySource::Path(root.join("target/debug/defra"))
 }
 
+/// The iroh build of the artifact under test, for the families that run over
+/// the iroh transport. `DEFRA_CONFORMANCE_IROH_BINARY` overrides the default,
+/// `target/debug/defra`, which must then be built with `--features iroh`.
+pub fn iroh_binary() -> BinarySource {
+    let root = workspace_root();
+    init_harness_env(&root);
+
+    if let Some(path) = std::env::var_os("DEFRA_CONFORMANCE_IROH_BINARY") {
+        return BinarySource::Path(PathBuf::from(path));
+    }
+    BinarySource::Path(root.join("target/debug/defra"))
+}
+
 pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
