@@ -11,4 +11,5 @@ mod schema;
 mod sync;
 mod truncate;
 mod user_writes;
+mod verify;
 mod window;
