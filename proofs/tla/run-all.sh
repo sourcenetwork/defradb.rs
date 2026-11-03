@@ -509,6 +509,13 @@ RUNS=(
   "MC_P2PDelivery_Red_F5_FanoutAbort.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration on the hub drops the intent of the peer not registered yet (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F5_FailedDropped.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration's own intent is never retried (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F27_HalfRegistered.cfg MC_P2PDelivery_E2E.tla RED" # F27, main only (the rc1 pin adopts): the accepting side sends on a connection its dialer does not serve (INV_ReverseBorrowServed)
+  "MC_P2PDelivery_Trace_TwoNode.cfg MC_P2PDelivery_Trace_TwoNode.tla GREEN" # a recorded run, a -> b, create and update: every event is a model step and the run settles
+  "MC_P2PDelivery_Trace_HubRelay.cfg MC_P2PDelivery_Trace_HubRelay.tla GREEN" # a recorded run, a -> h -> b: the hub's merge lays its marker for b
+  "MC_P2PDelivery_Trace_Red_Unscheduled.cfg MC_P2PDelivery_Trace_Mutants.tla RED" # the recorded run without its dispatches: a fetch with no slot (deadlock at the Acquire)
+  "MC_P2PDelivery_Trace_Red_PushBeforeMarker.cfg MC_P2PDelivery_Trace_Mutants.tla RED" # a push admitted before the sender's marker exists (deadlock at the Admit)
+  "MC_P2PDelivery_Trace_Red_ExpireAfterAck.cfg MC_P2PDelivery_Trace_Mutants.tla RED" # #0b: the TTL drops an acknowledged root and its record (deadlock at the Expire)
+  "MC_P2PDelivery_Trace_Red_CoveredByNothing.cfg MC_P2PDelivery_Trace_Mutants.tla RED" # F1 class: a head acked as covered that no record brings (deadlock at the Admit)
+  "MC_P2PDelivery_Trace_Red_Unsettled.cfg MC_P2PDelivery_Trace_Mutants.tla RED" # the run ends with an intent never registered (deadlock past the end)
   "MC_VectorLinks_Green.cfg VectorLinks.tla GREEN"
   "MC_VectorLinks_Red_Puts.cfg VectorLinks.tla RED"
   "MC_VectorLinks_Red_Prune.cfg VectorLinks.tla RED"

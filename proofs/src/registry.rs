@@ -1905,6 +1905,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The binary built with `model-trace` logs one event per model
+        // action; TLC replays a recorded run through the model under the
+        // fixed design's knobs. Two recorded runs and five planted mutants
+        // run in run-all.sh; the live replay needs DEFRA_TRACE_BINARY and a
+        // JDK, and runs in the Conformance job.
+        family: "P2P delivery liveness",
+        name: "TRACE_P2PDelivery — a recorded run of the binary is a behaviour of P2PDelivery: every logged event is a model step from the state the earlier ones left, the replayed states keep INV_ObligationOwned and INV_Bounded, and the run settles",
+        axis: Tla,
+        anchor: "crates/p2p/src/model_trace.rs Event; proofs/src/model_trace.rs Trace::abstracted, replay; proofs/tests/behavioral/model_trace.rs two_node_push_replays_through_p2p_delivery, hub_relay_replays_through_p2p_delivery",
+        model_ref: "Trace_P2PDelivery.tla; MC_P2PDelivery_Trace_{TwoNode,HubRelay,Red_*}.cfg",
+        tiers: &[Behavioral],
+    },
+    Property {
         // The witnesses are integration tests outside this conformance
         // binary: p2p_admission_restart and issue1154_repro. Assumes a pending
         // store is installed: without one the registration, and so the ack, is

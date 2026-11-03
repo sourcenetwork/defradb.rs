@@ -429,6 +429,12 @@ impl DagFetchLimiter {
         }
     }
 
+    /// Whether a fetch that holds its source peer's permit gets a global one
+    /// without waiting.
+    pub(crate) fn has_global_permit(&self) -> bool {
+        self.global.available_permits() > 0
+    }
+
     fn close(&self) {
         self.closed.set();
     }
@@ -1186,6 +1192,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 continue;
             }
 
+            if dag.dispatches > 0 {
+                crate::model_trace!(BecomeDue {
+                    head: root_cid.to_string(),
+                });
+            }
+            crate::model_trace!(Schedule {
+                doc: &dag.doc_id,
+                head: root_cid.to_string(),
+                mode: if self.runtime.dag_fetch_limiter.has_global_permit() {
+                    crate::model_trace::SlotMode::Run
+                } else {
+                    crate::model_trace::SlotMode::Wait
+                },
+            });
             if !self
                 .manager
                 .dispatch(self.pending_dag_dispatch(root_cid, &dag, peer_permit))

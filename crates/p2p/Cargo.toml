@@ -103,6 +103,9 @@ blake3 = { version = "1", optional = true }
 
 [features]
 default = []
+# Log abstract delivery events for trace validation against
+# proofs/tla/P2PDelivery.tla (`model_trace`). Off in every shipped build.
+model-trace = []
 test-utils = ["libp2p-transport"]
 libp2p-transport = [
     "dep:bitswap",

@@ -239,6 +239,11 @@ pub(super) async fn handle_connection_streams(
     super::endpoint_rpc::evict_connection(&context.connection_cache, remote_id, &connection);
     let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
+    if fully_disconnected {
+        crate::model_trace!(Disconnect {
+            peer: peer_id.to_string(),
+        });
+    }
 
     if fully_disconnected
         && context

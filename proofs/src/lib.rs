@@ -15,4 +15,5 @@
 
 pub mod lean_contract;
 pub mod matrix;
+pub mod model_trace;
 pub mod registry;

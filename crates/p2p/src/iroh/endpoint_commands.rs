@@ -756,6 +756,10 @@ async fn handle_dial(
 
     if admitted {
         ctx.resources.gossip.connected(endpoint_id, &connection);
+        crate::model_trace!(Reconnect {
+            peer: peer_id.to_string(),
+            mode: crate::model_trace::ConnMode::Full,
+        });
     }
 
     // Keep connection alive by spawning a handler for incoming streams.
