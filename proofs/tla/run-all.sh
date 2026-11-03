@@ -405,6 +405,7 @@ RUNS=(
   "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # failed superseded active head re-enters persisted retry
   "MC_PushCoalescing_Green_Siblings.cfg MC_PushCoalescing_Common.tla GREEN" # F1: a live ack clears the marker only for the whole frontier -> siblings reach the ladder
   "MC_PushCoalescing_Red_SiblingClear.cfg MC_PushCoalescing_Common.tla RED" # F1: the newest generation's ack clears the marker over a retired sibling (INV_ClearedScopeDelivered)
+  "MC_PushCoalescing_Red_UnfencedAck.cfg MC_PushCoalescing_Common.tla RED" # F1: a sibling's live ack reported without its generation overwrites the ladder's acked frontier (INV_AckRecordCurrent)
   "MC_PendingDagRestart_Green.cfg MC_PendingDagRestart_Common.tla GREEN" # #1099: pending-DAG registrations persisted + restored after crash -> acks stay backed, all docs merge
   "MC_PendingDagRestart_Red_ProcessLocal.cfg MC_PendingDagRestart_Common.tla RED" # process-local registrations: hub crash after success-ack -> silent permanent loss (INV_AckBacked)
   "MC_SyncOwnership_Green.cfg SyncOwnership.tla GREEN" # #1116 stage 3: one head hint transfers durable completion ownership to the receiver

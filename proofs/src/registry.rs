@@ -642,14 +642,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A live ack clears its scope's marker only when the acked head is the
-        // scope's whole frontier; with a sibling beside it, the retry ladder
-        // sends every current head. Witnessed by access_tests.rs
+        // scope's whole frontier; with a sibling beside it, the ack is not
+        // reported and the retry ladder sends every current head and records
+        // them as acked. Witnessed by access_tests.rs
         // live_ack_of_a_sibling_head_does_not_clear_the_scope_marker.
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_OneLiveHead / INV_NoStaleRetry / INV_NewestRetained / INV_ClearedScopeDelivered: latest-head coalescing, and a cleared marker never hides an undelivered sibling",
+        name: "INV_OneLiveHead / INV_NoStaleRetry / INV_NewestRetained / INV_ClearedScopeDelivered / INV_AckRecordCurrent: latest-head coalescing, a cleared marker never hides an undelivered sibling, and its acked-heads record is the current frontier",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier; crates/storage/src/stores/peerstore.rs complete_retry_scope",
-        model_ref: "MC_PushCoalescing_{Green,Green_Siblings,Red_AppendEvery,Red_StaleRetry,Red_SiblingClear}.cfg",
+        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier; crates/storage/src/stores/peerstore.rs complete_retry_scope, record_acknowledged_heads",
+        model_ref: "MC_PushCoalescing_{Green,Green_Siblings,Red_AppendEvery,Red_StaleRetry,Red_SiblingClear,Red_UnfencedAck}.cfg",
         tiers: &[Boundary],
     },
     Property {

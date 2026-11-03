@@ -1921,7 +1921,9 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
 /// marker stands for every head registered under it. A hub that merged two
 /// concurrent heads of a document holds both; the ack of either leaves the
 /// other undelivered, so only an ack of the document's whole frontier may
-/// clear the marker. The retry ladder delivers the rest.
+/// clear the marker. The retry ladder delivers the rest. An ack that may not
+/// clear the marker is not reported: without its generation the recorder
+/// would write the acked heads unfenced, over the frontier the ladder records.
 #[nuclei::test]
 async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
@@ -1981,14 +1983,11 @@ async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
             .push_to_replicators(&right, &right_data, "doc1", "collection1")
             .await
             .unwrap();
-        let generation = timeout(Duration::from_secs(5), acks.recv())
-            .await
-            .expect("the live push is acknowledged")
-            .expect("the recorder is running");
+        let ack = timeout(Duration::from_secs(2), acks.recv()).await.ok();
         assert_eq!(
-            generation.is_some(),
-            clears,
-            "an ack clears the marker only when its head is the whole frontier"
+            ack,
+            clears.then_some(Some(Some(7))),
+            "only an ack of the whole frontier is reported, with its marker generation"
         );
         coordinator.shutdown().await;
         recorder.abort();

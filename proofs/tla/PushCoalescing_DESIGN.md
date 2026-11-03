@@ -20,6 +20,8 @@ The green configuration proves:
   active, persisted, or already acknowledged.
 - `INV_ClearedScopeDelivered`: once a scope's marker is clear, every head offered to
   the peer is delivered or an ancestor of a delivered head.
+- `INV_AckRecordCurrent`: once a scope's marker is clear, the peer's acked-heads record
+  is the document's current frontier.
 
 `MC_PushCoalescing_Red_AppendEvery.cfg` demonstrates the live-queue failure, while
 `MC_PushCoalescing_Red_StaleRetry.cfg` demonstrates the active-send race that recreates
@@ -37,21 +39,31 @@ ack of the head holding the newest generation cleared the marker, and with it th
 sibling that was never sent (`CompleteRule = "Generation"`).
 
 The code's rule (`CompleteRule = "Frontier"`): the worker reads the scope's current
-heads (`DocumentHeadProvider`) and the ack carries the marker generation only when the
-acked head is the whole frontier, so every head registered before it is one of its
-ancestors (`push_worker.rs` `is_whole_frontier`). Otherwise the marker stays set and
+heads (`DocumentHeadProvider`) and reports the ack, with its marker generation, only
+when the acked head is the whole frontier, so every head registered before it is one of
+its ancestors (`push_worker.rs` `is_whole_frontier`). Otherwise no ack is reported, the
+marker stays set and
 the retry ladder sends every current head and clears it once they are acked and
 unchanged (`Ladder`; `retry_doc`, `complete_document_retry_if_current`). A failed head
 lookup leaves the marker set. One writer's linear heads always have a one-head
 frontier, so their acks clear the marker as before.
 
+The ack must not be reported without its generation either (`CompleteRule =
+"Unfenced"`). The recorder writes a generation-less ack as the peer's acked heads
+unconditionally (`record_acknowledged_heads`, the path of a push that registered no
+marker). Landing after the ladder recorded the whole frontier, it overwrites that
+record with one head; with the marker clear, `acknowledged_heads` returns it and
+`replication_acknowledged` reads the peer as behind until the document is written
+again. A generation-carrying ack is fenced: with its marker gone it writes nothing.
+
 | Config | Parents | `CompleteRule` | Verdict |
 |--------|---------|----------------|---------|
-| `MC_PushCoalescing_Green.cfg` | linear | `Frontier` | GREEN: all six invariants |
+| `MC_PushCoalescing_Green.cfg` | linear | `Frontier` | GREEN: all seven invariants |
 | `MC_PushCoalescing_Red_AppendEvery.cfg` | linear | `Frontier` | RED: `INV_OneLiveHead` |
 | `MC_PushCoalescing_Red_StaleRetry.cfg` | linear | `Frontier` | RED: `INV_NoStaleRetry` |
-| `MC_PushCoalescing_Green_Siblings.cfg` | 2 and 3 over 1 | `Frontier` | GREEN: all six invariants |
+| `MC_PushCoalescing_Green_Siblings.cfg` | 2 and 3 over 1 | `Frontier` | GREEN: all seven invariants |
 | `MC_PushCoalescing_Red_SiblingClear.cfg` | 2 and 3 over 1 | `Generation` | RED: `INV_ClearedScopeDelivered` (3 retires queued 2, 3's ack clears the marker) |
+| `MC_PushCoalescing_Red_UnfencedAck.cfg` | 2 and 3 over 1 | `Unfenced` | RED: `INV_AckRecordCurrent` (the ladder records {2, 3}, then 3's live ack records {3}) |
 
 The model makes `Fail` and its current-version check atomic. The runtime check and
 peerstore write are separated by an asynchronous recorder channel: a newer-head
