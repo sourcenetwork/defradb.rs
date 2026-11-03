@@ -139,6 +139,12 @@ pub(super) fn poll(budget: usize) -> workers::HookProgress {
                     continue;
                 };
                 let polled = queue.poll(IoBudget::units(budget));
+                if polled.retained_live_bytes > 0 {
+                    tracing::trace!(
+                        retained_live_bytes = polled.retained_live_bytes,
+                        "regolith queue retains landed bytes"
+                    );
+                }
                 progress.completed += polled.completed;
                 progress.more |= polled.more_pending;
                 progress.wake_in = match (progress.wake_in, polled.wake_in) {
@@ -150,13 +156,19 @@ pub(super) fn poll(budget: usize) -> workers::HookProgress {
     }
 }
 
-/// Hands `waker` to every queue of the calling worker before it parks.
+/// Hands `waker` to every queue of the calling worker before it parks, then
+/// flushes the thread's kovan state.
+///
+/// kovan reclaims what a thread retired only once that thread's batch fills
+/// or it flushes; a parked worker does neither, so map nodes its polls
+/// retired (and the decoded blocks they hold) would stay alive for as long as
+/// it rests. Flushing here hands them to reclamation before the park.
 pub(super) fn idle(waker: &Waker) {
     set_resting(Some(waker));
     let mut index = 0;
     loop {
         match slot(index) {
-            Slot::End => return,
+            Slot::End => break,
             Slot::Gone(entry) => drop(entry),
             Slot::Live(queue) => {
                 index += 1;
@@ -164,6 +176,7 @@ pub(super) fn idle(waker: &Waker) {
             }
         }
     }
+    kovan::flush();
 }
 
 /// How many queues the calling thread holds.
