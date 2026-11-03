@@ -486,7 +486,21 @@ a key-order sweep.
   view: `PersistedView` learns of a commit in commit-receipt order, which an
   earlier commit's hook on the same store holds back past the reply.
   `MRegisterDurable` registers and acknowledges in one step for that reason;
-  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself.
+  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself. The share
+  check reads the view's `source_count`, so registrations of one peer whose
+  events have not gone out yet can pass it together; the model checks it
+  against the durable set in one step, and the store's slots bound the total.
+- The second tier ends the nacks; it bounds no wait. A root without an entry
+  gets one only from the resync sweep (every 60 s, or on a peer connect),
+  which walks the waiting records in key order after the cursor and gives a
+  fresh head no precedence. `finish_attempt` gives an entry up only while the
+  map is full or the root's peer is at its in-memory quota, so after one
+  rotation per saturated class the freed entries wait for the next sweep. A
+  head acknowledged behind K waiting roots therefore waits on the order of K
+  divided by the entries freed per sweep: minutes to hours for a full store.
+  The wait a nack used to leave with the sender is now the receiver's, and
+  the sender sees only the acknowledgement. The models promise such a head
+  an eventual merge (`LIVE_WrittenHeadMerged`), not a bound.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
   (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
   entry up once its attempt has ended, while the map is full and a durable
