@@ -65,6 +65,7 @@ pub struct NodeBuilder {
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
+    txn_ownership: db::TxnOwnership,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -386,6 +387,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Which requests may reach a transaction this node began. Unset, only
+    /// requests acting as the identity that began it;
+    /// [`db::TxnOwnership::Embedder`] suits a node whose embedding process is
+    /// its only caller, such as the one behind the C API.
+    pub fn with_txn_ownership(mut self, ownership: db::TxnOwnership) -> Self {
+        self.txn_ownership = ownership;
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
@@ -414,6 +424,7 @@ impl NodeBuilder {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
+            txn_ownership: self.txn_ownership,
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]

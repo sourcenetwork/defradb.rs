@@ -112,7 +112,7 @@ pub use read::versioned::VersionedFetcher;
 pub use schema::CollectionSelector;
 pub use txn::context::DbTransactionContext;
 pub use txn::registry::{
-    CleanupResult, DbTransactionRegistry, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
+    CleanupResult, DbTransactionRegistry, TxnOwnership, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
     DEFAULT_TRANSACTION_IDLE_TIMEOUT,
 };
 pub use txn::DbTxn;
