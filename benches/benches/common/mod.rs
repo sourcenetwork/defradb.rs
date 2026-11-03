@@ -69,6 +69,14 @@ pub fn owned_runtime() -> Runtime {
     Runtime(nuclei::Runtime::new().expect("a nuclei runtime"))
 }
 
+/// The network runtime a node starts, on the edge cores the ledger gives it,
+/// for a benchmark that stands in for the server: its clients spawn through
+/// the [`edge::Edge`] it hands out, as the server's connections do. Start it
+/// before any worker pool, so the pool plans on the cores the edge leaves.
+pub fn server_edge() -> edge::EdgeRuntime {
+    edge::EdgeRuntime::start(edge::EdgeConfig::default()).expect("the network edge starts")
+}
+
 /// The positive count the environment variable `name` holds, else `default`.
 pub fn positive(name: &str, default: usize) -> usize {
     let value = std::env::var(name).map_or(default, |s| s.parse().expect(name));

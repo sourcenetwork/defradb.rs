@@ -89,7 +89,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new(scenario: Scenario) -> Self {
+    async fn new(scenario: Scenario, edge: &edge::Edge) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(
             RegolithStore::open_with_options(directory.path(), RegolithStoreOptions::new())
@@ -163,7 +163,7 @@ impl Fixture {
             }
         }
         Self {
-            state: Arc::new(AppStateBuilder::new(Arc::new(runner), edge::testing::edge()).build()),
+            state: Arc::new(AppStateBuilder::new(Arc::new(runner), edge.clone()).build()),
             store,
             db,
             ids,
@@ -172,76 +172,82 @@ impl Fixture {
     }
 }
 
-pub async fn run(scenario: Scenario, writers: usize, operations: usize) -> Measurement {
+pub async fn run(
+    edge: &edge::Edge,
+    scenario: Scenario,
+    writers: usize,
+    operations: usize,
+) -> Measurement {
     assert!(writers > 0 && operations > 0);
-    let fixture = Fixture::new(scenario).await;
+    let fixture = Fixture::new(scenario, edge).await;
     let stats = fixture.store.transaction_stats_handle().unwrap();
     let storage_before = stats.snapshot();
     let retries_before = telemetry::conflict_metrics_snapshot();
     let start = Instant::now();
-    let mut tasks = nuclei::task::JoinSet::new();
-    for writer in 0..writers {
-        let state = fixture.state.clone();
-        let ids = fixture.ids.clone();
-        tasks.spawn(async move {
-            let mut latencies = Vec::with_capacity(operations);
-            let mut successes = Vec::with_capacity(operations);
-            let mut engine_exhaustions = 0u64;
-            let mut client_conflicts = 0u64;
-            for operation in 0..operations {
-                let request = QueryRequest::new(scenario.mutation(writer, operation, &ids));
-                let start = Instant::now();
-                let response = defra_http::query_context::execute_with_context(
-                    &state,
-                    &ExtractIdentity::anonymous(),
-                    request,
-                )
-                .await;
-                latencies.push(start.elapsed());
-                if response.is_transaction_retry_exhausted() {
-                    engine_exhaustions += 1;
-                    continue;
-                }
-                if response.is_transaction_conflict() {
-                    client_conflicts += 1;
-                    continue;
-                }
-                {
-                    assert!(
-                        response.errors.is_empty(),
-                        "{}: {:?}",
-                        scenario.name(),
-                        response.errors
-                    );
-                    let data = response.data.unwrap();
-                    let key = if matches!(scenario, Scenario::Creates) {
-                        "add_Sample"
-                    } else {
-                        "update_Sample"
-                    };
-                    assert_eq!(
-                        data[key]
-                            .as_array()
-                            .unwrap_or_else(|| panic!("expected {key} array in {data}"))
-                            .len(),
-                        1,
-                        "exactly one document written"
-                    );
-                    if !matches!(scenario, Scenario::Creates) {
-                        assert_eq!(data[key][0]["_docID"], ids[operation % ids.len()]);
+    let tasks: Vec<_> = (0..writers)
+        .map(|writer| {
+            let state = fixture.state.clone();
+            let ids = fixture.ids.clone();
+            edge.spawn(async move {
+                let mut latencies = Vec::with_capacity(operations);
+                let mut successes = Vec::with_capacity(operations);
+                let mut engine_exhaustions = 0u64;
+                let mut client_conflicts = 0u64;
+                for operation in 0..operations {
+                    let request = QueryRequest::new(scenario.mutation(writer, operation, &ids));
+                    let start = Instant::now();
+                    let response = defra_http::query_context::execute_with_context(
+                        &state,
+                        &ExtractIdentity::anonymous(),
+                        request,
+                    )
+                    .await;
+                    latencies.push(start.elapsed());
+                    if response.is_transaction_retry_exhausted() {
+                        engine_exhaustions += 1;
+                        continue;
                     }
-                    successes.push((writer, operation));
+                    if response.is_transaction_conflict() {
+                        client_conflicts += 1;
+                        continue;
+                    }
+                    {
+                        assert!(
+                            response.errors.is_empty(),
+                            "{}: {:?}",
+                            scenario.name(),
+                            response.errors
+                        );
+                        let data = response.data.unwrap();
+                        let key = if matches!(scenario, Scenario::Creates) {
+                            "add_Sample"
+                        } else {
+                            "update_Sample"
+                        };
+                        assert_eq!(
+                            data[key]
+                                .as_array()
+                                .unwrap_or_else(|| panic!("expected {key} array in {data}"))
+                                .len(),
+                            1,
+                            "exactly one document written"
+                        );
+                        if !matches!(scenario, Scenario::Creates) {
+                            assert_eq!(data[key][0]["_docID"], ids[operation % ids.len()]);
+                        }
+                        successes.push((writer, operation));
+                    }
                 }
-            }
-            (latencies, successes, client_conflicts, engine_exhaustions)
-        });
-    }
+                (latencies, successes, client_conflicts, engine_exhaustions)
+            })
+        })
+        .collect();
     let mut latencies = Vec::with_capacity(writers * operations);
     let mut successes = Vec::with_capacity(writers * operations);
     let mut client_conflicts = 0u64;
     let mut engine_exhaustions = 0u64;
-    while let Some(result) = tasks.join_next().await {
-        let (samples, succeeded, http_failed, engine_failed) = result.unwrap();
+    for task in tasks {
+        let (samples, succeeded, http_failed, engine_failed) = task.await.unwrap();
         latencies.extend(samples);
         successes.extend(succeeded);
         client_conflicts += http_failed;

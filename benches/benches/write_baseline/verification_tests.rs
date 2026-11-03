@@ -3,7 +3,7 @@
 async fn verification_rejects_an_acknowledged_update_that_was_not_persisted() {
     use super::{verify, Fixture, Scenario};
 
-    let fixture = Fixture::new(Scenario::SharedUpdates).await;
+    let fixture = Fixture::new(Scenario::SharedUpdates, &edge::testing::edge()).await;
     verify::check(&fixture, Scenario::SharedUpdates, &[(0, 0)]).await;
 }
 
@@ -13,7 +13,7 @@ async fn verification_rejects_an_increment_without_its_label_update() {
     use super::{verify, Fixture, Scenario};
     use query::QueryRequest;
 
-    let fixture = Fixture::new(Scenario::CountersIndexes).await;
+    let fixture = Fixture::new(Scenario::CountersIndexes, &edge::testing::edge()).await;
     let response = fixture
         .state
         .executor
@@ -33,7 +33,7 @@ async fn verification_rejects_an_obsolete_index_entry() {
 
     use super::{verify, Fixture, Scenario, COLLECTION};
 
-    let fixture = Fixture::new(Scenario::CountersIndexes).await;
+    let fixture = Fixture::new(Scenario::CountersIndexes, &edge::testing::edge()).await;
     let collection = fixture.db.get_collection(COLLECTION).unwrap().unwrap();
     let indexes = db::index::IndexManager::from_collection(
         collection.resolved_root_id(),
@@ -69,7 +69,7 @@ async fn verification_rejects_an_obsolete_index_entry() {
 async fn measured_engine_exhaustions_are_failures_not_commits() {
     use super::{run, Scenario};
 
-    let sample = run(Scenario::SharedUpdates, 2, 4).await;
+    let sample = run(&edge::testing::edge(), Scenario::SharedUpdates, 2, 4).await;
     assert_eq!(
         sample.commits + sample.client_conflicts + sample.engine_exhaustions,
         8
