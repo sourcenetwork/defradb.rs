@@ -1043,10 +1043,10 @@ pub const PROPERTIES: &[Property] = &[
         // the document before the composite updates the index, so the
         // update starts from a read taken before the field merges.
         family: "Index-maintenance consistency",
-        name: "INV_IndexMatchesValue — after a merge the index holds exactly the merged value",
+        name: "INV_IndexMatchesValue / INV_NoLostEdit — after a merge the index holds exactly the merged value, and every edit counts",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
-        model_ref: "MC_MergedFieldIndex_{Green,Red_ReadAfterPart}.cfg",
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/block_reads.rs BlockReads::wrote_field; crates/db/src/merge/merge_handler/parked.rs replay_in_txn",
+        model_ref: "MC_MergedFieldIndex_{Green,Green_Clear,Red_ReadAfterPart,Red_StaleCache}.cfg",
         tiers: &[Boundary],
     },
     Property {
