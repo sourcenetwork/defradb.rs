@@ -25,6 +25,7 @@ pub(super) struct DagFetchRequest {
     sender_peer: Option<String>,
     is_explicit_replicator: bool,
     explicit_replay_authorization: Option<crate::ExplicitReplayAuthorization>,
+    peer_permit: crate::sync::DagFetchPeerPermit,
 }
 
 struct MergeEventMetadata {
@@ -192,6 +193,7 @@ where
         sender_peer,
         is_explicit_replicator,
         explicit_replay_authorization,
+        peer_permit,
     } = request;
 
     tracing::debug!(
@@ -230,6 +232,7 @@ where
             .with_explicit_replicator(is_explicit_replicator)
             .with_explicit_replay_authorization(explicit_replay_authorization)
             .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
+            .with_peer_permit(peer_permit)
             .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
@@ -1061,6 +1064,7 @@ where
             sender_peer,
             is_explicit_replicator,
             explicit_replay_authorization,
+            peer_permit,
         } => {
             handle_dag_needs_fetch(
                 coordinator,
@@ -1074,6 +1078,7 @@ where
                     sender_peer,
                     is_explicit_replicator,
                     explicit_replay_authorization,
+                    peer_permit,
                 },
             )
             .await
