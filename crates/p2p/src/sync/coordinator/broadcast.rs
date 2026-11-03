@@ -216,7 +216,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // would hold every local commit open even with no replication peers.
         // Register the observed head before enqueueing so its generation can
         // fence any later ACK against a newer update to the same scope.
+        // Each peer's registration stands alone: a removed, re-added or
+        // failing replicator must not cost the other peers their obligation.
         let mut jobs = self.push_jobs(&push).await?;
+        let mut unregistered = Vec::new();
         for job in &mut jobs {
             let Some(generation) = report_observed_head(&self.runtime.failure_tx, job).await else {
                 self.runtime.push_backlog.record_head_hint_failure(
@@ -228,18 +231,27 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     doc_id = %job.doc_id,
                     "Committed head has no durable sender marker"
                 );
-                return Err(crate::error::Error::DurableHeadMarker(format!(
-                    "failed to register peer {} scope {}/{}",
+                unregistered.push(format!(
+                    "peer {} scope {}/{}",
                     job.peer_id, job.collection_id, job.doc_id
-                )));
+                ));
+                continue;
             };
             job.marker_generation = Some(generation);
         }
 
         for job in jobs {
-            self.enqueue_replicator_push(job).await;
+            if job.marker_generation.is_some() {
+                self.enqueue_replicator_push(job).await;
+            }
         }
-        Ok(())
+        if unregistered.is_empty() {
+            return Ok(());
+        }
+        Err(crate::error::Error::DurableHeadMarker(format!(
+            "failed to register {}",
+            unregistered.join(", ")
+        )))
     }
 
     async fn push_jobs(&self, push: &PendingPush) -> Result<Vec<PushJobSpec>> {
