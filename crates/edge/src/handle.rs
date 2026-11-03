@@ -49,7 +49,10 @@ impl Edge {
     }
 
     fn admit(&self) -> Option<Permit> {
-        let permit = self.gate.admit();
+        self.counted(self.gate.admit())
+    }
+
+    fn counted(&self, permit: Option<Permit>) -> Option<Permit> {
         if permit.is_none() {
             self.shared.stats.refused();
             tracing::debug!("network work refused: the network runtime is shutting down");
@@ -84,6 +87,26 @@ impl Edge {
             contain(&shared.stats, AssertUnwindSafe(future).catch_unwind().await)
         });
         Ok(Task::running(&self.shared, join))
+    }
+
+    /// Runs `future` as a network task that continues a request already
+    /// admitted, such as a connection driver. It is admitted after the
+    /// runtime or scope stops accepting while admitted work is still in
+    /// flight, and refused once nothing is in flight or the drain finished.
+    pub fn spawn_continuation<F>(&self, future: F) -> Task<F::Output>
+    where
+        F: Future + MaybeSend + 'static,
+        F::Output: MaybeSend + 'static,
+    {
+        let Some(permit) = self.counted(self.gate.admit_continuation()) else {
+            return Task::refused();
+        };
+        let shared = Arc::clone(&self.shared);
+        let join = self.shared.rt.spawn(async move {
+            let _permit = permit;
+            contain(&shared.stats, AssertUnwindSafe(future).catch_unwind().await)
+        });
+        Task::running(&self.shared, join)
     }
 
     /// Runs `work`, which blocks, on a thread set aside for blocking work.

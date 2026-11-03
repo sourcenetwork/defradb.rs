@@ -537,6 +537,10 @@ RUNS=(
   "MC_EdgeCompletion_Red_NoMap.cfg EdgeCompletion.tla RED" # the code before: a cut-off by the runtime's stop says Cancelled (INV_StopSaysClosed)
   "MC_EdgeCompletion_Red_CancelBeforeFlag.cfg EdgeCompletion.tla RED" # the handle cancels before it records its abort: its own abort reads as the stop (INV_AbortSaysCancelled)
   "MC_EdgeCompletion_Red_CancelBeforeStopMark.cfg EdgeCompletion.tla RED" # the runtime ends its tasks before its stopped mark: the cut-off says Cancelled (INV_StopSaysClosed)
+  "MC_EdgeGateContinuation_Green.cfg EdgeGateContinuation.tla GREEN" # continuations of admitted work run through the drain, never after it, never from idle
+  "MC_EdgeGateContinuation_Red_PlainSpawn.cfg EdgeGateContinuation.tla RED" # the code before (#2546): a request in flight is refused its connection (INV_InFlightContinues)
+  "MC_EdgeGateContinuation_Red_NoSeal.cfg EdgeGateContinuation.tla RED" # no seal: a passing count lets a continuation in after the drain (INV_NothingAfterDrain)
+  "MC_EdgeGateContinuation_Red_NoCas.cfg EdgeGateContinuation.tla RED" # no compare-and-swap: a continuation starts from an idle closed gate (INV_NoContinuationWhenIdle)
   "MC_ServerDrain_Green.cfg ServerDrain.tla GREEN" # requests in flight finish, idle connections close, the server returns by the deadline
   "MC_ServerDrain_Red_Service.cfg ServerDrain.tla RED" # the code before: server tasks stopped as services, a request in flight dropped (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_CheckInside.cfg ServerDrain.tla RED" # closing looked at inside a request cuts it off (INV_NoDropBeforeDeadline)

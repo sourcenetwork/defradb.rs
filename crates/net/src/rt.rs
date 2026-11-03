@@ -208,7 +208,7 @@ where
     fn execute(&self, future: F) {
         let closing = self.edge.closing();
         let inflight = self.inflight.clone();
-        drop(self.edge.spawn(async move {
+        drop(self.edge.spawn_continuation(async move {
             let mut driver = pin!(future);
             nuclei::select! {
                 () = driver.as_mut() => return,

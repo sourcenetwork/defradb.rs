@@ -5,7 +5,15 @@
 
 mod support;
 
+use std::convert::Infallible;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+
+use bytes::Bytes;
+use http::{Request, Response};
+use http_body_util::Full;
+use hyper::body::Incoming;
 
 use net::http::{Client, Version};
 use nuclei::time::timeout;
@@ -105,6 +113,73 @@ fn a_closing_client_finishes_the_request_in_flight_and_frees_its_idle_connection
         let drained = scope.drain(LIMIT).await;
         assert!(drained.is_complete(), "{drained:?}");
         drop(pooled);
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_request_in_flight_at_close_opens_a_fresh_connection_and_finishes() {
+    let edge = edge::testing::edge();
+    edge.block_on(async {
+        let scope = edge.scope();
+        let second = support::serve_on(None, edge.clone()).await;
+        let target = format!("http://{}/method", second.address);
+        let inside = scope.edge().clone();
+        let entered = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&entered);
+        let service = tower::service_fn(move |_request: Request<Incoming>| {
+            let inside = inside.clone();
+            let target = target.clone();
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                inside.closing().await;
+                let fetched = Client::builder(inside)
+                    .no_proxy()
+                    .build()
+                    .expect("a client")
+                    .get(target)
+                    .send()
+                    .await
+                    .expect("a fresh connection opens while the request is in flight")
+                    .text()
+                    .await
+                    .expect("a body");
+                Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(fetched))))
+            }
+        });
+        let listener = nuclei::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a listener");
+        let address = listener.get_ref().local_addr().expect("an address");
+        let first = scope
+            .edge()
+            .spawn(net::server::serve(
+                listener,
+                None,
+                service,
+                scope.edge().clone(),
+            ))
+            .within(Duration::MAX);
+        let request = edge.spawn(async move {
+            client()
+                .get(format!("http://{address}/"))
+                .send()
+                .await?
+                .text()
+                .await
+        });
+        while entered.load(Ordering::SeqCst) == 0 {
+            nuclei::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        scope.close();
+
+        assert_eq!(request.await.unwrap().unwrap(), "GET");
+        let drained = scope.drain(LIMIT).await;
+        assert!(drained.is_complete(), "{drained:?}");
+        let ended = timeout(LIMIT, first).await.expect("the server returns");
+        assert!(matches!(ended, Ok(Ok(()))), "{ended:?}");
     })
     .unwrap();
 }
