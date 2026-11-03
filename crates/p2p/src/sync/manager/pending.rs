@@ -12,9 +12,9 @@ use kovan::Atom;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 use crate::ExplicitReplayAuthorization;
 
-/// Time-to-live for a pending DAG entry.
+/// Time-to-live for a pending DAG entry that was never acknowledged.
 ///
-/// Entries older than this are evicted during insertion to prevent
+/// Such entries older than this are evicted during insertion to prevent
 /// indefinitely stale DAGs from accumulating.
 pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
 
@@ -70,6 +70,16 @@ pub struct PendingDag {
     pub merge_continuation: bool,
     /// Transient local contention; discarded with this bounded pending root.
     pub storage_blocker: Option<Cid>,
+}
+
+impl PendingDag {
+    /// An entry expires only while it is not acknowledged. Once the sender has
+    /// a success reply it has dropped its retry marker, so this entry is the
+    /// head's one owner: it stays until merge, quarantine or a newer head of
+    /// its scope, bounded by `max_pending_dags`.
+    pub fn is_expired(&self, now: Instant) -> bool {
+        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL
+    }
 }
 
 /// Pending roots and the reverse index used to route arriving blocks only to
@@ -146,11 +156,9 @@ impl PendingDagRegistry {
         }
     }
 
-    /// Whether any entry has outlived `PENDING_DAG_TTL` at `now`.
+    /// Whether any entry has expired at `now`.
     pub(super) fn has_expired(&self, now: Instant) -> bool {
-        self.roots
-            .values()
-            .any(|dag| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+        self.roots.values().any(|dag| dag.is_expired(now))
     }
 
     pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {

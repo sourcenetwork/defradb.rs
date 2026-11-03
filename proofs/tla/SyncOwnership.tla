@@ -443,9 +443,11 @@ ContendedIngest(s, v) ==
 \* fetch lease as shed when every provider shed one batch, even after earlier
 \* batches delivered, or when some provider shed and none delivered a block
 \* because the rest did not hold the root yet. Either way the durable root
-\* returns to the same paced per-root clock after one bounded in-dispatch
+\* returns at once to the same paced per-root clock, whose backoff paces the
 \* retry (dag_fetcher.rs FetchBatchOutcome::ProviderBusy or
 \* incomplete_or_shed -> FetchAttemptOutcome::ProviderBusy -> poll_fetch_dag).
+\* Only a reply-driven fetch, which has no clock, retries a shed attempt once
+\* in place.
 \* Providers are not modelled one by one, so this single action is that shed
 \* release for every mix. The red policy ShedAsStall reads the busy reply as a stalled provider
 \* window, the way a zero-byte rejection was read before busy existed, so

@@ -572,6 +572,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A clock-dispatched fetch gives its slot back after one attempt, its
+        // root is due again a backoff after that attempt ends, and an
+        // acknowledged head never expires, so after a restart catch-up roots
+        // cannot hold every slot while acknowledged heads wait or expire.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_ReadyRootsServedInOrder / INV_ExpiryKeepsOwner / LIVE_AckedRootMerged",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::schedule_next_attempt; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
+        model_ref: "MC_SyncOwnership_{Green_Dispatch,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A second PushLog for a CID already being processed joins that
         // processing instead of being nacked: it waits, bounded by a deadline,
         // looks again once the owner lets go, and either acks a block already

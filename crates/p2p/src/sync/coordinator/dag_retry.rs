@@ -6,7 +6,8 @@ use crate::sync::manager::SyncDiagnostics;
 use crate::transport::PeerId;
 use rapidhash::{HashMapExt, HashSetExt};
 
-/// Total fetch attempts per root before the failure is escalated to ERROR.
+/// Total fetch attempts per reply-driven root before the failure is escalated
+/// to ERROR. A fetch the per-root retry clock dispatched makes one attempt.
 ///
 /// Each attempt spends up to 20s on the CAR phase (a 10s bounded request
 /// round-trip plus a 10s arrival watch), a stall budget of one full provider
@@ -33,8 +34,9 @@ pub(super) const MAX_FREE_REFUSALS: usize = 11;
 /// 30s fetch window is the dominant wait, not the backoff itself.
 const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 
-/// Shed attempts retried within one dispatch before deferring to the per-root
-/// clock: rides out a momentary saturation without hammering a saturated hub.
+/// Shed attempts a reply-driven fetch retries in place: rides out a momentary
+/// saturation without hammering a saturated hub. A clock-dispatched fetch
+/// defers at once and its root's backoff paces the retry.
 pub(super) const BUSY_RETRIES_PER_DISPATCH: u32 = 1;
 
 /// Backoff to sleep before `attempt` (1-based; only called for attempts >= 2).

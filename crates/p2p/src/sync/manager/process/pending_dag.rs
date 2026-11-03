@@ -11,7 +11,7 @@ use blockstore::Blockstore;
 use crate::error::{Error, Result};
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
-use crate::sync::manager::pending::{PendingDag, PENDING_DAG_TTL};
+use crate::sync::manager::pending::{retry_backoff, PendingDag};
 use crate::sync::pending_store::{PersistedPendingDag, PersistedQuarantinedDag, Registration};
 
 use super::SyncManager;
@@ -34,6 +34,17 @@ impl PendingDagLease {
     pub(crate) fn is_current(&self) -> bool {
         self.pending
             .read(|pending| pending.contains_key(&self.root_cid))
+    }
+
+    /// The fetch attempt ended and gave its slot back: the root is due again
+    /// one backoff from now, so roots that waited during the attempt go first.
+    pub(crate) fn schedule_next_attempt(&self) {
+        let now = n0_future::time::Instant::now();
+        self.pending.update(|pending| {
+            if let Some(dag) = pending.get_mut(&self.root_cid) {
+                dag.next_retry_at = dag.next_retry_at.max(now + retry_backoff(dag.dispatches));
+            }
+        });
     }
 }
 
@@ -71,7 +82,7 @@ fn evict_expired_pending_dags(
 ) -> Vec<(Cid, PendingDag)> {
     let expired: Vec<_> = pending
         .iter()
-        .filter(|(_, dag)| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+        .filter(|(_, dag)| dag.is_expired(now))
         .map(|(cid, dag)| (*cid, PendingDag::clone(dag)))
         .collect();
 
@@ -331,16 +342,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Insert a pending DAG entry, enforcing TTL eviction and capacity limits.
     ///
-    /// Expired entries (older than `PENDING_DAG_TTL`) are removed before checking
+    /// Expired entries (see `PendingDag::is_expired`) are removed before checking
     /// the capacity. If the map is still at `max_pending_dags` after eviction the
     /// new entry is rejected so callers can return a backpressure nack (#1088
     /// W1) instead of acking a discarded registration. A source peer may hold
     /// at most one quarter of the global map so one noisy pusher cannot starve
     /// every other peer (#1088 W2).
-    /// TTL eviction frees the in-memory slot only: a push-originated entry's
-    /// durable record survives (the recovery obligation is discharged solely
-    /// by a successful merge) and is re-driven by restart or the durable
-    /// resync sweep.
+    /// An acknowledged entry never expires: the ack ended the sender's retry
+    /// marker, so it stays until merge, quarantine or a newer scope head, and
+    /// counts against the cap meanwhile.
     /// Admit a registration into the in-memory map, reporting `true` on
     /// success. Callers that need to distinguish the failing limit (to nack
     /// with the right number) use [`Self::try_insert_pending_dag`].
@@ -839,11 +849,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             let now = Instant::now();
             let all_live = !roots.is_empty()
                 && self.pending_dags.read(|pending| {
-                    roots.iter().all(|root| {
-                        pending.get(root).is_some_and(|dag| {
-                            now.duration_since(dag.inserted_at) < PENDING_DAG_TTL
-                        })
-                    })
+                    roots
+                        .iter()
+                        .all(|root| pending.get(root).is_some_and(|dag| !dag.is_expired(now)))
                 });
             if all_live {
                 return 0;
@@ -889,11 +897,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let mut restored = 0usize;
         for (root_cid, mut record) in records {
             let now = Instant::now();
-            let live = self.pending_dags.read(|pending| {
-                pending
-                    .get(&root_cid)
-                    .map(|dag| now.duration_since(dag.inserted_at) < PENDING_DAG_TTL)
-            });
+            let live = self
+                .pending_dags
+                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now)));
             match live {
                 Some(true) => continue,
                 Some(false) => {
@@ -901,9 +907,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     // record below re-registers with a fresh TTL and a
                     // recomputed missing set.
                     self.pending_dags.update(|pending| {
-                        if pending.get(&root_cid).is_some_and(|dag| {
-                            now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL
-                        }) {
+                        if pending
+                            .get(&root_cid)
+                            .is_some_and(|dag| dag.is_expired(now))
+                        {
                             pending.remove(&root_cid);
                         }
                     });

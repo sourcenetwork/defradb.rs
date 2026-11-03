@@ -430,6 +430,10 @@ RUNS=(
   "MC_SyncOwnership_Red_BlockingHostEvent.cfg SyncOwnership.tla RED" # full event delivery blocks the host command needed to reply and release admitted work
   "MC_SyncOwnership_Red_BusyExhaustion.cfg SyncOwnership.tla RED" # local shared-CID ingest contention is deferred, never counted as terminal provider exhaustion
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
+  "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: waiting roots go in order and every acked head merges across a restart
+  "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and retries ahead of an acked root (INV_ReadyRootsServedInOrder)
+  "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root retakes the slot ahead of roots acked during its attempt (INV_ReadyRootsServedInOrder)
+  "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (INV_ExpiryKeepsOwner)
   "MC_Jwt_Green.cfg                MC_Jwt_Green.tla                GREEN" # token->DID binds genuine signer DID
   "MC_Jwt_Red_NoAlgBinding.cfg     MC_Jwt_Red_NoAlgBinding.tla     RED"   # alg-confusion: header alg not bound to key type
   "MC_Jwt_Red_NoIssBinding.cfg     MC_Jwt_Red_NoIssBinding.tla     RED"   # iss not bound to did(pubkey)

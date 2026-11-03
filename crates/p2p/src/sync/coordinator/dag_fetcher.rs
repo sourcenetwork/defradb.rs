@@ -111,6 +111,10 @@ enum FetchAttemptOutcome {
 /// are retried with backoff; terminal failure is logged at ERROR because the
 /// document cannot converge until the root is announced again.
 ///
+/// A fetch the per-root retry clock dispatched makes one attempt and returns:
+/// the clock owns that root's retries and backoff, and a slot held through
+/// retries would keep every other due root waiting behind it.
+///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
 /// starve other roots under fan-in pressure. Every issued transport query is
@@ -179,8 +183,12 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
 
     let mut remaining_count = 0usize;
     let mut last_failures = FetchFailures::default();
-    let mut busy_retries = BUSY_RETRIES_PER_DISPATCH;
-    for attempt in 1..=MAX_FETCH_ATTEMPTS {
+    let (attempts, mut busy_retries) = if context.is_clock_owned() {
+        (1, 0)
+    } else {
+        (MAX_FETCH_ATTEMPTS, BUSY_RETRIES_PER_DISPATCH)
+    };
+    for attempt in 1..=attempts {
         if !context.is_current() {
             debug!(
                 root_cid = %root_cid,
