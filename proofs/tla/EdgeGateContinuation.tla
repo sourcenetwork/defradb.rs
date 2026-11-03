@@ -21,7 +21,8 @@
 \*     itself first, then sees the gate closed and backs out (Gate::admit);
 \*   * the closer, which closes the gate once;
 \*   * the drain, which waits for zero, seals the gate, looks again, and only
-\*     then says the gate is drained.
+\*     then says the gate is drained. The drain's report (crates/edge/src/handle.rs
+\*     drain_gate) is that result itself, not a later look at the count.
 \*
 \* What must never happen:
 \*   1. once the drain said the gate is drained, a permit is still held -

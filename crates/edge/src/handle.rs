@@ -295,7 +295,7 @@ impl Scope {
 /// What a drain left behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Drained {
-    /// Admitted work still running when the drain's deadline passed.
+    /// Work still admitted when the deadline passed; a drain that finished reports none.
     pub remaining: usize,
 }
 
@@ -310,14 +310,14 @@ impl Drained {
 pub(crate) async fn drain_gate(gate: &Gate, shared: &Arc<Shared>, within: Duration) -> Drained {
     let mut timer = Timer::after(shared, Instant::now(), within);
     let mut drained = pin!(gate.drained());
-    poll_fn(|cx| {
+    let finished = poll_fn(|cx| {
         if drained.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(());
+            return Poll::Ready(true);
         }
-        timer.poll(cx).map(drop)
+        timer.poll(cx).map(|_| false)
     })
     .await;
     Drained {
-        remaining: gate.in_flight(),
+        remaining: if finished { 0 } else { gate.in_flight() },
     }
 }
