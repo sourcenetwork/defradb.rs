@@ -276,7 +276,7 @@ where
     // SE query correlator: lets this node serve as an SE replicator and route
     // any inbound replies. Cloned so the SAME correlator is shared between the
     // event handler (which delivers replies) and the owner/querier transport
-    // (which awaits them) — they must agree on message_id correlation (#976).
+    // (which awaits them): they must agree on message_id correlation (#976).
     let se_correlator = p2p::SeQueryCorrelator::new();
     let se_correlator_for_transport = se_correlator.clone();
     // Manage channel: correlators shared between the event loop (which delivers

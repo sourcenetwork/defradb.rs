@@ -903,7 +903,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .as_ref()
             .expect("pubsub readiness requires a coordinator");
         // Go's `activePeers` (`sync_doc.go:97-109`) is the connected set, so
-        // that is what a reply is expected from — not the doc-sync topic's
+        // that is what a reply is expected from, not the doc-sync topic's
         // subscriber list.
         let expected_peers = connected_peers.len();
         let replies = coord
