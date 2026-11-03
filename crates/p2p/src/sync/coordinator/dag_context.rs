@@ -36,6 +36,7 @@ pub(crate) struct DagFetchContext {
     explicit_replicator_collections: Option<Vec<String>>,
     pub(crate) explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
     pending_lease: Option<crate::sync::manager::PendingDagLease>,
+    peer_permit: crate::sync::DagFetchPeerPermit,
     block_sync_completions: Option<crate::sync::manager::BlockSyncCompletionTracker>,
     rooted_car_completions: Option<crate::sync::manager::RootedCarCompletionTracker>,
     rooted_provider_discovery: bool,
@@ -58,6 +59,7 @@ impl DagFetchContext {
             explicit_replicator_collections: None,
             explicit_replay_authorization: None,
             pending_lease: None,
+            peer_permit: Default::default(),
             block_sync_completions: None,
             rooted_car_completions: None,
             rooted_provider_discovery: false,
@@ -112,6 +114,16 @@ impl DagFetchContext {
     ) -> Self {
         self.pending_lease = Some(lease);
         self
+    }
+
+    /// The source peer's permit the retry clock took with this fetch's slot.
+    pub(crate) fn with_peer_permit(mut self, permit: crate::sync::DagFetchPeerPermit) -> Self {
+        self.peer_permit = permit;
+        self
+    }
+
+    pub(crate) fn take_peer_permit(&mut self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.peer_permit.take()
     }
 
     /// Whether the per-root retry clock dispatched this fetch and owns its retries.

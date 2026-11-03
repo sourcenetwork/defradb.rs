@@ -134,15 +134,17 @@ pub(crate) enum FetchTaskEnd {
 ///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
-/// starve other roots under fan-in pressure. Every issued transport query is
-/// reaped via `cancel_sync` at the end of its poll window, so releasing the
-/// permit never leaves stalled fetch work running in the transport.
+/// starve other roots under fan-in pressure. A clock-dispatched fetch arrives
+/// with its source peer's permit, taken together with its slot, and waits
+/// only for a global one. Every issued transport query is reaped via
+/// `cancel_sync` at the end of its poll window, so releasing the permit never
+/// leaves stalled fetch work running in the transport.
 pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     transport: T,
     blockstore: Arc<B>,
     event_tx: mpsc::Sender<SyncEvent>,
     root_cid: Cid,
-    context: DagFetchContext,
+    mut context: DagFetchContext,
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
 ) -> (FetchTaskEnd, AttemptSample) {
@@ -232,7 +234,8 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
 
         // A shed attempt repeats in place without consuming `attempt`.
         let outcome = loop {
-            let Some(permits) = limiter.acquire(&context.source_peer).await else {
+            let reserved = context.take_peer_permit();
+            let Some(permits) = limiter.acquire(&context.source_peer, reserved).await else {
                 debug!(
                     root_cid = %root_cid,
                     doc_id = %context.doc_id,
