@@ -30,6 +30,9 @@ use tokio::sync::mpsc;
 #[path = "continuation_tests.rs"]
 mod continuation_tests;
 
+#[path = "forward_tests.rs"]
+mod forward_tests;
+
 fn test_cid() -> Cid {
     Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap()
 }

@@ -89,6 +89,85 @@ fn recovered_metadata_error(cid: Cid, details: impl Into<String>) -> Replication
     }
 }
 
+/// Forward a root merged here to this node's replicators.
+///
+/// Match Go's post-merge Update -> SendUpdate replicator fanout: once this
+/// node has merged the complete DAG it may become the authenticated serving
+/// origin for its configured downstream replicators. This is independent of
+/// optional gossip rebroadcast, which remains disabled in production for
+/// stage 3. The replicators' durable markers must exist before the root is
+/// marked merged, because the mark discharges the root's upstream pending
+/// record; a forward that fails leaves the root owed, and its caller leaves
+/// it unmarked for the receiver clock to re-drive. Returns the failure's
+/// result, if the forward failed.
+async fn forward_merged<B, T>(
+    coordinator: &SyncCoordinator<B, T>,
+    cid: Cid,
+    block_data: &[u8],
+    doc_id: &str,
+    collection_id: &str,
+    creator: &str,
+) -> Option<ReplicationResult>
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    if collection_id.is_empty() {
+        return None;
+    }
+    match coordinator
+        .push_to_replicators_with_creator(
+            &cid,
+            block_data,
+            doc_id,
+            collection_id,
+            (!creator.is_empty()).then_some(creator),
+        )
+        .await
+    {
+        Ok(()) => {
+            coordinator.manager().forward_settled(&cid);
+            None
+        }
+        Err(error) => {
+            coordinator.manager().owe_forward(cid);
+            Some(ReplicationResult::MergedButBroadcastFailed {
+                cid,
+                doc_id: doc_id.to_string(),
+                collection_id: collection_id.to_string(),
+                broadcast_error: error.to_string(),
+            })
+        }
+    }
+}
+
+/// Forward a root merged here, then mark it merged. Returns the failure's
+/// result, if either step failed.
+async fn forward_then_mark<B, T>(
+    coordinator: &SyncCoordinator<B, T>,
+    cid: Cid,
+    block_data: &[u8],
+    doc_id: &str,
+    collection_id: &str,
+    creator: &str,
+) -> Option<ReplicationResult>
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    if let Some(failure) =
+        forward_merged(coordinator, cid, block_data, doc_id, collection_id, creator).await
+    {
+        return Some(failure);
+    }
+    coordinator.mark_as_merged(&cid).await.err().map(|error| {
+        ReplicationResult::MergedButNotMarked {
+            cid,
+            error: error.to_string(),
+        }
+    })
+}
+
 /// Handle a DagNeedsFetch event by initiating a Bitswap sync.
 pub(super) async fn handle_dag_needs_fetch<B, T>(
     coordinator: &SyncCoordinator<B, T>,
@@ -359,39 +438,17 @@ where
             if let Some(peer_id) = sender_peer {
                 coordinator.peer_state().record_block_received(peer_id);
             }
-            // Merge successful - mark as merged
-            if let Err(e) = coordinator.mark_as_merged(&cid).await {
-                // Return a distinct result so callers know the merge succeeded
-                // but bookkeeping failed (block will be reprocessed on restart)
-                return ReplicationResult::MergedButNotMarked {
-                    cid,
-                    error: e.to_string(),
-                };
-            }
-
-            // Match Go's post-merge Update -> SendUpdate replicator fanout:
-            // once this node has merged the complete DAG it may become the
-            // authenticated serving origin for its configured downstream
-            // replicators. This is independent of optional gossip
-            // rebroadcast, which remains disabled in production for stage 3.
-            if !collection_id_for_broadcast.is_empty() {
-                if let Err(error) = coordinator
-                    .push_to_replicators_with_creator(
-                        &cid,
-                        &block_data,
-                        &doc_id_for_result,
-                        collection_id_for_broadcast,
-                        (!creator_for_forward.is_empty()).then_some(creator_for_forward.as_str()),
-                    )
-                    .await
-                {
-                    return ReplicationResult::MergedButBroadcastFailed {
-                        cid,
-                        doc_id: doc_id_for_result,
-                        collection_id: collection_id_for_result,
-                        broadcast_error: error.to_string(),
-                    };
-                }
+            if let Some(result) = forward_then_mark(
+                coordinator,
+                cid,
+                &block_data,
+                &doc_id_for_result,
+                collection_id_for_broadcast,
+                &creator_for_forward,
+            )
+            .await
+            {
+                return result;
             }
 
             // Optionally re-broadcast (skip if metadata incomplete - can't broadcast without doc/collection IDs)
@@ -467,11 +524,26 @@ where
         }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
             if terminal {
-                if let Err(e) = coordinator.mark_as_merged(&cid).await {
-                    return ReplicationResult::MergedButNotMarked {
+                let failed = if coordinator.manager().forward_owed(&cid) {
+                    forward_then_mark(
+                        coordinator,
                         cid,
-                        error: format!("skipped but failed to mark: {}", e),
-                    };
+                        &block_data,
+                        &doc_id_for_result,
+                        collection_id_for_broadcast,
+                        &creator_for_forward,
+                    )
+                    .await
+                } else {
+                    coordinator.mark_as_merged(&cid).await.err().map(|e| {
+                        ReplicationResult::MergedButNotMarked {
+                            cid,
+                            error: format!("skipped but failed to mark: {}", e),
+                        }
+                    })
+                };
+                if let Some(result) = failed {
+                    return result;
                 }
             }
 
@@ -720,15 +792,12 @@ where
     let batch_result_start = results.len();
     let batch_results = handler.handle_block_batch(&merge_blocks).await;
 
-    // Collect CIDs to mark as merged
-    let mut merged_cids = Vec::new();
     for (block, result) in merge_blocks.iter().zip(batch_results) {
         match result {
             Ok(MergeOutcome::Merged) => {
                 if let Some(peer_id) = &block.sender_peer {
                     coordinator.peer_state().record_block_received(peer_id);
                 }
-                merged_cids.push(block.cid);
                 results.push(ReplicationResult::Merged {
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
@@ -764,9 +833,6 @@ where
                 });
             }
             Ok(MergeOutcome::Skipped { reason, terminal }) => {
-                if terminal {
-                    merged_cids.push(block.cid);
-                }
                 results.push(ReplicationResult::Skipped {
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
@@ -821,6 +887,38 @@ where
         }
     }
 
+    // A merged receiver may be the configured sender for a downstream hop.
+    // Forward only to explicit replicators here, before the batch mark
+    // discharges the upstream pending records; gossip rebroadcast remains
+    // controlled by `rebroadcast_on_merge` below.
+    let mut merged_cids = Vec::new();
+    for (index, block) in merge_blocks.iter().enumerate() {
+        let result_index = batch_result_start + index;
+        let forward = match &results[result_index] {
+            ReplicationResult::Merged { .. } => true,
+            ReplicationResult::Skipped { terminal: true, .. } => {
+                coordinator.manager().forward_owed(&block.cid)
+            }
+            _ => continue,
+        };
+        if forward {
+            if let Some(result) = forward_merged(
+                coordinator,
+                block.cid,
+                block.block_data.as_ref(),
+                &block.doc_id,
+                &block.collection_id,
+                &block.creator,
+            )
+            .await
+            {
+                results[result_index] = result;
+                continue;
+            }
+        }
+        merged_cids.push(block.cid);
+    }
+
     // Batch mark_as_merged in one txn
     if !merged_cids.is_empty() {
         if let Err(e) = coordinator.mark_batch_as_merged(&merged_cids).await {
@@ -848,35 +946,6 @@ where
                     };
                 }
             }
-        }
-    }
-
-    // A merged receiver may be the configured sender for a downstream hop.
-    // Forward only to explicit replicators here; gossip rebroadcast remains
-    // controlled by `rebroadcast_on_merge` below.
-    for (index, block) in merge_blocks.iter().enumerate() {
-        let result_index = batch_result_start + index;
-        if block.collection_id.is_empty()
-            || !matches!(results[result_index], ReplicationResult::Merged { .. })
-        {
-            continue;
-        }
-        if let Err(error) = coordinator
-            .push_to_replicators_with_creator(
-                &block.cid,
-                block.block_data.as_ref(),
-                &block.doc_id,
-                &block.collection_id,
-                (!block.creator.is_empty()).then_some(block.creator.as_str()),
-            )
-            .await
-        {
-            results[result_index] = ReplicationResult::MergedButBroadcastFailed {
-                cid: block.cid,
-                doc_id: block.doc_id.clone(),
-                collection_id: block.collection_id.clone(),
-                broadcast_error: error.to_string(),
-            };
         }
     }
 
