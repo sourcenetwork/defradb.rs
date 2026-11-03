@@ -37,7 +37,6 @@ use super::config::SyncConfig;
 use super::diagnostics::SyncDiagnostics;
 use super::events::SyncEvent;
 use super::pending::SharedPendingDags;
-use crate::sync::head_scope::ScopeDecision;
 use crate::sync::pending_store::{PendingDagStorage, PersistedView};
 
 /// Manager for P2P block synchronization.
@@ -144,42 +143,13 @@ pub(super) const PENDING_RESYNC_FORCED_TICK: usize = 10;
 pub(super) const PERSISTED_PENDING_CAP_FACTOR: usize = 4;
 
 impl<B: Blockstore + 'static> SyncManager<B> {
-    /// True when a newer head for the same sender scope is already durable
-    /// or pending, so this root's work is subsumed rather than dropped.
-    ///
-    /// Retiring a superseded root is deliberate: the newer head carries the
-    /// same document forward, and driving both would duplicate the fetch.
-    pub(super) fn scope_head_is_covered_by_current(
-        &self,
-        root_cid: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> bool {
-        matches!(
-            self.persisted.scope_decision(
-                root_cid,
-                source_peer,
-                collection_id,
-                doc_id,
-                head_priority
-            ),
-            ScopeDecision::CoveredByCurrent
-        ) || self.pending_dags.read(|pending| {
-            pending.scope_head_is_covered_by_current(
-                root_cid,
-                source_peer,
-                collection_id,
-                doc_id,
-                head_priority,
-            )
-        })
-    }
-
+    /// True when the head is its scope's current pending or durable head, or
+    /// links it as a parent: registering it retires that head and so takes
+    /// no new slot.
     pub(super) fn scope_head_is_refresh_or_newer(
         &self,
         root_cid: Cid,
+        parents: &[Cid],
         source_peer: Option<&str>,
         collection_id: &str,
         doc_id: &str,
@@ -187,6 +157,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     ) -> bool {
         self.persisted.refreshes_or_supersedes(
             root_cid,
+            parents,
             source_peer,
             collection_id,
             doc_id,
@@ -194,6 +165,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         ) || self.pending_dags.read(|pending| {
             pending.scope_head_is_refresh_or_newer(
                 root_cid,
+                parents,
                 source_peer,
                 collection_id,
                 doc_id,

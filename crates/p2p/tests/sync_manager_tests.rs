@@ -748,6 +748,22 @@ mod pending_persistence {
         (cid, bytes)
     }
 
+    fn composite_over(priority: u64, field_name: &str, parents: Vec<Cid>) -> (Cid, Vec<u8>) {
+        let (field_cid, _) = create_lww_block(field_name);
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema1".to_string(),
+                priority,
+                status: 1,
+            }),
+            parents,
+            vec![DAGLink::new(field_name, field_cid)],
+        );
+        let bytes = block.to_dag_cbor().expect("encode composite block");
+        let cid = block.generate_cid().expect("generate composite cid");
+        (cid, bytes)
+    }
+
     fn pushlog_for(cid: &Cid, bytes: &[u8]) -> PushLogBroadcast {
         PushLogBroadcast::new(
             "doc123".to_string(),
@@ -759,11 +775,11 @@ mod pending_persistence {
     }
 
     #[nuclei::test]
-    async fn current_sender_scope_head_atomically_supersedes_older_durable_root() {
+    async fn a_scope_head_atomically_supersedes_the_durable_root_it_links() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, mut events, pending_store) = manager_with_store(store.clone()).await;
         let (old_root, old_bytes) = composite_with_priority_and_missing_field(1, "old");
-        let (new_root, new_bytes) = composite_with_priority_and_missing_field(2, "new");
+        let (new_root, new_bytes) = composite_over(2, "new", vec![old_root]);
 
         manager
             .process_pushlog(
@@ -790,22 +806,8 @@ mod pending_persistence {
         assert_eq!(manager.pending_dag_cids(), vec![new_root]);
         assert_eq!(manager.persisted_pending_count(), 1);
 
-        // A delayed old hint is honestly covered by the already-durable newer
-        // head and must not recreate the retired CID-valued obligation.
-        manager
-            .process_pushlog(
-                &pushlog_for(&old_root, &old_bytes),
-                Some("peer-1"),
-                true,
-                None,
-            )
-            .await
-            .expect("stale head is covered");
-        assert_eq!(pending_store.load_all().await.expect("load").len(), 1);
-        assert_eq!(manager.pending_dag_cids(), vec![new_root]);
-
         // The same logical scope from another sender is an independent
-        // branch obligation and cannot be retired by peer-1's head.
+        // obligation and cannot be retired by peer-1's head.
         manager
             .process_pushlog(
                 &pushlog_for(&old_root, &old_bytes),
@@ -819,6 +821,48 @@ mod pending_persistence {
         assert_eq!(manager.pending_dag_count(), 2);
 
         while events.try_recv().is_ok() {}
+    }
+
+    /// A hub forwards two concurrently written heads of one document under
+    /// its own peer ID. Each success reply clears the hub's marker for that
+    /// head, so each needs a durable record of its own, in either order, and
+    /// through a restart.
+    #[nuclei::test]
+    async fn sibling_heads_from_one_sender_are_both_durable() {
+        let (base, _) = composite_over(1, "base", vec![]);
+        let (left, left_bytes) = composite_over(2, "left", vec![base]);
+        let (right, right_bytes) = composite_over(2, "right", vec![base]);
+        for order in [
+            [(left, &left_bytes), (right, &right_bytes)],
+            [(right, &right_bytes), (left, &left_bytes)],
+        ] {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let (manager, _events, pending_store) = manager_with_store(store.clone()).await;
+            for (root, bytes) in order {
+                manager
+                    .process_pushlog(&pushlog_for(&root, bytes), Some("hub"), true, None)
+                    .await
+                    .expect("a sibling head is acked");
+            }
+            let mut expected = vec![left, right];
+            expected.sort_unstable();
+            let mut durable: Vec<Cid> = pending_store
+                .load_all()
+                .await
+                .expect("load pending roots")
+                .into_iter()
+                .map(|(root, _)| root)
+                .collect();
+            durable.sort_unstable();
+            assert_eq!(durable, expected, "each acked sibling keeps its record");
+            drop(manager);
+
+            let (restarted, _events, _) = manager_with_store(store).await;
+            restarted.resync_persisted_pending_dags().await;
+            let mut restored = restarted.pending_dag_cids();
+            restored.sort_unstable();
+            assert_eq!(restored, expected, "a restart restores both siblings");
+        }
     }
 
     #[nuclei::test]
@@ -909,7 +953,8 @@ mod pending_persistence {
     async fn durable_scope_head_survives_pending_eviction_and_restart() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (old_root, old_bytes) = composite_with_priority_and_missing_field(1, "old");
-        let (new_root, new_bytes) = composite_with_priority_and_missing_field(2, "new");
+        let (new_root, new_bytes) = composite_over(2, "new", vec![old_root]);
+        let (newest_root, newest_bytes) = composite_over(3, "newest", vec![new_root]);
 
         {
             let (manager, _events, pending_store) = manager_with_store(store.clone()).await;
@@ -940,23 +985,22 @@ mod pending_persistence {
             assert_eq!(records[0].0, new_root);
         }
 
-        // Installation must hydrate the scope index synchronously. A stale
-        // hint arriving before the resync sweep is covered by the durable new
-        // head and cannot resurrect the retired per-root obligation.
+        // The durable scope head outlives the restart: a head that links it
+        // retires it before any resync sweep has run.
         let (restarted, _events, pending_store) = manager_with_store(store).await;
         restarted
             .process_pushlog(
-                &pushlog_for(&old_root, &old_bytes),
+                &pushlog_for(&newest_root, &newest_bytes),
                 Some("peer-1"),
                 true,
                 None,
             )
             .await
-            .expect("stale post-restart hint is durably covered");
+            .expect("a post-restart head supersedes the durable head it links");
         let records = pending_store.load_all().await.expect("load after restart");
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].0, new_root);
-        assert_eq!(records[0].1.head_priority, Some(2));
+        assert_eq!(records[0].0, newest_root);
+        assert_eq!(records[0].1.head_priority, Some(3));
     }
 
     #[nuclei::test]
@@ -976,7 +1020,7 @@ mod pending_persistence {
             .install_pending_dag_store(pending_store.clone())
             .await;
         let (old_root, old_bytes) = composite_with_priority_and_missing_field(1, "old");
-        let (new_root, new_bytes) = composite_with_priority_and_missing_field(2, "new");
+        let (new_root, new_bytes) = composite_over(2, "new", vec![old_root]);
 
         manager
             .process_pushlog(
@@ -1008,7 +1052,7 @@ mod pending_persistence {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let (manager, _events, pending_store) = manager_with_store(store).await;
         let (old_root, old_bytes) = composite_with_priority_and_missing_field(1, "old-col");
-        let (new_root, new_bytes) = composite_with_priority_and_missing_field(2, "new-col");
+        let (new_root, new_bytes) = composite_over(2, "new-col", vec![old_root]);
         let collection_pushlog = |cid: &Cid, bytes: &[u8]| {
             let mut message = pushlog_for(cid, bytes);
             message.doc_id.clear();

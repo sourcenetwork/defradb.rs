@@ -160,7 +160,6 @@ pub(super) enum PendingDagAdmission {
     Admitted {
         superseded: Box<Option<(Cid, PendingDag)>>,
     },
-    CoveredByCurrent,
     GlobalCapacity,
     PeerQuota {
         max_per_peer: usize,
@@ -466,14 +465,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     #[cfg(test)]
     pub(super) fn insert_pending_dag(&self, root_cid: Cid, dag: PendingDag) -> bool {
         matches!(
-            self.try_insert_pending_dag(root_cid, dag),
-            PendingDagAdmission::Admitted { .. } | PendingDagAdmission::CoveredByCurrent
+            self.try_insert_pending_dag(root_cid, &[], dag),
+            PendingDagAdmission::Admitted { .. }
         )
     }
 
+    /// `parents` are the heads `root_cid` links: it retires its scope's
+    /// current head only when that head is one of them.
     pub(super) fn try_insert_pending_dag(
         &self,
         root_cid: Cid,
+        parents: &[Cid],
         dag: PendingDag,
     ) -> PendingDagAdmission {
         use crate::sync::head_scope::ScopeDecision;
@@ -483,10 +485,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let (admission, depth) = self.pending_dags.update(|pending| {
             evict_expired_pending_dags(pending, Instant::now());
 
-            let scope_decision = pending.scope_head_decision(root_cid, &dag);
-            if matches!(scope_decision, ScopeDecision::CoveredByCurrent) {
-                return (PendingDagAdmission::CoveredByCurrent, None);
-            }
+            let scope_decision = pending.scope_head_decision(root_cid, parents, &dag);
             let superseded_root = match scope_decision {
                 ScopeDecision::Supersedes(root) => Some(root),
                 _ => None,
@@ -1068,18 +1067,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 continue;
             }
 
-            let (missing, decoded_head_priority): (Vec<Cid>, Option<u64>) =
+            let (missing, decoded_head_priority, parents): (Vec<Cid>, Option<u64>, Vec<Cid>) =
                 match self.blockstore.get(&root_cid).await {
                     Ok(Some(data)) => {
-                        let priority = defra_core::Block::from_dag_cbor(&data)
-                            .ok()
-                            .map(|block| block.delta.priority());
+                        let block = defra_core::Block::from_dag_cbor(&data).ok();
+                        let priority = block.as_ref().map(|block| block.delta.priority());
+                        let parents = block.and_then(|block| block.heads).unwrap_or_default();
                         let missing = find_all_missing_links(self.blockstore.as_ref(), &data)
                             .await
                             .unwrap_or_else(|_| vec![root_cid]);
-                        (missing, priority)
+                        (missing, priority, parents)
                     }
-                    _ => (vec![root_cid], None),
+                    _ => (vec![root_cid], None, Vec::new()),
                 };
             let head_priority = decoded_head_priority.or(record.head_priority);
 
@@ -1091,6 +1090,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 record.head_priority = head_priority;
                 let upgrade = Registration {
                     root: root_cid,
+                    parents: &[],
                     record: &record,
                     capacity: self.persisted_pending_capacity(),
                 };
@@ -1135,12 +1135,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 estimates: crate::sync::arbitration::RootEstimates::default(),
             };
 
-            let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {
+            let superseded = match self.try_insert_pending_dag(root_cid, &parents, dag.clone()) {
                 PendingDagAdmission::Admitted { superseded } => *superseded,
-                PendingDagAdmission::CoveredByCurrent => {
-                    self.remove_persisted_pending(&root_cid).await;
-                    continue;
-                }
                 PendingDagAdmission::GlobalCapacity | PendingDagAdmission::PeerQuota { .. } => {
                     tracing::warn!(
                         root_cid = %root_cid,
