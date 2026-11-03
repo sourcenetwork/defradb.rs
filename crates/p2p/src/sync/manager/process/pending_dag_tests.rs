@@ -54,6 +54,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         incomplete_attempts: 0,
         merge_continuation: false,
         storage_blocker: None,
+        origin: crate::sync::manager::pending::PendingOrigin::Push,
     }
 }
 

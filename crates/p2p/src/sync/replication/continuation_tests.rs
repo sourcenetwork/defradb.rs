@@ -753,3 +753,81 @@ async fn retry_clock_continues_local_history_without_a_timer_tick() {
     coordinator.shutdown().await;
     clock.await.unwrap().unwrap();
 }
+
+/// Yields its first turn, then waits for an input that never arrives.
+#[derive(Default)]
+struct YieldThenWait {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl MergeHandler for YieldThenWait {
+    type Error = TestError;
+
+    async fn handle_block(
+        &self,
+        _cid: &Cid,
+        _block_data: &[u8],
+        _metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, Self::Error> {
+        Ok(if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            MergeOutcome::Yielded
+        } else {
+            MergeOutcome::retryable_skip("predecessor definition is not yet available")
+        })
+    }
+}
+
+/// A pull-sync merge that yields leaves a local continuation: no sender waits
+/// on it and it has no durable record. When its next turn ends in a
+/// non-terminal skip, the entry leaves the map at once, so it neither counts
+/// against `max_pending_dags` nor is re-driven forever; the next pull or push
+/// of the head starts the merge again.
+#[tokio::test(start_paused = true)]
+async fn a_local_continuation_ends_on_a_non_terminal_skip() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "pulled").await;
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
+    let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
+    let handler = YieldThenWait::default();
+    let config = ReplicationConfig::default();
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "pulled".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert_eq!(coordinator.pending_dag_count(), 1, "the yield continues");
+
+    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    assert_eq!(dispatch(&coordinator), 1);
+    let results =
+        ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert!(matches!(
+        results.as_slice(),
+        [ReplicationResult::Skipped {
+            terminal: false,
+            ..
+        }]
+    ));
+    assert_eq!(
+        coordinator.pending_dag_count(),
+        0,
+        "a skipped local continuation must not keep a pending slot"
+    );
+    tokio::time::advance(crate::sync::manager::pending::PENDING_RETRY_CAP).await;
+    assert_eq!(dispatch(&coordinator), 0, "nothing re-drives it");
+    assert!(!blockstore.is_merged(&root).await.unwrap());
+    coordinator.shutdown().await;
+}

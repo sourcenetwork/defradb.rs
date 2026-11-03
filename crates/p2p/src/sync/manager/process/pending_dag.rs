@@ -11,7 +11,9 @@ use blockstore::Blockstore;
 use crate::error::{Error, Result};
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
-use crate::sync::manager::pending::{retry_backoff, PendingDag};
+use crate::sync::manager::pending::{
+    retry_backoff, PendingDag, PendingDagRegistry, PendingOrigin, SharedPendingDags,
+};
 use crate::sync::pending_store::{PersistedPendingDag, PersistedQuarantinedDag, Registration};
 
 use super::SyncManager;
@@ -56,6 +58,35 @@ impl PendingDagLease {
                 dag.next_retry_at = dag.next_retry_at.max(now + retry_backoff(dag.dispatches));
             }
         });
+    }
+}
+
+/// One merge turn of a root. Dropping it ends a local continuation the turn
+/// did not continue.
+#[must_use = "a local continuation ends when its turn drops"]
+pub(crate) struct MergeTurn {
+    root_cid: Cid,
+    local: Option<Arc<SharedPendingDags>>,
+}
+
+impl Drop for MergeTurn {
+    fn drop(&mut self) {
+        let Some(pending) = self.local.take() else {
+            return;
+        };
+        let root = self.root_cid;
+        let ended = |registry: &PendingDagRegistry| {
+            registry.get(&root).is_some_and(|dag| {
+                dag.origin == PendingOrigin::LocalContinuation && !dag.merge_continuation
+            })
+        };
+        if pending.read(ended) {
+            pending.update(|registry| {
+                if ended(registry) {
+                    registry.remove(&root);
+                }
+            });
+        }
     }
 }
 
@@ -558,6 +589,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         incomplete_attempts: 0,
                         merge_continuation: true,
                         storage_blocker: None,
+                        origin: PendingOrigin::LocalContinuation,
                     },
                 );
             }
@@ -576,19 +608,34 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         scheduled
     }
 
-    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) {
-        if !self.pending_dags.read(|pending| {
-            pending
-                .get(root_cid)
-                .is_some_and(|dag| dag.merge_continuation)
-        }) {
-            return;
-        }
-        self.pending_dags.update(|pending| {
-            if let Some(dag) = pending.get_mut(root_cid) {
-                dag.merge_continuation = false;
-            }
+    /// A merge turn of `root_cid` starts: consume its scheduled continuation.
+    /// The returned turn ends a local continuation when it drops, unless the
+    /// turn yielded again through `continue_merge`. Nobody else owns such an
+    /// entry, so a turn that merged, skipped or failed leaves nothing behind
+    /// to count against `max_pending_dags` or to be re-driven; the next pull
+    /// or push of the head starts the merge again.
+    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) -> MergeTurn {
+        let entry = self.pending_dags.read(|pending| {
+            pending.get(root_cid).map(|dag| {
+                (
+                    dag.merge_continuation,
+                    dag.origin == PendingOrigin::LocalContinuation,
+                )
+            })
         });
+        if entry.is_some_and(|(scheduled, _)| scheduled) {
+            self.pending_dags.update(|pending| {
+                if let Some(dag) = pending.get_mut(root_cid) {
+                    dag.merge_continuation = false;
+                }
+            });
+        }
+        MergeTurn {
+            root_cid: *root_cid,
+            local: entry
+                .is_some_and(|(_, local)| local)
+                .then(|| Arc::clone(&self.pending_dags)),
+        }
     }
 
     /// Make a root promptly due (e.g. a provider just connected) without
@@ -1010,6 +1057,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 incomplete_attempts: 0,
                 merge_continuation: false,
                 storage_blocker: None,
+                origin: PendingOrigin::Restored,
             };
 
             let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {
