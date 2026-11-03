@@ -15,9 +15,9 @@ mod cluster;
 
 use crate::support;
 use cluster::{
-    addr, churn, connect, create, eventually, fetches_in_flight_to, heads, heads_acked_by, holds,
-    markers_for, peer_id, pending_from, replicate, row, set, start, sync_status, COLLECTION,
-    START_TIMEOUT,
+    addr, churn, connect, count, create, eventually, fetches_in_flight_to, heads, heads_acked_by,
+    holds, is_connected, markers_for, peer_id, pending_from, replicate, row, set, start,
+    sync_status, COLLECTION, START_TIMEOUT,
 };
 use defra_harness::{DefraClient, TestCluster, Throttle};
 use std::time::{Duration, Instant};
@@ -41,10 +41,10 @@ const RECEIVER: usize = 2;
 const SIBLING_DOCS: usize = 10;
 
 /// The hub was down while the catch-up node wrote a long history; the hub is
-/// back and fetching that history from it. The catch-up node runs 100 ms in
-/// every 25 s: its connection stays up and every fetch window sees it, but a
-/// window is too short to serve a whole history, so its fetches do not finish
-/// on their own. The desktop only authors: it does not subscribe, so it
+/// back and fetching that history from it. From before the hub returns, the
+/// catch-up node runs 100 ms in every 25 s: its connection stays up and every
+/// fetch window sees it, but a window is too short to serve a whole history,
+/// so its fetches do not finish on their own. The desktop only authors: it does not subscribe, so it
 /// neither receives nor forwards the catch-up history, and nothing queues
 /// ahead of its own heads.
 struct CatchUp {
@@ -53,8 +53,9 @@ struct CatchUp {
 }
 
 /// Bring the hub back under catch-up load and return once the catch-up node's
-/// roots fill the hub's `fetch_slots`: as many are pending as there are slots,
-/// and as many are in flight as its per-peer share allows (one slot fewer).
+/// roots fill the hub's `fetch_slots`: as many are registered as there are
+/// slots, and as many fetches to it are in flight as its per-peer share allows
+/// (one slot fewer).
 async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64) -> CatchUp {
     cluster
         .client(DESKTOP)
@@ -73,6 +74,7 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
         );
     }
     let catchup_peer = peer_id(cluster, CATCHUP);
+    let catchup_addr = addr(cluster, CATCHUP);
 
     let stopped = cluster.stop_node(HUB).await.expect("stop the hub");
     let catchup = cluster.client(CATCHUP);
@@ -83,15 +85,22 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
             doc
         })
         .collect();
+    let throttle = cluster
+        .throttle_node(CATCHUP, THROTTLE_RUN, THROTTLE_STOP)
+        .expect("throttle the catch-up node");
     cluster
         .start_stopped_node(stopped, START_TIMEOUT)
         .await
         .expect("restart the hub");
-    connect(cluster, HUB, CATCHUP);
     connect(cluster, HUB, DESKTOP);
-    let throttle = cluster
-        .throttle_node(CATCHUP, THROTTLE_RUN, THROTTLE_STOP)
-        .expect("throttle the catch-up node");
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while !is_connected(cluster, HUB, &catchup_peer).await {
+        assert!(
+            Instant::now() < deadline,
+            "the hub never reached the throttled catch-up node"
+        );
+        let _ = cluster.client(HUB).p2p_connect(&[catchup_addr.as_str()]);
+    }
 
     let hub = cluster.client(HUB);
     let ids = docs.clone();
@@ -104,14 +113,15 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         let pending = pending_from(cluster, HUB, &catchup_peer).await;
+        let durable = count(&sync_status(cluster, HUB).await, "persisted_pending_dags");
         let in_flight = fetches_in_flight_to(cluster, HUB, &catchup_peer).await;
-        if pending >= fetch_slots && in_flight >= per_peer {
+        if pending.max(durable) >= fetch_slots && in_flight >= per_peer {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "the catch-up load never filled the hub's {fetch_slots} fetch slots \
-             (pending from it {pending}, in flight to it {in_flight}): the scenario cannot hold capacity"
+            "the catch-up load never filled the hub's {fetch_slots} fetch slots (pending from it \
+             {pending}, durable {durable}, in flight to it {in_flight}): the scenario cannot hold capacity"
         );
         nuclei::time::sleep(Duration::from_secs(1)).await;
     }

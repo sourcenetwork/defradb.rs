@@ -177,6 +177,14 @@ pub async fn heads_acked_by(cluster: &TestCluster, node: usize, peer: &str) -> u
     count(&details["heads_pushed"], "succeeded")
 }
 
+/// Whether `node` has a live connection to `peer`.
+pub async fn is_connected(cluster: &TestCluster, node: usize, peer: &str) -> bool {
+    cluster
+        .p2p_peer_details(node, peer)
+        .await
+        .is_ok_and(|details| details["connected"].as_bool() == Some(true))
+}
+
 /// DAG fetches `node` has in flight to `peer`.
 pub async fn fetches_in_flight_to(cluster: &TestCluster, node: usize, peer: &str) -> u64 {
     let status = sync_status(cluster, node).await;
