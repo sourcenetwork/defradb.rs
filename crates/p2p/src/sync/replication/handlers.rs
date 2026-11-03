@@ -130,7 +130,6 @@ where
         let limiter = coordinator.dag_fetch_limiter();
         let diagnostics = coordinator.manager().diagnostics();
         let source_peer = crate::transport::PeerId::new(source_peer);
-        let lease = coordinator.manager().pending_dag_lease(root_cid);
         let mut alternate_providers: Vec<crate::transport::PeerId> = providers
             .into_iter()
             .map(crate::transport::PeerId::new)
@@ -146,11 +145,12 @@ where
             .with_alternate_providers(alternate_providers)
             .with_explicit_replicator(is_explicit_replicator)
             .with_explicit_replay_authorization(explicit_replay_authorization)
-            .with_pending_lease(lease.clone())
+            .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
             .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
 
+        let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
             crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
@@ -162,7 +162,7 @@ where
                 diagnostics,
             )
             .await;
-            lease.schedule_next_attempt();
+            attempt.finish_clock_attempt();
         });
 
         return ReplicationResult::DagFetchStarted { root_cid };

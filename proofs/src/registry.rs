@@ -579,7 +579,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_ReadyRootsServedInOrder / INV_ExpiryKeepsOwner / LIVE_AckedRootMerged",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::schedule_next_attempt; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
         model_ref: "MC_SyncOwnership_{Green_Dispatch,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl}.cfg",
         tiers: &[Boundary],
     },
