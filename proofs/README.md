@@ -154,7 +154,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | B3 filtered replication | Behavioral | `replication.rs` |
 | DAG convergence | Behavioral | `replication.rs` (live-forward) + `partition.rs` (partition heal; concurrent same-doc merge — the bug it found+fixed) |
 | Replicator lifecycle | Behavioral | `replicator_lifecycle.rs` (backfill no-loss + resume across node restart) |
-| Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
+| Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
@@ -210,6 +210,8 @@ Read this before trusting a verdict; it states the model's honest reach.
   serving provider** (strong fairness on some completed fetch) for the SyncOwnership
   dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
   merge promise. Those results give fairness to the scheduler only, never to a root.
+  The PushBacklog liveness result assumes every running push send ends, by a reply or
+  its send timeout; its dispatch fairness is the scheduler's only, never a peer's.
 - **Crypto boundary (KMS):** ECIES is abstracted — a node can use an envelope iff it is
   the intended recipient. Real ECIES/IND-CCA security is assumed, not modeled.
 - **Float counter divergence (proven, real):** IEEE-754 addition is not associative, so
