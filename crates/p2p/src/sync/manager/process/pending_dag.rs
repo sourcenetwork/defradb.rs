@@ -49,7 +49,7 @@ impl PendingDagLease {
 
     /// The fetch attempt ended and gave its slot back: the root is due again
     /// one backoff from now, so roots that waited during the attempt go first.
-    pub(crate) fn schedule_next_attempt(&self) {
+    pub(crate) fn finish_attempt(&self) {
         let now = n0_future::time::Instant::now();
         self.pending.update(|pending| {
             if let Some(dag) = pending.get_mut(&self.root_cid) {

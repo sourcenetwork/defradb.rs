@@ -28,7 +28,7 @@
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each)
 \*   coordinator/dag_fetcher.rs  poll_fetch_dag (a clock-owned fetch makes one attempt)
 \*   replication/handlers.rs  handle_dag_needs_fetch (the slot comes back; the clock re-arms the root)
-\*   manager/process/pending_dag.rs  PendingDagLease::schedule_next_attempt, due_pending_dag_retries
+\*   manager/process/pending_dag.rs  PendingDagLease::finish_attempt, due_pending_dag_retries
 \*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires)
 \* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs.
 EXTENDS SyncOwnership, Sequences

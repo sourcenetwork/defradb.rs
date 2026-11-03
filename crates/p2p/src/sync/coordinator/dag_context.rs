@@ -119,6 +119,15 @@ impl DagFetchContext {
         self.pending_lease.is_some()
     }
 
+    /// End a clock-dispatched attempt: the clock re-arms its root (see
+    /// `PendingDagLease::finish_attempt`). A reply-driven fetch has no lease,
+    /// retries in place and never touches the clock, so this is a no-op for it.
+    pub(crate) fn finish_clock_attempt(&self) {
+        if let Some(lease) = &self.pending_lease {
+            lease.finish_attempt();
+        }
+    }
+
     /// Count a clock-dispatched attempt that left the DAG incomplete; see
     /// `PendingDagLease::record_incomplete_attempt`.
     pub(crate) fn record_incomplete_attempt(&self) -> Option<u32> {

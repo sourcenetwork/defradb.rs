@@ -217,7 +217,7 @@ their scope markers on the success reply.
   the old rule: `RetryInPlace` starts the next of `MaxAttempts` attempts while
   keeping the slot.
 - `RearmMode = "AttemptEnd"`: the root is due again a backoff after its attempt
-  ends (`PendingDagLease::schedule_next_attempt`, called by
+  ends (`PendingDagLease::finish_attempt`, called by
   `handle_dag_needs_fetch` when the task returns). `"ClaimTime"` leaves the
   due time the claim set, which an attempt longer than the backoff has already
   passed, so the root sits ahead of every head acknowledged while it ran.
