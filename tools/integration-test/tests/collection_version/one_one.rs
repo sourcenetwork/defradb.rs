@@ -19,7 +19,7 @@ fn one_to_one_doc_relation_field_errors() {
                 "#
             .into(),
             // The `Author.doc` field results in a virtual id field named `_docID` being auto-added
-            // this then clashes with the std `_docID` field (the litteral document id field).
+            // this then clashes with the std `_docID` field (the literal document id field).
             expected_error: Some("duplicate field. Name: _docID".to_string()),
             ..Default::default()
         }
