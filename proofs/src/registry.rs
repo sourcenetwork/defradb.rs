@@ -1407,7 +1407,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "no_orphan_chunks / parent_is_gone / others_stay / delete_alone_leaves_an_orphan",
         axis: Lean,
-        anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn, delete_collections_as",
+        anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn; crates/db/src/collection/ops/chunk_versions.rs chunk_versions_to_add",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
     },
