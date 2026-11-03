@@ -123,9 +123,9 @@ name = "http_contract"
 path = "tests/http_contract.rs"
 
 [dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-commonware-codec = "2026.9.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "696538b9e3be3be058ff159d93878264807a925d" }
+commonware-codec = "=2026.10.0"
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "501bff096be8a3e1de1d203f4cad0f95e8d4883a" }
 crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 edge = { path = "../../crates/edge", features = ["testing"] }
@@ -167,9 +167,9 @@ required-features = ["generator"]
 [dev-dependencies]
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "982a617e7626a855bc9edce63d85385f74824129" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "696538b9e3be3be058ff159d93878264807a925d" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "696538b9e3be3be058ff159d93878264807a925d" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "696538b9e3be3be058ff159d93878264807a925d" }
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
