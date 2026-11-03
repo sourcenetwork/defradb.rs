@@ -369,15 +369,10 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn poll_until_connected(&self, peer_id: &PeerId, timeout: Duration) -> Result<()> {
-        let wait_for_peer = async {
-            loop {
-                let peers = self.connected_peers().await?;
-                if peers.contains(peer_id) {
-                    return Ok(());
-                }
-                crate::rt::time::sleep(Duration::from_millis(50)).await;
-            }
-        };
+        let wait_for_peer = self.send_command(|reply| IrohCommand::WaitConnected {
+            peer_id: peer_id.clone(),
+            reply,
+        });
         futures::select_biased! {
             _ = self.stopped.clone() => Err(Error::ChannelSend),
             result = crate::rt::time::timeout(timeout, wait_for_peer).fuse() => {

@@ -438,11 +438,10 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .map_err(|_| {
                 P2PError::transport(format!("failed to connect: timeout dialing {peer_id}"))
             })?
-            .map_err(|error| P2PError::transport(format!("failed to connect: {error}")))?;
-        self.transport
-            .poll_until_connected(&peer_id, std::time::Duration::from_secs(10))
-            .await
-            .map_err(|error| P2PError::transport(error.to_string()))?;
+            .map_err(|error| match error {
+                p2p::error::Error::Unauthorized(message) => P2PError::unauthorized(message),
+                error => P2PError::transport(format!("failed to connect: {error}")),
+            })?;
 
         self.peer_addresses
             .insert(peer_id.to_string(), addr.to_string());
@@ -1321,10 +1320,12 @@ mod tests {
         let adapter_b = IrohP2PAdapter::<NoopBlockstore>::for_tests(transport_b.clone());
 
         let dial_addr = dialable_ticket(&transport_b).await;
-        adapter_a
-            .connect_peer(&dial_addr)
-            .await
-            .expect("dial reaches endpoint b");
+        // The handshake and b's refusal race: either the dial answers Ok before the close, or
+        // it sees the close and says so. Both are correct, and neither waits.
+        match adapter_a.connect_peer(&dial_addr).await {
+            Ok(()) | Err(P2PError::Unauthorized(_)) => {}
+            Err(error) => panic!("dial to a refusing peer must answer at once: {error}"),
+        }
 
         let deadline = web_time::Instant::now() + std::time::Duration::from_millis(500);
         while web_time::Instant::now() < deadline {

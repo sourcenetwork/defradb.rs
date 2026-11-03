@@ -72,6 +72,12 @@ pub enum IrohCommand {
     ConnectedPeers {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerId>>>,
     },
+    /// Resolves once `peer_id` holds a connection; abandoned when the reply
+    /// receiver drops.
+    WaitConnected {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
     InboundBudget {
         reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::InboundClassSnapshot>>>,
     },

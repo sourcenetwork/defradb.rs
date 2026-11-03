@@ -112,8 +112,9 @@ async fn assert_never_connects(dialer: &IrohTransport, server: &IrohTransport, w
 /// check, running in the accept path, can close it).
 async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &IrohTransport) {
     let addrs = server.listen_addresses().await.unwrap();
-    if dialer.dial(server.local_peer_id(), addrs).await.is_ok() {
-        return;
+    match dialer.dial(server.local_peer_id(), addrs).await {
+        Ok(()) | Err(crate::error::Error::Unauthorized(_)) => return,
+        Err(_) => {}
     }
     timeout(Duration::from_secs(5), async {
         loop {
@@ -682,4 +683,74 @@ async fn deny_peer_then_allow_peer_again_permits_reconnection() {
     wait_gossip_message(&mut server_events, &dialer).await;
 
     shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// The close the refusing node sends is read by its code, and only when the
+/// remote sent it.
+#[nuclei::test(threads = 0)]
+async fn closed_by_refusal_reads_the_remote_close_code() {
+    let (server, _events, server_task) =
+        spawn_node(IrohAllowlistConfig::Explicit(Default::default())).await;
+    let addrs = server.listen_addresses().await.unwrap();
+    let addr = super::addr::endpoint_addr_from_parts(server.local_peer_id(), &addrs).unwrap();
+    edge::compat(async {
+        let client = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .relay_mode(iroh::RelayMode::Disabled)
+            .bind_addr("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+            .unwrap()
+            .bind()
+            .await
+            .unwrap();
+        let connection = super::endpoint_rpc::connect_mux(&client, addr)
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(5), connection.closed())
+            .await
+            .expect("the refusing node never closed the connection");
+        assert!(super::endpoint_streams::closed_by_refusal(&connection));
+
+        let (open, _events, open_task) = spawn_node(IrohAllowlistConfig::default()).await;
+        let addrs = open.listen_addresses().await.unwrap();
+        let addr = super::addr::endpoint_addr_from_parts(open.local_peer_id(), &addrs).unwrap();
+        let connection = super::endpoint_rpc::connect_mux(&client, addr)
+            .await
+            .unwrap();
+        connection.close(1u32.into(), b"peer not authorized");
+        assert!(!super::endpoint_streams::closed_by_refusal(&connection));
+        drop(open);
+        drop(open_task);
+    })
+    .await;
+    drop(server);
+    drop(server_task);
+}
+
+/// A wait for a peer that connects later returns as the connection lands,
+/// and a wait for one that never does ends at its deadline.
+#[nuclei::test(threads = 0)]
+async fn poll_until_connected_wakes_on_the_connection_and_times_out_without_one() {
+    let (waiter, _waiter_events, waiter_task) = spawn_node(IrohAllowlistConfig::default()).await;
+    let (target, _target_events, target_task) = spawn_node(IrohAllowlistConfig::default()).await;
+    let (stranger, _stranger_events, stranger_task) =
+        spawn_node(IrohAllowlistConfig::default()).await;
+
+    let waiting = waiter.poll_until_connected(target.local_peer_id(), Duration::from_secs(5));
+    let dialing = async {
+        let addrs = target.listen_addresses().await.unwrap();
+        waiter.dial(target.local_peer_id(), addrs).await.unwrap();
+    };
+    let (woken, ()) = futures::join!(waiting, dialing);
+    woken.unwrap();
+
+    let missed = waiter
+        .poll_until_connected(stranger.local_peer_id(), Duration::from_millis(100))
+        .await;
+    assert!(matches!(
+        missed,
+        Err(crate::error::Error::ConnectionTimeout(_))
+    ));
+
+    shutdown_all(waiter, target, waiter_task, target_task).await;
+    drop(stranger);
+    drop(stranger_task);
 }

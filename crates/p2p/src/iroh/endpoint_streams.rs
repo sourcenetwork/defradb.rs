@@ -23,6 +23,16 @@ use super::solicited::Solicited;
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
 const REFUSED_CONNECTION_CODE: u32 = 1;
 
+/// Whether the remote already closed `connection` with the refusal code. The
+/// code is matched, never the reason bytes.
+pub(super) fn closed_by_refusal(connection: &iroh::endpoint::Connection) -> bool {
+    matches!(
+        connection.close_reason(),
+        Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+            if close.error_code == REFUSED_CONNECTION_CODE.into()
+    )
+}
+
 /// QUIC stream error codes sent when a stream is refused before its body is
 /// read, or reset because the body stopped arriving.
 const RESET_UNKNOWN_SERVICE: u32 = 2;
