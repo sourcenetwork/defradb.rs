@@ -61,7 +61,7 @@ zeroize = "1.8"
 rand = { workspace = true }
 uuid = { workspace = true }
 cid = { workspace = true }
-x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+x25519-dalek = { version = "3.0", features = ["static_secrets"] }
 # The KMS's bounded channels, on every target.
 async-channel = "2"
 
