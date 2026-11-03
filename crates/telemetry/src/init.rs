@@ -38,9 +38,6 @@ pub enum InitError {
     #[error("failed to build OTLP metric exporter: {0}")]
     MetricExporter(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("the network runtime for telemetry export could not start: {0}")]
-    Network(#[source] edge::EdgeError),
-
     #[error("failed to build the telemetry HTTP client: {0}")]
     HttpClientBuild(#[source] net::http::Error),
 }
@@ -51,15 +48,18 @@ pub enum InitError {
 /// `S` parameter for `OpenTelemetryLayer<S, _>`.
 ///
 /// Safe to call from any context: `BatchSpanProcessor` exports from a
-/// dedicated OS thread, and each export runs as a task of the process's
-/// on-demand network runtime ([`edge::on_demand`]), started here.
+/// dedicated OS thread, and each export runs as a task of the given network
+/// `edge`.
 ///
 /// By default `init` installs the providers in the process-wide
 /// `opentelemetry::global` slot. Set [`TelemetryConfig::install_global`] to
 /// `false` (or call [`TelemetryConfig::without_global`]) to skip that —
 /// useful when the host process already runs its own OTel stack and would
 /// otherwise see its globals silently replaced.
-pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), InitError> {
+pub fn init(
+    config: TelemetryConfig,
+    edge: edge::Edge,
+) -> Result<(TelemetryHandle, SdkTracer), InitError> {
     let executable_name = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -81,7 +81,6 @@ pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), Ini
         .with_attribute(KeyValue::new("process.executable.name", executable_name))
         .build();
 
-    let edge = edge::on_demand().map_err(InitError::Network)?.clone();
     let http_client = OtlpHttp::new(edge, otel_timeout()).map_err(InitError::HttpClientBuild)?;
 
     let span_exporter = SpanExporter::builder()

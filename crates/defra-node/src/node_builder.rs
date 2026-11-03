@@ -291,8 +291,8 @@ impl NodeBuilder {
     /// calling this twice is a compile error rather than a silent overwrite.
     ///
     /// For a one-call ergonomic version, callers can write
-    /// `.with_telemetry(telemetry::init(cfg)?.0)` — `init` requires a Tokio
-    /// runtime and returns `(TelemetryHandle, SdkTracer)`.
+    /// `.with_telemetry(telemetry::init(cfg, edge)?.0)` — `init` exports on
+    /// the given network `edge` and returns `(TelemetryHandle, SdkTracer)`.
     #[cfg(feature = "otel")]
     pub fn with_telemetry(mut self, handle: TelemetryHandle) -> Self {
         self.telemetry_handle = Some(handle);

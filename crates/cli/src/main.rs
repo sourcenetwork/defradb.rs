@@ -88,7 +88,7 @@ async fn run(edge: edge::Edge) -> Result<()> {
     // Initialize logging based on config. Telemetry only initializes for the
     // `start` command (matching Go, which configures it only in start.go) so
     // ephemeral commands like `version` / `client` don't spin up the exporter.
-    let logging = cli::logging::init(&config, should_profile(&cli), enable_telemetry(&cli))?;
+    let logging = cli::logging::init(&config, &edge, should_profile(&cli), enable_telemetry(&cli))?;
 
     // Execute the command
     let result = cli.execute(config, edge).await;
