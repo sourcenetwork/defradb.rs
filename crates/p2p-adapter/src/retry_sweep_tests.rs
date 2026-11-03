@@ -30,13 +30,13 @@ const OTHER_PEER: &str = "peer-b";
 
 /// A failure the replay path attributed to the document, not the transport:
 /// `push_docs` picks this prefix when the typed error is not connection-like.
-const DOCUMENT_FAILURE: &str =
+pub(super) const DOCUMENT_FAILURE: &str =
     "replay push failed after 0 successful block(s): failed to write request: 9ddf7e88/1451: connection is closed";
 const RATE_LIMITED: &str =
     "peer rejected replay after 0 successful block(s): rate limited: too many requests, retry later";
 
 #[derive(Clone)]
-enum Outcome {
+pub(super) enum Outcome {
     Delivered,
     Failed(&'static str),
     RateLimited(u64),
@@ -46,10 +46,10 @@ enum Outcome {
 
 /// Replays documents by script and, like the production pusher, clears the
 /// marker of every delivered document.
-struct ScriptedPusher {
-    peerstore: Peerstore<RegolithStore>,
-    script: RapidHashMap<String, Outcome>,
-    attempted: Atom<Vec<String>>,
+pub(super) struct ScriptedPusher {
+    pub(super) peerstore: Peerstore<RegolithStore>,
+    pub(super) script: RapidHashMap<String, Outcome>,
+    pub(super) attempted: Atom<Vec<String>>,
 }
 
 impl ScriptedPusher {
@@ -169,9 +169,9 @@ impl TransportDocPusher for ScriptedPusher {
 
 /// A transport whose only job is to report the sweep's peers as connected.
 #[derive(Clone)]
-struct ConnectedTransport {
-    local: PeerId,
-    connected: Vec<PeerId>,
+pub(super) struct ConnectedTransport {
+    pub(super) local: PeerId,
+    pub(super) connected: Vec<PeerId>,
 }
 
 #[async_trait]
@@ -372,7 +372,7 @@ impl Sweep {
     async fn escalate(&self, rungs: usize) {
         for _ in 0..rungs {
             self.peerstore
-                .reschedule_retry_peer(PEER, None, 1)
+                .reschedule_retry_peer(PEER, None, None)
                 .await
                 .unwrap();
         }

@@ -47,13 +47,15 @@ pub struct RetryInfo {
     pub not_before_unix: u64,
     #[serde(default)]
     pub deferred_at_unix: u64,
-    /// Durable round-robin start for the peer's presence-only scope markers.
+    /// Durable round-robin start for the peer's presence-only scope markers:
+    /// the scope the last bounded pass tried last.
     ///
-    /// All scopes share this peer clock.  Persisting the cursor prevents a
+    /// All scopes share this peer clock. Persisting the cursor prevents a
     /// bounded consumer from retrying the same failing lexical prefix after
-    /// every sweep or process restart.
+    /// every sweep or process restart, and lets a pass read one page after it
+    /// instead of the whole marker set.
     #[serde(default)]
-    pub dispatch_cursor: u64,
+    pub dispatch_after: Option<(RetryScope, String)>,
 }
 
 /// Durable sender obligations surfaced through P2P sync diagnostics.
@@ -105,6 +107,16 @@ impl PushRetryMarker {
     /// Whether this record is a doc-less collection-commit obligation.
     pub fn is_collection_commit(&self) -> bool {
         matches!(self.scope, RetryScope::CollectionCommit)
+    }
+
+    /// This scope's place in the peer's dispatch order.
+    pub fn dispatch_key(&self) -> (RetryScope, String) {
+        let id = if self.is_collection_commit() {
+            &self.collection_id
+        } else {
+            &self.doc_id
+        };
+        (self.scope, id.clone())
     }
 }
 
@@ -158,7 +170,7 @@ impl RetryInfo {
             next_retry_unix: 0,
             not_before_unix: 0,
             deferred_at_unix: 0,
-            dispatch_cursor: 0,
+            dispatch_after: None,
         }
     }
 
@@ -205,11 +217,6 @@ impl RetryInfo {
         let delay = floor + hasher.finish() % (cap - floor + 1);
         self.next_retry_unix = now.saturating_add(delay).max(self.not_before_unix);
         self.num_retries = self.num_retries.saturating_add(1);
-    }
-
-    /// Move the next bounded pass to a different lexical marker prefix.
-    pub fn advance_dispatch_cursor(&mut self, by: u64) {
-        self.dispatch_cursor = self.dispatch_cursor.wrapping_add(by);
     }
 
     /// Schedule another attempt without recording a delivery failure.
@@ -301,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_retry_info_decodes_with_zero_dispatch_cursor() {
+    fn legacy_retry_info_decodes_without_a_dispatch_cursor() {
         let bytes = defra_core::cbor::to_vec(&LegacyRetryInfo {
             num_retries: 4,
             next_retry_unix: 42,
@@ -310,7 +317,26 @@ mod tests {
         let decoded = RetryInfo::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.num_retries, 4);
         assert_eq!(decoded.next_retry_unix, 42);
-        assert_eq!(decoded.dispatch_cursor, 0);
+        assert_eq!(decoded.dispatch_after, None);
+    }
+
+    #[test]
+    fn counted_dispatch_cursor_decodes_without_a_dispatch_cursor() {
+        #[derive(serde::Serialize)]
+        struct CountedCursorRetryInfo {
+            num_retries: u32,
+            next_retry_unix: u64,
+            dispatch_cursor: u64,
+        }
+        let bytes = defra_core::cbor::to_vec(&CountedCursorRetryInfo {
+            num_retries: 4,
+            next_retry_unix: 42,
+            dispatch_cursor: 17,
+        })
+        .unwrap();
+        let decoded = RetryInfo::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.num_retries, 4);
+        assert_eq!(decoded.dispatch_after, None);
     }
 
     #[test]
