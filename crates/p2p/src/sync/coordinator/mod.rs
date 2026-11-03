@@ -166,7 +166,7 @@ pub struct SyncStatus {
     pub pending_dag_capacity: usize,
     pub pending_dag_high_water: u64,
     /// Durable pending-DAG registrations (may exceed `pending_dags`: records
-    /// outlive TTL-evicted in-memory entries until their roots merge).
+    /// restored past the in-memory cap wait there until their roots merge).
     pub persisted_pending_dags: usize,
     pub persisted_pending_dag_capacity: usize,
     pub persisted_pending_dag_high_water: u64,
@@ -1058,10 +1058,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Periodic bounded drain for durable pending-DAG registrations: sweeps
-    /// at `interval` until shutdown, so records skipped at capacity (or whose
-    /// in-memory entries TTL-expired) are re-driven even when no peer
-    /// reconnects and the node never restarts. The steady-state early-exit
-    /// inside the sweep makes idle ticks free. Run from a spawned task.
+    /// at `interval` until shutdown, so records skipped at capacity are
+    /// re-driven even when no peer reconnects and the node never restarts.
+    /// The steady-state early-exit inside the sweep makes idle ticks free.
+    /// Run from a spawned task.
     pub async fn run_pending_dag_resync(&self, interval: Duration) {
         loop {
             if self.runtime.shutdown.is_shutting_down() {

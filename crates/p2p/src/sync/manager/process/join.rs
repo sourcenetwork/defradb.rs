@@ -68,9 +68,9 @@ where
     }
 
     /// Whether the block needs nothing more from a duplicate: its DAG is
-    /// registered for recovery, or it is merged.
+    /// registered for recovery (in memory or durably), or it is merged.
     async fn needs_nothing_more(&self, cid: &Cid) -> Result<bool> {
-        if self.is_pending_dag_recovery_registered(cid) {
+        if self.is_pending_dag_owned(cid) {
             return Ok(true);
         }
         let merged = self

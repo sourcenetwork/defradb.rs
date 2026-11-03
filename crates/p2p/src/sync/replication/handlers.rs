@@ -150,8 +150,9 @@ where
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
 
+        let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
-            crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
+            let end = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
                 blockstore,
                 event_tx,
@@ -161,6 +162,7 @@ where
                 diagnostics,
             )
             .await;
+            attempt.finish_clock_attempt(end);
         });
 
         return ReplicationResult::DagFetchStarted { root_cid };
@@ -263,7 +265,7 @@ where
 {
     // Load block from blockstore
     let _pending_owner = coordinator.pending_dag_merge_guard(cid);
-    coordinator
+    let _turn = coordinator
         .manager()
         .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
@@ -642,10 +644,10 @@ where
         .filter_map(event_merge_cid)
         .map(|cid| {
             let owner = coordinator.pending_dag_merge_guard(cid);
-            coordinator
+            let turn = coordinator
                 .manager()
                 .consume_pending_merge_continuation(&cid);
-            owner
+            (owner, turn)
         })
         .collect();
 
