@@ -15,10 +15,17 @@
 \* current text, the reader cuts the current text itself instead of trusting
 \* the list.
 \*
+\* A peer can also send a chunk document that lies. One lie is a chunk whose
+\* hash is not the hash of its text. Another is a new version of a chunk the
+\* receiver already stores, which would change it after it was created. The
+\* merge guard refuses both before anything is stored.
+\*
 \* What must never happen:
 \*   - a reader shows a chunk that is not part of the current text (INV_ReadsMatchText);
 \*   - once every edit and chunk has reached both peers, they show different
-\*     chunks, or miss a chunk of the text (INV_SettledPeersAgree).
+\*     chunks, or miss a chunk of the text (INV_SettledPeersAgree);
+\*   - a peer stores a chunk whose hash does not match its text (INV_NoForgedChunk);
+\*   - a stored chunk is changed after it was created (INV_ChunksNeverChange).
 \*
 \* Code it models:
 \*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule)
@@ -26,19 +33,25 @@
 \*   crates/crdt/src/lww.rs                  the per-field tie break
 \*   crates/db/src/chunk/sync/mod.rs         set_lists (text and list in one write)
 \*   crates/db/src/chunk/guard.rs            check_chunk_merge
-\* The deleted-parent and hash guards, and races with a reader, are ChunkRead.tla's.
+\* The deleted-parent guard, the read-time hash check and races with a reader are
+\* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so that
+\* case is not modelled here.
 \* Numbers and finite sets are all this model needs.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
   Peers,       \* the two peers, for example {p1, p2}
   MaxEdits,    \* how many edits each peer makes, at most
-  CheckEntry0  \* TRUE: a reader checks entry 0 against the text (the fix)
+  CheckEntry0, \* TRUE: a reader checks entry 0 against the text (the fix)
+  CheckHash,   \* TRUE: the merge refuses a chunk whose hash does not match its text (the fix)
+  Immutable    \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
 
 \* Each peer edits at least once.
 ASSUME MaxEdits \in Nat \ {0}
-\* The switch is yes-or-no.
+\* The switches are yes-or-no.
 ASSUME CheckEntry0 \in BOOLEAN
+ASSUME CheckHash \in BOOLEAN
+ASSUME Immutable \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2", "t3"}
@@ -55,6 +68,9 @@ TextRank(t) == CASE t = "t1" -> 1 [] t = "t2" -> 2 [] t = "t3" -> 3
 \* hash, so they order the texts differently.
 ListRank(t) == CASE t = "t1" -> 3 [] t = "t2" -> 1 [] t = "t3" -> 2
 
+\* Every chunk any text is cut into.
+AllChunks == UNION {ChunksOf(t) : t \in Texts}
+
 \* An edit: who made it, at which height, and the text it wrote.
 Edits == [peer : Peers, height : 1..(2 * MaxEdits), text : Texts]
 
@@ -62,10 +78,12 @@ VARIABLES
   made,      \* every edit made so far, by anyone
   known,     \* known[p]: the edits peer p has merged
   chunks,    \* chunks[p]: the chunks stored on peer p
-  count      \* count[p]: how many edits peer p has made
+  count,     \* count[p]: how many edits peer p has made
+  forged,    \* forged[p]: chunks stored on p whose hash does not match their text
+  changed    \* changed[p]: chunks on p that were changed after they were stored
 
 \* All the variables, for stuttering steps.
-vars == <<made, known, chunks, count>>
+vars == <<made, known, chunks, count, forged, changed>>
 
 \* The edit among `es` that wins under a tie break `rank`: highest height
 \* first, then the higher rank.
@@ -102,8 +120,10 @@ NextHeight(p) ==
 TypeOK ==
   /\ made \subseteq Edits                                          \* edits are edits
   /\ known \in [Peers -> SUBSET Edits]                              \* each peer knows some
-  /\ chunks \in [Peers -> SUBSET UNION {ChunksOf(t) : t \in Texts}] \* stored chunks are real chunks
+  /\ chunks \in [Peers -> SUBSET AllChunks]                         \* stored chunks are real chunks
   /\ count \in [Peers -> 0..MaxEdits]                               \* edits made, per peer
+  /\ forged \in [Peers -> SUBSET AllChunks]                         \* forged ones are real chunk names
+  /\ changed \in [Peers -> SUBSET AllChunks]                        \* changed ones are real chunk names
 
 \* At the start no one has edited anything.
 Init ==
@@ -111,6 +131,8 @@ Init ==
   /\ known = [p \in Peers |-> {}]      \* no peer knows any
   /\ chunks = [p \in Peers |-> {}]     \* no chunks stored
   /\ count = [p \in Peers |-> 0]       \* no peer has edited
+  /\ forged = [p \in Peers |-> {}]     \* nothing forged is stored
+  /\ changed = [p \in Peers |-> {}]    \* nothing was changed
 
 \* Peer p edits the article to text t: one write sets text and list, and the
 \* chunks of t are created on p in the same transaction.
@@ -123,12 +145,13 @@ Edit(p, t) ==
         /\ known' = [known EXCEPT ![p] = @ \cup {e}]         \* and p has it
   /\ chunks' = [chunks EXCEPT ![p] = @ \cup ChunksOf(t)]    \* p stores t's chunks
   /\ count' = [count EXCEPT ![p] = @ + 1]                  \* one more edit by p
+  /\ UNCHANGED <<forged, changed>>                         \* no lie is involved
 
 \* Peer p merges an edit another peer made. Both fields merge from it.
 MergeEdit(p) ==
   \E e \in made \ known[p] :                      \* an edit p lacks
     /\ known' = [known EXCEPT ![p] = @ \cup {e}]   \* is merged on p
-    /\ UNCHANGED <<made, chunks, count>>          \* nothing else changes
+    /\ UNCHANGED <<made, chunks, count, forged, changed>>  \* nothing else changes
 
 \* A chunk document reaches peer p from the peer that created it.
 MergeChunk(p) ==
@@ -136,14 +159,32 @@ MergeChunk(p) ==
     \E c \in chunks[q] \ chunks[p] :   \* stores a chunk p lacks
       \* The merge guard accepts it: its hash is its text's, and it never changes.
       /\ chunks' = [chunks EXCEPT ![p] = @ \cup {c}]  \* p now stores it
-      /\ UNCHANGED <<made, known, count>>            \* nothing else changes
+      /\ UNCHANGED <<made, known, count, forged, changed>>  \* nothing else changes
+
+\* A peer sends p a chunk whose hash does not match its text.
+PlantForged(p) ==
+  /\ ~CheckHash                                         \* only when the merge does not check the hash
+  /\ \E c \in AllChunks :                               \* some chunk name
+       /\ chunks' = [chunks EXCEPT ![p] = @ \cup {c}]   \* p stores it
+       /\ forged' = [forged EXCEPT ![p] = @ \cup {c}]   \* and it is a forgery
+  /\ UNCHANGED <<made, known, count, changed>>         \* nothing else changes
+
+\* A peer sends p a new version of a chunk p already stores, with a hash that
+\* matches the new version. The hash check alone can't tell.
+Rewrite(p) ==
+  /\ ~Immutable                                         \* only when the merge allows changes
+  /\ \E c \in chunks[p] :                               \* a chunk p stores
+       changed' = [changed EXCEPT ![p] = @ \cup {c}]    \* is now a different chunk
+  /\ UNCHANGED <<made, known, count, chunks, forged>>  \* nothing else changes
 
 \* Every step a peer can take.
 Next ==
   \E p \in Peers :
     \/ \E t \in Texts : Edit(p, t)  \* p edits the article,
     \/ MergeEdit(p)                 \* merges an edit,
-    \/ MergeChunk(p)                 \* or receives a chunk
+    \/ MergeChunk(p)                \* receives a chunk,
+    \/ PlantForged(p)               \* is sent a forged chunk,
+    \/ Rewrite(p)                   \* or is sent a change to a stored chunk
 
 \* Start from Init and take any steps.
 Spec == Init /\ [][Next]_vars
@@ -151,6 +192,12 @@ Spec == Init /\ [][Next]_vars
 \* A reader shows only chunks of the text it shows.
 INV_ReadsMatchText ==
   \A p \in Peers : known[p] # {} => Shown(p) \subseteq ChunksOf(TextOn(p))  \* per peer holding the article
+
+\* No peer stores a chunk whose hash does not match its text.
+INV_NoForgedChunk == \A p \in Peers : forged[p] = {}  \* nothing forged anywhere
+
+\* No stored chunk is ever changed.
+INV_ChunksNeverChange == \A p \in Peers : changed[p] = {}  \* nothing changed anywhere
 
 \* Every edit and chunk has reached every peer.
 Settled ==

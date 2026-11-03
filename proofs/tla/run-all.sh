@@ -116,6 +116,8 @@ RUNS=(
   "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
   "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
   "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list (INV_ReadsMatchText)
+  "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
+  "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
@@ -125,6 +127,7 @@ RUNS=(
   "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
+  "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"

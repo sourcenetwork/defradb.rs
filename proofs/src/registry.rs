@@ -1389,10 +1389,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ReadsMatchText / INV_SettledPeersAgree",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange",
         axis: Tla,
         anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes; crates/db/src/chunk/guard.rs check_chunk_merge",
-        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -1413,10 +1413,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_LiveParentHasChunks",
+        name: "INV_LiveParentHasChunks / INV_PurgedHaveNoChunks",
         axis: Tla,
         anchor: "crates/db/src/collection/ops/truncate/all.rs truncate_all; crates/db/src/collection/ops/purge.rs purge_documents",
-        model_ref: "MC_TruncateChunks_Green.cfg / MC_TruncateChunks_Red_ParentsFirst.cfg",
+        model_ref: "MC_TruncateChunks_Green.cfg / MC_TruncateChunks_Red_ParentsFirst.cfg / MC_TruncateChunks_Red_PurgeLeavesChunks.cfg",
         tiers: &[Boundary],
     },
     Property {
