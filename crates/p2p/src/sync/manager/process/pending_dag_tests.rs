@@ -11,6 +11,11 @@ use crate::sync::manager::DEFAULT_MAX_PENDING_DAGS;
 use crate::sync::{PeerStateTracker, SyncConfig};
 use rapidhash::{HashSetExt, RapidHashSet};
 
+#[path = "../../../../tests/unit/acked_pending_ttl.rs"]
+mod acked_pending_ttl;
+#[path = "../../../../tests/unit/durable_only_repush.rs"]
+mod durable_only_repush;
+
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
         0x55,
@@ -48,8 +53,10 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         last_fetch_error: None,
         next_retry_at: n0_future::time::Instant::now(),
         dispatches: 0,
+        incomplete_attempts: 0,
         merge_continuation: false,
         storage_blocker: None,
+        origin: crate::sync::manager::pending::PendingOrigin::Push,
     }
 }
 
@@ -1120,7 +1127,7 @@ async fn resync_deletes_live_leftover_of_quarantined_root_without_redriving() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
+async fn resync_restore_leaves_root_due_and_discards_volatile_continuation() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
     let blockstore = Arc::new(DefraBlockstore::new(
@@ -1179,14 +1186,8 @@ async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
             .unwrap()
             .merge_continuation
     );
-    // TTL uses web_time, not Tokio's paused retry clock.
-    manager.pending_dags.update(|pending| {
-        pending.get_mut(&root).unwrap().inserted_at =
-            Instant::now() - PENDING_DAG_TTL - Duration::from_secs(1);
-    });
-    assert!(manager
-        .due_pending_dag_retries(n0_future::time::Instant::now())
-        .is_empty());
+    // A restart loses the in-memory entry and keeps the durable record.
+    manager.pending_dags.update(|pending| pending.remove(&root));
     assert!(manager.pending_dag_snapshot(&root).is_none());
     assert_eq!(pending_store.load_all().await.unwrap().len(), 1);
     assert_eq!(manager.resync_persisted_pending_dags().await, 1);
