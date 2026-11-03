@@ -33,17 +33,17 @@
 \* properties are stated over it; nothing is recorded only to state them.
 \* Variables and the code state each one is (crates/p2p/src/sync):
 \*   mem        the keys of the in-memory pending map (SyncManager::pending_dags,
-\*              manager/process/mod.rs:86) whose PendingDag::origin (manager/pending.rs:93)
+\*              manager/process/mod.rs:90) whose PendingDag::origin (manager/pending.rs:93)
 \*              is Push or Restored.
 \*   conts      the keys of the same map whose origin is LocalContinuation.
 \*   dispatches PendingDag::dispatches (manager/pending.rs:83): claims since the entry
 \*              was made, counted by try_claim_pending_dag_dispatch
-\*              (manager/process/pending_dag.rs:562), up to RotateAfter, the
+\*              (manager/process/pending_dag.rs:563), up to RotateAfter, the
 \*              PENDING_ROTATE_AFTER_DISPATCHES (manager/pending.rs:353) that
-\*              PendingDagLease::finish_attempt (pending_dag.rs:80) compares it with.
+\*              PendingDagLease::finish_attempt (pending_dag.rs:81) compares it with.
 \*   dueOrder   the entries in mem whose PendingDag::next_retry_at (manager/pending.rs:81)
 \*              has passed, in next_retry_at order (due_pending_dag_retries,
-\*              pending_dag.rs:722); next_retry_at is kept by its order, the only
+\*              pending_dag.rs:723); next_retry_at is kept by its order, the only
 \*              thing the code reads from it.
 \*   backoff    the entries in mem whose next_retry_at is still ahead. Which passes
 \*              next is left open (BecomeDue), so every order of deadlines is explored.

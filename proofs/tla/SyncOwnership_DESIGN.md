@@ -385,6 +385,48 @@ that assumption, or without weak fairness on `PullEnd` (a pull fetch that
 never ends), d1 is never dispatched and the liveness check fails, so the
 result is not vacuous.
 
+The clock does not start a fetch itself: it hands the root to the merge loop
+(`DagNeedsFetch`, or `DagReady` for a merge continuation), which starts it.
+The merge loop drains one bounded channel of merge work (`event_buffer_size`,
+256), one event at a time. In a catch-up storm other senders keep that
+channel full and wait for room: pull-sync replies, finished fetches
+reporting `DagReady`, and transport handlers that complete another root's
+DAG. A freed cell goes to the oldest waiting sender, so `try_reserve` finds
+room only when nobody waits.
+
+- `fifo` is that channel (`FifoCap` cells) and `blocked` the sender waiting
+  for room in it, both code state: the channel's buffer, with merge work kept
+  only as `Work`, and a `Sender::send` awaiting its permit. `Storm` turns on `StormSend`, the environment's merge work;
+  it gets no fairness and is never made to stop. `Drain` is the merge loop
+  taking its next event, with weak fairness. A fetch's outcomes need the
+  merge loop to have taken its dispatch (`Started`). A finished fetch's
+  `DagReady` waits for room like any other sender, oldest first;
+  `ClaimMerge`'s strong fairness stands for that wait.
+- `DispatchPath = "OwnLane"`: the clock's dispatches take a lane of their own
+  (`lane`; `DispatchLane`, one per fetch slot, checked by `can_dispatch`),
+  which the merge loop empties before the channel
+  (`SyncEventReceiver::recv`). No waiting sender is owed the lane's room, and
+  no queued merge delays a dispatch. `"MergeFifo"`, the rule before, takes a
+  cell of the channel with `try_reserve`.
+- `HandlerSend = "TryThenClock"`: a PushLog, peer-connect or completion
+  handler that completes another root's DAG tries the channel once; when it
+  is full it makes the root due at once and the clock dispatches it
+  (`retry_pending_dag`), so the handler never waits in its lane slot.
+  `"Blocking"`, the rule before, waits for room while it holds the admission
+  lane slot and the CID guard (`INV_AdmissionNeverWaitsOnMergeLoop`).
+
+`MC_SyncOwnership_Green_Dispatch_Storm` checks one document across a restart
+with the storm on: the head merges and no handler waits in its admission
+slot. `MC_SyncOwnership_Red_MergeFifoDispatch` puts the dispatch back in the
+channel: the waiting sender takes every freed cell and the next one waits
+again, so the head is never dispatched. It fails under `WStrongClockSpec`, a
+strongly fair clock, so the starvation does not come from the clock looking
+at the wrong moments. `MC_SyncOwnership_Red_BlockingHandlerSend` lets a
+handler wait in its admission slot. Pull-sync replies (`DocSyncReply`,
+`BranchableSyncReply`) still wait for room in their completion lane slot;
+they have no clock to hand their blocks to, and the model keeps them as
+`StormSend("pull")`.
+
 ## In-memory pending map
 
 `MC_SyncOwnership_Memory.tla` runs every action of this model with the
@@ -518,7 +560,11 @@ state a property: the end of a continuation is the liveness property
   acknowledged head leaves the receiver only while someone else (sender
   marker, a hint, a newer pending head or the merge) still owns it.
 - `LIVE_AckedRootMerged` (dispatch): every acknowledged head whose provider
-  eventually serves is merged (the environment assumption above).
+  eventually serves is merged (the environment assumption above), however
+  long a storm keeps the merge loop's channel full.
+- `INV_AdmissionNeverWaitsOnMergeLoop` (dispatch): no transport handler waits
+  for room in the merge loop's channel while it holds an admission lane
+  slot.
 - `INV_MemoryBounded`, `INV_MemoryHoldsDurable` (memory): the map never holds
   more entries than it may, and an acknowledged entry always has its record.
 - `INV_ContinuationsNeverAcked` (memory): a local continuation is never an

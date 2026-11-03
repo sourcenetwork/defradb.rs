@@ -640,6 +640,21 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The clock hands its dispatches to the merge loop on a lane of their
+        // own, one per fetch slot, which the merge loop empties before its
+        // channel of merge work: senders waiting for room in that channel
+        // are owed every cell it frees, and would otherwise starve the clock.
+        // A transport handler that completes a root never waits for room in
+        // its lane slot; it makes the root due for the clock instead. The
+        // storm of merge work is never forced and never made to stop.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "LIVE_AckedRootMerged under a full merge-loop channel / INV_AdmissionNeverWaitsOnMergeLoop",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/event_lanes.rs DispatchLane, SyncEventReceiver::recv; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches; crates/p2p/src/sync/manager/process/pending_dag.rs retry_pending_dag",
+        model_ref: "MC_SyncOwnership_{Green_Dispatch_Storm,Red_MergeFifoDispatch,Red_BlockingHandlerSend}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // The durable store can hold more acknowledged roots than the
         // in-memory map. A root that had its dispatches gives its entry up
         // while a durable root waits (its record stays), and the resync sweep

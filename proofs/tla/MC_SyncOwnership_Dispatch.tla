@@ -11,10 +11,19 @@
 \* (PeerPermits each), which pull fetches (DocSync and BranchableSync
 \* replies) take too, without a slot.
 \*
+\* The clock does not start a fetch itself: it hands the root to the merge
+\* loop, which starts it. The merge loop drains a bounded channel of merge
+\* work, one event at a time, and in a catch-up storm other senders keep
+\* that channel full and wait for room; each freed cell goes to the oldest
+\* waiting sender. Some of those senders are transport handlers that hold a
+\* lane slot while they wait.
+\*
 \* Who acts: the sender (writes and hints), the receiver's clock (claims a
-\* slot for the oldest due root), each fetch (one attempt, which completes or
-\* fails), the merge writer, a one-shot restart, the wall clock (a root's
-\* retry deadline passes), and pull fetches of one source peer.
+\* slot for the oldest due root), the merge loop (takes the next event), the
+\* storm (other merge work, from senders that may wait for room), each fetch
+\* (one attempt, which completes or fails), the merge writer, a one-shot
+\* restart, the wall clock (a root's retry deadline passes), and pull fetches
+\* of one source peer.
 \*
 \* What must never happen:
 \*   - an attempt starts for any root but the oldest due root that can run
@@ -30,8 +39,12 @@
 \*   - an acknowledged head leaves the receiver while nobody else still owns
 \*     it (ACT_AckedRootLeavesOwned): a wall-clock TTL would drop acknowledged
 \*     heads whose senders have already forgotten them;
+\*   - a transport handler waits for room in the merge loop's channel while
+\*     it holds its admission lane slot (INV_AdmissionNeverWaitsOnMergeLoop):
+\*     a full channel would then nack every other peer's push;
 \* and what must eventually happen: every acknowledged head whose provider
-\* serves it is fetched and merged (LIVE_AckedRootMerged). A head whose
+\* serves it is fetched and merged (LIVE_AckedRootMerged), however long the
+\* storm keeps the merge loop's channel full. A head whose
 \* provider never serves (Dead) or only trickles (Trickle) is kept but not
 \* promised a merge here, and it does not keep the other heads from theirs:
 \* a trickling attempt gives its slot back at its quantum (Preempt).
@@ -50,14 +63,15 @@
 \* Variables and the code state each one is (crates/p2p/src/sync):
 \*   dueOrder  the pending roots whose PendingDag::next_retry_at (manager/pending.rs:81)
 \*             has passed, in next_retry_at order: what due_pending_dag_retries
-\*             (manager/process/pending_dag.rs:722) returns. next_retry_at is kept by
+\*             (manager/process/pending_dag.rs:723) returns. next_retry_at is kept by
 \*             its order, the only thing the code reads from it.
 \*   backoff   the pending roots whose next_retry_at is still ahead: set by
-\*             try_claim_pending_dag_dispatch (pending_dag.rs:562) and
-\*             PendingDagLease::finish_attempt (pending_dag.rs:80). Which of them passes
+\*             try_claim_pending_dag_dispatch (pending_dag.rs:563) and
+\*             PendingDagLease::finish_attempt (pending_dag.rs:81). Which of them passes
 \*             next is left open (BecomeDue), so every order of deadlines is explored.
 \*   tries     the attempt a root's fetch task is on: the loop index of poll_fetch_dag
-\*             (coordinator/dag_fetcher.rs:206), 0 when no task runs.
+\*             (coordinator/dag_fetcher.rs:208), 0 when no task runs. A root whose
+\*             dispatch is still queued (Queued) is on attempt 1, not yet started.
 \*   parked    the roots whose clock-dispatched fetch task holds its reservation and
 \*             waits in DagFetchLimiter::acquire (coordinator/mod.rs) for a permit of
 \*             its source peer: waiters on that peer's Semaphore in
@@ -66,6 +80,14 @@
 \*             poll_fetch_dag without a pending lease, spawned by the DocSync and
 \*             BranchableSync reply handlers (coordinator/event_handler/doc_sync.rs,
 \*             branchable_sync.rs).
+\*   fifo      the merge loop's channel (SyncManager::event_tx, manager/process/mod.rs),
+\*             one cell per event_buffer_size slot. Merge work is kept only as Work;
+\*             under MergeFifo it also holds the clock's DagNeedsFetch.
+\*   lane      the clock's dispatches not yet taken by the merge loop
+\*             (DispatchLane::queue, manager/event_lanes.rs).
+\*   blocked   the sender waiting in the channel for room (a tokio Sender::send
+\*             awaiting its permit), at most one here: a pull-sync reply ("pull") or
+\*             a PushLog or peer-connect handler ("admission").
 \* A peer's free permits (its Semaphore's available_permits) are PeerPermits
 \* less InUse below.
 \* SyncOwnership's flights is the fetch reservation (SyncShutdownHandle's
@@ -74,8 +96,11 @@
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   coordinator/mod.rs  dispatch_due_pending_dag_fetches (oldest due first, one slot each,
-\*                        taken with a permit of the root's source peer),
-\*                        DagFetchLimiter::try_reserve_peer, DagFetchLimiter::acquire
+\*                        taken with a permit of the root's source peer, on the
+\*                        clock's own lane), DagFetchLimiter::try_reserve_peer,
+\*                        DagFetchLimiter::acquire
+\*   manager/event_lanes.rs  DispatchLane, SyncEventReceiver::recv (the lane before merge work)
+\*   manager/process/pending_dag.rs  retry_pending_dag (a full channel hands the root to the clock)
 \*   coordinator/dag_fetcher.rs  poll_fetch_dag (a clock-owned fetch makes one attempt,
 \*                                ended at CLOCK_ATTEMPT_QUANTUM while still progressing)
 \*   replication/handlers.rs  handle_dag_needs_fetch (the slot comes back; the clock re-arms the root;
@@ -85,7 +110,7 @@
 \*                                   due_pending_dag_retries (next_retry_at order, due roots only)
 \*   manager/pending.rs  PendingDag::is_expired (only an unacknowledged entry expires)
 \* Rust tests: tests/unit/restart_slot_fairness.rs, tests/unit/acked_pending_ttl.rs,
-\*   tests/unit/productive_quantum.rs.
+\*   tests/unit/productive_quantum.rs, tests/unit/dispatch_merge_fifo.rs.
 \*
 \* The limiter's global permit is not modelled: the slot pool and the global
 \* limit are the same number (max_concurrent_dag_fetches), so clock fetches
@@ -107,7 +132,11 @@ CONSTANTS
   SharedPeer,  \* scopes whose heads one source peer announces; every other scope's peer announces only it
   PeerPermits, \* fetch permits per source peer (DagFetchLimiter's per-peer limit)
   MaxPulls,    \* pull fetches of SharedPeer's peer that run at once: each holds a permit and no slot
-  PermitMode   \* "WithSlot": the clock takes a root's slot and its peer's permit together | "AfterSlot": the bug, the slot first, then the fetch waits for the permit
+  PermitMode,  \* "WithSlot": the clock takes a root's slot and its peer's permit together | "AfterSlot": the bug, the slot first, then the fetch waits for the permit
+  DispatchPath, \* "OwnLane": the clock's dispatches take their own lane, emptied first | "MergeFifo": the bug, they need a free cell in the merge loop's channel
+  HandlerSend, \* "TryThenClock": a handler that finds the channel full hands its root to the clock | "Blocking": the bug, it waits for room in its lane slot
+  Storm,       \* TRUE: other merge work keeps arriving from senders that wait for room
+  FifoCap      \* cells in the merge loop's channel (event_buffer_size)
 
 \* Each knob takes one of its named values.
 ASSUME AttemptMode \in {"PerAttempt", "WholeTask"}
@@ -129,21 +158,42 @@ ASSUME SharedPeer \subseteq Scopes /\ PeerPermits \in Nat /\ PeerPermits >= 1
 ASSUME MaxPulls \in Nat
 \* The permit knob takes one of its named values.
 ASSUME PermitMode \in {"WithSlot", "AfterSlot"}
+\* The dispatch path takes one of its named values.
+ASSUME DispatchPath \in {"OwnLane", "MergeFifo"}
+\* The handler send takes one of its named values.
+ASSUME HandlerSend \in {"TryThenClock", "Blocking"}
+\* The storm is on or off.
+ASSUME Storm \in BOOLEAN
+\* The merge loop's channel holds at least one event.
+ASSUME FifoCap \in Nat /\ FifoCap >= 1
 
 VARIABLES
   dueOrder,  \* roots whose next_retry_at has passed, in next_retry_at order
   backoff,   \* roots whose next_retry_at is still ahead
   tries,     \* [Roots -> 0..MaxAttempts], the attempt a root's fetch task is on
   parked,    \* roots holding a slot whose fetch waits for a permit of its peer
-  pullHeld   \* permits of SharedPeer's peer held by pull fetches
+  pullHeld,  \* permits of SharedPeer's peer held by pull fetches
+  fifo,      \* the merge loop's channel: merge work, and under MergeFifo the clock's dispatches
+  lane,      \* OwnLane only: the clock's dispatches, in order
+  blocked    \* the sender waiting for room in the channel: "none", "pull" or "admission"
 
+\* The merge loop's channel and the clock's lane.
+mvars == <<fifo, lane, blocked>>
 \* The variables this module adds.
-dvars == <<dueOrder, backoff, tries, parked, pullHeld>>
+dvars == <<dueOrder, backoff, tries, parked, pullHeld, fifo, lane, blocked>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, dvars>>
 
 \* The roots a sequence holds.
 Members(q) == {q[i] : i \in 1..Len(q)}
+\* One event of merge work in the channel; its root field means nothing.
+Work == [root |-> CHOOSE r \in Roots : TRUE, work |-> TRUE]
+\* A clock dispatch of root r in the channel.
+DispatchOf(r) == [root |-> r, work |-> FALSE]
+\* Roots the clock dispatched whose fetch the merge loop has not started yet.
+Queued == Members(lane) \cup {fifo[i].root : i \in {j \in 1..Len(fifo) : ~fifo[j].work}}
+\* Root r's fetch has started: the merge loop took its dispatch.
+Started(r) == r \notin Queued
 \* A sequence with the roots of S left out, the rest in order.
 Without(q, S) == SelectSeq(q, LAMBDA r : r \notin S)
 \* The roots of a finite set as a sequence, in one fixed order.
@@ -205,25 +255,72 @@ QueueStep ==
   \* Pull fetches start and end in steps of their own.
   /\ UNCHANGED pullHeld
 
-\* A SyncOwnership step followed by the bookkeeping.
-W(A) == A /\ QueueStep
+\* A SyncOwnership step followed by the bookkeeping; the merge loop's channel
+\* and the clock's lane are untouched.
+W(A) == A /\ QueueStep /\ UNCHANGED mvars
 
-\* A step of root <<s, v>>'s attempt, which starts only once its fetch holds
-\* its peer's permit.
-Attempt(s, v, A) == <<s, v>> \notin parked /\ W(A)
+\* A SyncOwnership step of a fetch the merge loop has already started, whose
+\* attempt runs only once the fetch holds its peer's permit.
+WS(s, v, A) == Started(<<s, v>>) /\ <<s, v>> \notin parked /\ W(A)
 
 \* The clock claims a slot only for a due root, and only for the oldest due
 \* root that could take one: a root in backoff is not due, so a root that
 \* became due later can go before it. Under WithSlot the claim also takes a
 \* permit of the root's peer (try_reserve_peer), so a root whose peer has none
 \* free is passed over and keeps its place; under AfterSlot the fetch asks for
-\* the permit only after the claim.
+\* the permit only after the claim. It hands the root to the merge loop,
+\* which starts the fetch when it takes the dispatch.
 WClaim(s, v) ==
   /\ <<s, v>> \in Members(dueOrder)
+  \* OwnLane: the lane holds one dispatch per slot, so it has room
+  \* (can_dispatch); the dispatch goes behind the earlier ones.
+  /\ \/ /\ DispatchPath = "OwnLane"
+        /\ Len(lane) < FetchCap
+        /\ lane' = Append(lane, <<s, v>>)
+        /\ UNCHANGED fifo
+     \* MergeFifo: try_reserve wins only a cell that no waiting sender is owed.
+     \/ /\ DispatchPath = "MergeFifo"
+        /\ Len(fifo) < FifoCap
+        /\ blocked = "none"
+        /\ fifo' = Append(fifo, DispatchOf(<<s, v>>))
+        /\ UNCHANGED lane
   /\ ClaimFetch(s, v)
   /\ (PermitMode = "AfterSlot" \/ PeerFree(s))
   /\ \A q \in Before(dueOrder, <<s, v>>) : ~Eligible(q)
   /\ QueueStep
+  /\ UNCHANGED blocked
+
+\* The merge loop takes its next event. It empties the clock's lane first; a
+\* dispatch it takes starts that root's fetch. Taking from the channel frees
+\* a cell, which the waiting sender, if any, fills at once.
+Drain ==
+  /\ \/ /\ lane # <<>>
+        /\ lane' = Tail(lane)
+        /\ UNCHANGED <<fifo, blocked>>
+     \/ /\ lane = <<>>
+        /\ fifo # <<>>
+        /\ fifo' = IF blocked = "none" THEN Tail(fifo) ELSE Append(Tail(fifo), Work)
+        /\ blocked' = "none"
+        /\ UNCHANGED lane
+  \* Nothing else changes: the started fetch is the dispatch leaving the queue.
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked, pullHeld>>
+
+\* The storm: a pull-sync reply ("pull") or a PushLog or peer-connect handler
+\* that completed another root's DAG ("admission") sends merge work. With
+\* room and nobody waiting it is queued. Otherwise a pull reply waits for
+\* room; a handler waits only under Blocking, holding its admission lane
+\* slot, and under TryThenClock makes its root due for the clock instead,
+\* which leaves the channel as it is.
+StormSend(k) ==
+  /\ Storm
+  /\ blocked = "none"
+  /\ IF Len(fifo) < FifoCap
+     THEN /\ fifo' = Append(fifo, Work)
+          /\ UNCHANGED blocked
+     ELSE /\ (k = "pull" \/ HandlerSend = "Blocking")
+          /\ blocked' = k
+          /\ UNCHANGED fifo
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, lane, parked, pullHeld>>
 
 \* AfterSlot only: a peer's permit comes back and a fetch waiting for one
 \* takes it, so its attempt can start.
@@ -231,7 +328,7 @@ Unpark(s, v) ==
   /\ <<s, v>> \in parked
   /\ PeerFree(s)
   /\ parked' = parked \ {<<s, v>>}
-  /\ UNCHANGED <<vars, dueOrder, backoff, tries, pullHeld>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, pullHeld, mvars>>
 
 \* A pull fetch of the shared peer (a DocSync or BranchableSync reply) takes
 \* one of that peer's free permits, and no slot.
@@ -239,29 +336,33 @@ PullBegin ==
   /\ pullHeld < MaxPulls
   /\ \E s \in SharedPeer : PeerFree(s)
   /\ pullHeld' = pullHeld + 1
-  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked, mvars>>
 
 \* A pull fetch ends and gives its permit back.
 PullEnd ==
   /\ pullHeld > 0
   /\ pullHeld' = pullHeld - 1
-  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked, mvars>>
 
 \* A failed attempt gives the slot back. Under WholeTask only the last of the
 \* task's attempts does; the earlier ones retry in place (below). A trickling
 \* provider delivers every window, so its attempts never stall.
 WFail(s, v) ==
   /\ s \notin Trickle
+  /\ Started(<<s, v>>)
   /\ <<s, v>> \notin parked
   /\ FailFetchBeforeWaiter(s, v)
   /\ (AttemptMode = "PerAttempt" \/ tries[<<s, v>>] >= MaxAttempts)
   /\ QueueStep
+  /\ UNCHANGED mvars
 
 \* A completed fetch, which a provider that never serves never gives, and a
-\* trickling one never gives within the horizon of this model.
+\* trickling one never gives within the horizon of this model. Its DagReady
+\* then waits for room in the channel like any other sender, oldest first;
+\* ClaimMerge's strong fairness stands for that wait.
 WComplete(s, v) ==
   /\ s \notin Dead \cup Trickle
-  /\ Attempt(s, v, CompleteFetch(s, v))
+  /\ WS(s, v, CompleteFetch(s, v))
 
 \* A trickling attempt's window delivers a block: progress, with nothing for
 \* the clock to act on. Without a quantum, the attempt goes on like this.
@@ -269,6 +370,7 @@ TrickleWindow(s, v) ==
   /\ s \in Trickle
   /\ <<s, v>> \in pending
   /\ flights[<<s, v>>] > 0
+  /\ Started(<<s, v>>)
   /\ <<s, v>> \notin parked
   /\ UNCHANGED allVars
 
@@ -280,6 +382,7 @@ TrickleWindow(s, v) ==
 Preempt(s, v) ==
   /\ CutoffMode = "Quantum"
   /\ s \in Trickle
+  /\ Started(<<s, v>>)
   /\ <<s, v>> \notin parked
   \* The slot is released like a deferral: no exhaustion, the record stays.
   /\ ContendedIngest(s, v)
@@ -287,7 +390,7 @@ Preempt(s, v) ==
   /\ dueOrder' = Append(Without(dueOrder, {<<s, v>>}), <<s, v>>)
   /\ backoff' = backoff \ {<<s, v>>}
   /\ tries' = [tries EXCEPT ![<<s, v>>] = 0]
-  /\ UNCHANGED <<parked, pullHeld>>
+  /\ UNCHANGED <<parked, pullHeld, mvars>>
 
 \* The root's next_retry_at passes and the root is due again. AttemptEnd sets
 \* that deadline when the attempt ends, so only a root with no fetch running
@@ -302,23 +405,24 @@ BecomeDue(s, v) ==
   /\ backoff' = backoff \ {<<s, v>>}
   /\ dueOrder' = Append(dueOrder, <<s, v>>)
   \* Nothing else changes.
-  /\ UNCHANGED <<vars, tries, parked, pullHeld>>
+  /\ UNCHANGED <<vars, tries, parked, pullHeld, mvars>>
 
 \* WholeTask only: a failed attempt keeps its slot, sleeps, and starts the next
 \* attempt without asking the clock, ahead of every root that is waiting.
 RetryInPlace(s, v) ==
   \* Only the old hold-the-slot rule retries inside the task.
   /\ AttemptMode = "WholeTask"
-  \* The root is still owed and its fetch holds a slot.
+  \* The root is still owed and its fetch holds a slot and has started.
   /\ <<s, v>> \in pending
   /\ flights[<<s, v>>] > 0
+  /\ Started(<<s, v>>)
   /\ <<s, v>> \notin parked
   \* The task has attempts left.
   /\ tries[<<s, v>>] < MaxAttempts
   \* The next attempt starts.
   /\ tries' = [tries EXCEPT ![<<s, v>>] = @ + 1]
   \* Nothing else changes: the slot stays with this root.
-  /\ UNCHANGED <<vars, dueOrder, backoff, parked, pullHeld>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, parked, pullHeld, mvars>>
 
 \* WallClockTtl only: the TTL drops an acknowledged root that has not been
 \* fetched yet, whether or not it was ever given a slot.
@@ -345,12 +449,14 @@ Expire(s, v) ==
                  ready, mergeFlights, terminalFlights, fetchExhausted, mergedV,
                  crashed, fwdVars>>
   /\ UNCHANGED senderVars
-  \* The queues drop it too.
+  \* The queues drop it too; a dispatch already handed over stays queued.
   /\ QueueStep
+  /\ UNCHANGED mvars
 
 \* The restart: the resync sweep restores every durable root due at once, in
 \* the sweep's order, with no fetch and no backoff. Fetches waiting for a
-\* permit and pull fetches end with the process.
+\* permit, pull fetches, the channel, the lane and every waiting sender are
+\* gone with the process.
 WCrash ==
   /\ Crash
   /\ dueOrder' = AsSeq(pending')
@@ -358,8 +464,12 @@ WCrash ==
   /\ tries' = [r \in Roots |-> 0]
   /\ parked' = {}
   /\ pullHeld' = 0
+  /\ fifo' = <<>>
+  /\ lane' = <<>>
+  /\ blocked' = "none"
 
-\* Nothing pending, so nothing due or waiting, no fetch task and no permit held.
+\* Nothing pending, so nothing due or waiting, no fetch task, no permit held,
+\* an empty channel and lane, and nobody waiting for room.
 WInit ==
   /\ Init
   /\ dueOrder = <<>>
@@ -367,12 +477,15 @@ WInit ==
   /\ tries = [r \in Roots |-> 0]
   /\ parked = {}
   /\ pullHeld = 0
+  /\ fifo = <<>>
+  /\ lane = <<>>
+  /\ blocked = "none"
 
 \* Every SyncOwnership action, with the claim, the failure, the completion and
-\* the restart replaced by their dispatch-aware forms, the attempt's other
-\* endings only for a fetch that holds its permit, plus the deadline, the
+\* the restart replaced by their dispatch-aware forms, a fetch's other
+\* outcomes only once it started and holds its permit, plus the deadline, the
 \* trickling window, the quantum, the in-place retry, the TTL, a waiting fetch
-\* taking its permit, and pull fetches.
+\* taking its permit, pull fetches, the merge loop and the storm.
 WNext ==
   \/ \E s \in Scopes : W(Update(s)) \/ W(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
@@ -383,16 +496,17 @@ WNext ==
        \/ WClaim(s, v) \/ WFail(s, v) \/ BecomeDue(s, v)
        \/ TrickleWindow(s, v) \/ Preempt(s, v)
        \/ RetryInPlace(s, v) \/ Expire(s, v)
-       \/ Attempt(s, v, ContendedIngest(s, v)) \/ Attempt(s, v, ProviderShed(s, v))
-       \/ Attempt(s, v, StarveTransportCompletion(s, v))
-       \/ Attempt(s, v, StarveRecoveryServe(s, v))
-       \/ Attempt(s, v, StarveRecoveryAuthorization(s, v))
+       \/ WS(s, v, ContendedIngest(s, v)) \/ WS(s, v, ProviderShed(s, v))
+       \/ WS(s, v, StarveTransportCompletion(s, v)) \/ WS(s, v, StarveRecoveryServe(s, v))
+       \/ WS(s, v, StarveRecoveryAuthorization(s, v))
        \/ WComplete(s, v) \/ W(ClaimMerge(s, v))
        \/ W(CompleteMerge(s, v)) \/ W(ClaimTerminal(s, v))
        \/ W(CompleteTerminal(s, v))
        \/ Unpark(s, v)
   \/ PullBegin \/ PullEnd
   \/ WCrash
+  \/ Drain
+  \/ \E k \in {"pull", "admission"} : StormSend(k)
   \/ W(Terminating)
 
 \* Safety runs.
@@ -400,7 +514,8 @@ WSpec == WInit /\ [][WNext]_allVars
 
 \* Liveness runs: once a head is acknowledged only the receiver acts on it, so
 \* only the receiver is fair, and only at the scheduler: the clock dispatches
-\* whenever it can, and merges and their cleanup run. No root has dispatch
+\* whenever it can, the merge loop keeps taking events, and merges and their
+\* cleanup run. The storm is never forced and never made to stop. No root has dispatch
 \* fairness of its own; which root goes next is the due order's choice. Per
 \* root there are only timers: a deadline passes, an attempt's windows end
 \* (each is bounded), a quantum ends. Sender fairness is SyncOwnership's own
@@ -422,6 +537,7 @@ WFairSpec ==
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : Unpark(s, v))
   /\ WF_allVars(PullEnd)
   /\ <>[][~PullBegin]_allVars
+  /\ WF_allVars(Drain)
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : WComplete(s, v))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(ClaimMerge(s, v)))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(CompleteMerge(s, v)))
@@ -432,6 +548,15 @@ WFairSpec ==
        /\ WF_allVars(\E v \in 1..MaxV : WFail(s, v))
        /\ WF_allVars(\E v \in 1..MaxV : Preempt(s, v))
 
+\* The liveness runs with a strongly fair clock: it dispatches once a dispatch
+\* is possible infinitely often, not only while it stays possible. The
+\* MergeFifo red uses it to show that even such a clock never dispatches in a
+\* storm, because the sender waiting for room is owed every cell the merge
+\* loop frees.
+WStrongClockSpec ==
+  /\ WFairSpec
+  /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : WClaim(s, v))
+
 \* Promise: the added variables keep their shapes, on top of SyncOwnership's.
 INV_DispatchTypeOK ==
   /\ TypeOK
@@ -440,6 +565,11 @@ INV_DispatchTypeOK ==
   /\ tries \in [Roots -> 0..MaxAttempts]
   /\ parked \subseteq Roots
   /\ pullHeld \in 0..PeerPermits
+  /\ fifo \in Seq([root : Roots, work : BOOLEAN])
+  /\ Len(fifo) <= FifoCap
+  /\ lane \in Seq(Roots)
+  /\ Len(lane) <= FetchCap
+  /\ blocked \in {"none", "pull", "admission"}
 
 \* Promise: a pending root with no fetch running is either due or waiting out
 \* its backoff, never both and never neither, so no root is lost to the clock.
@@ -486,8 +616,13 @@ CouldStart(r) == r \in Members(dueOrder) /\ Eligible(r) /\ PeerFree(r[1])
 \* root that could start at once waits for a slot.
 INV_NoSlotWaitsForPermit == parked # {} => ~\E r \in Roots : CouldStart(r)
 
+\* Promise: no handler waits for room in the merge loop's channel while it
+\* holds an admission lane slot.
+INV_AdmissionNeverWaitsOnMergeLoop == blocked # "admission"
+
 \* Promise: every acknowledged head whose provider serves is merged, whatever
-\* never-serving or trickling heads hold the slots.
+\* never-serving or trickling heads hold the slots, and however long the
+\* storm keeps the merge loop's channel full.
 LIVE_AckedRootMerged ==
   \A r \in Roots : r[1] \notin Dead \cup Trickle => ((r \in pending) ~> (mergedV[r[1]] >= r[2]))
 ====
