@@ -10,7 +10,7 @@ use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
 use crate::sync::DispatchSender;
-use crate::transport::{PeerId, TransportEvent};
+use crate::transport::{FetchFailureCause, PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
@@ -69,6 +69,7 @@ enum CarFetchOutcome {
     ResponseTimedOut,
     EmptyResponse,
     HeaderOnlyCar,
+    Busy,
     EventChannelClosed,
 }
 
@@ -82,7 +83,25 @@ impl CarFetchOutcome {
             Self::Success => FetchOutcome::Success,
             Self::SizeLimited => FetchOutcome::Partial,
             Self::ResponseTimedOut => FetchOutcome::TimedOut,
+            Self::Busy => FetchOutcome::Busy,
             _ => FetchOutcome::Failed,
+        }
+    }
+
+    /// A shed serve answers busy; an older peer answers the same refusal empty.
+    fn failure_cause(&self) -> FetchFailureCause {
+        match self {
+            Self::ResponseTimedOut => FetchFailureCause::TimedOut,
+            Self::EmptyResponse | Self::Busy => FetchFailureCause::Refused,
+            Self::HeaderOnlyCar => FetchFailureCause::NoBlocks,
+            Self::Success
+            | Self::SizeLimited
+            | Self::InvalidPeerId(_)
+            | Self::ConnectFailed(_)
+            | Self::OpenBiFailed(_)
+            | Self::WriteFailed(_)
+            | Self::ReadFailed(_)
+            | Self::EventChannelClosed => FetchFailureCause::Error,
         }
     }
 
@@ -98,6 +117,7 @@ impl CarFetchOutcome {
             Self::ResponseTimedOut => "response_timed_out",
             Self::EmptyResponse => "empty_response",
             Self::HeaderOnlyCar => "header_only_car",
+            Self::Busy => "busy",
             Self::EventChannelClosed => "event_channel_closed",
         }
     }
@@ -114,9 +134,18 @@ impl CarFetchOutcome {
             | Self::ResponseTimedOut
             | Self::EmptyResponse
             | Self::HeaderOnlyCar
+            | Self::Busy
             | Self::EventChannelClosed => None,
         }
     }
+}
+
+fn aggregate_failure_cause(attempts: &[CarFetchAttempt]) -> FetchFailureCause {
+    attempts
+        .iter()
+        .map(|attempt| attempt.outcome.failure_cause())
+        .max()
+        .unwrap_or(FetchFailureCause::Error)
 }
 
 fn summarize_car_fetch_attempts(attempts: &[CarFetchAttempt]) -> String {
@@ -860,9 +889,21 @@ async fn request_car_response(
 
 /// How a CAR reply counts in the peer's fetch stats, the way a provider
 /// fetch counts it: an empty or header-only reply served nothing.
+/// Read only once no provider succeeded, when `failures` holds one entry per
+/// provider: a panicked task or any non-busy failure means the providers are
+/// not all just saturated.
+fn every_provider_shed(failures: &[CarFetchAttempt]) -> bool {
+    !failures.is_empty()
+        && failures
+            .iter()
+            .all(|attempt| matches!(attempt.outcome, CarFetchOutcome::Busy))
+}
+
 fn car_reply_outcome(car_data: &[u8]) -> FetchOutcome {
     if car_data.is_empty() {
         FetchOutcome::Failed
+    } else if crate::sync::car::is_car_busy(car_data) {
+        FetchOutcome::Busy
     } else if crate::sync::car::decode_car_oversized(car_data)
         .is_ok_and(|notices| !notices.is_empty())
     {
@@ -1041,6 +1082,7 @@ async fn try_fetch_from_provider(
     // "none returned usable blocks" WARN is suppressed when every provider
     // replies empty (issue #858 review round 3).
     let has_blocks = crate::sync::car::car_has_any_block(&car_data);
+    let busy = crate::sync::car::is_car_busy(&car_data);
     let has_notices =
         crate::sync::car::decode_car_oversized(&car_data).is_ok_and(|notices| !notices.is_empty());
 
@@ -1072,7 +1114,9 @@ async fn try_fetch_from_provider(
     }
     CarFetchAttempt {
         provider: provider.clone(),
-        outcome: if has_notices {
+        outcome: if busy {
+            CarFetchOutcome::Busy
+        } else if has_notices {
             CarFetchOutcome::SizeLimited
         } else if has_blocks {
             CarFetchOutcome::Success
@@ -1124,6 +1168,7 @@ pub(super) async fn handle_block_sync(
     root: cid::Cid,
     providers: Vec<PeerId>,
     missing: Vec<cid::Cid>,
+    max_depth: Option<u32>,
 ) {
     use n0_future::task::JoinSet;
 
@@ -1141,7 +1186,10 @@ pub(super) async fn handle_block_sync(
     let request = if missing.is_empty() {
         CarFetchRequest::full_dag(root)
     } else {
-        CarFetchRequest::selective_dag(root, missing.clone())
+        CarFetchRequest {
+            max_depth,
+            ..CarFetchRequest::selective_dag(root, missing.clone())
+        }
     };
 
     let BlockSyncResources {
@@ -1243,7 +1291,9 @@ pub(super) async fn handle_block_sync(
             .send(TransportEvent::BitswapComplete {
                 query_id,
                 success: false,
+                cause: Some(aggregate_failure_cause(&failures)),
                 error,
+                provider_busy: every_provider_shed(&failures),
             })
             .await
             .is_err()
@@ -1255,6 +1305,10 @@ pub(super) async fn handle_block_sync(
 #[cfg(test)]
 #[path = "../../tests/unit/iroh_car_size.rs"]
 mod car_size_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/iroh_block_sync_depth.rs"]
+mod block_sync_depth_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1284,6 +1338,32 @@ mod tests {
         assert_eq!(car_reply_outcome(&with_block), FetchOutcome::Success);
         let size_limited = encode_car_response(&[root], &[], &[(root, 1 << 30)]).unwrap();
         assert_eq!(car_reply_outcome(&size_limited), FetchOutcome::Partial);
+        let busy = crate::sync::car::encode_car_busy(&root).unwrap();
+        assert_eq!(car_reply_outcome(&busy), FetchOutcome::Busy);
+    }
+
+    #[test]
+    fn provider_busy_only_when_every_provider_shed() {
+        use CarFetchOutcome::{Busy, HeaderOnlyCar};
+        let join_error = || CarFetchOutcome::ReadFailed("join_error: panicked".to_string());
+        let cases = [
+            (vec![Busy, Busy], true),
+            (vec![Busy, HeaderOnlyCar], false),
+            (vec![Busy, join_error()], false),
+            (vec![], false),
+        ];
+        for (outcomes, busy) in cases {
+            let label = format!("{outcomes:?}");
+            let failures: Vec<_> = outcomes
+                .into_iter()
+                .enumerate()
+                .map(|(i, outcome)| CarFetchAttempt {
+                    provider: PeerId::new(format!("p{i}")),
+                    outcome,
+                })
+                .collect();
+            assert_eq!(every_provider_shed(&failures), busy, "{label}");
+        }
     }
 
     #[test]
@@ -1305,6 +1385,44 @@ mod tests {
         assert!(summary.contains("connect_failed(timeout)"));
         assert!(summary.contains(&attempts[0].provider.to_string()));
         assert!(summary.contains(&attempts[1].provider.to_string()));
+    }
+
+    #[test]
+    fn a_timed_out_provider_is_reported_as_a_timeout_not_a_refusal() {
+        let attempt = |outcome| CarFetchAttempt {
+            provider: peer_id(b"provider"),
+            outcome,
+        };
+        let cases = [
+            (
+                vec![CarFetchOutcome::ResponseTimedOut],
+                FetchFailureCause::TimedOut,
+            ),
+            (
+                vec![CarFetchOutcome::EmptyResponse],
+                FetchFailureCause::Refused,
+            ),
+            (
+                vec![CarFetchOutcome::HeaderOnlyCar],
+                FetchFailureCause::NoBlocks,
+            ),
+            (
+                vec![CarFetchOutcome::ReadFailed("reset".into())],
+                FetchFailureCause::Error,
+            ),
+            (
+                vec![
+                    CarFetchOutcome::EmptyResponse,
+                    CarFetchOutcome::ResponseTimedOut,
+                ],
+                FetchFailureCause::TimedOut,
+            ),
+            (vec![], FetchFailureCause::Error),
+        ];
+        for (outcomes, expected) in cases {
+            let attempts: Vec<_> = outcomes.into_iter().map(attempt).collect();
+            assert_eq!(aggregate_failure_cause(&attempts), expected, "{attempts:?}");
+        }
     }
 
     #[test]

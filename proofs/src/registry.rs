@@ -929,6 +929,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A request reaches an explicit transaction when its owner key is the
+        // one the transaction began with. An HTTP registry keys a request by
+        // its identity; the embedded node's registry gives every request one
+        // key, since the embedding process is its only caller (#2335). Either
+        // way the work runs as the request's own identity.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
+        model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
+        name: "embedder_admits_every / byIdentity_admits_iff / byIdentity_turns_away_stranger / admits_beginner / default_is_byIdentity",
+        axis: Lean,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller; crates/db/src/txn/owner/table.rs Table::admits",
+        model_ref: "TxnAdmission (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Transaction & merge-queue concurrency",
         name: "exactly_one_wins / one_lowering_per_raise / caller_win_means_owner_lowers / uncancelled_owner_wins: the two swaps settle each fence once",
         axis: Lean,
@@ -1205,6 +1226,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "DAG fetch provider ranking",
+        name: "INV_WaitBounded — one attempt waits at most a rotation of stalls plus its free refusals, however many batches",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt, poll_fetch_blocks_rotating, window_outcome; crates/p2p/src/sync/coordinator/dag_retry.rs FAST_REFUSAL, MAX_FREE_REFUSALS",
+        model_ref: "MC_DagFetchBudget_{Green,Red_SlowIsRefusal,Red_Uncapped,Red_NoCheck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "DAG fetch provider ranking",
+        name: "rank_perm / rank_keeps_healthy_source_first / rank_all_healthy / next_delay_in_range / stale_starts_over / forget_keeps_fresh / forget_drops_stale",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/provider_health.rs ProviderHealth::rank, record_fast_failure, forget_stale, Cooldown::is_stale",
+        model_ref: "ProviderHealth (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Gossip connection ownership",
         name: "INV_RevokedHasNoGossip / INV_PathOnLiveConnection / INV_GossipNeverClosesShared / LIVE_HealthyReached / LIVE_AskAnswered",
         axis: Tla,
@@ -1234,6 +1271,22 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input, Records::rotate",
         model_ref: "MC_ServiceRecords_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Depth-cut DAG fetch",
+        name: "INV_HistoryNotResent / INV_RoundsLogarithmic / LIVE_Completes",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::widen; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt",
+        model_ref: "MC_DepthCutFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Depth-cut DAG fetch",
+        name: "within_iff_level / deep_block_not_served / within_le / cut_le_cap / cut_ge_pow / cut_reaches",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial, ClosureDepth::widen",
+        model_ref: "CarClosureDepth (lake build)",
         tiers: &[Boundary],
     },
     Property {

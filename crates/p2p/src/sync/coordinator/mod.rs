@@ -44,15 +44,19 @@ mod access;
 mod accessors;
 mod authorizer;
 mod broadcast;
+mod closure_depth;
 mod constructor;
 pub(crate) mod dag_context;
 pub(crate) mod dag_fetcher;
 pub(crate) mod dag_retry;
 mod event_handler;
+mod fetch_failures;
+mod fetch_logs;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
 mod peer_details;
+pub(crate) mod provider_health;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_client;
 #[cfg(feature = "libp2p-transport")]
@@ -179,6 +183,12 @@ pub struct SyncStatus {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    /// Providers ranked behind a healthy peer for poor measured fetch health,
+    /// summed over roots.
+    pub provider_demotions_total: u64,
+    /// Providers ranked behind a healthy peer for a recent fast failure,
+    /// summed over roots.
+    pub provider_cooldown_skips_total: u64,
     pub pending_dag_resolved: u64,
     /// Push-originated missing DAGs durably registered before a success ack.
     pub pending_dag_registered: u64,
@@ -196,6 +206,12 @@ pub struct SyncStatus {
     /// Useful CAR responses coalesced behind an existing local storage owner.
     /// These release the fetch lease without consuming provider-failure attempts.
     pub pending_dag_fetch_deferred_contention: u64,
+    /// Fetches deferred to the per-root clock because providers answered busy.
+    pub pending_dag_fetch_deferred_busy: u64,
+    /// Rooted CAR replies received from a provider that shed the request.
+    pub car_busy_responses: u64,
+    /// Rotations past a provider that answered busy, without stall budget.
+    pub provider_busy_rotations: u64,
     /// Roots whose bounded fetch exhausted all attempts/providers.
     pub pending_dag_fetch_exhausted: u64,
     /// Durable pending-DAG obligations discharged by terminal merge/mark.
@@ -277,6 +293,7 @@ pub(crate) struct DagFetchLimiter {
     peer_limit: usize,
     /// Roots a reply-driven fetch is running for, with the trust it merges under.
     roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    provider_health: Arc<provider_health::ProviderHealth>,
 }
 
 /// A root and the collections its fetch merges as an explicit replicator.
@@ -314,7 +331,12 @@ impl DagFetchLimiter {
             roots: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
+            provider_health: Arc::default(),
         }
+    }
+
+    pub(crate) fn provider_health(&self) -> &provider_health::ProviderHealth {
+        &self.provider_health
     }
 
     /// Claims `root` for one fetch trusted as an explicit replicator of
@@ -963,6 +985,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             car_served_cids: diagnostics.car_served_cids,
             car_filtered_cids: diagnostics.car_filtered_cids,
             provider_rotations: diagnostics.provider_rotations,
+            provider_demotions_total: diagnostics.provider_demotions,
+            provider_cooldown_skips_total: diagnostics.provider_cooldown_skips,
             pending_dag_resolved: diagnostics.pending_dag_resolved,
             pending_dag_registered: diagnostics.pending_dag_registered,
             pending_dag_expired: diagnostics.pending_dag_expired,
@@ -975,6 +999,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .pending_dag_fetch_deferred_unavailable,
             pending_dag_fetch_deferred_contention: diagnostics
                 .pending_dag_fetch_deferred_contention,
+            pending_dag_fetch_deferred_busy: diagnostics.pending_dag_fetch_deferred_busy,
+            car_busy_responses: diagnostics.car_busy_responses,
+            provider_busy_rotations: diagnostics.provider_busy_rotations,
             pending_dag_fetch_exhausted: diagnostics.pending_dag_fetch_exhausted,
             pending_dag_terminal_merged: diagnostics.pending_dag_terminal_merged,
             next_pending_retry_in_ms: self.manager.next_pending_retry_in_ms(),
