@@ -346,6 +346,12 @@ impl SharedPendingDags {
     }
 }
 
+/// Clock dispatches after which a root with a durable record gives its
+/// in-memory entry to a durable root waiting for one, keeping its record
+/// (`PendingDagLease::finish_attempt`): the attempts a reply-driven fetch
+/// makes before it gives up.
+pub const PENDING_ROTATE_AFTER_DISPATCHES: u32 = 3;
+
 /// Base delay before the first scheduled re-dispatch of a pending root.
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);
 /// Local committed work is immediately eligible; the bounded scheduler owns fairness.
