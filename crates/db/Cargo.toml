@@ -115,6 +115,7 @@ blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"
 ed25519-dalek.workspace = true
+mantra-macros = "0.9"
 
 [lints]
 workspace = true

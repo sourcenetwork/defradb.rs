@@ -1,11 +1,21 @@
 use std::path::PathBuf;
 
+pub mod actions;
+mod client_type;
+pub mod clients;
 mod cross_runtime;
+pub mod export;
 mod feature_binaries;
+mod go_node;
+pub mod nodes;
 mod purge;
+pub mod scenario;
+pub mod test_case;
+
+pub use scenario::m;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
-pub use feature_binaries::{build_cli_variant, vera_cli_binary};
+pub use feature_binaries::{build_cli_variant, listing_tests, vera_cli_binary, TestBuild};
 pub use purge::purge_node;
 
 // Re-export modules from defra-harness
@@ -71,11 +81,12 @@ pub fn workspace_root() -> PathBuf {
         .expect("failed to canonicalize workspace root")
 }
 
-/// Return the configured Rust CLI binary, falling back to Cargo's debug output.
+/// Return the configured Rust CLI binary, falling back to the CLI built on
+/// the tests' own profile.
 pub fn rust_binary() -> PathBuf {
     std::env::var_os("DEFRA_RUST_BINARY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target/debug/defra"))
+        .unwrap_or_else(|| TestBuild::current(&workspace_root()).out_dir.join("defra"))
 }
 
 /// Generate `rust_<name>` and `go_<name>` test wrappers for a single-node test.
@@ -300,4 +311,14 @@ macro_rules! for_each_p2p_topology_3_ignored {
             }
         }
     };
+}
+
+/// The path of the enclosing test function, for naming an exported scenario.
+#[macro_export]
+macro_rules! scenario_id {
+    () => {{
+        fn here() {}
+        let name = ::std::any::type_name_of_val(&here);
+        &name[..name.len() - "::here".len()]
+    }};
 }

@@ -6,6 +6,7 @@ mod cursor;
 mod filter_prep;
 mod groupby;
 mod index_methods;
+mod ordering_only;
 mod scan_setup;
 pub(crate) mod se_detection;
 
@@ -549,7 +550,7 @@ impl Planner {
                 })
                 .collect();
 
-            let multi_level_paths = filter.get_multi_level_relation_paths();
+            let multi_level_paths = self.relation_filter_paths(filter, &collection);
             for path in multi_level_paths {
                 // Only handle paths where the first relation is NOT in the selection set
                 if let Some(first_relation) = path.first() {
@@ -598,7 +599,7 @@ impl Planner {
                 .filter
                 .as_ref()
                 .map(|f| {
-                    f.get_multi_level_relation_paths()
+                    self.relation_filter_paths(f, &collection)
                         .into_iter()
                         .filter_map(|path| path.into_iter().next())
                         .collect()

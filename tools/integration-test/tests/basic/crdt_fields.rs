@@ -73,28 +73,6 @@ async fn graphql_updates_replace_lww_and_add_to_counters() {
 }
 
 #[nuclei::test]
-async fn graphql_rejects_a_negative_pcounter_increment() {
-    edge::compat(async move {
-        let cluster = single_node().await;
-        let node = cluster.client(0);
-        node.query(
-            r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
-        )
-        .expect("add_Tally");
-        let id = doc_id(&node);
-
-        let error = node
-            .query_expect_error(&format!(
-                r#"mutation {{ update_Tally(docID: "{id}", input: {{hits: -1}}) {{ _docID }} }}"#
-            ))
-            .expect("negative increment error");
-        assert!(error.contains("value cannot be negative"), "{error}");
-        assert_tally(&tally(&node), "first", 2, 1.5);
-    })
-    .await;
-}
-
-#[nuclei::test]
 async fn http_rejects_a_negative_pcounter_increment() {
     edge::compat(async move {
         let cluster = single_node().await;
@@ -284,9 +262,9 @@ async fn concurrent_updates_on_two_nodes_converge() {
             node.schema_add(SDL).expect("schema add");
             node.p2p_collection_add(&["Tally"]).expect("collection add");
             node.query(
-            r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
-        )
-        .expect("add_Tally");
+                r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
+            )
+            .expect("add_Tally");
         }
         let id = doc_id(&node0);
         assert_eq!(id, doc_id(&node1), "same content, same docID");

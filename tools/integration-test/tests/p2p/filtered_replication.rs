@@ -4,7 +4,7 @@
 //! per-collection `{Field, Value}` predicate so a source node only pushes
 //! documents whose field matches. The feature spans live push, backfill, SE
 //! artifacts, and `@immutable` enforcement. These tests exercise that behavior
-//! across two running nodes via the real CLI/HTTP surface — the layer where the
+//! across two running nodes via the real CLI/HTTP surface - the layer where the
 //! emergent "non-matching document must NOT arrive" property is observable.
 //!
 //! Because the predicate has no Go equivalent, these are explicit `rust_nodes`
@@ -235,7 +235,7 @@ async fn filtered_excludes_nonmatching(cluster: TestCluster) {
         .expect("create non-matching doc");
 
     // The non-matching doc is filtered at the SENDER and never pushed, so its
-    // absence is guaranteed by the filter — not by timing. Create a second
+    // absence is guaranteed by the filter - not by timing. Create a second
     // matching doc and wait for it so the assertion runs only after the push
     // pipeline has demonstrably delivered, replacing the earlier wall-clock sleep.
     let matching2 = node0
@@ -545,7 +545,7 @@ async fn rust_immutable_field_rejects_local_update() {
     .await;
 }
 
-/// #6: the CLI contract — `--filter-value` without `--filter-field` is rejected
+/// #6: the CLI contract - `--filter-value` without `--filter-field` is rejected
 /// before any network call (clap `requires`).
 #[nuclei::test]
 async fn rust_filtered_replicator_cli_requires_filter_field() {
@@ -819,7 +819,7 @@ async fn rust_filtered_replicator_rejects_unknown_field() {
     .await;
 }
 
-/// G8: a filter on an existing-but-mutable field is rejected — the filter key
+/// G8: a filter on an existing-but-mutable field is rejected - the filter key
 /// must be `@immutable` (the B3 split-ownership guard).
 #[nuclei::test]
 async fn rust_filtered_replicator_rejects_non_immutable_field() {
@@ -881,7 +881,7 @@ async fn rust_filtered_replicator_rejects_type_mismatch() {
 }
 
 /// G8/F6: the "must be a scalar LWW field" branch of filter validation is
-/// belt-and-suspenders — the schema layer already forbids `@immutable` on any
+/// belt-and-suspenders - the schema layer already forbids `@immutable` on any
 /// non-LWW field, so a filter field that passes the `@immutable` check is
 /// necessarily a scalar LWW field. There is therefore no way to construct an
 /// `@immutable` non-LWW field to reach that branch; verify the underlying schema
@@ -1447,7 +1447,7 @@ async fn rust_filtered_replicator_rejects_empty_field_over_http() {
 }
 
 /// The legacy `{Field, Value}` HTTP shape still routes correctly through the new
-/// filter resolution path — back-compat for clients that have not migrated to
+/// filter resolution path - back-compat for clients that have not migrated to
 /// the `Conditions` shape.
 #[nuclei::test]
 async fn rust_filtered_replication_legacy_format_back_compat() {
@@ -2489,7 +2489,7 @@ async fn rust_filtered_replication_delete_stops_push() {
 /// Iroh transport variant of `rust_filtered_replication_delete_stops_push`:
 /// deleting a filtered replicator over Iroh (Gents' production transport)
 /// must stop further filtered pushes. Exercises the iroh adapter's delete path
-/// end to end — name->CID resolution, coordinator/registry removal, and
+/// end to end - name->CID resolution, coordinator/registry removal, and
 /// peerstore handling. A matching doc created BEFORE the delete replicates; a
 /// matching doc created AFTER the delete must not.
 #[nuclei::test]
@@ -2580,7 +2580,7 @@ async fn rust_filtered_replication_delete_stops_push_iroh() {
 
 /// Gap 5/6: a rich `Conditions` predicate created over the direct HTTP
 /// `POST /api/v0/p2p/replicators` endpoint must round-trip structurally through
-/// the `GET` list response (no P2P replication exercised — pure wire-format
+/// the `GET` list response (no P2P replication exercised - pure wire-format
 /// coverage for the create -> list rich-predicate seam).
 #[nuclei::test]
 async fn rust_filtered_replication_http_conditions_roundtrip() {
@@ -2791,7 +2791,7 @@ async fn rust_filtered_replication_composite_and_iroh() {
 /// Iroh transport variant of `rust_filtered_replication_backfill_respects_filter`:
 /// documents created BEFORE the replicator is added must be backfilled over Iroh,
 /// respecting the filter. This exercises the iroh backfill path
-/// (`push_existing_docs`) with a predicate — the matching doc must
+/// (`push_existing_docs`) with a predicate - the matching doc must
 /// arrive while the non-matching doc stays absent.
 #[nuclei::test]
 async fn rust_filtered_replication_backfill_iroh() {
@@ -2862,7 +2862,7 @@ async fn rust_filtered_replication_backfill_iroh() {
 }
 
 /// #1038 Gap 4: a rich `_in` predicate composed with the Controlled-mode ACP
-/// gate. The push path runs TWO independent gates in sequence — the ACP access
+/// gate. The push path runs TWO independent gates in sequence - the ACP access
 /// check + creator-DID resolution, AND the replication filter. This proves an
 /// `_in` set filter and the ACP gate compose: alice+carol (in the set) replicate,
 /// bob (out of set) is excluded, all under Controlled access.
@@ -2991,7 +2991,7 @@ async fn rust_filtered_replication_acp_in_set_controlled_mode() {
 
 /// #1038 Gap 4: a composite AND predicate composed with the Controlled-mode ACP
 /// gate. Two filter clauses (`agent_did = alice` AND `kind = keep`) × ACP gating
-/// × creator-DID resolution — the composition most likely to hide a seam. A doc
+/// × creator-DID resolution - the composition most likely to hide a seam. A doc
 /// matching BOTH clauses replicates; a doc matching only one is excluded, under
 /// Controlled access.
 #[nuclei::test]
@@ -3343,7 +3343,7 @@ async fn rust_forget_replicator_prevents_retry_redial_after_restart() {
                 replicators
                     .as_array()
                     .and_then(|entries| entries.first())
-                    .and_then(|entry| entry["status"].as_u64())
+                    .and_then(|entry| entry["Status"].as_u64())
                     == Some(1)
             },
             P2P_TIMEOUT,
@@ -3606,7 +3606,7 @@ async fn list_replicators_http(cluster: &TestCluster, node: usize) -> serde_json
 /// #1038 two-store divergence: a PARTIAL `replicator delete -c <one>` on a
 /// multi-collection replicator removes only that collection from the in-memory
 /// push registry, but the CLI adapter must ALSO re-persist the remaining
-/// collections to the peerstore — not wipe the whole peer entry. On the buggy
+/// collections to the peerstore - not wipe the whole peer entry. On the buggy
 /// code the peerstore is deleted unconditionally, so `replicator list` (read from
 /// the peerstore) shows the peer GONE while push still serves the survivor, and
 /// the survivor silently stops after a restart. The fix mirrors the embedded
@@ -3819,7 +3819,7 @@ async fn rust_filtered_replication_partial_delete_keeps_remaining() {
 ///
 /// Note on scope: `add`/`delete` mutate the live registry and the peerstore
 /// together, so this does NOT distinguish live-authoritative reporting from a
-/// peerstore read — those divergence semantics (live wins, persisted-only peers
+/// peerstore read - those divergence semantics (live wins, persisted-only peers
 /// dropped, metadata overlay) are locked by the unit test
 /// `live_replicator_state_is_authoritative_over_persisted_collections`. This test
 /// only locks that the `get_replicators` call sites are wired and the wire shape

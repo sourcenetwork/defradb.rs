@@ -60,8 +60,12 @@ impl<S: Store> P2PHost<S> {
         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
         // `disconnect_peer_id` returns `Err(())` when the peer is not connected.
         // Disconnect is idempotent: hanging up on an absent peer is success.
-        let _ = self.swarm.disconnect_peer_id(peer_id);
-        if response.send(Ok(())).is_err() {
+        if self.swarm.disconnect_peer_id(peer_id).is_ok() {
+            self.pending_disconnects
+                .entry(peer_id)
+                .or_default()
+                .push(response);
+        } else if response.send(Ok(())).is_err() {
             debug!(peer_id = %peer_id, "Disconnect command response dropped - caller cancelled");
         }
     }

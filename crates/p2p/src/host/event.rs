@@ -74,6 +74,8 @@ pub enum HostEvent {
     BitswapComplete {
         query_id: QueryId,
         success: bool,
+        /// Why a failed sync failed; `None` on success.
+        cause: Option<crate::transport::FetchFailureCause>,
         error: Option<String>,
     },
 

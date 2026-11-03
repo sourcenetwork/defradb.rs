@@ -16,7 +16,7 @@ use kovan::Atom;
 #[test]
 fn coding_session_fixture_smoke_test() {
     edge::testing::edge().block_on(async {
-    let node = crate::EmbeddedNode::builder().build().await.unwrap();
+    let node = crate::Node::builder().build().await.unwrap();
     let fixture = seed_coding_session_fixture(&node, &CodingSessionFixtureConfig::smoke_test())
         .await
         .unwrap();
@@ -78,7 +78,7 @@ fn coding_session_fixture_smoke_test() {
 fn coding_session_fixture_exports_context1_style_tasks() {
     edge::testing::edge()
         .block_on(async {
-            let node = crate::EmbeddedNode::builder().build().await.unwrap();
+            let node = crate::Node::builder().build().await.unwrap();
             let mut config = CodingSessionFixtureConfig::smoke_test();
             config.hot_session_messages = 40;
             config.hot_session_actions = 16;
@@ -509,7 +509,7 @@ command
     )
 }
 
-async fn total_embedding_documents(node: &crate::EmbeddedNode) -> usize {
+async fn total_embedding_documents(node: &crate::Node) -> usize {
     let data = ensure_success(
         node.execute(
             r#"{
@@ -535,7 +535,7 @@ async fn total_embedding_documents(node: &crate::EmbeddedNode) -> usize {
 
 /// The distinct (model, text) pairs the fixture's documents embed: each is
 /// embedded once, however many documents carry it.
-async fn embedded_source_texts(node: &crate::EmbeddedNode) -> usize {
+async fn embedded_source_texts(node: &crate::Node) -> usize {
     let data = ensure_success(
         node.execute(
             r#"{
@@ -569,10 +569,7 @@ async fn embedded_source_texts(node: &crate::EmbeddedNode) -> usize {
     texts.len()
 }
 
-async fn lookup_session_doc_id(
-    node: &crate::EmbeddedNode,
-    session_id: &str,
-) -> crate::Result<String> {
+async fn lookup_session_doc_id(node: &crate::Node, session_id: &str) -> crate::Result<String> {
     let query = format!(
         r#"{{
   CodingSession(filter: {{ session_id: {{ _eq: "{session_id}" }} }}, limit: 1) {{
@@ -592,7 +589,7 @@ _docID
 }
 
 async fn run_hybrid_comparison(
-    node: &crate::EmbeddedNode,
+    node: &crate::Node,
     target: SearchTarget,
     session_id: &str,
     case_name: &str,
@@ -651,7 +648,7 @@ async fn run_hybrid_comparison(
 }
 
 async fn assert_hits_belong_to_session(
-    node: &crate::EmbeddedNode,
+    node: &crate::Node,
     target: crate::CodingSearchTarget,
     hits: &[crate::CodingHybridSearchHit],
     expected_session_doc_id: &str,
@@ -714,7 +711,7 @@ _sessionID
 }
 
 async fn assert_doc_ids_belong_to_session(
-    node: &crate::EmbeddedNode,
+    node: &crate::Node,
     collection_name: &str,
     doc_ids: &[String],
     expected_session_doc_id: &str,
@@ -988,7 +985,7 @@ fn coding_session_embedding_fixture_accepts_model_specific_dimensions() {
     edge::testing::edge()
         .block_on(async {
             let server = MockEmbeddingServer::start_with_dimensions([16, 24, 32]).await;
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1033,7 +1030,7 @@ fn coding_session_embedding_fixture_supports_similarity_queries() {
             config.medium_session_messages = 12;
             config.medium_session_actions = 6;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1097,7 +1094,7 @@ fn coding_session_embedding_fixture_scores_context1_style_tasks() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1155,7 +1152,7 @@ fn coding_session_embedding_fixture_supports_hybrid_rank_comparison() {
             config.medium_session_messages = 18;
             config.medium_session_actions = 10;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1212,7 +1209,7 @@ fn coding_session_embedding_fixture_supports_query_text_hybrid_search_api() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1299,7 +1296,7 @@ fn coding_session_embedding_fixture_hybrid_search_api_honors_session_scope_and_e
             config.medium_session_messages = 14;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1369,7 +1366,7 @@ fn coding_session_embedding_fixture_hybrid_search_api_honors_session_scope_and_e
 fn coding_data_fixture_materializes_search_chunks_for_large_messages() {
     edge::testing::edge()
         .block_on(async {
-            let node = crate::EmbeddedNode::builder().build().await.unwrap();
+            let node = crate::Node::builder().build().await.unwrap();
             let mut config = CodingSessionFixtureConfig::smoke_test();
             config.hot_session_messages = 24;
             config.hot_session_actions = 10;
@@ -1437,7 +1434,7 @@ fn dense_search_v1_supports_production_coding_search_chunks() {
             config.assistant_message_bytes = 1_600;
             config.action_command_bytes = 480;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1544,7 +1541,7 @@ fn dense_search_v1_supports_query_text_api() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1655,7 +1652,7 @@ fn dense_search_v1_honors_filter_and_exclusions() {
             config.medium_session_messages = 14;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1794,7 +1791,7 @@ impl Drop for RealEmbeddingServer {
 }
 
 async fn seed_real_embedding_fixture(
-    node: &crate::EmbeddedNode,
+    node: &crate::Node,
     config: &CodingSessionFixtureConfig,
     server: &RealEmbeddingServer,
 ) -> crate::Result<CodingSessionFixture> {
@@ -1881,7 +1878,7 @@ fn coding_session_embedding_fixture_real_models_e2e() {
             config.medium_session_messages = 12;
             config.medium_session_actions = 6;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -1956,7 +1953,7 @@ fn coding_session_embedding_fixture_real_models_hybrid_rank_comparison() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -2020,7 +2017,7 @@ fn coding_session_embedding_fixture_real_models_hybrid_search_api() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -2082,7 +2079,7 @@ fn dense_search_v1_real_models_query_text_api() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -2147,7 +2144,7 @@ fn coding_session_embedding_fixture_real_models_context1_task_eval() {
             config.medium_session_messages = 16;
             config.medium_session_actions = 8;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -2224,7 +2221,7 @@ fn coding_session_embedding_fixture_similarity_uses_the_vector_index() {
             config.medium_session_messages = 12;
             config.medium_session_actions = 6;
 
-            let node = crate::EmbeddedNode::builder()
+            let node = crate::Node::builder()
                 .with_embedding_url(server.base_url.clone())
                 .build()
                 .await
@@ -2280,7 +2277,7 @@ fn coding_session_embedding_fixture_filtered_similarity_fills_the_page() {
     config.medium_session_messages = 20;
     config.medium_session_actions = 8;
 
-    let node = crate::EmbeddedNode::builder()
+    let node = crate::Node::builder()
         .with_embedding_url(server.base_url.clone())
         .build()
         .await

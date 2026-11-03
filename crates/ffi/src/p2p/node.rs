@@ -47,7 +47,7 @@ pub unsafe extern "C" fn new_node_with_p2p(
 fn resolve_transport(
     options: &NodeInitOptions,
     listen_addr: &str,
-) -> Result<embedded::TransportConfig, String> {
+) -> Result<defra_node::TransportConfig, String> {
     let transport = unsafe { c_str_to_string(options.p2p_transport) }
         .unwrap_or_else(|| "libp2p".to_string())
         .to_lowercase();
@@ -59,10 +59,12 @@ fn resolve_transport(
                 if listen_addr.is_empty() {
                     return Err("listen_addr is required for libp2p transport".to_string());
                 }
-                Ok(embedded::TransportConfig::Libp2p(embedded::Libp2pConfig {
-                    listen_addrs: vec![listen_addr.to_string()],
-                    ..Default::default()
-                }))
+                Ok(defra_node::TransportConfig::Libp2p(
+                    defra_node::Libp2pConfig {
+                        listen_addrs: vec![listen_addr.to_string()],
+                        ..Default::default()
+                    },
+                ))
             }
             #[cfg(not(feature = "libp2p"))]
             {
@@ -75,7 +77,8 @@ fn resolve_transport(
         "iroh" => {
             #[cfg(feature = "iroh")]
             {
-                let mut config = embedded::IrohConfig {
+                let mut config = defra_node::P2PConfig {
+                    peer_key: defra_node::PeerKeySource::Store,
                     secret_key_path: unsafe { c_str_to_string(options.iroh_key_path) }
                         .map(PathBuf::from),
                     ..Default::default()
@@ -157,7 +160,7 @@ fn resolve_transport(
                     })?);
                 }
                 if options.iroh_bind_port != 0 {
-                    config.bind_port = Some(options.iroh_bind_port);
+                    config.port = Some(options.iroh_bind_port);
                 }
 
                 if !listen_addr.trim().is_empty() {
@@ -166,10 +169,10 @@ fn resolve_transport(
                             format!("invalid iroh listen address '{}': {}", listen_addr, error)
                         })?;
                     config.bind_addr = Some(socket_addr.ip());
-                    config.bind_port = Some(socket_addr.port());
+                    config.port = Some(socket_addr.port());
                 }
 
-                Ok(embedded::TransportConfig::Iroh(config))
+                Ok(defra_node::TransportConfig::Iroh(config))
             }
             #[cfg(not(feature = "iroh"))]
             {

@@ -1,142 +1,90 @@
-//! Lens FFI functions for DefraDB.
-//!
-//! This module provides FFI functions for lens transform operations:
-//! - Adding lens transforms
-//! - Listing lens transforms
+//! Lens FFI functions: Go's `AddLens` and `ListLenses`, each a call to the
+//! core through the node's executor, in the transaction a `*_in_txn`
+//! variant names.
 
-use acp::nac::NodePermission;
 use std::ffi::c_char;
 
 use crate::ffi_entry;
 use crate::helpers::require_c_str;
-use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
 use crate::types::FfiResult;
-use crate::{ffi_async, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::{ffi_async, try_ffi};
 
-use lens::{LensConfig, LensModule};
-
-/// Add a lens transform to the database.
-///
-/// Builds Go-compatible IPLD blocks (ConfigBlock -> ModuleBlock -> LensBlock),
-/// stores them in the blockstore for P2P Bitswap, and registers the transform
-/// under the ConfigBlock CID.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `lens_json` - JSON string containing the lens configuration
-///
-/// # Returns
-///
-/// - Status 0: Success (value contains the lens CID)
-/// - Status 1: Error (error field contains message)
+/// The context `identity_did` acts in, in transaction `txn_id` when it is set.
 ///
 /// # Safety
 ///
-/// `lens_json` must be a valid null-terminated UTF-8 string.
+/// Both pointers must be null or valid null-terminated UTF-8 strings.
+pub(crate) unsafe fn call_context(
+    identity_did: *const c_char,
+    txn_id: *const c_char,
+) -> Result<defra_core::RequestContext, FfiResult> {
+    let identity = crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty());
+    let txn = match txn_id.is_null() {
+        true => None,
+        false => Some(
+            require_c_str(txn_id, "txn_id")?
+                .parse::<defra_core::TxnId>()
+                .map_err(|e| FfiResult::error(format!("invalid transaction ID: {e}")))?,
+        ),
+    };
+    Ok(defra_core::RequestContext::default()
+        .with_identity(identity)
+        .with_txn(txn))
+}
+
+/// Store a lens, Go's `model.Lens` JSON (`{"Lenses": [...]}`); the result is
+/// its content ID.
+unsafe fn add(
+    node_ptr: usize,
+    txn_id: *const c_char,
+    identity_did: *const c_char,
+    lens_json: *const c_char,
+) -> FfiResult {
+    let context = try_ffi!(call_context(identity_did, txn_id));
+    let lens_str = try_ffi!(require_c_str(lens_json, "lens_json"));
+    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+    ffi_async!(caller, {
+        let config: lens::LensConfig = serde_json::from_str(&lens_str)
+            .map_err(|e| format!("failed to parse lens config: {e}"))?;
+        runner
+            .add_lens_as(&context, config)
+            .await
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// Every stored lens, a JSON object from content ID to Go's `model.Lens`.
+unsafe fn list(node_ptr: usize, txn_id: *const c_char, identity_did: *const c_char) -> FfiResult {
+    let context = try_ffi!(call_context(identity_did, txn_id));
+    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
+    ffi_async!(caller, {
+        runner
+            .list_lenses_as(&context)
+            .await
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// Store a lens. See [`add`].
+///
+/// # Safety
+///
+/// `identity_did` and `lens_json` must be null or valid null-terminated
+/// UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn lens_add(
     node_ptr: usize,
     identity_did: *const c_char,
     lens_json: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::LensCreate
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let lens_str = try_ffi!(require_c_str(lens_json, "lens_json"));
-
-        // If the JSON contains version IDs, this is a full migration config — delegate to
-        // set_migration on the database so the transform gets linked to schema versions.
-        if let Ok(full_config) = serde_json::from_str::<LensConfig>(&lens_str) {
-            if !full_config.source_collection_version_id.is_empty()
-                && !full_config.destination_collection_version_id.is_empty()
-            {
-                let database = match NODES.get(node_ptr, |state| state.database.clone()) {
-                    Some(db) => db,
-                    None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-                };
-
-                let result = crate::call::on_node(node_ptr, move || async move {
-                    let transform_id = database
-                        .set_migration_as(&context, full_config)
-                        .await
-                        .map_err(|e| format!("failed to set migration: {}", e))?;
-                    Ok::<String, String>(transform_id.to_string())
-                });
-
-                return match result {
-                    Ok(id) => FfiResult::success(&id),
-                    Err(e) => FfiResult::error(&e),
-                };
-            }
-        }
-
-        // No version IDs — register as standalone lens module(s).
-        let database = match NODES.get(node_ptr, |state| state.database.clone()) {
-            Some(db) => db,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        let result = crate::call::on_node(node_ptr, move || async move {
-            // Try parsing as Go's model.Lens format ({"Lenses": [...]}) first,
-            // then fall back to single LensModule
-            let modules: Vec<LensModule> =
-                if let Ok(lens_obj) = serde_json::from_str::<serde_json::Value>(&lens_str) {
-                    if let Some(lenses_arr) = lens_obj.get("Lenses").and_then(|v| v.as_array()) {
-                        lenses_arr
-                            .iter()
-                            .map(|v| {
-                                serde_json::from_value::<LensModule>(v.clone())
-                                    .map_err(|e| format!("failed to parse lens module: {}", e))
-                            })
-                            .collect::<std::result::Result<Vec<_>, _>>()?
-                    } else {
-                        vec![serde_json::from_str::<LensModule>(&lens_str)
-                            .map_err(|e| format!("failed to parse lens config: {}", e))?]
-                    }
-                } else {
-                    vec![serde_json::from_str::<LensModule>(&lens_str)
-                        .map_err(|e| format!("failed to parse lens config: {}", e))?]
-                };
-
-            let mut all_ids = Vec::new();
-            for lens_module in &modules {
-                let config = LensConfig::new("", "", lens_module.clone());
-                let transform_id = database
-                    .add_lens(config)
-                    .await
-                    .map_err(|e| format!("failed to add lens: {}", e))?;
-
-                all_ids.push(transform_id.to_string());
-            }
-
-            // Return comma-joined IDs so chained transforms are preserved
-            Ok::<String, String>(all_ids.join(","))
-        });
-
-        match result {
-            Ok(lens_id) => FfiResult::success(&lens_id),
-            Err(e) => FfiResult::error(&e),
-        }
-    }
+    ffi_entry! { add(node_ptr, std::ptr::null(), identity_did, lens_json) }
 }
 
-/// Add a lens transform within a transaction.
-///
-/// The lens is only visible within the transaction until commit.
+/// Store a lens in transaction `txn_id`. See [`add`].
 ///
 /// # Safety
 ///
-/// Both string pointers must be valid null-terminated UTF-8 strings.
+/// Every string pointer must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lens_add_in_txn(
     node_ptr: usize,
@@ -144,139 +92,32 @@ pub unsafe extern "C" fn lens_add_in_txn(
     identity_did: *const c_char,
     lens_json: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::LensCreate
-        ));
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
-        let lens_str = try_ffi!(require_c_str(lens_json, "lens_json"));
-
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = crate::call::wait(async move {
-            let modules: Vec<LensModule> =
-                if let Ok(lens_obj) = serde_json::from_str::<serde_json::Value>(&lens_str) {
-                    if let Some(lenses_arr) = lens_obj.get("Lenses").and_then(|v| v.as_array()) {
-                        lenses_arr
-                            .iter()
-                            .map(|v| {
-                                serde_json::from_value::<LensModule>(v.clone())
-                                    .map_err(|e| format!("failed to parse lens module: {}", e))
-                            })
-                            .collect::<std::result::Result<Vec<_>, _>>()?
-                    } else {
-                        vec![serde_json::from_str::<LensModule>(&lens_str)
-                            .map_err(|e| format!("failed to parse lens config: {}", e))?]
-                    }
-                } else {
-                    vec![serde_json::from_str::<LensModule>(&lens_str)
-                        .map_err(|e| format!("failed to parse lens config: {}", e))?]
-                };
-
-            let mut all_ids = Vec::new();
-            for lens_module in &modules {
-                let config = LensConfig::new("", "", lens_module.clone());
-                let transform_id = registry
-                    .add_lens_in_txn_as(&context, &txn_str, config)
-                    .await
-                    .map_err(|e| format!("failed to add lens in txn: {}", e))?;
-                all_ids.push(transform_id.to_string());
-            }
-
-            Ok::<String, String>(all_ids.join(","))
-        });
-
-        match result {
-            Ok(lens_id) => FfiResult::success(&lens_id),
-            Err(e) => FfiResult::error(&e),
-        }
-    }
+    ffi_entry! { add(node_ptr, txn_id, identity_did, lens_json) }
 }
 
-/// List all lens transforms.
-///
-/// Returns a JSON object mapping lens IDs to their configurations.
+/// Every stored lens. See [`list`].
 ///
 /// # Safety
 ///
-/// The caller must free the returned string with `defra_free_string`.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string. The
+/// caller frees the returned string with `defra_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn lens_list(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::LensList
-        ));
-
-        let lens_store = match NODES.get(node_ptr, |state| state.database.lens_store().clone()) {
-            Some(store) => store,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        ffi_async!(node_ptr, {
-            let lenses = lens_store
-                .list()
-                .await
-                .map_err(|e| format!("failed to list lenses: {}", e))?;
-
-            let json = serde_json::to_string(&lenses)
-                .map_err(|e| format!("failed to serialize lenses: {}", e))?;
-
-            Ok(json)
-        })
-    }
+    ffi_entry! { list(node_ptr, std::ptr::null(), identity_did) }
 }
 
-/// List all lens transforms visible within a transaction.
+/// Every lens transaction `txn_id` sees. See [`list`].
 ///
 /// # Safety
 ///
-/// `txn_id` must be a valid null-terminated UTF-8 string.
+/// Both string pointers must be null or valid null-terminated UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn lens_list_in_txn(
     node_ptr: usize,
     txn_id: *const c_char,
     identity_did: *const c_char,
 ) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::LensList
-        ));
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
-
-        let registry = match NODES.get(node_ptr, |state| state.txn_registry.clone()) {
-            Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        ffi_async!(caller, {
-            let lenses = registry
-                .list_lenses_in_txn_as(&context, &txn_str)
-                .await
-                .map_err(|e| format!("failed to list lenses in txn: {}", e))?;
-
-            let json = serde_json::to_string(&lenses)
-                .map_err(|e| format!("failed to serialize lenses: {}", e))?;
-
-            Ok(json)
-        })
-    }
+    ffi_entry! { list(node_ptr, txn_id, identity_did) }
 }
 
 #[cfg(test)]

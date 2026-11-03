@@ -115,6 +115,7 @@ pub struct DispatchDiagnostics {
     active_completions: AtomicUsize,
     active_completions_high_water: AtomicUsize,
     saturated_total: AtomicU64,
+    admission_saturated_total: AtomicU64,
     recovery_saturated_total: AtomicU64,
     rejection_dropped_total: AtomicU64,
 }
@@ -134,7 +135,11 @@ pub struct DispatchSnapshot {
     pub completion_capacity: usize,
     pub active_completions: usize,
     pub active_completions_high_water: usize,
+    /// Sum of `admission_saturated_total` and `recovery_saturated_total`.
     pub saturated_total: u64,
+    /// Admission requests refused with a capacity nack.
+    pub admission_saturated_total: u64,
+    /// CAR serves shed because the recovery lane was full, answered busy.
     pub recovery_saturated_total: u64,
     pub rejection_dropped_total: u64,
 }
@@ -157,6 +162,7 @@ impl DispatchDiagnostics {
                 .active_completions_high_water
                 .load(Ordering::Relaxed),
             saturated_total: self.saturated_total.load(Ordering::Relaxed),
+            admission_saturated_total: self.admission_saturated_total.load(Ordering::Relaxed),
             recovery_saturated_total: self.recovery_saturated_total.load(Ordering::Relaxed),
             rejection_dropped_total: self.rejection_dropped_total.load(Ordering::Relaxed),
         }
@@ -265,14 +271,16 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                     handler.clone()(event, DispatchAdmission::Admitted).await;
                     drop(lease);
                 } else {
-                    let (slots, activity_kind) = match class {
+                    let (slots, activity_kind, lane_saturated) = match class {
                         DispatchClass::Admission => (
                             &request_slots,
                             DispatchActivityKind::Request,
+                            &diagnostics.admission_saturated_total,
                         ),
                         DispatchClass::Recovery => (
                             &recovery_slots,
                             DispatchActivityKind::Recovery,
+                            &diagnostics.recovery_saturated_total,
                         ),
                         DispatchClass::Inline | DispatchClass::Completion => unreachable!(),
                     };
@@ -287,11 +295,7 @@ pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
                         });
                     } else {
                         diagnostics.saturated_total.fetch_add(1, Ordering::Relaxed);
-                        if class == DispatchClass::Recovery {
-                            diagnostics
-                                .recovery_saturated_total
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
+                        lane_saturated.fetch_add(1, Ordering::Relaxed);
                         // A capacity nack is best effort: the remote peer may stop
                         // reading its response stream. Keep those writes off the
                         // sole event drain. A stalled write keeps its bounded slot;
@@ -390,6 +394,7 @@ mod tests {
         let observed = Arc::new(SegQueue::new());
         let started = Arc::new(Semaphore::new(0));
         let release = Arc::new(Semaphore::new(0));
+        let diagnostics = Arc::new(DispatchDiagnostics::default());
 
         let dispatcher = {
             let observed = Arc::clone(&observed);
@@ -398,7 +403,7 @@ mod tests {
             crate::rt::spawn(run_event_dispatcher(
                 rx,
                 edge::testing::edge(),
-                Arc::new(DispatchDiagnostics::default()),
+                Arc::clone(&diagnostics),
                 move |event, admission| {
                     let observed = Arc::clone(&observed);
                     let started = Arc::clone(&started);
@@ -453,6 +458,10 @@ mod tests {
         })
         .await
         .expect("saturation must not hide a completion");
+        let snapshot = diagnostics.snapshot();
+        assert_eq!(snapshot.admission_saturated_total, 1);
+        assert_eq!(snapshot.recovery_saturated_total, 0);
+        assert_eq!(snapshot.saturated_total, 1);
 
         release.add_permits(MAX_ACTIVE_REQUESTS);
         drop(tx);
@@ -577,6 +586,8 @@ mod tests {
         assert_eq!(snapshot.active_recovery, MAX_ACTIVE_RECOVERY);
         assert_eq!(snapshot.active_recovery_high_water, MAX_ACTIVE_RECOVERY);
         assert_eq!(snapshot.recovery_saturated_total, 1);
+        assert_eq!(snapshot.admission_saturated_total, 0);
+        assert_eq!(snapshot.saturated_total, 1);
 
         release.add_permits(MAX_ACTIVE_RECOVERY);
         drop(tx);

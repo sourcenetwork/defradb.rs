@@ -656,6 +656,24 @@ impl P2PTransport for IrohTransport {
             root,
             providers,
             missing,
+            max_depth: None,
+            reply,
+        })
+        .await
+    }
+
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        max_depth: u32,
+    ) -> Result<QueryId> {
+        self.send_command(|reply| IrohCommand::SyncBlocks {
+            root,
+            providers,
+            missing,
+            max_depth: Some(max_depth),
             reply,
         })
         .await

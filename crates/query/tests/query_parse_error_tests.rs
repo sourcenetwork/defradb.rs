@@ -131,10 +131,7 @@ fn test_parse_circular_fragment_returns_error() {
     let result = parse_query(query);
     assert!(result.is_err(), "Circular fragment should error");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular fragment reference"),
+        result.unwrap_err().to_string().contains("within itself"),
         "Expected error about circular fragment"
     );
 }
@@ -149,10 +146,7 @@ fn test_parse_self_referential_fragment_returns_error() {
     let result = parse_query(query);
     assert!(result.is_err(), "Self-referential fragment should error");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular fragment reference"),
+        result.unwrap_err().to_string().contains("within itself"),
         "Expected error about circular fragment"
     );
 }
@@ -272,4 +266,24 @@ fn test_parse_filter_non_object_returns_error() {
         .unwrap_err()
         .to_string()
         .contains("filter must be an object"));
+}
+
+#[test]
+fn test_parse_group_by_rejects_ungrouped_relation_select() {
+    let query = "query { Book(groupBy: [genre]) { genre author { name } } }";
+    let err = parse_query(query).unwrap_err().to_string();
+    assert!(
+        err.contains("cannot select a non-group-by field at group-level"),
+        "{err}"
+    );
+}
+
+#[test]
+fn test_parse_group_by_accepts_grouped_relation_select() {
+    for query in [
+        "query { Book(groupBy: [author]) { author { name } GROUP { genre } } }",
+        "query { Book(groupBy: [_authorID]) { _authorID author { name } } }",
+    ] {
+        assert!(parse_query(query).is_ok(), "{query}");
+    }
 }

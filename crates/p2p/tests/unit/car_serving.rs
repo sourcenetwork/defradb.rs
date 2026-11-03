@@ -440,7 +440,10 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert_eq!(completion.await.unwrap(), FetchCompletion::Failure);
+    assert_eq!(
+        completion.await.unwrap(),
+        FetchCompletion::Failure(crate::transport::FetchFailureCause::NoBlocks)
+    );
 
     let mut completion = coordinator
         .manager()

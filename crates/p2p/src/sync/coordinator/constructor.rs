@@ -213,6 +213,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         };
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
+        manager
+            .diagnostics()
+            .dag_fetch_logs()
+            .use_network(network.clone());
 
         let authorizer = Arc::new(RuntimeAuthorizer::new(
             transport.clone(),

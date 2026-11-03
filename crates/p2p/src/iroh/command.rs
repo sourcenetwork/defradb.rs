@@ -231,6 +231,8 @@ pub enum IrohCommand {
         root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
+        /// Links below each missing CID to walk; `None` is the whole closure.
+        max_depth: Option<u32>,
         reply: oneshot::Sender<crate::error::Result<QueryId>>,
     },
     CancelSync {

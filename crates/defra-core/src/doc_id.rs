@@ -43,6 +43,10 @@ impl ParsedDocId {
             return Err(DocIdFormatError::InvalidVersion(version as u16));
         }
 
+        // Go's gofrs/uuid accepts these lengths and names any other one.
+        if ![32, 36, 38, 41, 45].contains(&uuid_str.len()) {
+            return Err(DocIdFormatError::UuidLength(uuid_str.to_string()));
+        }
         let uuid = Uuid::parse_str(uuid_str)?;
 
         Ok(Self {
@@ -122,6 +126,9 @@ pub enum DocIdFormatError {
 
     #[error("UUID parse error: {0}")]
     Uuid(#[from] uuid::Error),
+
+    #[error("uuid: incorrect UUID length {} in string {:?}", .0.len(), .0)]
+    UuidLength(String),
 }
 
 fn read_uvarint(buf: &[u8]) -> Option<u64> {
@@ -205,5 +212,14 @@ mod tests {
     fn test_parse_invalid_doc_id() {
         assert!(ParsedDocId::from_string("bae-not-a-uuid").is_err());
         assert!(ParsedDocId::from_string("nodash").is_err());
+    }
+
+    #[test]
+    fn test_wrong_length_uuid_names_the_length_like_go() {
+        let err = ParsedDocId::from_string("bae-35953ca-518d-9e6b-9ce6cd00eff5").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "uuid: incorrect UUID length 30 in string \"35953ca-518d-9e6b-9ce6cd00eff5\""
+        );
     }
 }

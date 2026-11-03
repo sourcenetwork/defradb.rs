@@ -349,7 +349,8 @@ pub async fn get_collection_with_index_manager<S: Store + 'static>(
     let (collection, datastore, systemstore) =
         get_collection_with_lazy_load(txn, collection_name).await?;
 
-    // Create an IndexManager from the collection schema.
+    // Create an IndexManager from the collection schema, sharing the
+    // database's DiskANN quantizers so a write does not rebuild one.
     let short_id = collection.resolved_root_id();
     let index_manager =
         IndexManager::from_indexes(short_id, collection.schema(), collection.write_indexes())
@@ -358,7 +359,8 @@ pub async fn get_collection_with_index_manager<S: Store + 'static>(
                     "failed to create index manager for collection '{}': {}",
                     collection_name, e
                 ))
-            })?;
+            })?
+            .with_vector_caches(txn.vector_codes());
 
     Ok((collection, datastore, systemstore, index_manager))
 }
@@ -420,5 +422,72 @@ mod tests {
             Some(17)
         ));
         assert!(same_schema_except_indexes(expected.schema(), &schema));
+    }
+
+    fn diskann_collection() -> CollectionVersion {
+        let mut version = CollectionVersion::new(
+            "Embeddings",
+            "version",
+            "collection",
+            vec![
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "embedding",
+                    schema::FieldKind::float32_array(),
+                    schema::CType::LwwRegister,
+                ),
+            ],
+        );
+        version.indexes = vec![IndexDescription {
+            name: "by_embedding".to_string(),
+            id: 1,
+            fields: vec![schema::IndexedFieldDescription {
+                name: "embedding".to_string(),
+                descending: false,
+            }],
+            unique: false,
+            kind: None,
+            auto_generated: false,
+        }
+        .as_vector(schema::VectorIndexDescription {
+            algorithm: schema::VectorAlgorithm::DiskAnn,
+            metric: schema::DistanceMetric::Cosine,
+            dimensions: 8,
+            hnsw: None,
+            ivfpq: None,
+            ivfflat: None,
+            ssg: None,
+            diskann: Some(schema::DiskAnnParams::default()),
+        })];
+        version
+    }
+
+    /// An explicit transaction's writes load their index manager here, so it
+    /// must share the database's DiskANN quantizers as autocommit writes do.
+    #[test]
+    fn a_loaded_index_manager_shares_the_database_vector_caches() {
+        workers::block_on(async {
+            let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            db.create_collection(diskann_collection()).await.unwrap();
+            let before = db.vector_codes().len();
+            let mut txn = db.new_txn(false).await.unwrap();
+            txn.make_explicit();
+            super::get_collection_with_index_manager(&txn, "Embeddings")
+                .await
+                .unwrap();
+            assert_eq!(
+                db.vector_codes().len(),
+                before + 1,
+                "the manager's DiskANN index took its cache from the database"
+            );
+            txn.force_discard().unwrap();
+        })
+        .unwrap()
     }
 }

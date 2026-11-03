@@ -12,7 +12,10 @@ use db::{
 };
 use events::Bus;
 use query::runner::QueryRunner;
-use query::{parse_request_with_limits, ParsedOperation, QueryError, QueryLimits};
+use query::QueryExecutor;
+use query::{
+    parse_request_with_limits, ParsedOperation, QueryError, QueryLimits, TransactionError,
+};
 use rapidhash::RapidHashMap;
 use storage::RegolithStore;
 
@@ -119,8 +122,9 @@ impl DefraClient {
     /// Resolves to `{ gql: { data, errors? } }`. A failed request does not
     /// reject: `data` is `null` and `errors` lists `{ message }` objects.
     /// `opts` takes `variables`, an object of values for the request's
-    /// variables; any other key rejects, since this client has no
-    /// per-request identity, operation name or transaction to honour.
+    /// variables, and `txnId`, a transaction from `txnBegin` to run it in; any
+    /// other key rejects, since this client has no per-request identity or
+    /// operation name to honour.
     ///
     /// # Example
     ///
@@ -141,6 +145,25 @@ impl DefraClient {
         self.exec_request_impl(request, opts)
             .await
             .map_err(|e| e.into())
+    }
+
+    /// Begin a transaction and resolve to its ID. Pass the ID as `txnId` to
+    /// `execRequest`, then end it with `txnCommit` or `txnDiscard`.
+    #[wasm_bindgen(js_name = txnBegin)]
+    pub async fn txn_begin(&self, read_only: bool) -> std::result::Result<String, JsValue> {
+        self.txn_begin_impl(read_only).await.map_err(|e| e.into())
+    }
+
+    /// Make the writes of transaction `id` durable and end it.
+    #[wasm_bindgen(js_name = txnCommit)]
+    pub async fn txn_commit(&self, id: &str) -> std::result::Result<(), JsValue> {
+        self.txn_end_impl(id, true).await.map_err(|e| e.into())
+    }
+
+    /// Drop the writes of transaction `id` and end it.
+    #[wasm_bindgen(js_name = txnDiscard)]
+    pub async fn txn_discard(&self, id: &str) -> std::result::Result<(), JsValue> {
+        self.txn_end_impl(id, false).await.map_err(|e| e.into())
     }
 
     /// Author with a key this client holds, given as hex.
@@ -339,22 +362,13 @@ impl DefraClient {
     async fn add_collection_impl(&mut self, sdl: &str) -> Result<JsValue> {
         let db = self.ensure_open()?;
 
-        // Parse SDL into CollectionVersions using the query crate's parser
-        let collections = query::sdl_parse::parse_sdl(sdl)
-            .map_err(|e| WasmError::Schema(format!("Failed to parse SDL: {}", e)))?;
-
-        schema::definition_validation::validate_new_collections(&collections)
-            .map_err(|e| WasmError::Schema(format!("Failed to validate SDL: {}", e)))?;
-
-        // Create each collection in the database
-        let mut added = Vec::new();
-        for collection in collections {
-            let name = collection.name.clone();
-            db.create_collection(collection).await.map_err(|e| {
-                WasmError::Schema(format!("Failed to create collection '{}': {}", name, e))
-            })?;
-            added.push(name);
-        }
+        let added = db
+            .add_collection(&defra_core::RequestContext::default(), sdl)
+            .await
+            .map_err(|e| WasmError::Schema(e.to_string()))?
+            .into_iter()
+            .map(|collection| collection.name)
+            .collect::<Vec<_>>();
 
         // Persist to OPFS so schema definitions survive page refresh
         self.persist_impl().await?;
@@ -364,10 +378,86 @@ impl DefraClient {
         }))
     }
 
+    /// The context the transactions of this client run in: the identity it
+    /// authors as owns them.
+    fn txn_context(&self) -> defra_core::RequestContext {
+        defra_core::RequestContext::default().with_identity(
+            self.identity
+                .as_ref()
+                .map(|identity| identity.did().to_owned()),
+        )
+    }
+
+    fn runner(&self) -> Result<&WasmRunner> {
+        self.runner.as_ref().ok_or(WasmError::NotInitialized)
+    }
+
+    async fn txn_begin_impl(&self, read_only: bool) -> Result<String> {
+        self.ensure_open()?;
+        let handle = self
+            .runner()?
+            .begin_txn_as(&self.txn_context(), read_only)
+            .await
+            .map_err(|e| WasmError::Query(e.to_string()))?;
+        Ok(handle.to_string())
+    }
+
+    async fn txn_end_impl(&self, id: &str, commit: bool) -> Result<()> {
+        self.ensure_open()?;
+        let handle: query::TransactionHandle = id
+            .parse()
+            .map_err(|e: TransactionError| WasmError::Query(e.to_string()))?;
+        let context = self.txn_context();
+        let runner = self.runner()?;
+        let ended = if commit {
+            runner.commit_txn_as(&context, &handle).await
+        } else {
+            runner.discard_txn_as(&context, &handle).await
+        };
+        ended.map_err(|e| WasmError::Query(e.to_string()))?;
+        if commit {
+            self.persist_impl().await?;
+        }
+        Ok(())
+    }
+
+    async fn run_in_txn(
+        &self,
+        id: &str,
+        request: &str,
+        variables: Option<&RapidHashMap<String, serde_json::Value>>,
+    ) -> std::result::Result<serde_json::Value, QueryError> {
+        let handle: query::TransactionHandle = id
+            .parse()
+            .map_err(|e: TransactionError| QueryError::execution(e.to_string()))?;
+        let runner = self
+            .runner
+            .as_ref()
+            .ok_or_else(|| QueryError::execution("client is not initialized"))?;
+        let context = self
+            .txn_context()
+            .with_signing(self.identity.as_ref().map(ClientIdentity::signing_config));
+        let mut query = query::QueryRequest::new(request)
+            .with_context(context)
+            .with_identity(self.caller());
+        if let Some(variables) = variables {
+            query = query.with_variables(serde_json::to_value(variables).unwrap_or_default());
+        }
+        let response = runner.execute_in_txn(query, &handle).await;
+        match response.errors.first() {
+            Some(error) => Err(QueryError::execution(error.message.clone())),
+            None => Ok(response.data.unwrap_or_default()),
+        }
+    }
+
     async fn exec_request_impl(&self, request: &str, opts: JsValue) -> Result<JsValue> {
         self.ensure_open()?;
         let opts = ExecRequestOptions::from_js(opts)?;
-        let response = match self.run_request(request, opts.variables.as_ref()).await {
+        let outcome = match opts.txn_id.as_deref() {
+            Some(id) => self.run_in_txn(id, request, opts.variables.as_ref()).await,
+            None => self.run_request(request, opts.variables.as_ref()).await,
+        };
+        let response = match outcome {
             Ok(data) => serde_json::json!({ "gql": { "data": data } }),
             Err(e) => serde_json::json!({
                 "gql": { "data": null, "errors": [{ "message": e.to_string() }] },
@@ -596,6 +686,15 @@ mod tests {
             .mutate(r#"mutation { create_User(input: {name: "Alice"}) { _docID } }"#)
             .await
             .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_empty_transaction_id_is_an_error_not_a_trap() {
+        let client = DefraClient::create(test_config("txn_empty_id"))
+            .await
+            .unwrap();
+        assert!(client.txn_commit("").await.is_err());
+        assert!(client.txn_discard("").await.is_err());
     }
 
     #[wasm_bindgen_test]
@@ -1282,6 +1381,44 @@ mod tests {
         .unwrap();
         assert!(response["gql"]["data"].is_null());
         assert!(response["gql"]["errors"][0]["message"].is_string());
+    }
+
+    #[wasm_bindgen_test]
+    async fn exec_request_in_txn_is_invisible_outside_until_commit() {
+        let mut client = DefraClient::create(test_config("exec_request_txn"))
+            .await
+            .unwrap();
+        client
+            .add_collection("type Note { text: String }")
+            .await
+            .unwrap();
+        let id = client.txn_begin(false).await.unwrap();
+        let opts = js_sys::Object::new();
+        js_sys::Reflect::set(&opts, &"txnId".into(), &id.clone().into()).unwrap();
+        client
+            .exec_request(
+                r#"mutation { add_Note(input: {text: "a"}) { text } }"#,
+                opts.into(),
+            )
+            .await
+            .unwrap();
+        let outside: serde_json::Value = serde_wasm_bindgen::from_value(
+            client
+                .exec_request("{ Note { text } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(outside["gql"]["data"]["Note"], serde_json::json!([]));
+        client.txn_commit(&id).await.unwrap();
+        let after: serde_json::Value = serde_wasm_bindgen::from_value(
+            client
+                .exec_request("{ Note { text } }", JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after["gql"]["data"]["Note"].as_array().unwrap().len(), 1);
     }
 
     #[wasm_bindgen_test]

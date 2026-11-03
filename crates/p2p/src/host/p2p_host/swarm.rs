@@ -307,6 +307,13 @@ impl<S: Store> P2PHost<S> {
 
         info!(peer_id = %peer_id, "Peer disconnected");
         self.peer_addrs.remove(&peer_id);
+        for response in self
+            .pending_disconnects
+            .remove(&peer_id)
+            .unwrap_or_default()
+        {
+            let _ = response.send(Ok(()));
+        }
         if !self
             .forward_event(HostEvent::PeerDisconnected(peer_id))
             .await

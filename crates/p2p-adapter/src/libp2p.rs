@@ -466,7 +466,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     collection_cids.push(cid);
                 } else {
                     return Err(P2PError::not_found(format!(
-                        "collection '{name}' not found"
+                        "collection not found. Name: {name}"
                     )));
                 }
             }
@@ -715,7 +715,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     if let Some(ref pusher) = self.doc_pusher {
                         pusher.get_collection_id(&collection_name).ok_or_else(|| {
                             P2PError::not_found(format!(
-                                "collection '{}' not found - add schema before subscribing to P2P",
+                                "collection not found. Name: {}",
                                 collection_name
                             ))
                         })
@@ -749,7 +749,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     if let Some(ref pusher) = self.doc_pusher {
                         pusher.get_collection_id(&collection_name).ok_or_else(|| {
                             P2PError::not_found(format!(
-                                "collection '{}' not found",
+                                "collection not found. Name: {}",
                                 collection_name
                             ))
                         })

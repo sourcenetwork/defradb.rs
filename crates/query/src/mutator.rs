@@ -884,6 +884,13 @@ pub trait DocMutator: MaybeSendSync {
         collection_name: &str,
         doc_id: &DocID,
     ) -> Result<Option<Document>>;
+
+    /// Whether `doc_id` names a document the collection deleted. A mutator
+    /// over a store implements it; the default, for one that never deletes,
+    /// says no.
+    async fn is_deleted(&self, _collection_name: &str, _doc_id: &DocID) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Prepares each of `docs` for creation with `mutator`, one after another.
