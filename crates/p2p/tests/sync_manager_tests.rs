@@ -1375,7 +1375,8 @@ mod pending_persistence {
 
     /// Durable registrations outlive the in-memory map, so they carry their
     /// own cap; at the cap the obligation is refused with a backpressure
-    /// nack instead of being accepted and later dropped.
+    /// nack instead of being accepted and later dropped. Each peer holds at
+    /// most a quarter of the cap, so four peers fill it.
     #[tokio::test]
     async fn durable_cap_nacks_new_registrations() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -1401,7 +1402,7 @@ mod pending_persistence {
             let mut message = pushlog_for(&comp_cid, &comp_bytes);
             message.doc_id = format!("doc-{index}");
             manager
-                .process_pushlog(&message, Some("peer-1"), true, None)
+                .process_pushlog(&message, Some(&format!("peer-{index}")), true, None)
                 .await
                 .expect("registration under the durable cap");
             manager.clear_pending_dag(&comp_cid);
@@ -1412,7 +1413,7 @@ mod pending_persistence {
         let mut message = pushlog_for(&comp_cid, &comp_bytes);
         message.doc_id = "doc-overflow".to_string();
         let result = manager
-            .process_pushlog(&message, Some("peer-1"), true, None)
+            .process_pushlog(&message, Some("peer-overflow"), true, None)
             .await;
         assert!(
             matches!(result, Err(Error::PendingDagCapacity { max: 4 })),
