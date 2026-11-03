@@ -57,7 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
 | DiskANN back-edges in place | Lean | db-index (vector) |
-| Retry input and marker fencing | TLA+ | db, query, storage |
+| Retry input and marker fencing | TLA+ | db, query, storage, p2p |
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |
 | Peer connection observation | TLA+ / Lean | p2p |
@@ -291,7 +291,11 @@ Core directly and retains the sibling, pruning, abort and old-snapshot cases.
 `RetryRegistrationFence.tla` separates token allocation from registration commit.
 It checks that a delayed registration cannot cross forget/re-add or replace a
 newer pending marker. Its negative variants remove the incarnation or ordering
-check. This finite model does not verify the Rust implementation.
+check. It also models the fan-out caller that registers a committed head with
+each replicator. `INV_FanOutPeerLocal` requires that a gone, re-incarnated,
+covered or failed peer is decided on its own, and that every registered peer
+is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
+finite model does not verify the Rust implementation.
 
 The adapter-owned `Ssi.tla` and `SsiRange.tla` families and their eight TLC
 configurations are retired. They modeled the removed `ConflictTracker`, including
