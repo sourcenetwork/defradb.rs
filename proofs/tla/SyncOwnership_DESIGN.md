@@ -483,6 +483,12 @@ a key-order sweep.
   except at the store's own cap (`ProcessNack`). With no quota
   (`DurableQuota = Cap`) one peer's never-serving roots fill the store and
   every other peer's head is nacked for ever.
+- The acknowledgement of a head on its durable record alone rests on the
+  record the store committed (`Processed::DurablyRegistered`), not on the
+  view: `PersistedView` learns of a commit in commit-receipt order, which an
+  earlier commit's hook on the same store holds back past the reply.
+  `MRegisterDurable` registers and acknowledges in one step for that reason;
+  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
   (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
   entry up once its attempt has ended, while the map is full and a durable

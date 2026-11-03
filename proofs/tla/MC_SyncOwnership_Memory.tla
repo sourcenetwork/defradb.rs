@@ -225,7 +225,9 @@ MRegisterDurable(s, v) ==
   \* The map is full, and the peer has room in its quota.
   /\ MemoryFull
   /\ DurableRoom(s, v)
-  \* The durable registration and its acknowledgement (ProcessRegister keeps Cap).
+  \* The durable registration and its acknowledgement (ProcessRegister keeps Cap),
+  \* one step: the ack rests on the record the store committed
+  \* (Processed::DurablyRegistered), not on the view, which may learn of it later.
   /\ ProcessRegister(s, v)
   \* No entry is taken; what the head retires leaves memory too.
   /\ LET retired == pending \ pending'
