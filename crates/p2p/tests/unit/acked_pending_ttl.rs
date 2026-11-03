@@ -26,7 +26,7 @@ async fn an_acknowledged_head_outlives_the_pending_ttl() {
         )
         .await
         .expect("the head is acknowledged");
-    assert!(manager.is_pending_dag_recovery_registered(&head));
+    assert!(manager.is_pending_dag_owned(&head));
     let running_fetch = manager.pending_dag_lease(head);
 
     manager.pending_dags.update(|pending| {

@@ -207,20 +207,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
     }
 
-    /// Whether this side owns the root's recovery: its in-memory entry is
-    /// registered, or a durable record holds it while it has no entry (it gave
-    /// its entry up past the cap, or the node restarted). Either backs a
-    /// success reply.
+    /// Whether this side owns the root's recovery for a sender: its pushed or
+    /// restored entry is registered, or a durable record holds it while it
+    /// has no entry (it gave its entry up past the cap, or the node
+    /// restarted). Either backs a success reply. A local continuation does
+    /// not: it has no record and ends with its merge turn.
     pub(super) fn is_pending_dag_owned(&self, root_cid: &Cid) -> bool {
-        self.is_pending_dag_recovery_registered(root_cid) || self.persisted.contains(root_cid)
-    }
-
-    pub(super) fn is_pending_dag_recovery_registered(&self, root_cid: &Cid) -> bool {
-        self.pending_dags.read(|pending| {
-            pending
-                .get(root_cid)
-                .is_some_and(|dag| dag.is_recovery_registered)
-        })
+        self.persisted.contains(root_cid)
+            || self.pending_dags.read(|pending| {
+                pending.get(root_cid).is_some_and(|dag| {
+                    dag.is_recovery_registered && dag.origin != PendingOrigin::LocalContinuation
+                })
+            })
     }
 
     pub(super) fn mark_pending_dag_recovery_registered(
