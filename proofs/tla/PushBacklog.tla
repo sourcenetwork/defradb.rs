@@ -1,9 +1,10 @@
 ---- MODULE PushBacklog ----
 \* Outbound PushLog backlog on the pusher (#1099, audit F24). The code it models:
 \*   crates/p2p/src/sync/push_backlog.rs: BacklogOwner::enqueue (admission),
-\*     BacklogOwner::pop_eligible (which job a free worker takes next),
-\*     BacklogOwner::park_peer and BacklogOwner::peer_answered (the unreachable
-\*     state), BacklogOwner::take_queued_for_peer, BacklogOwner::job_done;
+\*     BacklogOwner::pop_eligible (which job a free worker takes next, and which job
+\*     is a probe), BacklogOwner::park_peer, BacklogOwner::park_peer_unreachable and
+\*     BacklogOwner::peer_answered (the unreachable state and its spells),
+\*     BacklogOwner::take_queued_for_peer, BacklogOwner::job_done;
 \*   crates/p2p/src/sync/coordinator/push_worker.rs: spawn_push_workers (the fixed
 \*     pool) and run_push_job (send, park on a timeout, demote the peer's queue).
 \*
@@ -15,16 +16,19 @@
 \*
 \* WHAT MUST NEVER HAPPEN: the queue grows without bound; a worker slot is lost; one
 \* peer holds every worker; jobs for peers already seen timing out hold every worker;
-\* a job vanishes. WHAT MUST HAPPEN: every job for a healthy peer leaves the queue.
+\* a job vanishes; a peer's queued jobs move to the ledger before one of its probes
+\* timed out. WHAT MUST HAPPEN: every job for a healthy peer leaves the queue.
 \*
 \* THE RULES (GREEN). The queue has an item cap and a byte cap, and a full queue
 \* rejects the job into the retry ledger. One peer holds at most PerPeerCap < Workers
-\* workers. A send that times out marks its peer unreachable and parks it: the peer's
-\* queued jobs move to the retry ledger, and until the peer answers again it shares one
-\* PerPeerCap with every other unreachable peer, so all of them together hold at most
-\* the workers of one slow peer.
+\* workers. A send that times out marks its peer unreachable and parks it, and until
+\* the peer answers again it shares one PerPeerCap with every other unreachable peer,
+\* so all of them together hold at most the workers of one slow peer. A job started
+\* while its peer is unreachable is a probe. Only when a probe times out too do the
+\* peer's queued jobs move to the retry ledger, so a peer that answers right after one
+\* failed round keeps its queue live.
 \*
-\* Five knobs, each breaking one rule:
+\* Five knobs; each RED value breaks one rule:
 \*   AdmissionMode = "BoundedQueue"     - admit against the item and byte caps. [GREEN]
 \*                 = "SpawnPerItem"     - every arrival becomes resident spawned work
 \*                                        (the old broadcast spawn per (write, peer)). [RED]
@@ -37,6 +41,10 @@
 \*   ParkMode      = "ParkUnreachable"  - a timeout parks the peer as described. [GREEN]
 \*                 = "RetryUnreachable" - a timeout frees the worker and nothing else,
 \*                                        so dead peers take it straight back (F24). [RED]
+\*                 = "DemoteEveryTimeout" - every timeout also moves the peer's queued
+\*                                        jobs to the ledger, probe or not, so one
+\*                                        transient failure costs a peer that answers
+\*                                        again its live queue. [RED]
 \*
 \* Abstractions: `backlog` is admitted-but-not-running work per peer (the bounded queue,
 \* or the spawned waiting futures under SpawnPerItem). Payload size is a per-peer
@@ -81,7 +89,7 @@ ASSUME AdmissionMode \in {"BoundedQueue", "SpawnPerItem"}
 ASSUME ReleaseMode \in {"Release", "Leak"}
 ASSUME HandleMode \in {"FixedWorkers", "RetainAll"}
 ASSUME FairnessMode \in {"PerPeerCap", "Unfair"}
-ASSUME ParkMode \in {"ParkUnreachable", "RetryUnreachable"}
+ASSUME ParkMode \in {"ParkUnreachable", "RetryUnreachable", "DemoteEveryTimeout"}
 
 VARIABLES
   arrivals,    \* arrivals so far
@@ -96,10 +104,12 @@ VARIABLES
   unreachable, \* peers whose last send timed out and that have not answered since
   probes,      \* [Peers -> Nat] running jobs started during the peer's current unreachable
                \* spell (a reply ends the spell, and its leftover jobs become ordinary)
-  glitches     \* sends to healthy peers that timed out so far
+  glitches,    \* sends to healthy peers that timed out so far
+  probeTimedOut, \* ghost: peers one of whose probes timed out in the current spell
+  demoted      \* ghost: peers whose queued jobs moved to the ledger in the current spell
 
 vars == <<arrivals, backlog, active, freeWorkers, sent, coalesced, rejected, handles,
-          failed, unreachable, probes, glitches>>
+          failed, unreachable, probes, glitches, probeTimedOut, demoted>>
 
 \* The sum of f over the peers in S.
 RECURSIVE SumOver(_, _)
@@ -137,6 +147,8 @@ TypeOK ==
   /\ unreachable \subseteq Peers
   /\ probes \in [Peers -> 0..Workers]
   /\ glitches \in 0..MaxGlitches
+  /\ probeTimedOut \subseteq Peers
+  /\ demoted \subseteq Peers
 
 \* Nothing has arrived; every worker is free; every peer is presumed reachable.
 Init ==
@@ -152,9 +164,11 @@ Init ==
   /\ unreachable = {}
   /\ probes = [p \in Peers |-> 0]
   /\ glitches = 0
+  /\ probeTimedOut = {}
+  /\ demoted = {}
 
 \* The variables only a send's end or a park changes.
-parkVars == <<failed, unreachable, probes, glitches>>
+parkVars == <<failed, unreachable, probes, glitches, probeTimedOut, demoted>>
 
 \* A (write, peer) arrival is admitted as resident work: under BoundedQueue only within
 \* the item and byte caps, under SpawnPerItem always (the spawned future keeps its
@@ -209,7 +223,8 @@ StartJob(p) ==
   /\ active' = [active EXCEPT ![p] = @ + 1]
   /\ freeWorkers' = freeWorkers - 1
   /\ probes' = IF p \in unreachable THEN [probes EXCEPT ![p] = @ + 1] ELSE probes
-  /\ UNCHANGED <<arrivals, sent, coalesced, rejected, handles, failed, unreachable, glitches>>
+  /\ UNCHANGED <<arrivals, sent, coalesced, rejected, handles, failed, unreachable, glitches,
+                 probeTimedOut, demoted>>
 
 \* One of p's running jobs ends (job_done). Leak: its worker slot is not returned.
 \* RetainAll: its JoinHandle is kept for good.
@@ -219,39 +234,49 @@ JobEnds(p) ==
   /\ freeWorkers' = IF ReleaseMode = "Release" THEN freeWorkers + 1 ELSE freeWorkers
   /\ handles' = IF HandleMode = "RetainAll" THEN handles + 1 ELSE handles
 
-\* The job that ended is left open: a probe (k = 1) or a job started before p's
-\* current unreachable spell (k = 0).
-ProbeMayEnd(p) ==
-  \E k \in {0, 1} :
-    /\ k <= probes[p]
-    /\ (k = 0 => probes[p] < active[p])
-    /\ probes' = [probes EXCEPT ![p] = @ - k]
+\* The job that ended is a probe (k = 1) or a job started before p's current
+\* unreachable spell (k = 0); the code knows which (PushJobSpec::probe_of).
+ProbeEnds(p, k) ==
+  /\ k <= probes[p]
+  /\ (k = 0 => probes[p] < active[p])
+  /\ probes' = [probes EXCEPT ![p] = @ - k]
 
 \* A healthy peer replies to a send. A reply means the peer is reachable again
-\* (peer_answered): it leaves `unreachable`, and its other running jobs are ordinary
-\* jobs from now on.
+\* (peer_answered): it leaves `unreachable`, its spell ends, and its other running
+\* jobs are ordinary jobs from now on.
 Complete(p) ==
   /\ p \notin SlowPeers
   /\ JobEnds(p)
   /\ sent' = sent + 1
   /\ unreachable' = unreachable \ {p}
   /\ probes' = [probes EXCEPT ![p] = 0]
+  /\ probeTimedOut' = probeTimedOut \ {p}
+  /\ demoted' = demoted \ {p}
   /\ UNCHANGED <<arrivals, backlog, coalesced, rejected, failed, glitches>>
+
+\* Whether the timeout of a job (a probe when k = 1) moves p's queued jobs to the
+\* ledger (park_peer_unreachable returns take_queued_for_peer).
+Demotes(k) ==
+  \/ ParkMode = "DemoteEveryTimeout"
+  \/ ParkMode = "ParkUnreachable" /\ k = 1
 
 \* A send times out: always for a dead peer, at most MaxGlitches times for healthy ones.
 \* The job goes to the retry ledger and its peer becomes unreachable. ParkUnreachable
-\* also parks the peer, moving its queued jobs to the ledger (take_queued_for_peer).
+\* also parks the peer, and when the job was a probe moves its queued jobs to the ledger.
 Timeout(p) ==
   /\ (p \in SlowPeers \/ glitches < MaxGlitches)
   /\ JobEnds(p)
-  /\ ProbeMayEnd(p)
+  /\ \E k \in {0, 1} :
+       /\ ProbeEnds(p, k)
+       /\ probeTimedOut' = IF k = 1 THEN probeTimedOut \cup {p} ELSE probeTimedOut
+       /\ IF Demotes(k)
+            THEN /\ failed' = failed + 1 + backlog[p]
+                 /\ backlog' = [backlog EXCEPT ![p] = 0]
+                 /\ demoted' = IF backlog[p] > 0 THEN demoted \cup {p} ELSE demoted
+            ELSE /\ failed' = failed + 1
+                 /\ UNCHANGED <<backlog, demoted>>
   /\ glitches' = IF p \in SlowPeers THEN glitches ELSE glitches + 1
   /\ unreachable' = unreachable \cup {p}
-  /\ IF ParkMode = "ParkUnreachable"
-       THEN /\ failed' = failed + 1 + backlog[p]
-            /\ backlog' = [backlog EXCEPT ![p] = 0]
-       ELSE /\ failed' = failed + 1
-            /\ UNCHANGED backlog
   /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
 Next ==
@@ -309,6 +334,13 @@ INV_PeerLeavesAWorker == \A p \in Peers : active[p] < Workers
 \* however many such peers there are. RetryUnreachable breaks it: two dead peers whose
 \* sends timed out take the freed workers straight back.
 INV_UnreachableLeaveAWorker == ProbeJobs < Workers
+
+\* A peer's queued jobs move to the ledger only once one of its probes has timed out in
+\* the current spell: the failed round that marked it unreachable is not enough. With
+\* MaxGlitches = 1 a healthy peer is therefore never demoted. DemoteEveryTimeout breaks
+\* it: the first timeout of a peer that answers its next send hands its queue to the
+\* ledger.
+INV_DemoteAfterFailedProbe == demoted \subseteq probeTimedOut
 
 \* Liveness (under FairSpec): every job admitted for a healthy peer leaves the queue, by
 \* its reply or, after a transient timeout, into the retry ledger.

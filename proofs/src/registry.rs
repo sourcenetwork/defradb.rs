@@ -663,16 +663,17 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // The pusher's outbound head hints wait in one bounded queue drained by
         // a fixed worker pool; one peer holds at most its per-peer cap. A send
-        // that times out parks its peer and moves its queued jobs to the retry
-        // ledger, and peers that have not answered since share one per-peer
-        // cap, so any number of dead replicators leave workers for the rest.
+        // that times out parks its peer, and peers that have not answered since
+        // share one per-peer cap, so any number of dead replicators leave
+        // workers for the rest. A peer's queued jobs move to the retry ledger
+        // only when a probe (a job started while it was unreachable) times out.
         // Fairness is the scheduler's only; every running send ends by a reply
         // or its send timeout.
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / LIVE_HealthyProgress",
+        name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / INV_DemoteAfterFailedProbe / LIVE_HealthyProgress",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, peer_answered, take_queued_for_peer; crates/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
-        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
+        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, take_queued_for_peer; crates/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
+        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
     },
     Property {
