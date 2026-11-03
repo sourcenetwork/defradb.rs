@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use futures::channel::oneshot;
+use crate::rt::oneshot;
 use kovan_map::HopscotchMap;
 use kovan_queue::array_queue::ArrayQueue;
 use tracing::debug;

@@ -3,7 +3,7 @@
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
-use futures::channel::oneshot;
+use crate::rt::oneshot;
 use futures::FutureExt;
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;

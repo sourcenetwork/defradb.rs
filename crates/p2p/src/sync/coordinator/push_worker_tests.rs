@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use cid::Cid;
-use futures::SinkExt;
 use kovan::AtomOption;
 use multihash_codetable::{Code, MultihashDigest};
 
@@ -18,7 +17,7 @@ fn test_context(
     send_timeout: Duration,
 ) -> (
     Arc<PushWorkerContext<TestTransport>>,
-    futures::channel::mpsc::Receiver<PushFailure>,
+    crate::rt::mpsc::Receiver<PushFailure>,
 ) {
     test_context_with_admission(transport, backlog, send_timeout, true)
 }
@@ -30,12 +29,12 @@ fn test_context_with_admission(
     admit: bool,
 ) -> (
     Arc<PushWorkerContext<TestTransport>>,
-    futures::channel::mpsc::Receiver<PushFailure>,
+    crate::rt::mpsc::Receiver<PushFailure>,
 ) {
-    let (tx, mut events) = futures::channel::mpsc::channel::<PushFailure>(64);
-    let (mut forward, rx) = futures::channel::mpsc::channel(64);
+    let (tx, mut events) = crate::rt::mpsc::channel::<PushFailure>(64);
+    let (forward, rx) = crate::rt::mpsc::channel(64);
     crate::rt::spawn(async move {
-        while let Ok(mut event) = events.recv().await {
+        while let Some(mut event) = events.recv().await {
             if event.admission_only {
                 // A marker generation admits the push; `None` represents the
                 // durable recorder denying it. The fake recorder supplies a
@@ -530,7 +529,7 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
 /// channel applies backpressure instead of dropping the retry record.
 #[nuclei::test]
 async fn report_push_failure_backpressures_instead_of_dropping() {
-    let (mut tx, mut rx) = futures::channel::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     tx.send(PushFailure {
         peer_id: "occupant".to_string(),
         doc_id: "occupant-doc".to_string(),
@@ -584,7 +583,7 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
 
 #[nuclei::test]
 async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
-    let (tx, mut rx) = futures::channel::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     let slot = Arc::new(AtomOption::some(tx));
     let cid = Cid::new_v1(0x55, Code::Sha2_256.digest(b"collection-commit"));
 
@@ -616,7 +615,7 @@ async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
 /// dropped (the versionless SE-artifact path).
 #[nuclei::test]
 async fn versionless_collection_failure_is_not_recorded() {
-    let (tx, mut rx) = futures::channel::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     let slot = Arc::new(AtomOption::some(tx));
 
     report_push_failure(

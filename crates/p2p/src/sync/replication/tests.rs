@@ -7,6 +7,7 @@ use crate::message::{
     PushLogReply, PushLogRequest, PushSEArtifactsRequest,
 };
 use crate::replicator::EqOnlyFilterMatcher;
+use crate::rt::mpsc;
 use crate::sync::manager::SyncEvent;
 use crate::sync::merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
@@ -20,8 +21,6 @@ use crate::ReplicatorInfo;
 use async_trait::async_trait;
 use blockstore::{Blockstore, DefraBlockstore};
 use cid::Cid;
-use futures::channel::mpsc;
-use futures::SinkExt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -1237,7 +1236,7 @@ async fn test_process_block_received_success() {
     let handler = Arc::new(TestMergeHandler::new(true, false));
 
     // Create a simple event
-    let (mut tx, _rx) = mpsc::channel(1);
+    let (tx, _rx) = mpsc::channel(1);
     tx.send(SyncEvent::BlockReceived {
         cid,
         doc_id: "doc1".to_string(),
@@ -2225,7 +2224,7 @@ async fn dispatch_one_pending_dag_fetch(
         DefraBlockstore<RegolithStore>,
         PollFetchTransport,
     >,
-    events: &mut futures::channel::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
     root_cid: Cid,
 ) {
     assert_eq!(
@@ -2695,7 +2694,7 @@ async fn test_run_serializes_duplicate_cids() {
     .await
     .unwrap();
 
-    let (mut tx, rx) = mpsc::channel(2);
+    let (tx, rx) = mpsc::channel(2);
     for _ in 0..2 {
         tx.send(SyncEvent::BlockReceived {
             cid,
@@ -2712,7 +2711,7 @@ async fn test_run_serializes_duplicate_cids() {
     drop(tx);
 
     let handler = Arc::new(SlowMergeHandler::new());
-    let (result_tx, mut result_rx) = mpsc::unbounded();
+    let (result_tx, mut result_rx) = mpsc::channel(64);
 
     ReplicationLoop::run(
         Arc::new(coordinator),
@@ -2720,7 +2719,7 @@ async fn test_run_serializes_duplicate_cids() {
         handler.clone(),
         ReplicationConfig::default(),
         move |result| {
-            let _ = result_tx.unbounded_send(result.clone());
+            let _ = result_tx.try_send(result.clone());
         },
     )
     .await;
@@ -2840,7 +2839,7 @@ async fn test_run_uses_one_observable_batch_merge_pipeline() {
     .await
     .unwrap();
 
-    let (mut tx, rx) = mpsc::channel(2);
+    let (tx, rx) = mpsc::channel(2);
     for i in 0..2 {
         let data = format!("canonical-batch-{i}");
         let cid = make_cid(data.as_bytes());
@@ -2898,7 +2897,7 @@ async fn test_process_next_batch_caps_drain_at_config_batch_size() {
     .await
     .unwrap();
 
-    let (mut tx, mut rx) = mpsc::channel(16);
+    let (tx, mut rx) = mpsc::channel(16);
     for i in 0..10 {
         let data = format!("block{}", i);
         let cid = make_cid(data.as_bytes());
@@ -3016,10 +3015,10 @@ async fn merged_head_forwards_to_configured_replicator_without_gossip_rebroadcas
         )
         .await
         .unwrap();
-    let (failure_tx, mut failure_rx) = futures::channel::mpsc::channel(8);
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel(8);
     coordinator.set_failure_channel(failure_tx);
     crate::rt::spawn(async move {
-        while let Ok(mut event) = failure_rx.recv().await {
+        while let Some(mut event) = failure_rx.recv().await {
             if let Some(durable_tx) = event.durable_tx.take() {
                 let generation = Some(event.marker_generation.unwrap_or(1));
                 let _ = durable_tx.send(generation);

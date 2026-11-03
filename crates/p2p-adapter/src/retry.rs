@@ -72,7 +72,7 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
     #[cfg(not(target_arch = "wasm32"))]
     let pool = peerstore.pool().cloned();
     let record = async move {
-        while let Ok(failure) = failures.recv().await {
+        while let Some(failure) = failures.recv().await {
             record_failure(&peerstore, failure).await;
         }
     };
@@ -766,7 +766,6 @@ mod hint_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::SinkExt;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1237,8 +1236,8 @@ mod tests {
                 seed_retry_peer(&peerstore, &format!("peer-{index}"), "addr").await;
             }
             let key = load_or_generate_secret_key(None).await.expect("key");
-            let (command_tx, command_rx) = futures::channel::mpsc::channel(4);
-            let (running, stopped) = futures::channel::oneshot::channel::<()>();
+            let (command_tx, command_rx) = nuclei::sync::mpsc::channel(4);
+            let (running, stopped) = nuclei::sync::oneshot::channel::<()>();
             // A dropped receiver is what a stopped endpoint task looks like
             // from the transport: every command fails.
             drop((command_rx, running));
@@ -1362,10 +1361,10 @@ mod tests {
     }
 
     async fn check_live_admission(
-        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &nuclei::sync::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
+        let (durable_tx, durable_rx) = nuclei::sync::oneshot::channel();
         let mut check = failure(false);
         check.admission_only = true;
         check.marker_generation = Some(marker_generation);
@@ -1375,11 +1374,11 @@ mod tests {
     }
 
     async fn record_terminal_failure(
-        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &nuclei::sync::mpsc::Sender<p2p::sync::PushFailure>,
         marker_generation: u64,
         retry_after: Option<Duration>,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
+        let (durable_tx, durable_rx) = nuclei::sync::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.marker_generation = Some(marker_generation);
@@ -1390,10 +1389,10 @@ mod tests {
     }
 
     async fn record_initial_failure(
-        tx: &futures::channel::mpsc::Sender<p2p::sync::PushFailure>,
+        tx: &nuclei::sync::mpsc::Sender<p2p::sync::PushFailure>,
         initial_registration: bool,
     ) -> Option<u64> {
-        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
+        let (durable_tx, durable_rx) = nuclei::sync::oneshot::channel();
         let mut failed = failure(false);
         failed.create_retry = true;
         failed.initial_registration = initial_registration;
@@ -1416,10 +1415,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = futures::channel::mpsc::channel(2);
+        let (tx, rx) = nuclei::sync::mpsc::channel(2);
         let task = spawn_failure_recorder(storage::stores::Peerstore::new(Arc::clone(&store)), rx);
 
-        let (registered_tx, registered_rx) = futures::channel::oneshot::channel();
+        let (registered_tx, registered_rx) = nuclei::sync::oneshot::channel();
         let mut announced = failure(false);
         announced.durable_tx = Some(registered_tx);
         tx.clone().send(announced).await.unwrap();
@@ -1429,7 +1428,7 @@ mod tests {
             1
         );
 
-        let (cleared_tx, cleared_rx) = futures::channel::oneshot::channel();
+        let (cleared_tx, cleared_rx) = nuclei::sync::oneshot::channel();
         let mut acknowledged = failure(true);
         acknowledged.marker_generation = Some(generation);
         acknowledged.durable_tx = Some(cleared_tx);
@@ -1464,10 +1463,10 @@ mod tests {
             .await
             .unwrap();
         for _ in 0..2 {
-            let (tx, rx) = futures::channel::mpsc::channel(2);
+            let (tx, rx) = nuclei::sync::mpsc::channel(2);
             let recorder =
                 spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
-            let (response, allowed) = futures::channel::oneshot::channel();
+            let (response, allowed) = nuclei::sync::oneshot::channel();
             let mut check = failure(false);
             check.admission_only = true;
             check.durable_tx = Some(response);
@@ -1498,7 +1497,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = futures::channel::mpsc::channel(8);
+        let (tx, rx) = nuclei::sync::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A normal first push is admitted only while its exact marker is live.
@@ -1557,7 +1556,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (tx, rx) = futures::channel::mpsc::channel(8);
+        let (tx, rx) = nuclei::sync::mpsc::channel(8);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A failure for the admitted generation refreshes the retry obligation
@@ -1616,7 +1615,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, rx) = futures::channel::mpsc::channel(4);
+        let (tx, rx) = nuclei::sync::mpsc::channel(4);
         let recorder = spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
 
         // A terminal worker failure with a missing source token is dropped;

@@ -10,7 +10,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
-use futures::channel::{mpsc, oneshot};
+use crate::rt::{mpsc, oneshot};
 use futures::FutureExt;
 use iroh::Endpoint;
 use kovan_map::HopscotchMap;
@@ -235,16 +235,16 @@ async fn run_event_loop(
 
     // Every transport gone: the commands still buffered have no owner.
     'endpoint: loop {
-        if running.is_canceled() {
+        if running.is_closed() {
             break;
         }
         futures::select! {
             cmd = command_rx.recv().fuse() => {
-                let Ok(cmd) = cmd else { break };
+                let Some(cmd) = cmd else { break };
                 let mut pending_cmd = Some(cmd);
                 let mut processed = 0;
                 while let Some(cmd) = pending_cmd.take() {
-                    if running.is_canceled() {
+                    if running.is_closed() {
                         break 'endpoint;
                     }
                     let should_shutdown = handle_command(

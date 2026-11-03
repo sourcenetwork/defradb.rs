@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use cid::Cid;
-use futures::{FutureExt, SinkExt};
+use futures::FutureExt;
 use kovan::AtomOption;
 
 use super::{PushFailure, SyncShutdownHandle};
@@ -23,7 +23,7 @@ pub(super) struct PushWorkerContext<T> {
     pub(super) transport: T,
     pub(super) backlog: Arc<PushBacklog>,
     pub(super) selective_car_access: Arc<super::selective_car_access::SelectiveCarAccess>,
-    pub(super) failure_tx: Arc<AtomOption<futures::channel::mpsc::Sender<PushFailure>>>,
+    pub(super) failure_tx: Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     pub(super) send_timeout: Duration,
     pub(super) peer_state: Arc<PeerStateTracker>,
 }
@@ -34,7 +34,7 @@ pub(super) struct PushWorkerContext<T> {
 /// this queue exists to make durable. Only a closed channel (recorder gone,
 /// process shutting down) is logged and released.
 pub(super) async fn report_push_failure(
-    failure_tx: &Arc<AtomOption<futures::channel::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -60,7 +60,7 @@ pub(super) async fn report_push_failure(
 }
 
 pub(super) async fn report_observed_head(
-    failure_tx: &Arc<AtomOption<futures::channel::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> Option<u64> {
     report_push_event(
@@ -81,7 +81,7 @@ pub(super) async fn report_observed_head(
 }
 
 pub(super) async fn report_push_ack(
-    failure_tx: &Arc<AtomOption<futures::channel::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> bool {
     report_push_event(
@@ -104,7 +104,7 @@ pub(super) async fn report_push_ack(
 
 #[allow(clippy::too_many_arguments)]
 async fn report_push_event(
-    failure_tx: &Arc<AtomOption<futures::channel::mpsc::Sender<PushFailure>>>,
+    failure_tx: &Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -134,8 +134,8 @@ async fn report_push_event(
         return None;
     }
     let tx = failure_tx.load().as_deref().cloned();
-    if let Some(mut tx) = tx {
-        let (durable_tx, durable_rx) = futures::channel::oneshot::channel();
+    if let Some(tx) = tx {
+        let (durable_tx, durable_rx) = crate::rt::oneshot::channel();
         let failure = PushFailure {
             peer_id: peer_id.to_string(),
             doc_id,
@@ -151,23 +151,20 @@ async fn report_push_event(
             durable_tx: Some(durable_tx),
         };
         let doc_id = failure.doc_id.clone();
-        // A fresh sender always has room for its first message, so the record
-        // is queued at once; the backpressure is waiting until the recorder
-        // makes room again. Flushing is cancel-safe, so waiting in a loop lets
-        // sustained recorder backpressure surface in the logs instead of
-        // silently stalling the push pool. The data path reports from a pool
-        // worker, which has no reactor: the pool's timer serves on a worker
-        // and off one alike.
-        if tx.start_send(failure).is_ok() {
-            while workers::timeout(Duration::from_secs(5), tx.flush())
-                .await
-                .is_err()
-            {
-                tracing::warn!(
+        // The send waits until the recorder makes room. Re-polling the same
+        // send future after each timeout loses nothing, so sustained recorder
+        // backpressure surfaces in the logs instead of silently stalling the
+        // push pool. The data path reports from a pool worker, which has no
+        // reactor: the pool's timer serves on a worker and off one alike.
+        let mut send = std::pin::pin!(tx.send(failure));
+        loop {
+            match workers::timeout(Duration::from_secs(5), &mut send).await {
+                Ok(_) => break,
+                Err(_) => tracing::warn!(
                     peer_id = %peer_id,
                     doc_id = %doc_id,
                     "Push failure recorder is backlogged; still waiting to hand off retry record"
-                );
+                ),
             }
         }
         match durable_rx.await {

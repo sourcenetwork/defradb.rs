@@ -1,6 +1,5 @@
 //! Pending DAG registration and retry logic.
 
-use futures::SinkExt;
 use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;

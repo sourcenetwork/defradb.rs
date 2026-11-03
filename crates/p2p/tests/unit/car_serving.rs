@@ -459,7 +459,10 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert!(matches!(completion.try_recv(), Ok(None)));
+    assert!(matches!(
+        completion.try_recv(),
+        Err(crate::rt::oneshot::error::TryRecvError::Empty)
+    ));
 }
 
 /// A small root the doc index cannot attribute (a doc-less collection

@@ -19,9 +19,9 @@ use super::SyncManager;
 
 /// A completion sender parked in a queue so whoever resolves the query can
 /// take ownership of it.
-type CompletionSlot = Arc<SegQueue<futures::channel::oneshot::Sender<FetchCompletion>>>;
+type CompletionSlot = Arc<SegQueue<crate::rt::oneshot::Sender<FetchCompletion>>>;
 
-fn completion_slot(sender: futures::channel::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
+fn completion_slot(sender: crate::rt::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
     let slot = SegQueue::new();
     slot.push(sender);
     Arc::new(slot)
@@ -157,7 +157,7 @@ impl std::fmt::Debug for RootedCarCompletionTracker {
 
 struct RootedCarWaiter {
     peer: crate::transport::PeerId,
-    completion: SegQueue<futures::channel::oneshot::Sender<FetchCompletion>>,
+    completion: SegQueue<crate::rt::oneshot::Sender<FetchCompletion>>,
 }
 
 impl RootedCarCompletionTracker {
@@ -165,8 +165,8 @@ impl RootedCarCompletionTracker {
         &self,
         root_cid: Cid,
         peer_id: crate::transport::PeerId,
-    ) -> futures::channel::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = futures::channel::oneshot::channel();
+    ) -> crate::rt::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = crate::rt::oneshot::channel();
         let completion = SegQueue::new();
         completion.push(tx);
         self.waiters.insert(
@@ -248,8 +248,8 @@ impl BlockSyncCompletionTracker {
     pub(crate) fn register(
         &self,
         query_id: QueryId,
-    ) -> futures::channel::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = futures::channel::oneshot::channel();
+    ) -> crate::rt::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = crate::rt::oneshot::channel();
         let slot = completion_slot(tx);
         let early = self.update(|state| {
             let early = state.remove_early(query_id);

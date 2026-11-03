@@ -155,7 +155,7 @@ mod tests {
 
     #[nuclei::test(threads = 0)]
     async fn completion_is_visible_from_inside_later_tracked_work() {
-        let (release, released) = futures::channel::oneshot::channel::<()>();
+        let (release, released) = crate::rt::oneshot::channel::<()>();
         let task = TrackedTask::spawn(&edge::testing::edge(), async move {
             let _ = released.await;
         });

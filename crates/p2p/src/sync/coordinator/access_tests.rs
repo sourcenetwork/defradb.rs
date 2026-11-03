@@ -186,7 +186,7 @@ fn create_test_coordinator(
     peer_state: Arc<PeerStateTracker>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     create_test_coordinator_with_rate_limiter(
         access_mode,
@@ -203,7 +203,7 @@ fn create_test_coordinator_with_rate_limiter(
     rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -221,7 +221,7 @@ fn create_test_coordinator_with_sync_config(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -240,7 +240,7 @@ fn create_test_coordinator_with_options(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     // Most limiter tests exercise one path at a time; share the injected
     // limiter across gossip and request intake so either path sees it.
@@ -263,7 +263,7 @@ fn create_test_coordinator_with_split_limiters(
     request_rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     create_test_coordinator_full(
         access_mode,
@@ -284,7 +284,7 @@ fn create_test_coordinator_full(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     let transport = NoopTransport::new();
     let local_peer_id = transport.local_peer_id().to_string();
@@ -325,7 +325,7 @@ fn create_test_coordinator_with_blockstore<B: Blockstore + 'static>(
     params: TestCoordinatorParams<B>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     create_test_coordinator_with_blockstore_and_head_provider(params, Arc::new(NoOpHeadProvider))
 }
@@ -335,7 +335,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
     head_provider: Arc<dyn DocumentHeadProvider>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    futures::channel::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
 ) {
     let TestCoordinatorParams {
         sync_config,
@@ -1201,7 +1201,7 @@ fn two_stream_event(
 }
 
 async fn recv_block_received(
-    events: &mut futures::channel::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
 ) -> crate::sync::manager::SyncEvent {
     timeout(Duration::from_secs(1), events.recv())
         .await
@@ -1229,7 +1229,7 @@ async fn dispatch_complete_pending<B: Blockstore + 'static, T: P2PTransport>(
 
 async fn recv_complete_pushlog<B: Blockstore + 'static, T: P2PTransport>(
     coordinator: &SyncCoordinator<B, T>,
-    events: &mut futures::channel::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
 ) -> SyncEvent {
     dispatch_complete_pending(coordinator).await;
     recv_block_received(events).await
@@ -1528,7 +1528,7 @@ async fn duplicate_car_ingest_defers_without_waiting_for_root_owner() {
 
     assert_eq!(
         completion.try_recv().unwrap(),
-        Some(crate::sync::manager::FetchCompletion::Deferred)
+        crate::sync::manager::FetchCompletion::Deferred
     );
     assert_eq!(
         coordinator
@@ -1867,12 +1867,12 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     )
     .await
     .unwrap();
-    let (failure_tx, mut failure_rx) = futures::channel::mpsc::channel::<super::PushFailure>(16);
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
     coordinator.set_failure_channel(failure_tx);
     let registered = Arc::new(AtomicUsize::new(0));
     let observer = Arc::clone(&registered);
     let markers = crate::rt::spawn(async move {
-        while let Ok(mut observation) = failure_rx.recv().await {
+        while let Some(mut observation) = failure_rx.recv().await {
             if let Some(ack) = observation.durable_tx.take() {
                 if !observation.admission_only
                     && !observation.create_retry
@@ -2105,10 +2105,10 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     )
     .await
     .unwrap();
-    let (failure_tx, mut failure_rx) = futures::channel::mpsc::channel(16);
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel(16);
     coordinator.set_failure_channel(failure_tx);
     crate::rt::spawn(async move {
-        while let Ok(mut event) = failure_rx.recv().await {
+        while let Some(mut event) = failure_rx.recv().await {
             if let Some(durable_tx) = event.durable_tx.take() {
                 let generation = Some(event.marker_generation.unwrap_or(1));
                 let _ = durable_tx.send(generation);

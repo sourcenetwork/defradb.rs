@@ -262,6 +262,9 @@ Disjoint parts of one document never conflict. A read that validates more than i
   - work handed between tasks or cores: `regolith::sync::bounded` and `unbounded` channels;
   - a counter or a flag: a plain atomic;
   - one-time initialization: `regolith::sync::OnceCell` and `Lazy`.
+- Network-edge code (p2p, bitswap, net, http and what runs on the edge runtime) takes channels and semaphores from
+  `nuclei::sync` natively (p2p's `rt` gives the same API on wasm32), because they cost a seventh to a sixteenth of
+  regolith's per message; the data path keeps `regolith::sync`.
 - Only where waiting is part of the meaning (one task must wait for another) use a `regolith::sync` future: `Mutex`,
   `RwLock`, `Semaphore`, `Notify`, `Event`, `Latch`, `Barrier`. They suspend the task and never block the thread.
 - Never add a lock to make a value `Sync`, to serialize writers, or to avoid a transaction conflict. Shared durable

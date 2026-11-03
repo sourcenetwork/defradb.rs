@@ -5,7 +5,6 @@ use crate::sync::pending_store::{
     PendingDagStorage, PendingDagStore, PersistedPendingDag, PersistedView,
 };
 use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
-use futures::SinkExt;
 
 type TestCoordinator = SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport>;
 

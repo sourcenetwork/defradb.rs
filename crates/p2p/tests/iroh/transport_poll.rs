@@ -77,7 +77,7 @@ async fn poll_deadline_bounds_a_pending_reply() {
 
 #[nuclei::test(start_paused = true)]
 async fn poll_deadline_bounds_a_full_command_queue() {
-    let (mut transport, _commands, _running) = transport();
+    let (transport, _commands, _running) = transport();
     let (reply, _response) = oneshot::channel();
     assert!(transport
         .command_tx

@@ -20,9 +20,9 @@ mod pushlog;
 pub(crate) use bitswap::{BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker};
 pub(crate) use pending_dag::PendingDagLease;
 
+use crate::rt::mpsc;
 use crate::QueryId;
 use cid::Cid;
-use futures::channel::mpsc;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
@@ -207,7 +207,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         peer_state: Arc<PeerStateTracker>,
         config: SyncConfig,
     ) -> (Self, mpsc::Receiver<SyncEvent>) {
-        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size);
+        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size.max(1));
 
         let manager = Self {
             blockstore,

@@ -4,8 +4,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use futures::channel::mpsc;
 
 #[cfg(feature = "libp2p-transport")]
 use super::authorizer::AccessAuthorizer;
@@ -314,7 +314,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// A bounded channel of `capacity` push failures, installed as this
     /// coordinator's failure channel; the receiver is the caller's.
     pub fn attach_failure_channel(&mut self, capacity: usize) -> super::PushFailureReceiver {
-        let (tx, rx) = mpsc::channel(capacity);
+        let (tx, rx) = mpsc::channel(capacity.max(1));
         self.set_failure_channel(tx);
         rx
     }

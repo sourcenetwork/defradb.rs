@@ -32,9 +32,9 @@ use std::time::Duration;
 
 use crate::rt::time::Instant;
 
+use crate::rt::oneshot;
 use bytes::Bytes;
 use cid::Cid;
-use futures::channel::oneshot;
 use futures::FutureExt;
 
 use crate::transport::PeerId;
@@ -626,11 +626,7 @@ impl BacklogOwner {
             return None;
         }
         loop {
-            while self
-                .waiters
-                .front()
-                .is_some_and(|reply| reply.is_canceled())
-            {
+            while self.waiters.front().is_some_and(|reply| reply.is_closed()) {
                 self.waiters.pop_front();
             }
             if self.waiters.is_empty() {

@@ -25,7 +25,7 @@ async fn coordinator() -> Arc<SyncCoordinator<DefraBlockstore<RegolithStore>, No
 #[nuclei::test]
 async fn spawn_or_run_detaches_while_a_slot_is_free() {
     let coordinator = coordinator().await;
-    let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+    let (release_tx, release_rx) = crate::rt::oneshot::channel::<()>();
     let finished = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&finished);
 

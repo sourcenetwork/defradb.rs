@@ -75,7 +75,7 @@ impl Fixture {
             self.diagnostics.clone(),
         )
         .await;
-        event_rx.next().await
+        event_rx.recv().await
     }
 }
 

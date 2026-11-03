@@ -10,11 +10,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::mpsc;
 use crate::rt::time::Instant;
 use blockstore::Blockstore;
 use cid::Cid;
-use futures::channel::mpsc;
-use futures::{FutureExt, SinkExt};
+use futures::FutureExt;
 use tracing::{debug, error, info, warn};
 
 use super::closure_depth::ClosureDepth;
@@ -779,7 +779,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
                 return ProviderWindowOutcome::Superseded;
             }
             futures::select! {
-                result = &mut *receiver => {
+                result = (&mut *receiver).fuse() => {
                     // Busy is alive, not the silent publisher of a dead Bitswap link.
                     let busy = matches!(result, Ok(FetchCompletion::ProviderBusy));
                     *answered = result.is_ok() && !busy;
@@ -911,7 +911,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
         }
         if let Some(receiver) = completion.as_mut() {
             futures::select! {
-                result = &mut *receiver => {
+                result = (&mut *receiver).fuse() => {
                     let fetch_completion =
                         result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;
@@ -1232,7 +1232,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         }
         if let Some(receiver) = completion.as_mut() {
             futures::select! {
-                result = &mut *receiver => {
+                result = (&mut *receiver).fuse() => {
                     let fetch_completion =
                         result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;

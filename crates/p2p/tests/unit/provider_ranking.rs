@@ -97,7 +97,7 @@ impl Fixture {
         )
         .await;
         matches!(
-            event_rx.next().await,
+            event_rx.recv().await,
             Some(SyncEvent::DagReady { root_cid, .. }) if root_cid == self.root_cid
         )
     }

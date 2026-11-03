@@ -1,7 +1,9 @@
 //! The runtime names this crate's code uses, one set per target: nuclei
 //! natively, the browser's event loop (n0-future) on wasm32. Code written
-//! against this module builds and behaves the same on both. Channels come
-//! from `futures::channel` and every other primitive from `regolith::sync`.
+//! against this module builds and behaves the same on both. The `mpsc` and
+//! `oneshot` channels are nuclei's natively and an adapter with the same calls
+//! over `futures::channel` on wasm32; every other primitive comes from
+//! `regolith::sync`.
 //!
 //! A nuclei task is cancelled when its handle drops, so a task that must
 //! outlive its handle is [`Task::detach`]ed; the browser's tasks run on either
@@ -9,9 +11,6 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    // Only for the code that builds natively alone (the libp2p host, the
-    // two-stream protocol, the KMS pubsub-RPC layer); code both targets build
-    // takes its channels from `futures::channel`.
     pub use nuclei::sync::{mpsc, oneshot, Semaphore};
     pub use nuclei::task::{yield_now, AbortHandle, JoinError, JoinSet, Task};
     pub use nuclei::{select, spawn};
@@ -42,9 +41,13 @@ mod native {
 }
 
 #[cfg(target_arch = "wasm32")]
+mod wasm_channel;
+
+#[cfg(target_arch = "wasm32")]
 mod wasm {
     use std::future::Future;
 
+    pub use super::wasm_channel::{mpsc, oneshot};
     pub use n0_future::task::{AbortHandle, JoinError, JoinSet};
     pub use regolith::sync::Notify;
 

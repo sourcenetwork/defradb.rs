@@ -78,11 +78,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::rt::Notify;
+use crate::rt::{mpsc, oneshot};
 use acp::DocumentACP;
 use blockstore::Blockstore;
 use cid::Cid;
 use defra_core::thread_bounds::MaybeSend;
-use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::FutureExt;
 use kovan::{Atom, AtomOption};
@@ -1097,7 +1097,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         retry_tick.set_missed_tick_behavior(crate::rt::time::MissedTickBehavior::Skip);
         // One sender for the clock's whole life, so its readiness carries
         // over from one dispatch to the next.
-        let mut event_tx = self.manager.event_sender();
+        let event_tx = self.manager.event_sender();
         loop {
             if self.runtime.shutdown.is_shutting_down() {
                 return Ok(());
@@ -1107,13 +1107,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 _ = self.manager.pending_dag_ready().fuse() => {}
                 _ = self.runtime.shutdown.cancelled().fuse() => return Ok(()),
             }
-            self.dispatch_due_pending_dag_fetches(&mut event_tx, crate::rt::time::Instant::now());
+            self.dispatch_due_pending_dag_fetches(&event_tx, crate::rt::time::Instant::now());
         }
     }
 
     fn dispatch_due_pending_dag_fetches(
         &self,
-        event_tx: &mut mpsc::Sender<crate::sync::SyncEvent>,
+        event_tx: &mpsc::Sender<crate::sync::SyncEvent>,
         now: crate::rt::time::Instant,
     ) -> usize {
         let due = self.manager.due_pending_dag_retries(now);
@@ -1128,8 +1128,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             available -= 1;
 
-            let ready = futures::future::poll_fn(|cx| event_tx.poll_ready(cx)).now_or_never();
-            let Some(Ok(())) = ready else {
+            let Ok(permit) = event_tx.try_reserve() else {
                 self.runtime
                     .shutdown
                     .release_pending_dag_fetch_reservation(&root_cid);
@@ -1143,7 +1142,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 continue;
             }
 
-            self.dispatch_pending_dag_fetch(root_cid, &dag, event_tx);
+            self.dispatch_pending_dag_fetch(root_cid, &dag, permit);
             count += 1;
         }
         count
@@ -1154,7 +1153,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         &self,
         now: crate::rt::time::Instant,
     ) -> usize {
-        self.dispatch_due_pending_dag_fetches(&mut self.manager.event_sender(), now)
+        self.dispatch_due_pending_dag_fetches(&self.manager.event_sender(), now)
     }
 
     /// Build the provider list for a fetch dispatch from positive per-CID
@@ -1165,12 +1164,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         &self,
         root_cid: Cid,
         dag: &PendingDag,
-        event_tx: &mut mpsc::Sender<crate::sync::SyncEvent>,
+        permit: mpsc::Permit<'_, crate::sync::SyncEvent>,
     ) {
-        // The caller saw `event_tx` ready, so only a receiver gone since can
-        // refuse these sends, and then the event has nowhere to go.
         if dag.merge_continuation {
-            let _ = event_tx.start_send(crate::sync::SyncEvent::DagReady {
+            permit.send(crate::sync::SyncEvent::DagReady {
                 root_cid,
                 doc_id: dag.doc_id.clone(),
                 collection_id: dag.collection_id.clone(),
@@ -1203,7 +1200,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             fetch_failures = dag.fetch_failures,
             "Dispatching pending DAG fetch"
         );
-        let _ = event_tx.start_send(crate::sync::SyncEvent::DagNeedsFetch {
+        permit.send(crate::sync::SyncEvent::DagNeedsFetch {
             root_cid,
             missing,
             providers,
@@ -1218,12 +1215,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     #[cfg(test)]
     fn dispatch_pending_dag_fetch_for_test(&self, root_cid: Cid, dag: &PendingDag) {
-        let mut event_tx = self.manager.event_sender();
-        futures::future::poll_fn(|cx| event_tx.poll_ready(cx))
-            .now_or_never()
-            .expect("test event receiver must have capacity")
-            .expect("test event receiver must be open");
-        self.dispatch_pending_dag_fetch(root_cid, dag, &mut event_tx);
+        let event_tx = self.manager.event_sender();
+        let permit = event_tx
+            .try_reserve()
+            .expect("test event receiver must have capacity and be open");
+        self.dispatch_pending_dag_fetch(root_cid, dag, permit);
     }
 
     pub fn shutdown_handle(&self) -> SyncShutdownHandle {

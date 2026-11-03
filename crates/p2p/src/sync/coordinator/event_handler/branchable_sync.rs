@@ -1,7 +1,6 @@
 //! BranchableSync request and reply handling.
 
 use cid::Cid;
-use futures::SinkExt;
 
 use blockstore::Blockstore;
 
@@ -225,7 +224,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
 
         if !cids_to_remerge.is_empty() {
-            let mut event_tx = self.manager.event_sender();
+            let event_tx = self.manager.event_sender();
             for cid in cids_to_remerge {
                 match self.manager.blockstore().get(&cid).await {
                     Ok(Some(data)) => {

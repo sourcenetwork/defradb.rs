@@ -1,7 +1,7 @@
 //! Commands sent from `IrohTransport` to the background `IrohEndpoint` event loop.
 
+use crate::rt::{mpsc, oneshot};
 use cid::Cid;
-use futures::channel::{mpsc, oneshot};
 use iroh::endpoint::SendStream;
 
 use crate::message::{
@@ -16,7 +16,7 @@ use crate::QueryId;
 /// Where the endpoint answers a command.
 pub type Reply<T> = oneshot::Sender<crate::error::Result<T>>;
 
-/// Resolves, as `Err(Canceled)`, once the endpoint task has stopped. The
+/// Resolves, as `Err(RecvError)`, once the endpoint task has stopped. The
 /// endpoint holds the other half, and stops once no transport holds one.
 pub type EndpointStopped = futures::future::Shared<oneshot::Receiver<()>>;
 

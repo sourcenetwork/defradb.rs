@@ -63,7 +63,7 @@ async fn depth_cut_fetch_serves_only_the_cut_below_the_frontier() {
         .await;
 
         assert!(matches!(
-            event_rx.next().await,
+            event_rx.recv().await,
             Some(SyncEvent::DagReady { root_cid, .. }) if root_cid == head
         ));
         for (cid, _) in &blocks {

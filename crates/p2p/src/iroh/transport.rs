@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::{mpsc, oneshot};
 use async_trait::async_trait;
 use cid::Cid;
-use futures::channel::{mpsc, oneshot};
-use futures::{FutureExt, SinkExt};
+use futures::FutureExt;
 use iroh::SecretKey;
 
 use crate::error::{Error, Result};

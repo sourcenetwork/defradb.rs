@@ -16,7 +16,6 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use web_time::Instant;
 
 use cid::Cid;
-use futures::SinkExt;
 
 use blockstore::{verify_block_cid, Blockstore};
 
@@ -1389,7 +1388,7 @@ pub(super) mod tests {
         assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
         assert!(matches!(
             events.try_recv(),
-            Err(futures::channel::mpsc::TryRecvError::Empty)
+            Err(crate::rt::mpsc::error::TryRecvError::Empty)
         ));
     }
 

@@ -15,14 +15,14 @@ use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
     PushLogReply, PushLogRequest, PushSEArtifactsRequest,
 };
+use crate::rt::mpsc;
 use crate::sync::manager::SyncEvent;
 use crate::topics::DefraTopic;
 use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
 use crate::{QueryId, ReplicatorInfo};
 use async_trait::async_trait;
 use blockstore::{Blockstore, DefraBlockstore};
-use futures::channel::mpsc;
-use futures::StreamExt;
+
 use ipld_core::{codec::Codec, ipld, ipld::Ipld};
 use kovan::{Atom, AtomOption};
 use kovan_map::HopscotchMap;
@@ -744,7 +744,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     )
     .await;
 
-    match event_rx.next().await {
+    match event_rx.recv().await {
         Some(SyncEvent::DagReady {
             root_cid: ready_cid,
             doc_id,
@@ -818,7 +818,7 @@ async fn poll_fetch_dag_uses_known_missing_frontier_without_recursive_car() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -873,7 +873,7 @@ async fn rooted_selective_response_drains_before_query_is_reaped() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&leaf_cid).await, Ok(true)));
@@ -1016,7 +1016,7 @@ async fn contended_car_ingest_defers_to_root_clock_without_fetch_exhaustion() {
     )
     .await;
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     assert_eq!(transport.sync_batches().len(), 1);
     assert_eq!(transport.cancelled_queries(), vec![1]);
     let snapshot = diagnostics.snapshot();
@@ -1076,7 +1076,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
 
@@ -1153,7 +1153,7 @@ async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
 
     assert!(
         matches!(
-            event_rx.next().await,
+            event_rx.recv().await,
             Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
         ),
         "a DAG deeper than the legacy 20-iteration cap must fully reconcile and emit DagReady"
@@ -1209,7 +1209,7 @@ async fn poll_fetch_dag_rotates_to_alternate_provider_on_no_progress() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -1255,7 +1255,7 @@ async fn poll_fetch_dag_retries_incomplete_fetch_and_succeeds() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -1300,7 +1300,7 @@ async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
     .await;
 
     assert!(
-        event_rx.next().await.is_none(),
+        event_rx.recv().await.is_none(),
         "terminal failure must not emit DagReady"
     );
     assert!(matches!(blockstore.has(&child_cid).await, Ok(false)));
@@ -1367,7 +1367,7 @@ async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
     )
     .await;
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     assert_eq!(diagnostics.snapshot().pending_dag_fetch_exhausted, 1);
     assert_eq!(
         transport.disconnected_peers(),
@@ -1484,7 +1484,7 @@ async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
     )
     .await;
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     assert!(transport.sync_batches().is_empty());
     let deferred = diagnostics.snapshot();
     assert_eq!(deferred.pending_dag_fetch_deferred_unavailable, 1);
@@ -1504,7 +1504,7 @@ async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -1548,7 +1548,7 @@ async fn poll_fetch_dag_cancels_every_issued_query() {
     )
     .await;
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     let issued: Vec<u64> = (1..=transport.sync_batches().len() as u64).collect();
     assert_eq!(
         transport.cancelled_queries(),
@@ -1604,7 +1604,7 @@ async fn poll_fetch_dag_stall_budget_caps_stalled_batches_per_attempt() {
     )
     .await;
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     // Two batches per attempt are missing, but the single provider's stall
     // budget is spent on the first, so the second issues no query: one
     // stalled (and cancelled) query per attempt, not two.
@@ -1657,7 +1657,7 @@ async fn poll_fetch_dag_bounds_hung_car_request() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -1713,7 +1713,7 @@ async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
@@ -1841,7 +1841,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     drop(permits);
     fetch.join().await.unwrap();
 
-    assert!(event_rx.next().await.is_none());
+    assert!(event_rx.recv().await.is_none());
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
 }
 
@@ -1938,7 +1938,7 @@ async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff()
     .await;
 
     assert!(matches!(
-        event_rx.next().await,
+        event_rx.recv().await,
         Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
     ));
     let elapsed = crate::rt::time::Instant::now().duration_since(started);

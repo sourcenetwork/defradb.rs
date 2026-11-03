@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use futures::channel::mpsc;
 
 use super::config::ReplicationConfig;
 use super::handlers::{
@@ -185,7 +185,7 @@ impl ReplicationLoop {
         T: P2PTransport,
         H: MergeHandler + ?Sized + 'static,
     {
-        let event = match events.recv().await.ok() {
+        let event = match events.recv().await {
             Some(e) => e,
             None => return ReplicationResult::ChannelClosed,
         };
@@ -211,7 +211,7 @@ impl ReplicationLoop {
         H: MergeHandler + ?Sized + 'static,
     {
         // Wait for first event (blocking)
-        let first = match events.recv().await.ok() {
+        let first = match events.recv().await {
             Some(e) => e,
             None => return vec![ReplicationResult::ChannelClosed],
         };
@@ -286,8 +286,8 @@ impl ReplicationLoop {
                         process_one_event(&coordinator, event, handler.as_ref(), &config).await;
                     results.push(result);
                 }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Closed) => break,
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
 
