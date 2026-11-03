@@ -31,7 +31,8 @@ pub const DEFAULT_PUSH_QUEUE_BYTE_CAPACITY: usize = 32 * 1024 * 1024;
 /// Default maximum push jobs concurrently in flight to one peer (#1099).
 ///
 /// Must stay below `max_concurrent_push_tasks` so one nonresponsive peer
-/// cannot occupy every worker.
+/// cannot occupy every worker. Peers whose last send failed on transport
+/// share one such cap, so any number of them cannot either.
 pub const DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER: usize = 4;
 
 /// Default maximum document IDs accepted in one DocSync request.

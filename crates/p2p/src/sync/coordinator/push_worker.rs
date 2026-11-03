@@ -300,12 +300,17 @@ where
     if let Some(reason) = send_outcome.failure_reason {
         context.backlog.record_head_hint_failure(reason);
     }
-    // A saturated receiver parks the whole peer: every CID we would push next
-    // is going to be rejected for the same reason (defradb#1112).
-    if send_outcome.at_capacity || send_outcome.retry_after.is_some() {
-        context
-            .backlog
-            .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
+    // A saturated or unreachable receiver parks the whole peer: every CID we
+    // would push next fails for the same reason (defradb#1112).
+    let unreachable = send_outcome.failure_reason == Some(HeadHintFailureReason::Transport);
+    if unreachable || send_outcome.at_capacity || send_outcome.retry_after.is_some() {
+        if unreachable {
+            context.backlog.park_peer_unreachable(&job.peer_id);
+        } else {
+            context
+                .backlog
+                .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
+        }
         for queued_job in context.backlog.take_queued_for_peer(&job.peer_id).await {
             let peer_id = queued_job.peer_id.clone();
             let head_priority = queued_job.head_priority();
@@ -325,6 +330,8 @@ where
             )
             .await;
         }
+    } else if send_outcome.failure_reason != Some(HeadHintFailureReason::Local) {
+        context.backlog.record_peer_answered(&job.peer_id);
     }
     let send_failed = send_outcome.failed;
     let any_failed = root_missing || send_failed;

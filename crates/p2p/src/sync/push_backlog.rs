@@ -12,6 +12,9 @@
 //! - one peer holds at most `min(per_peer_active_cap, worker_count)` workers,
 //!   and ready peers are served round-robin, so a nonresponsive peer cannot
 //!   starve healthy peers.
+//! - a peer whose send failed on transport is parked, and until it answers
+//!   again it shares one `per_peer_active_cap` with every other such peer, so
+//!   any number of dead peers hold the workers of one slow peer at most.
 //! - every admission has an explicit outcome; rejection is counted and the
 //!   caller reports it to the persisted retry ladder. Nothing is silently
 //!   dropped and no waiting task is allocated.
@@ -182,11 +185,14 @@ pub enum JobCompletion {
     Retired,
 }
 
-/// Peer-wide parking state for a saturated receiver.
+/// Peer-wide parking state for a saturated or unreachable receiver.
 #[derive(Debug, Clone)]
 struct PeerCooldown {
     until: Instant,
     consecutive: u32,
+    /// The last send failed on transport. The entry outlives `until` and keeps
+    /// the peer within the unreachable peers' shared cap until it answers again.
+    unreachable: bool,
 }
 
 #[derive(Default)]
@@ -360,6 +366,12 @@ enum Command {
         peer_key: String,
         retry_after: Option<Duration>,
     },
+    ParkPeerUnreachable {
+        peer_key: String,
+    },
+    PeerAnswered {
+        peer_key: String,
+    },
     TakeQueuedForPeer {
         peer_key: String,
         reply: oneshot::Sender<Vec<PushJobSpec>>,
@@ -454,6 +466,24 @@ impl PushBacklog {
         self.commands.send(Command::ParkPeerAtCapacity {
             peer_key: peer_id.to_string(),
             retry_after,
+        });
+    }
+
+    /// Park a peer whose send got no reply (timeout or lost connection).
+    ///
+    /// The cooldown escalates while sends keep failing, and once it elapses
+    /// the peer's jobs count against the one `per_peer_active_cap` that every
+    /// unreachable peer shares, until a reply arrives (`record_peer_answered`).
+    pub(crate) fn park_peer_unreachable(&self, peer_id: &PeerId) {
+        self.commands.send(Command::ParkPeerUnreachable {
+            peer_key: peer_id.to_string(),
+        });
+    }
+
+    /// The peer replied to a send, so it is no longer treated as unreachable.
+    pub(crate) fn record_peer_answered(&self, peer_id: &PeerId) {
+        self.commands.send(Command::PeerAnswered {
+            peer_key: peer_id.to_string(),
         });
     }
 
@@ -591,7 +621,9 @@ impl BacklogOwner {
             Command::ParkPeerAtCapacity {
                 peer_key,
                 retry_after,
-            } => self.park_peer_at_capacity(peer_key, retry_after),
+            } => self.park_peer(peer_key, retry_after, false),
+            Command::ParkPeerUnreachable { peer_key } => self.park_peer(peer_key, None, true),
+            Command::PeerAnswered { peer_key } => self.peer_answered(&peer_key),
             Command::TakeQueuedForPeer { peer_key, reply } => {
                 let jobs = self.take_queued_for_peer(&peer_key);
                 let _ = reply.send(jobs);
@@ -796,7 +828,7 @@ impl BacklogOwner {
         }
     }
 
-    fn park_peer_at_capacity(&mut self, peer_key: String, retry_after: Option<Duration>) {
+    fn park_peer(&mut self, peer_key: String, retry_after: Option<Duration>, unreachable: bool) {
         let inner = &mut self.inner;
         let consecutive = inner
             .peer_cooldowns
@@ -823,10 +855,28 @@ impl BacklogOwner {
                 .get(&peer_key)
                 .map_or(Instant::now(), |cooldown| cooldown.until),
         );
-        inner
+        inner.peer_cooldowns.insert(
+            peer_key,
+            PeerCooldown {
+                until,
+                consecutive,
+                unreachable,
+            },
+        );
+        if !unreachable {
+            inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
+        }
+    }
+
+    fn peer_answered(&mut self, peer_key: &str) {
+        if self
+            .inner
             .peer_cooldowns
-            .insert(peer_key, PeerCooldown { until, consecutive });
-        inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
+            .get(peer_key)
+            .is_some_and(|cooldown| cooldown.unreachable)
+        {
+            self.inner.peer_cooldowns.remove(peer_key);
+        }
     }
 
     fn take_queued_for_peer(&mut self, peer_key: &str) -> Vec<PushJobSpec> {
@@ -859,6 +909,12 @@ impl BacklogOwner {
         now: Instant,
     ) -> std::result::Result<PushJobSpec, Option<Instant>> {
         let mut next_wake: Option<Instant> = None;
+        let unreachable_active: usize = inner
+            .peer_cooldowns
+            .iter()
+            .filter(|(_, cooldown)| cooldown.unreachable)
+            .filter_map(|(peer_key, _)| inner.active.get(peer_key))
+            .sum();
         for _ in 0..inner.ready.len() {
             let Some(peer_key) = inner.ready.pop_front() else {
                 break;
@@ -882,7 +938,14 @@ impl BacklogOwner {
                     inner.ready.push_back(peer_key);
                     continue;
                 }
-                inner.peer_cooldowns.remove(&peer_key);
+                // Unreachable peers together stay within one peer's cap; a
+                // job_done wakes the waiters again.
+                if !cooldown.unreachable {
+                    inner.peer_cooldowns.remove(&peer_key);
+                } else if unreachable_active >= per_peer_active_cap {
+                    inner.ready.push_back(peer_key);
+                    continue;
+                }
             }
             let queue = inner
                 .queues
@@ -1156,6 +1219,68 @@ mod tests {
             "a peer that stays saturated must be backed off further"
         );
         assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 2);
+    }
+
+    async fn drain_eligible(backlog: &PushBacklog) -> Vec<String> {
+        let mut peers = Vec::new();
+        while let Ok(Some(job)) =
+            crate::rt::time::timeout(Duration::from_millis(10), backlog.next_job()).await
+        {
+            peers.push(job.peer_id.to_string());
+        }
+        peers.sort();
+        peers
+    }
+
+    /// Audit F24: once their cooldowns elapse, unreachable peers together stay
+    /// within one peer's cap, so the rest of the pool serves reachable peers,
+    /// and a reply takes a peer out of the shared cap.
+    #[test]
+    fn unreachable_peers_share_one_peer_cap() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(64, usize::MAX, 2, 4, edge.clone());
+            for peer in ["dead-a", "dead-b", "dead-c", "healthy"] {
+                for seed in [b"1", b"2"] {
+                    assert_eq!(
+                        backlog.try_enqueue(job(peer, seed)).await,
+                        EnqueueOutcome::Enqueued
+                    );
+                }
+            }
+        }
+        for peer in ["dead-a", "dead-b", "dead-c"] {
+            backlog.park_peer_unreachable(&PeerId::new(peer.to_string()));
+        }
+        let cooling = backlog
+            .snapshot()
+            .await
+            .per_peer
+            .iter()
+            .filter(|peer| peer.cooldown_remaining_ms > 0)
+            .count();
+        assert_eq!(cooling, 3);
+        crate::rt::time::advance(Duration::from_secs(60)).await;
+
+        assert_eq!(
+            drain_eligible(&backlog).await,
+            ["dead-a", "dead-b", "healthy", "healthy"]
+        );
+        assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 0);
+
+            assert_eq!(
+                drain_eligible(&backlog).await,
+                ["dead-a", "dead-b", "healthy", "healthy"]
+            );
+            assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 0);
+
+            let dead_a = PeerId::new("dead-a".to_string());
+            backlog.record_peer_answered(&dead_a);
+            backlog
+                .job_done(&job("dead-a", b"1"), JobCompletion::Succeeded)
+                .await;
+            assert_eq!(drain_eligible(&backlog).await, ["dead-a", "dead-b"]);
+            backlog.close();
+        })
     }
 
     #[nuclei::test(threads = 0)]
