@@ -476,4 +476,118 @@ mod tests {
             "the process owner must satisfy document ACP when serving blocks"
         );
     }
+
+    const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+    const STRANGER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
+
+    fn article_schemas() -> Vec<CollectionVersion> {
+        let mut schemas =
+            query::parse_sdl("type Article { title: String body: String @chunk(maxChars: 64) }")
+                .unwrap();
+        schemas[0].policy = Some(PolicyDescription::new("policy1", "users"));
+        schemas
+    }
+
+    async fn article_with_chunks() -> (Arc<db::DB<RegolithStore>>, query::mutator::CreateResult) {
+        use query::DocMutator;
+
+        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collections_atomic(article_schemas())
+            .await
+            .unwrap();
+        let collection = db.get_collection("Article").unwrap().unwrap();
+        let mut doc = document::Document::new(collection.schema_arc());
+        doc.set("title", "t").unwrap();
+        doc.set(
+            "body",
+            "First paragraph.\n\nSecond paragraph that is a little longer.",
+        )
+        .unwrap();
+        let created = db::AutoCommitMutator::new(db.clone())
+            .create("Article", doc)
+            .await
+            .unwrap();
+        assert!(!created.derived.is_empty());
+        (db, created)
+    }
+
+    async fn chunk_block(db: &db::DB<RegolithStore>, cid: &cid::Cid) -> Vec<u8> {
+        use blockstore::Blockstore as _;
+
+        blockstore::DefraBlockstore::new(db.store().clone(), false)
+            .get(cid)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_vec()
+    }
+
+    #[tokio::test]
+    async fn a_chunk_block_is_served_as_its_parents_to_the_parents_readers_only() {
+        let (db, created) = article_with_chunks().await;
+        let parent = created.doc_id.to_string();
+        let article = db.get_collection("Article").unwrap().unwrap();
+        let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+        let owner = identity::Did::new(OWNER).unwrap();
+        acp.register_doc_object(&owner, "policy1", "users", &parent)
+            .await
+            .unwrap();
+        let gate = DbBlockReadGate::new(acp);
+        let classifier = DbBlockClassifier::new(db.clone());
+
+        for chunk in &created.derived {
+            let bytes = chunk_block(&db, &chunk.commit_cid).await;
+            for class in [
+                classifier.classify(&chunk.commit_cid, &bytes).await,
+                classifier
+                    .classify_indexed(&chunk.commit_cid)
+                    .await
+                    .expect("an indexed chunk block"),
+            ] {
+                let BlockClass::Data(meta) = class else {
+                    panic!("expected the parent's metadata, got {class:?}");
+                };
+                assert_eq!(meta.doc_ids, vec![parent.clone()]);
+                assert_eq!(meta.collection_id, article.schema().collection_id);
+                assert_eq!(
+                    meta.policy,
+                    Some(("policy1".to_string(), "users".to_string()))
+                );
+                assert!(
+                    gate.may_read(&Identity::Authenticated(owner.clone()), &meta)
+                        .await
+                );
+                let stranger = Identity::Authenticated(identity::Did::new(STRANGER).unwrap());
+                assert!(!gate.may_read(&stranger, &meta).await);
+                assert!(!gate.may_read(&Identity::Anonymous, &meta).await);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_chunk_block_is_denied_until_its_parent_has_merged() {
+        let (source, created) = article_with_chunks().await;
+        let chunk = &created.derived[0];
+        let bytes = chunk_block(&source, &chunk.commit_cid).await;
+
+        let peer = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        peer.create_collections_atomic(article_schemas())
+            .await
+            .unwrap();
+        let txn = peer.new_txn(false).await.unwrap();
+        db::docid::map::set_block_doc_id_mapping(
+            &txn.systemstore().unwrap(),
+            &chunk.commit_cid.to_string(),
+            &chunk.doc_id.to_string(),
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+
+        let classifier = DbBlockClassifier::new(peer);
+        assert_eq!(
+            classifier.classify(&chunk.commit_cid, &bytes).await,
+            BlockClass::Deny
+        );
+    }
 }
