@@ -147,6 +147,7 @@ async-channel = "2"
 cli = { path = "../../crates/cli" }
 query = { path = "../../crates/query" }
 schema = { path = "../../crates/schema" }
+db = { path = "../../crates/db" }
 defra-core = { path = "../../crates/defra-core" }
 serde.workspace = true
 tempfile = "3.17"

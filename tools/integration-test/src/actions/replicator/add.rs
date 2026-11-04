@@ -11,6 +11,9 @@ use testo::prelude::*;
 #[serde(rename_all = "camelCase")]
 pub struct AddReplicator {
     pub target: String,
+    /// The collections to push; every collection when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collections: Vec<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,7 +44,13 @@ impl Op for AddReplicator {
         );
         test_node
             .replicator_completed(
-                || state.block_on(node.add_replicator_as(&ambient(), &addresses, &[])),
+                || {
+                    state.block_on(node.add_replicator_as(
+                        &ambient(),
+                        &addresses,
+                        &self.collections,
+                    ))
+                },
                 REPLICATOR_COMPLETED,
             )
             .map_err(failed)?;
@@ -66,9 +75,10 @@ impl HttpRun for AddReplicator {
             test_node
                 .replicator_completed(
                     || {
+                        let collections = action.collections.clone();
                         state
                             .http_on(action.common.node(), |client| async move {
-                                client.add_replicator(&addresses, &[]).await
+                                client.add_replicator(&addresses, &collections).await
                             })?
                             .map_err(failed)
                     },
@@ -81,11 +91,31 @@ impl HttpRun for AddReplicator {
 
 impl CliRun for AddReplicator {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI's replicator add needs a collection",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.common.plain(Self::name())?;
+            if action.collections.is_empty() {
+                return Err(Failure::unsupported(format!(
+                    "{}: the CLI's replicator add needs a collection",
+                    Self::name()
+                )));
+            }
+            let addresses = addresses_of(state, &[action.target.as_str()])?;
+            let collections = action.collections.join(",");
+            let test_node = state.node(action.common.node())?;
+            test_node
+                .replicator_completed(
+                    || {
+                        let mut args =
+                            vec!["p2p", "replicator", "add", "--collection", &collections];
+                        args.extend(addresses.iter().map(String::as_str));
+                        state
+                            .defra_client_on(action.common.node(), None, &args)
+                            .map(drop)
+                            .map_err(Failure::operation)
+                    },
+                    REPLICATOR_COMPLETED,
+                )
+                .map(|()| json!({}))
         });
     }
 }
