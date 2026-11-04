@@ -289,7 +289,6 @@ impl QueryExecutor for MockQueryExecutor {
         Ok(self.schema_sdl.clone())
     }
 
-
     async fn nac_status_as(
         &self,
         _context: &RequestContext,
@@ -334,12 +333,12 @@ impl QueryExecutor for MockQueryExecutor {
     ) -> std::result::Result<bool, TransactionError> {
         match &self.nac {
             Some(nac) => {
-                let target = target_actor
-                    .parse()
-                    .map_err(|_| TransactionError::execution(format!(
-                        "invalid TargetActor DID: {target_actor}"
-                    )))?;
-                nac.add_relationship(relation, &target).await.map_err(nac_error)
+                let target = target_actor.parse().map_err(|_| {
+                    TransactionError::execution(format!("invalid TargetActor DID: {target_actor}"))
+                })?;
+                nac.add_relationship(relation, &target)
+                    .await
+                    .map_err(nac_error)
             }
             None => Err(TransactionError::not_supported(
                 "node access control is not supported by this executor",
@@ -355,12 +354,12 @@ impl QueryExecutor for MockQueryExecutor {
     ) -> std::result::Result<bool, TransactionError> {
         match &self.nac {
             Some(nac) => {
-                let target = target_actor
-                    .parse()
-                    .map_err(|_| TransactionError::execution(format!(
-                        "invalid TargetActor DID: {target_actor}"
-                    )))?;
-                nac.remove_relationship(relation, &target).await.map_err(nac_error)
+                let target = target_actor.parse().map_err(|_| {
+                    TransactionError::execution(format!("invalid TargetActor DID: {target_actor}"))
+                })?;
+                nac.remove_relationship(relation, &target)
+                    .await
+                    .map_err(nac_error)
             }
             None => Err(TransactionError::not_supported(
                 "node access control is not supported by this executor",
