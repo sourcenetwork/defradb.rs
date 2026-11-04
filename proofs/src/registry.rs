@@ -614,6 +614,8 @@ pub const PROPERTIES: &[Property] = &[
         // permit of its source peer, so no slot is held by a fetch waiting for
         // one while another peer's root could use it; a root whose peer has no
         // permit free, its own fetches' or a pull fetch's, keeps its place.
+        // The liveness leg also assumes that pull fetches, which answer this
+        // node's own sync requests, at some point stop starting.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "ACT_AttemptsStartInDueOrder / ACT_EndedAttemptQueuesBehind / ACT_AckedRootLeavesOwned / INV_NoSlotWaitsForPermit / LIVE_AckedRootMerged (assumes an eventually serving provider)",
         axis: Tla,
