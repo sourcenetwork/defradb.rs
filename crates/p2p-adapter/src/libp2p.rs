@@ -1103,6 +1103,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 #[path = "../tests/libp2p/replicator_completion.rs"]
 mod completion_tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/libp2p/replicator_replay_wiring.rs"]
+mod replay_wiring_tests;
+
 #[cfg(test)]
 #[path = "../tests/libp2p/followed_documents.rs"]
 mod followed_documents_tests;
