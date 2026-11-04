@@ -211,7 +211,9 @@ unset. The bit is set only after a durable forward, so every route to the
 terminal step forwards first: a fresh merge, and an "already merged" re-drive
 in the same process or after a restart (the database answers from its durable
 head publication, not by merging again). The re-driven-merge sink in
-`db/src/merge/redriven_sink.rs` keeps the same order. A forward that fails is
+`db/src/merge/redriven_sink.rs` keeps the same order, and
+`merge_handler/dispatch.rs` `redrive_deferred` hands it an applied skip whose
+merged bit is unset as well as a merge. A forward that fails is
 the terminal step not having happened: the root stays unmarked, its record
 stays, and the receiver clock re-drives it.
 
