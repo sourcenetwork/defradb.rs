@@ -104,6 +104,12 @@ jobs:
           -p storage -p datastore -p blockstore -p crdt -p defra-core -p query -p db
           -p acp -p zanzibar -p lens -p kms -p events
           -- -A clippy::all -D clippy::disallowed_methods
+      - name: Network edge confinement
+        env:
+          CLIPPY_CONF_DIR: .github/clippy/edge
+        run: >-
+          cargo clippy --lib --no-deps --workspace --exclude edge
+          -- -A clippy::all -D clippy::disallowed_methods
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
@@ -471,7 +477,14 @@ jobs:
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: Conformance
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'Conformance', suffix: '', backend: '', recv: '' }
+          - { name: 'Conformance (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'Conformance (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
@@ -481,6 +494,8 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -506,7 +521,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-e2e-logs
+          name: conformance-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
@@ -666,7 +681,14 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: P2P Integration (Linux)
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'P2P Integration (Linux)', suffix: '', backend: '', recv: '' }
+          - { name: 'P2P Integration (Linux) (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'P2P Integration (Linux) (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
@@ -677,6 +699,8 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -716,7 +740,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-linux-e2e-logs
+          name: p2p-linux-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
@@ -746,6 +770,8 @@ jobs:
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
+      # A failing scenario shows its in-process nodes' P2P trace.
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       # basic holds legacy tests and one testo module, txn_context.
       TESTO: >-
         --test acp_scenarios --test backup_scenarios --test collection

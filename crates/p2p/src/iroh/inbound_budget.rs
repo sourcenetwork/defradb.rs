@@ -195,7 +195,7 @@ impl InboundBudget {
             let class_bytes = class.room.acquire_owned(permits).await;
             (share_bytes, class_bytes)
         };
-        let Ok((share_bytes, class_bytes)) = n0_future::time::timeout(deadline, acquire).await
+        let Ok((share_bytes, class_bytes)) = crate::rt::time::timeout(deadline, acquire).await
         else {
             class.stats.busy_resets.fetch_add(1, Ordering::Relaxed);
             return Err(Busy);
@@ -281,7 +281,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_lease_holds_its_bytes_until_dropped() {
         let budget = InboundBudget::default();
         let share = budget.peer_share(peer());
@@ -310,7 +310,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn one_peer_cannot_take_a_whole_class() {
         let budget = InboundBudget::default();
         let greedy = budget.peer_share(peer());
@@ -334,7 +334,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_full_class_does_not_block_another() {
         let budget = InboundBudget::default();
         let shares = [budget.peer_share(peer()), budget.peer_share(peer())];
@@ -363,7 +363,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_failed_admission_keeps_no_share() {
         let budget = InboundBudget::default();
         let shares = [budget.peer_share(peer()), budget.peer_share(peer())];
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(third.room[3].available_permits(), permits_for(half));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn every_connection_of_a_peer_draws_on_one_share() {
         let budget = InboundBudget::default();
         let greedy = peer();
@@ -415,7 +415,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_peer_that_reconnects_gets_its_held_share_back() {
         let budget = InboundBudget::default();
         let greedy = peer();

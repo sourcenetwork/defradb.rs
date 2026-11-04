@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use n0_future::time::Instant;
+use crate::rt::time::Instant;
 
 mod due_order;
 mod ewma;

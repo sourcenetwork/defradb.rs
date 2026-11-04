@@ -15,7 +15,7 @@ fn internal_for(id: &Cid, data: &[u8], err: &str) -> InternalResponse {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn single_response_delivers_and_removes() {
     let c = Correlator::new();
     let mut prep = c.publish(b"req".to_vec(), PublishOptions::default());
@@ -33,7 +33,7 @@ async fn single_response_delivers_and_removes() {
     assert!(r.err.is_none());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn multi_response_keeps_entry_open() {
     let c = Correlator::new();
     let mut prep = c.publish(
@@ -73,7 +73,7 @@ fn publish_fire_and_forget_allocates_no_entry() {
     assert_eq!(id, derive_request_id(b"req"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn dropping_handle_cancels_in_flight() {
     let c = Correlator::new();
     let prep = c.publish(b"req".to_vec(), PublishOptions::default());
@@ -82,7 +82,7 @@ async fn dropping_handle_cancels_in_flight() {
     assert_eq!(c.in_flight(), 0, "Drop must auto-cancel");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancel_all_wakes_waiting_publishers() {
     let c = Correlator::new();
     let mut first = c.publish(b"first".to_vec(), PublishOptions::default());

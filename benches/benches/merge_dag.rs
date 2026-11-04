@@ -40,14 +40,6 @@ const FIELD_COUNTS: [usize; 2] = [1, 4];
 
 type BenchHandler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .unwrap()
-}
-
 fn field_names(field_count: usize) -> Vec<String> {
     (0..field_count).map(|i| format!("field_{i}")).collect()
 }
@@ -180,7 +172,7 @@ async fn seed_handler(dag: &SyntheticDag, field_count: usize) -> BenchHandler {
 }
 
 fn bench_merge_dag(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = common::runtime(1);
     let mut group = c.benchmark_group("merge_dag");
     group.sample_size(10);
 

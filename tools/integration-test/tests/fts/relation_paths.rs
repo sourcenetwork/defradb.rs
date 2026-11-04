@@ -17,8 +17,9 @@ type Function {
 }
 "#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_relation_path_scores_parent_context() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(RELATION_SCHEMA).unwrap();
@@ -88,10 +89,13 @@ async fn bm25_relation_path_scores_parent_context() {
         0.0,
         "Function in utils.rs should not score for auth-related file context"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_relation_path_scores_reverse_one_to_many_and_orders_by_alias() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(RELATION_SCHEMA).unwrap();
@@ -160,10 +164,13 @@ async fn bm25_relation_path_scores_reverse_one_to_many_and_orders_by_alias() {
         0.0,
         "utils.rs should not receive a score for parse token"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_nested_child_selection_scores_one_to_many_children() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(RELATION_SCHEMA).unwrap();
@@ -228,10 +235,13 @@ async fn bm25_nested_child_selection_scores_one_to_many_children() {
         0.0,
         "Nested Function selection under utils.rs should not score for auth"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_nested_child_selection_scores_one_to_one_children() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(RELATION_SCHEMA).unwrap();
@@ -299,10 +309,13 @@ async fn bm25_nested_child_selection_scores_one_to_one_children() {
         0.0,
         "Nested File selection under utils::format_output should not score for parse token"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_nested_child_selection_filters_and_orders_by_alias() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(RELATION_SCHEMA).unwrap();
@@ -398,4 +411,6 @@ async fn bm25_nested_child_selection_filters_and_orders_by_alias() {
         utils_functions.is_empty(),
         "Nested alias filtering should remove utils.rs children with zero BM25 score"
     );
+})
+    .await;
 }

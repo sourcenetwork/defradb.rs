@@ -10,10 +10,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::mpsc;
+use crate::rt::time::Instant;
 use blockstore::Blockstore;
 use cid::Cid;
-use n0_future::time::Instant;
-use tokio::sync::mpsc;
+use futures::FutureExt;
 use tracing::{debug, error, info, warn};
 
 use super::closure_depth::ClosureDepth;
@@ -227,7 +228,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 &last_failures,
                 diagnostics.dag_fetch_logs(),
             );
-            n0_future::time::sleep(backoff).await;
+            crate::rt::time::sleep(backoff).await;
         }
 
         // A shed attempt repeats in place without consuming `attempt`.
@@ -267,7 +268,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 attempt,
                 "Busy; retrying once without spending an attempt"
             );
-            n0_future::time::sleep(retry_backoff(attempt + 1)).await;
+            crate::rt::time::sleep(retry_backoff(attempt + 1)).await;
             if !context.is_current() {
                 return (FetchTaskEnd::Settled, sample);
             }
@@ -784,6 +785,7 @@ async fn emit_dag_ready(
     let mut context = context.clone();
     context.fill_missing_from_block(root_data);
     if event_tx
+        .clone()
         .send(context.into_dag_ready(root_cid))
         .await
         .is_err()
@@ -824,7 +826,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
 
     let mut completion = context.track_rooted_car(*root_cid, source_peer);
 
-    match n0_future::time::timeout(
+    match crate::rt::time::timeout(
         Duration::from_secs(10),
         transport.send_car_request(source_peer, *root_cid),
     )
@@ -858,14 +860,14 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     }
 
     if let Some(receiver) = completion.as_mut() {
-        let deadline = n0_future::time::Instant::now() + Duration::from_secs(10);
+        let deadline = crate::rt::time::Instant::now() + Duration::from_secs(10);
         loop {
             if !context.is_current() {
                 context.cancel_rooted_car_tracking(*root_cid);
                 return ProviderWindowOutcome::Superseded;
             }
-            tokio::select! {
-                result = &mut *receiver => {
+            futures::select! {
+                result = (&mut *receiver).fuse() => {
                     // Busy is alive, not the silent publisher of a dead Bitswap link.
                     let busy = matches!(result, Ok(FetchCompletion::ProviderBusy));
                     *answered = result.is_ok() && !busy;
@@ -885,10 +887,10 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
                     }
                     break;
                 },
-                _ = n0_future::time::sleep_until(deadline) => break,
-                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep_until(deadline).fuse() => break,
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
-            if n0_future::time::Instant::now() >= deadline {
+            if crate::rt::time::Instant::now() >= deadline {
                 break;
             }
         }
@@ -899,7 +901,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
             if remaining < initially_missing {
                 return observe(remaining);
             }
-            n0_future::time::sleep(Duration::from_millis(100)).await;
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
         }
     }
     context.cancel_rooted_car_tracking(*root_cid);
@@ -996,8 +998,8 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
             break;
         }
         if let Some(receiver) = completion.as_mut() {
-            tokio::select! {
-                result = receiver => {
+            futures::select! {
+                result = (&mut *receiver).fuse() => {
                     let fetch_completion =
                         result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;
@@ -1022,10 +1024,10 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
         } else {
-            n0_future::time::sleep(Duration::from_millis(100)).await;
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
         }
     }
     context.cancel_block_sync_tracking(query_id);
@@ -1050,7 +1052,7 @@ struct ProviderFetchState<'a> {
     depth: ClosureDepth,
     /// When a clock-dispatched attempt that keeps making progress gives its
     /// slot back (`CLOCK_ATTEMPT_QUANTUM` from its start).
-    quantum_ends: Option<n0_future::time::Instant>,
+    quantum_ends: Option<crate::rt::time::Instant>,
 }
 
 impl<'a> ProviderFetchState<'a> {
@@ -1078,13 +1080,13 @@ impl<'a> ProviderFetchState<'a> {
     /// Bound a clock-dispatched attempt by `CLOCK_ATTEMPT_QUANTUM`.
     fn with_quantum(mut self, clock_owned: bool) -> Self {
         self.quantum_ends =
-            clock_owned.then(|| n0_future::time::Instant::now() + CLOCK_ATTEMPT_QUANTUM);
+            clock_owned.then(|| crate::rt::time::Instant::now() + CLOCK_ATTEMPT_QUANTUM);
         self
     }
 
     fn quantum_spent(&self) -> bool {
         self.quantum_ends
-            .is_some_and(|end| n0_future::time::Instant::now() >= end)
+            .is_some_and(|end| crate::rt::time::Instant::now() >= end)
     }
 }
 
@@ -1333,8 +1335,8 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
             break;
         }
         if let Some(receiver) = completion.as_mut() {
-            tokio::select! {
-                result = receiver => {
+            futures::select! {
+                result = (&mut *receiver).fuse() => {
                     let fetch_completion =
                         result.unwrap_or(FetchCompletion::Failure(FetchFailureCause::Error));
                     completion = None;
@@ -1361,10 +1363,10 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
+                _ = crate::rt::time::sleep(Duration::from_millis(100)).fuse() => {}
             }
         } else {
-            n0_future::time::sleep(Duration::from_millis(100)).await;
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
         }
     }
 

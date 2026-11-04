@@ -252,10 +252,7 @@ mod tests {
 
     fn remote_test_lock() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("lock runtime builds")
-            .block_on(LOCK.lock())
+        futures_lite::future::block_on(LOCK.lock())
     }
 
     unsafe extern "C" fn test_remote_sign_callback(

@@ -25,6 +25,8 @@ prost = { workspace = true }
 
 # Signing runs on the network runtime the client is given.
 edge = { path = "../edge" }
+# The gRPC channel, on nuclei sockets.
+net = { path = "../net" }
 
 # Encoding
 base64.workspace = true
@@ -41,8 +43,7 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync"] }
-tokio-stream.workspace = true
+nuclei.workspace = true
 regolith.workspace = true
 rapidhash.workspace = true
 blst = "0.3"

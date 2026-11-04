@@ -103,7 +103,7 @@ impl Fixture {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_failing_source_is_asked_after_a_healthy_alternate() {
     // (source success_ppm, source dead, asked, demotions)
     for (source_ppm, dead, asked, demotions) in
@@ -118,7 +118,7 @@ async fn a_failing_source_is_asked_after_a_healthy_alternate() {
             measured(ALT, 103, 1_000_000),
         ]);
         let diagnostics = diagnostics();
-        let started = n0_future::time::Instant::now();
+        let started = crate::rt::time::Instant::now();
 
         assert!(
             fixture
@@ -135,7 +135,7 @@ async fn a_failing_source_is_asked_after_a_healthy_alternate() {
 /// Only the announcing peer's fast refusal cools it for the next root: an
 /// alternate may just not hold a root published moments ago, and on libp2p the
 /// source keeps the rooted CAR slot the dead-Bitswap repair depends on.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_fast_refusal_cools_only_the_announcing_peer_on_cancellable_transports() {
     let cases = [
         (SOURCE, true, vec![], [&[SOURCE, ALT][..], &[ALT]], 1),
@@ -173,7 +173,7 @@ async fn refused_batches(batches: usize, delay: Duration) -> (usize, Duration, D
     let fixture = Fixture::new(SELECTIVE_FETCH_BATCH_SIZE * (batches - 1) + 1, 0, true).await;
     let context = fixture.refuse(SOURCE, delay, context(false));
     let limiter = DagFetchLimiter::new(2);
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
     assert!(!fixture.fetch(context, &limiter, &diagnostics()).await);
     (
         fixture.transport.sync_batches().len(),
@@ -182,14 +182,14 @@ async fn refused_batches(batches: usize, delay: Duration) -> (usize, Duration, D
     )
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_fast_refusal_does_not_spend_the_stall_budget() {
     let (asked, _, _) = refused_batches(2, Duration::ZERO).await;
     assert_eq!(asked, 2 * MAX_FETCH_ATTEMPTS as usize);
 }
 
 /// A failure only at iroh's 30 s response timeout waited the window out.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_failure_at_the_response_timeout_spends_the_stall_budget() {
     let (asked, elapsed, limiter) = refused_batches(2, Duration::from_secs(30)).await;
     assert_eq!(asked, MAX_FETCH_ATTEMPTS as usize);
@@ -200,12 +200,12 @@ async fn a_failure_at_the_response_timeout_spends_the_stall_budget() {
             PeerId::new(ALT.to_string()),
         ],
         &[],
-        n0_future::time::Instant::now(),
+        crate::rt::time::Instant::now(),
     );
     assert_eq!(next.cooling, 0, "a waited-out failure starts no cool-down");
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn free_refusals_are_capped_per_attempt() {
     let (asked, _, _) = refused_batches(MAX_FREE_REFUSALS + 3, Duration::ZERO).await;
     assert_eq!(asked, MAX_FETCH_ATTEMPTS as usize * (MAX_FREE_REFUSALS + 1));

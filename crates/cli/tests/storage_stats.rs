@@ -11,7 +11,7 @@ fn command(root: &std::path::Path) -> Command {
     command
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn storage_stats_prints_aggregates_without_creating_config_or_keys() {
     let root = tempfile::tempdir().unwrap();
     let config = cli::config::Config {
@@ -76,7 +76,7 @@ fn storage_stats_rejects_memory() {
     assert!(!config.data_path().exists());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn storage_stats_reads_engine_encryption_without_replacing_key() {
     use keyring::{FileKeyring, Keyring, ENCRYPTION_KEY, KEYRING_SECRET_ENV};
     let root = tempfile::tempdir().unwrap();
@@ -160,7 +160,7 @@ fn encrypted_storage_stats_does_not_generate_a_missing_key() {
 
 /// A key rotation through the keyring: the store was sealed under the key now
 /// kept as a previous key, and stays readable while the current key is new.
-#[tokio::test]
+#[nuclei::test]
 async fn storage_stats_reads_a_store_sealed_under_a_previous_key() {
     use keyring::{
         FileKeyring, Keyring, ENCRYPTION_KEY, KEYRING_SECRET_ENV, PREVIOUS_ENCRYPTION_KEYS,

@@ -187,110 +187,119 @@ async fn start_rust_go_quic_cluster() -> (tempfile::TempDir, RunningNode, Runnin
     (temp_dir, rust_running, go_running)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_connects_over_quic_when_quic_multiaddr_is_dialed() {
-    let (_temp_dir, nodes) = start_configured_transport_cluster().await;
-    let clients = nodes.iter().map(client).collect::<Vec<_>>();
+    edge::compat(async {
+        let (_temp_dir, nodes) = start_configured_transport_cluster().await;
+        let clients = nodes.iter().map(client).collect::<Vec<_>>();
 
-    let node0_addrs = wait_for_configured_transports(&clients[0]).await;
-    let node1_addrs = wait_for_configured_transports(&clients[1]).await;
+        let node0_addrs = wait_for_configured_transports(&clients[0]).await;
+        let node1_addrs = wait_for_configured_transports(&clients[1]).await;
 
-    assert!(
-        node0_addrs
+        assert!(
+            node0_addrs
+                .iter()
+                .any(|addr| addr.contains("/udp/") && addr.contains("/quic-v1")),
+            "node0 should expose a QUIC listen address: {node0_addrs:?}"
+        );
+
+        let node1_quic_addr = node1_addrs
             .iter()
-            .any(|addr| addr.contains("/udp/") && addr.contains("/quic-v1")),
-        "node0 should expose a QUIC listen address: {node0_addrs:?}"
-    );
+            .find(|addr| addr.contains("/udp/") && addr.contains("/quic-v1"))
+            .expect("node1 should expose a QUIC listen address")
+            .to_string();
+        let node1_peer_id = peer_id_from_addr(&node1_quic_addr);
 
-    let node1_quic_addr = node1_addrs
-        .iter()
-        .find(|addr| addr.contains("/udp/") && addr.contains("/quic-v1"))
-        .expect("node1 should expose a QUIC listen address")
-        .to_string();
-    let node1_peer_id = peer_id_from_addr(&node1_quic_addr);
+        clients[0]
+            .p2p_connect(&[&node1_quic_addr])
+            .expect("node0 failed to connect to node1 over QUIC");
 
-    clients[0]
-        .p2p_connect(&[&node1_quic_addr])
-        .expect("node0 failed to connect to node1 over QUIC");
-
-    poll_until(
-        || {
-            active_peer_addrs(&clients[0])
-                .iter()
-                .any(|addr| peer_id_from_addr(addr) == node1_peer_id)
-        },
-        P2P_TIMEOUT,
-        POLL_INTERVAL,
-        "node1 did not appear as an active peer after dialing its QUIC address",
-    )
+        poll_until(
+            || {
+                active_peer_addrs(&clients[0])
+                    .iter()
+                    .any(|addr| peer_id_from_addr(addr) == node1_peer_id)
+            },
+            P2P_TIMEOUT,
+            POLL_INTERVAL,
+            "node1 did not appear as an active peer after dialing its QUIC address",
+        )
+        .await;
+    })
     .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_connects_over_websocket_when_websocket_multiaddr_is_dialed() {
-    let (_temp_dir, nodes) = start_configured_transport_cluster().await;
-    let clients = nodes.iter().map(client).collect::<Vec<_>>();
+    edge::compat(async {
+        let (_temp_dir, nodes) = start_configured_transport_cluster().await;
+        let clients = nodes.iter().map(client).collect::<Vec<_>>();
 
-    let node0_addrs = wait_for_configured_transports(&clients[0]).await;
-    let node1_addrs = wait_for_configured_transports(&clients[1]).await;
+        let node0_addrs = wait_for_configured_transports(&clients[0]).await;
+        let node1_addrs = wait_for_configured_transports(&clients[1]).await;
 
-    assert!(
-        node0_addrs.iter().any(|addr| is_websocket_addr(addr)),
-        "node0 should expose a WebSocket listen address: {node0_addrs:?}"
-    );
+        assert!(
+            node0_addrs.iter().any(|addr| is_websocket_addr(addr)),
+            "node0 should expose a WebSocket listen address: {node0_addrs:?}"
+        );
 
-    let node1_ws_addr = node1_addrs
-        .iter()
-        .find(|addr| is_websocket_addr(addr))
-        .expect("node1 should expose a WebSocket listen address")
-        .to_string();
-    let node1_peer_id = peer_id_from_addr(&node1_ws_addr);
+        let node1_ws_addr = node1_addrs
+            .iter()
+            .find(|addr| is_websocket_addr(addr))
+            .expect("node1 should expose a WebSocket listen address")
+            .to_string();
+        let node1_peer_id = peer_id_from_addr(&node1_ws_addr);
 
-    clients[0]
-        .p2p_connect(&[&node1_ws_addr])
-        .expect("node0 failed to connect to node1 over WebSocket");
+        clients[0]
+            .p2p_connect(&[&node1_ws_addr])
+            .expect("node0 failed to connect to node1 over WebSocket");
 
-    poll_until(
-        || {
-            active_peer_addrs(&clients[0])
-                .iter()
-                .any(|addr| peer_id_from_addr(addr) == node1_peer_id)
-        },
-        P2P_TIMEOUT,
-        POLL_INTERVAL,
-        "node1 did not appear as an active peer after dialing its WebSocket address",
-    )
+        poll_until(
+            || {
+                active_peer_addrs(&clients[0])
+                    .iter()
+                    .any(|addr| peer_id_from_addr(addr) == node1_peer_id)
+            },
+            P2P_TIMEOUT,
+            POLL_INTERVAL,
+            "node1 did not appear as an active peer after dialing its WebSocket address",
+        )
+        .await;
+    })
     .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_rust_connects_over_quic_when_quic_multiaddr_is_dialed() {
-    let (_temp_dir, rust_node, go_node) = start_rust_go_quic_cluster().await;
-    let rust_client = client(&rust_node);
-    let go_client = client_with_kind(&go_node, NodeKind::Go);
+    edge::compat(async {
+        let (_temp_dir, rust_node, go_node) = start_rust_go_quic_cluster().await;
+        let rust_client = client(&rust_node);
+        let go_client = client_with_kind(&go_node, NodeKind::Go);
 
-    wait_for_quic_transport(&rust_client).await;
+        wait_for_quic_transport(&rust_client).await;
 
-    let go_quic_addr = wait_for_quic_transport(&go_client)
-        .await
-        .into_iter()
-        .find(|addr| addr.contains("/udp/") && addr.contains("/quic-v1"))
-        .expect("Go node should expose a QUIC listen address");
-    let go_peer_id = peer_id_from_addr(&go_quic_addr);
+        let go_quic_addr = wait_for_quic_transport(&go_client)
+            .await
+            .into_iter()
+            .find(|addr| addr.contains("/udp/") && addr.contains("/quic-v1"))
+            .expect("Go node should expose a QUIC listen address");
+        let go_peer_id = peer_id_from_addr(&go_quic_addr);
 
-    rust_client
-        .p2p_connect(&[&go_quic_addr])
-        .expect("Rust node failed to connect to Go node over QUIC");
+        rust_client
+            .p2p_connect(&[&go_quic_addr])
+            .expect("Rust node failed to connect to Go node over QUIC");
 
-    poll_until(
-        || {
-            active_peer_addrs(&rust_client)
-                .iter()
-                .any(|addr| peer_id_from_addr(addr) == go_peer_id)
-        },
-        P2P_TIMEOUT,
-        POLL_INTERVAL,
-        "Go node did not appear as an active peer after dialing its QUIC address",
-    )
+        poll_until(
+            || {
+                active_peer_addrs(&rust_client)
+                    .iter()
+                    .any(|addr| peer_id_from_addr(addr) == go_peer_id)
+            },
+            P2P_TIMEOUT,
+            POLL_INTERVAL,
+            "Go node did not appear as an active peer after dialing its QUIC address",
+        )
+        .await;
+    })
     .await;
 }

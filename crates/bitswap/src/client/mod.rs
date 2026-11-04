@@ -17,9 +17,9 @@ use std::time::Duration;
 
 use cid::Cid;
 use libp2p::PeerId;
+use nuclei::sync::mpsc;
+use nuclei::time::Instant;
 use rapidhash::{RapidHashMap, RapidHashSet};
-use tokio::sync::mpsc;
-use tokio::time::Instant;
 use tracing::trace;
 
 use crate::block::Block;

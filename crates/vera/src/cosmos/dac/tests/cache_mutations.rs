@@ -10,7 +10,7 @@ enum Mutation {
     Archive,
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn mutations_invalidate_inherited_grants_but_not_other_policies() {
     for mutation in [
         Mutation::AddActor,

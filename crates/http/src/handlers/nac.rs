@@ -310,7 +310,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn add_relationships_prevalidates_and_returns_ordered_results() {
         let requestor = identity::Did::new("did:key:requestor").unwrap();
         let target = identity::Did::new("did:key:target").unwrap();

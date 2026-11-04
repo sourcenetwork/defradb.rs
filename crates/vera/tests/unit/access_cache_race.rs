@@ -1,9 +1,9 @@
 use super::*;
 
-#[tokio::test]
+#[nuclei::test]
 async fn revocation_during_remote_check_cannot_restore_the_grant() {
-    let started = Arc::new(tokio::sync::Notify::new());
-    let resume = Arc::new(tokio::sync::Semaphore::new(0));
+    let started = Arc::new(regolith::sync::Notify::new());
+    let resume = Arc::new(regolith::sync::Semaphore::new(0));
     let mut provider = MockProvider::new(vec![true, false]);
     provider.verify_gate = Some((started.clone(), resume.clone()));
     let provider = Arc::new(provider);
@@ -16,8 +16,8 @@ async fn revocation_during_remote_check_cannot_restore_the_grant() {
         "files",
         "doc",
     );
-    tokio::pin!(check);
-    tokio::select! {
+    let mut check = std::pin::pin!(check);
+    nuclei::select! {
         _ = started.notified() => {}
         result = &mut check => panic!("check completed before release: {result:?}"),
     }

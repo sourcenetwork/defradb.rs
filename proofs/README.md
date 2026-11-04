@@ -80,11 +80,20 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index drop during backfill | TLA+ | db-index |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
-| Node startup | TLA+, Lean | embedded, storage |
+| Node startup | TLA+, Lean | defra-node, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
+| Postgres wire connection loop | TLA+ | pg-compat |
+| HTTP client redirects and body deadline | Lean | net |
+| Connect fallback race | TLA+ | net |
+| Coordinator shutdown drain | TLA+ | p2p, edge |
+| Edge completion | TLA+ | edge |
+| Edge gate continuation | TLA+ | edge, net (#2546) |
+| Iroh dial outcome | TLA+ | p2p, p2p-adapter |
+| Server drain | TLA+ | net, pg-compat, edge |
+| Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

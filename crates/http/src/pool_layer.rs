@@ -206,7 +206,7 @@ mod tests {
     use axum::body::Body;
     use axum::routing::get;
     use axum::Router;
-    use tokio::sync::Notify;
+    use regolith::sync::Notify;
 
     const LIMIT: Duration = Duration::from_secs(10);
 
@@ -240,7 +240,7 @@ mod tests {
             .unwrap()
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_request_that_times_out_before_its_worker_starts_it_never_runs() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
         let (release, held) = std::sync::mpsc::channel::<()>();
@@ -253,7 +253,7 @@ mod tests {
             .unwrap();
         let notify = || Arc::new(Notify::new());
         let (started, gate, done) = (notify(), notify(), notify());
-        let timed_out = tokio::time::timeout(
+        let timed_out = nuclei::time::timeout(
             Duration::from_millis(50),
             app(&pool, &started, &gate, &done).oneshot(request()),
         )
@@ -269,7 +269,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(1), started.notified())
+            nuclei::time::timeout(Duration::from_millis(1), started.notified())
                 .await
                 .is_err(),
             "the timed-out request never ran"
@@ -277,19 +277,19 @@ mod tests {
         pool.shutdown_blocking().unwrap();
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_request_that_times_out_while_it_runs_runs_to_its_end() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
         let notify = || Arc::new(Notify::new());
         let (started, gate, done) = (notify(), notify(), notify());
         let mut response = Box::pin(app(&pool, &started, &gate, &done).oneshot(request()));
-        tokio::select! {
+        nuclei::select! {
             _ = &mut response => panic!("the request ended before its gate opened"),
             _ = started.notified() => {}
         }
         drop(response);
         gate.notify_one();
-        tokio::time::timeout(LIMIT, done.notified())
+        nuclei::time::timeout(LIMIT, done.notified())
             .await
             .expect("the running request finished");
         pool.shutdown_blocking().unwrap();

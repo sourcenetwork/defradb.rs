@@ -31,6 +31,8 @@ The model proves:
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
+| `HttpClient.credentials_stay_with_their_origin` / `at_most_limit_plus_one_exchanges` / `endless_redirects_fail` / `same_origin_redirect_keeps_credentials` / `cross_origin_redirect_strips_credentials` | Across any chain of redirects, a credential from the request or the client's defaults is sent only to the request's own origin (scheme, host and port), a proxy credential only on its own hop; a request makes at most eleven exchanges. The witnesses `per_hop_defaults_leak`, `host_only_downgrade_leaks`, `host_only_port_leaks` and `unlimited_runs_past_the_limit` show each guard is needed. | `crates/net/src/http/client.rs` |
+| `HttpClient.BodyDeadline.ends_after_timeout` / `at_most_one_timeout` / `deadline_wins_over_a_ready_piece` / `never_waits_past_the_deadline` / `no_timeout_before_the_deadline` / `no_limit_no_timeout` | A body stream gives one timeout once the limit passes, even with a piece ready, then only its end; `old_reads_after_timeout` and `late_reads_past_the_deadline` are the code before each fix. | `crates/net/src/http/response.rs` |
 | `TxnAdmission.embedder_admits_every` / `byIdentity_admits_iff` / `byIdentity_turns_away_stranger` / `admits_beginner` / `default_is_byIdentity` | An embedder registry lets every request into its transactions; an identity registry, the default, lets in exactly the identity that began one; the beginner always gets in. | `crates/db/src/txn/registry/mod.rs` |
 | `ProviderHealth.rank_perm` / `rank_keeps_healthy_source_first` / `rank_all_healthy` / `next_delay_in_range` / `stale_starts_over` / `forget_keeps_fresh` / `forget_drops_stale` | Ranking a root's fetch providers only reorders them and keeps a healthy announcer first; a fast-failure cool-down stays within 2..30 s, starts over once stale, and pruning drops exactly the stale entries. | `crates/p2p/src/sync/coordinator/provider_health.rs` |
 | `Arbitration.roll_le_bound` / `troll_le_bound` / `record_first` / `troll_full` / `iter_monotone_up` / `iter_stays_below` / `decay_geometric` / `troll_decay_up` / `troll_decay_down` / `dither_mean` / `expected_useful_le` | The arbitration estimators stay within what they were fed (no overflow), take their first sample as is, approach a steady input without overshoot, decay geometrically (per sample, or by `2^(-Δt/H)` per unit of time), move by their exact share on average under the dither (so a sub-unit share never freezes them), and the expected time to a useful fetch is at most 64 fetches' cost. | `crates/p2p/src/sync/arbitration/` |
@@ -38,6 +40,18 @@ The model proves:
 | `Arbitration.table_is_floor` / `table_decreasing` / `table_wraps` / `weight_le_one` / `weight_full_after_silence` / `weight_zero_gap` / `weight_first_ms` and the side conditions on the constants | The Q16 weight table is exactly `⌊65536 · 2^(-i/64)⌋` and falls step by step, the interpolated Q32 weight never exceeds one, a long silence starts the estimate over, a zero gap (a clock gone backwards) moves nothing and a 1 ms gap already moves something; the side conditions hold on the values `Conformance.lean` binds to the Rust constants. | `crates/p2p/src/sync/arbitration/{mod,ewma}.rs` |
 
 `#print axioms` status checked with Lean 4.18:
+
+HTTP client redirects (`HttpClient.Redirect`):
+
+- `HttpClient.credentials_stay_with_their_origin`, `at_most_limit_plus_one_exchanges`, `shipped_limit`, `same_origin_redirect_keeps_credentials`, `cross_origin_redirect_strips_credentials`: `[propext]`
+- `HttpClient.endless_redirects_fail`: `[propext, Quot.sound]`
+- `HttpClient.per_hop_defaults_leak`, `shipped_defaults_stay_home`, `host_only_downgrade_leaks`, `host_only_port_leaks`, `shipped_strips_downgrade_and_port`, `unlimited_runs_past_the_limit`, `shipped_stops_at_the_limit`: *(no axioms)*
+
+HTTP body deadline (`HttpClient.BodyDeadline`):
+
+- `HttpClient.BodyDeadline.ends_after_timeout`, `at_most_one_timeout`: `[propext, Quot.sound]`
+- `HttpClient.BodyDeadline.deadline_wins_over_a_ready_piece`, `never_waits_past_the_deadline`, `no_timeout_before_the_deadline`, `no_limit_no_timeout`: `[propext]`
+- `HttpClient.BodyDeadline.old_reads_after_timeout`, `keep_times_out_twice`, `late_reads_past_the_deadline`, `shipped_times_out_once`: *(no axioms)*
 
 Provider ranking (`ProviderHealth.Ranking`):
 

@@ -90,7 +90,7 @@ pub(crate) async fn setup_iroh<S>(
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
     peer_keyring: Option<&crate::PeerKeyring>,
-    edge: &edge::Edge,
+    scope: edge::Scope,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -128,7 +128,7 @@ where
             allowlist: config.allowlist.clone(),
         },
         document_acp,
-        edge.clone(),
+        scope.edge().clone(),
     );
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = config.sync.sync_config();
@@ -160,7 +160,7 @@ where
     let system = Arc::new(ManagedP2PSystem::with_replicator_push_options_callback(
         TransportKind::Iroh,
         Arc::clone(&peer.ops),
-        crate::managed_p2p::ShutdownHandle::iroh(peer.shutdown.clone()),
+        crate::managed_p2p::ShutdownHandle::iroh(peer.shutdown.clone(), scope),
         replicator_push_options,
         Some(se_options_callback),
     ));

@@ -6,11 +6,11 @@ use std::sync::{
 use async_trait::async_trait;
 use cid::Cid;
 use libp2p::{identity::Keypair, PeerId};
+use nuclei::sync::mpsc;
 use p2p::pubsub_rpc::{
     derive_request_id, response_topic, DeliveryOutcome, FnHandler, InternalResponse,
     MessageHandler, PublishOptions, PubsubResponse, TopicHandler,
 };
-use tokio::sync::mpsc;
 
 fn a_peer() -> PeerId {
     PeerId::from_public_key(&Keypair::generate_ed25519().public())
@@ -27,7 +27,7 @@ impl MessageHandler for CountingEcho {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn round_trip_request_reply() {
     let alice = a_peer();
     let bob = a_peer();
@@ -74,7 +74,7 @@ async fn round_trip_request_reply() {
     assert_eq!(alice_topic.in_flight(), 0, "single-response auto-closes");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn echoed_own_request_is_ignored() {
     let alice = a_peer();
     let t = TopicHandler::new(
@@ -90,7 +90,7 @@ async fn echoed_own_request_is_ignored() {
     assert!(matches!(outcome, DeliveryOutcome::Ignored));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn response_for_other_peer_is_ignored() {
     let alice = a_peer();
     let bob = a_peer();
@@ -108,7 +108,7 @@ async fn response_for_other_peer_is_ignored() {
     assert!(matches!(outcome, DeliveryOutcome::Ignored));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn handler_error_propagates_as_err_string() {
     let alice = a_peer();
     let bob = a_peer();
@@ -145,7 +145,7 @@ async fn handler_error_propagates_as_err_string() {
     assert!(got.data.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn out_of_band_topic_is_ignored() {
     let alice = a_peer();
     let t = TopicHandler::new(
@@ -161,7 +161,7 @@ async fn out_of_band_topic_is_ignored() {
     assert!(matches!(outcome, DeliveryOutcome::Ignored));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn multi_response_collects_until_dropped() {
     let alice = a_peer();
     let bob = a_peer();
@@ -226,7 +226,7 @@ async fn multi_response_collects_until_dropped() {
     assert_eq!(alice_topic.in_flight(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn late_response_is_dropped() {
     let alice = a_peer();
     let t = TopicHandler::new(
@@ -252,7 +252,7 @@ async fn late_response_is_dropped() {
     assert!(matches!(outcome, DeliveryOutcome::Ignored));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn malformed_response_envelope_is_ignored() {
     let alice = a_peer();
     let t = TopicHandler::new(

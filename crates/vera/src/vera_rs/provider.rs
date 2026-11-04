@@ -43,7 +43,8 @@ pub struct VeraRsProvider {
     signing_key: SigningKey,
     sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
-    light_client_observer_handle: tokio::task::JoinHandle<()>,
+    _light_client_observer: edge::Service,
+    edge: edge::Edge,
 }
 
 fn derive_ws_url(rpc_url: &str) -> String {
@@ -53,6 +54,8 @@ fn derive_ws_url(rpc_url: &str) -> String {
 }
 
 impl VeraRsProvider {
+    /// A provider whose connections, light client observer and worker calls
+    /// run on `edge`.
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
@@ -60,6 +63,7 @@ impl VeraRsProvider {
         worker: NativeWorker,
         tuning: &AcpTuning,
         event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         let encoded = hex::decode(
             trusted_consensus_key
@@ -70,18 +74,22 @@ impl VeraRsProvider {
         let trusted = ConsensusPublicKey::decode(encoded)
             .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
         let ws_url = derive_ws_url(&rpc_url);
-        let light_client = Arc::new(
-            AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
+        let light_client = edge::compat(async {
+            let light_client = Arc::new(
+                AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
+                    .await
+                    .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
+            );
+            light_client
+                .wait_for_height(1, tuning.receipt_timeout)
                 .await
-                .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
-        );
-        light_client
-            .wait_for_height(1, tuning.receipt_timeout)
-            .await
-            .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
+                .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
+            Ok::<_, ProviderError>(light_client)
+        })
+        .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = VeraRsClient::new(rpc_url, tuning.request_timeout)
+        let client = VeraRsClient::new(rpc_url, tuning.request_timeout, edge)
             .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
         let signing_key = SigningKey::from_slice(private_key)
             .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
@@ -89,11 +97,11 @@ impl VeraRsProvider {
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
-        let light_client_observer_handle = tokio::spawn(run_light_client_observer(
+        let _light_client_observer = edge.spawn_service(edge::compat(run_light_client_observer(
             light_client.clone(),
             light_client_observability.clone(),
             event_bus,
-        ));
+        )));
 
         let provider = Self {
             light_client,
@@ -106,7 +114,8 @@ impl VeraRsProvider {
             signing_key,
             sync_timeout: tuning.receipt_timeout,
             light_client_observability,
-            light_client_observer_handle,
+            _light_client_observer,
+            edge: edge.clone(),
         };
         provider.recover_pending().await?;
         Ok(provider)
@@ -136,12 +145,6 @@ fn access_request(
             permission: permission.into(),
         }],
     })
-}
-
-impl Drop for VeraRsProvider {
-    fn drop(&mut self) {
-        self.light_client_observer_handle.abort();
-    }
 }
 
 fn format_root(root: alloy_primitives::B256) -> String {
@@ -588,7 +591,7 @@ mod tests {
     use crypto::PrivateKey;
     use identity::Identity;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn trusted_consensus_key_is_required_before_connecting() {
         let root = tempfile::tempdir().unwrap();
         let keys = keyring::FileKeyring::open(root.path().join("keys"), b"test").unwrap();
@@ -602,6 +605,7 @@ mod tests {
                 worker,
                 &AcpTuning::default(),
                 None,
+                &edge::testing::edge(),
             )
             .await
             .err()

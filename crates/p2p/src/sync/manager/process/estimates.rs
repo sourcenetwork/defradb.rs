@@ -24,7 +24,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// dispatch order, and samples per-source occupancy once per tick.
     pub(super) fn observe_dispatch_pass(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
         due: &[(Cid, PendingDag)],
     ) {
         if let Some(earliest) = due.first().map(|(_, dag)| dag.next_retry_at) {

@@ -123,7 +123,7 @@ fn dir_bytes(path: &Path) -> u64 {
 
 /// The families the dashboard draws. Runs once, outside criterion's sampling,
 /// because an open is a one-shot cost and criterion measures a loop.
-fn report(rt: &tokio::runtime::Runtime) {
+fn report(rt: &common::Runtime) {
     let mut open = Family::new(
         "Startup",
         format!(

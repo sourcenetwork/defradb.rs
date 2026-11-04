@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use n0_future::time::Instant;
+use crate::rt::time::Instant;
 use rapidhash::RapidHashMap;
 use regolith::sync::HopscotchMap;
 

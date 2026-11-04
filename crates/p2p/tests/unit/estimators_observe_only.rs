@@ -35,10 +35,10 @@ fn adversarial(seed: usize) -> RootEstimates {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn no_sample_changes_when_a_root_is_due_again() {
     let manager = test_manager();
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     for (dispatches, preempted) in (0..7).flat_map(|d| [(d, false), (d, true)]) {
         for (index, sample) in samples().into_iter().enumerate() {
             let offset = index * 8 + usize::from(preempted) * 4 + dispatches as usize * 1_000;
@@ -78,10 +78,10 @@ async fn no_sample_changes_when_a_root_is_due_again() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn the_due_order_ignores_the_estimates() {
     let manager = test_manager();
-    let now = n0_future::time::Instant::now();
+    let now = crate::rt::time::Instant::now();
     let roots: Vec<Cid> = (0..48).map(|i| test_cid(6_000 + i)).collect();
     for (i, cid) in roots.iter().enumerate() {
         let mut dag = pending_dag("order", Instant::now());
@@ -142,7 +142,7 @@ fn the_provider_ranking_ignores_the_estimates() {
         ewma_age_millis: Some(0),
     };
     let (plain, measured) = (ProviderHealth::default(), ProviderHealth::default());
-    let at = n0_future::time::Instant::now();
+    let at = crate::rt::time::Instant::now();
     for _ in 0..64 {
         let without = plain.rank(peers.clone(), &stats(ProviderEstimateExport::default()), at);
         let with = measured.rank(peers.clone(), &stats(extreme), at);

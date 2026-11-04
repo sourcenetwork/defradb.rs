@@ -54,11 +54,11 @@ impl Report {
     /// Save the report to disk
     pub async fn save(&self) -> Result<PathBuf> {
         let dir = reports_dir();
-        tokio::fs::create_dir_all(&dir).await?;
+        nuclei::fs::create_dir_all(&dir).await?;
 
         let path = dir.join(self.filename());
         let json = serde_json::to_string_pretty(self)?;
-        tokio::fs::write(&path, json).await?;
+        nuclei::fs::write(&path, json).await?;
 
         // Enforce retention
         enforce_retention(&self.branch, &self.package).await?;
@@ -80,7 +80,7 @@ async fn enforce_retention(branch: &str, package: &str) -> Result<()> {
 
     // Collect matching reports
     let mut reports: Vec<(PathBuf, DateTime<Utc>)> = Vec::new();
-    let mut entries = tokio::fs::read_dir(&dir).await?;
+    let mut entries = nuclei::fs::read_dir(&dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
@@ -99,7 +99,7 @@ async fn enforce_retention(branch: &str, package: &str) -> Result<()> {
 
     // Delete oldest reports beyond retention count
     for (path, _) in reports.into_iter().skip(REPORT_RETENTION_COUNT) {
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = nuclei::fs::remove_file(path).await;
     }
 
     Ok(())
@@ -138,14 +138,14 @@ pub async fn load_all_reports() -> Result<Vec<Report>> {
     }
 
     let mut reports = Vec::new();
-    let mut entries = tokio::fs::read_dir(&dir).await?;
+    let mut entries = nuclei::fs::read_dir(&dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
         if name_str.ends_with(".json") {
-            let content = tokio::fs::read_to_string(entry.path()).await?;
+            let content = nuclei::fs::read_to_string(entry.path()).await?;
             if let Ok(report) = serde_json::from_str::<Report>(&content) {
                 reports.push(report);
             }
@@ -173,14 +173,14 @@ pub async fn load_all_for_branch(branch: &str) -> Result<Vec<Report>> {
     let prefix = format!("{}_", branch_safe);
 
     let mut reports = Vec::new();
-    let mut entries = tokio::fs::read_dir(&dir).await?;
+    let mut entries = nuclei::fs::read_dir(&dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
         if name_str.starts_with(&prefix) && name_str.ends_with(".json") {
-            let content = tokio::fs::read_to_string(entry.path()).await?;
+            let content = nuclei::fs::read_to_string(entry.path()).await?;
             if let Ok(report) = serde_json::from_str::<Report>(&content) {
                 reports.push(report);
             }
@@ -209,7 +209,7 @@ pub async fn load_for_diff(branch: &str, package: &str, count: usize) -> Result<
     let prefix = format!("{}_{}_", branch_safe, package_safe);
 
     let mut reports_with_ts: Vec<(Report, DateTime<Utc>)> = Vec::new();
-    let mut entries = tokio::fs::read_dir(&dir).await?;
+    let mut entries = nuclei::fs::read_dir(&dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
@@ -217,7 +217,7 @@ pub async fn load_for_diff(branch: &str, package: &str, count: usize) -> Result<
 
         if name_str.starts_with(&prefix) && name_str.ends_with(".json") {
             if let Some(ts) = parse_timestamp_from_filename(&name_str) {
-                let content = tokio::fs::read_to_string(entry.path()).await?;
+                let content = nuclei::fs::read_to_string(entry.path()).await?;
                 if let Ok(report) = serde_json::from_str::<Report>(&content) {
                     reports_with_ts.push((report, ts));
                 }

@@ -44,8 +44,11 @@ async fn stale_transaction_cannot_write_after_collection_delete_test(cluster: Te
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_stale_transaction_cannot_write_after_collection_delete() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    stale_transaction_cannot_write_after_collection_delete_test(cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        stale_transaction_cannot_write_after_collection_delete_test(cluster).await;
+    })
+    .await;
 }

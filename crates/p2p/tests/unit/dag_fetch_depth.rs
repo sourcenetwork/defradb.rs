@@ -4,7 +4,7 @@ use super::*;
 /// blocks. Each round serves only its cut below the frontier: a new head over
 /// held history costs one small round, and an empty receiver widens the cut
 /// without any round re-serving an earlier round's blocks.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn depth_cut_fetch_serves_only_the_cut_below_the_frontier() {
     let cases = [
         (99, vec![(2, 3)]),

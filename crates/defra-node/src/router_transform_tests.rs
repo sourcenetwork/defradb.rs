@@ -42,7 +42,7 @@ fn http_config_wraps_native_extra_and_fallback_routes_once() {
                     router.layer(middleware::from_fn(filter))
                 }));
             let node = Node::builder().with_http(config).build().await.unwrap();
-            let client = reqwest::Client::builder()
+            let client = net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()

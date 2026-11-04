@@ -105,12 +105,8 @@ impl QueryExecutor for NoopExecutor {
 
 /// The runtime the benchmark drives requests from. The slow path's pinned
 /// hop runs on the network runtime the state carries, not on this one.
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .expect("runtime should build")
+fn runtime() -> common::Runtime {
+    common::runtime(4)
 }
 
 fn executor() -> Arc<dyn QueryExecutor> {
@@ -151,7 +147,7 @@ async fn drive(router: &Router) -> StatusCode {
 
 /// Fails loudly if a router does not actually serve the request, so a
 /// benchmark can never report an error path as a fast path.
-fn assert_serves(rt: &tokio::runtime::Runtime, router: &Router, label: &str) {
+fn assert_serves(rt: &common::Runtime, router: &Router, label: &str) {
     let status = rt.block_on(drive(router));
     assert_eq!(status, StatusCode::OK, "{label} did not return 200");
 }

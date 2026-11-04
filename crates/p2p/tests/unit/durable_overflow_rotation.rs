@@ -77,7 +77,7 @@ fn record(doc_id: &str, source_peer: &str) -> PersistedPendingDag {
 /// take both in-memory slots at restore; once each has spent its dispatches
 /// it gives its slot back while keeping its record, and the resync carries on
 /// past the roots it admitted last, so the other three are fetched and merge.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn resync_rotates_past_unfetchable_records() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -123,9 +123,14 @@ async fn resync_rotates_past_unfetchable_records() {
         max_pending_dags: 2,
         ..SyncConfig::default()
     };
-    let (coordinator, mut events) = SyncCoordinator::new(transport, blockstore.clone(), config)
-        .await
-        .unwrap();
+    let (coordinator, mut events) = SyncCoordinator::new(
+        transport,
+        blockstore.clone(),
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
     let coordinator = Arc::new(coordinator);
     coordinator
         .install_pending_dag_store(pending_store.clone())
@@ -141,7 +146,7 @@ async fn resync_rotates_past_unfetchable_records() {
 
     let pump = {
         let coordinator = Arc::clone(&coordinator);
-        n0_future::task::spawn(async move {
+        crate::rt::spawn(async move {
             let config = ReplicationConfig::default();
             while !matches!(
                 ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await,
@@ -151,7 +156,7 @@ async fn resync_rotates_past_unfetchable_records() {
     };
     let clock = {
         let coordinator = Arc::clone(&coordinator);
-        n0_future::task::spawn(async move {
+        crate::rt::spawn(async move {
             coordinator
                 .run_pending_dag_retry_clock(Duration::from_secs(2))
                 .await
@@ -160,17 +165,17 @@ async fn resync_rotates_past_unfetchable_records() {
     };
     let resync = {
         let coordinator = Arc::clone(&coordinator);
-        n0_future::task::spawn(async move {
+        crate::rt::spawn(async move {
             coordinator
                 .run_pending_dag_resync(Duration::from_secs(60))
                 .await;
         })
     };
 
-    let deadline = n0_future::time::Instant::now() + Duration::from_secs(30 * 60);
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(30 * 60);
     let mut merged = 0;
-    while n0_future::time::Instant::now() < deadline {
-        n0_future::time::sleep(Duration::from_secs(1)).await;
+    while crate::rt::time::Instant::now() < deadline {
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
         merged = 0;
         for root in &fetchable {
             if coordinator.manager().is_merged(root).await.unwrap() {
@@ -183,8 +188,8 @@ async fn resync_rotates_past_unfetchable_records() {
     }
 
     coordinator.shutdown().await;
-    clock.await.unwrap();
-    resync.await.unwrap();
+    clock.await;
+    resync.await;
     pump.abort();
 
     assert_eq!(

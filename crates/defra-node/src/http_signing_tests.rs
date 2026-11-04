@@ -22,7 +22,7 @@ fn http_write_signs_as_a_generated_node_identity() {
             node.add_collection("type User { name: String }")
                 .await
                 .unwrap();
-            let client = reqwest::Client::builder()
+            let client = net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
