@@ -76,6 +76,15 @@
 \* crates/db/src/merge/redriven_sink.rs;
 \* crates/p2p/src/sync/manager/process/mod.rs mark_as_merged, discharge_merged;
 \* crates/p2p/src/sync/coordinator/broadcast.rs push_to_replicators_with_creator.
+\*
+\* The sender's commit-to-marker handoff (MarkerHandoff). Rust: handoff is
+\* the scopes whose ordered_transaction_broadcast task
+\* (crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update)
+\* has not ended, each holding the BroadcastDone its commit call waits on
+\* (crates/db/src/event/emission.rs register_update_event_callback);
+\* senderUp is SyncCoordinator::spawn_background_task still accepting tasks
+\* (crates/p2p/src/sync/coordinator/mod.rs), false once the coordinator's
+\* shutdown began or its process died.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -156,7 +165,6 @@ VARIABLES
   fwdDirty,      \* SUBSET Scopes, the hub's durable scope markers for its own downstream replicator
   downV,         \* [Scopes -> 0..MaxV], the head the hub's downstream replicator holds
   handoff,       \* SUBSET Scopes, committed heads whose markers are not registered yet
-  ackedV,        \* [Scopes -> 0..MaxV], newest head a writer was told committed
   senderUp       \* BOOLEAN, the sender's P2P still registers markers
 
 \* The three variables of the hub's downstream hop, for actions that leave it alone.
@@ -165,11 +173,10 @@ fwdVars == <<fwdDue, fwdDirty, downV>>
 vars == <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider,
           serveAuth, serveScopes,
           flights, drained, ready, mergeFlights, terminalFlights, fetchExhausted,
-          lostCompletions, mergedV, crashed, fwdDue, fwdDirty, downV, handoff, ackedV,
-          senderUp>>
+          lostCompletions, mergedV, crashed, fwdDue, fwdDirty, downV, handoff, senderUp>>
 
 \* The sender's commit-to-marker handoff; every receiver action leaves it as is.
-senderVars == <<handoff, ackedV, senderUp>>
+senderVars == <<handoff, senderUp>>
 
 TypeOK ==
   /\ localV \in [Scopes -> 0..MaxV]
@@ -200,7 +207,6 @@ TypeOK ==
   \* The downstream replicator holds some version of each scope.
   /\ downV \in [Scopes -> 0..MaxV]
   /\ handoff \subseteq Scopes
-  /\ ackedV \in [Scopes -> 0..MaxV]
   /\ senderUp \in BOOLEAN
 
 Init ==
@@ -230,7 +236,6 @@ Init ==
   \* The downstream replicator starts with nothing.
   /\ downV = [s \in Scopes |-> 0]
   /\ handoff = {}
-  /\ ackedV = [s \in Scopes |-> 0]
   /\ senderUp = TRUE
 
 RecordMarker(s) ==
@@ -274,7 +279,6 @@ Update(s) ==
         /\ serveScopes' = IF ServeMode = "DurableDerived"
                           THEN serveScopes \cup {s}
                           ELSE serveScopes
-        /\ ackedV' = [ackedV EXCEPT ![s] = v]
   /\ UNCHANGED <<pending, originBound, qualifiedOffers, qualifiedProvider, flights, drained, ready, mergeFlights, terminalFlights,
                  fetchExhausted, lostCompletions, mergedV, crashed, fwdVars, handoff, senderUp>>
 
@@ -313,7 +317,7 @@ Commit(s) ==
   /\ UNCHANGED <<dirty, payloadLedger, inflight, pending, originBound,
                  qualifiedOffers, qualifiedProvider, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted,
-                 lostCompletions, mergedV, crashed, ackedV, senderUp>>
+                 lostCompletions, mergedV, crashed, senderUp>>
   /\ UNCHANGED fwdVars
 
 \* The handed-off registration runs: the scope marker becomes durable, the
@@ -327,8 +331,7 @@ RegisterMarker(s) ==
        THEN {r \in payloadLedger : r[1] # s} \cup {<<s, localV[s]>>}
        ELSE payloadLedger
   /\ inflight' = inflight \cup {<<s, localV[s]>>} \* the live hint
-  /\ handoff' = handoff \ {s}                \* nothing pending for s
-  /\ ackedV' = [ackedV EXCEPT ![s] = localV[s]] \* the writer is told
+  /\ handoff' = handoff \ {s}                \* the commit call returns
   /\ UNCHANGED <<localV, pending, originBound, qualifiedOffers,
                  qualifiedProvider, serveAuth, serveScopes, flights, drained,
                  ready, mergeFlights, terminalFlights, fetchExhausted,
@@ -344,11 +347,7 @@ SenderStop ==
   /\ senderUp                                \* it runs until now
   /\ MarkerHandoff = "Drained" => handoff = {} \* drained first
   /\ senderUp' = FALSE                       \* no marker registers any more
-  /\ handoff' = {}                           \* pending registrations dropped
-  /\ ackedV' = IF MarkerHandoff = "Undrained" \* each dropped task returns
-               THEN [s \in Scopes |->
-                       IF s \in handoff THEN localV[s] ELSE ackedV[s]]
-               ELSE ackedV
+  /\ handoff' = {}                           \* dropped; each commit returns
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound,
                  qualifiedOffers, qualifiedProvider, serveAuth, serveScopes,
                  flights, drained, ready, mergeFlights, terminalFlights,
@@ -367,7 +366,7 @@ SenderCrash ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound,
                  qualifiedOffers, qualifiedProvider, serveAuth, serveScopes,
                  flights, drained, ready, mergeFlights, terminalFlights,
-                 fetchExhausted, lostCompletions, mergedV, crashed, ackedV>>
+                 fetchExhausted, lostCompletions, mergedV, crashed>>
   /\ UNCHANGED fwdVars
 
 \* Marker retry always rederives localV[s].  There is no stored version to
@@ -956,17 +955,24 @@ INV_ObligationConservation ==
       \/ <<s, localV[s]>> \in inflight
       \/ <<s, localV[s]>> \in pending
 
-\* A head its writer was told committed is owed to the receiver until the
-\* receiver merged it: a durable scope marker, or a hint or durable receiver
-\* registration for that head or a newer one, which subsumes it. A head no
-\* writer was told committed (its sender crashed before registering it) is
-\* outside this promise.
-INV_AckedWriteOwned ==
-  \A s \in Scopes :
-    mergedV[s] < ackedV[s] =>
-      \/ s \in dirty
-      \/ \E v \in ackedV[s]..MaxV :
-            <<s, v>> \in payloadLedger \cup inflight \cup pending
+\* A commit call returns to its writer only at a step that leaves its head
+\* owed to the receiver: a durable scope marker, or a hint or durable
+\* receiver registration for that head or a newer one, which subsumes it,
+\* unless the receiver already merged it. The steps that return a commit
+\* call are its registration (RegisterMarker) and P2P's shutdown dropping
+\* it unrun (SenderStop); a crash (SenderCrash) returns nothing.
+ACT_AckedWriteOwned ==
+  [][\A s \in handoff :
+       RegisterMarker(s) \/ SenderStop =>
+         \/ mergedV'[s] >= localV[s]
+         \/ s \in dirty'
+         \/ \E v \in localV[s]..MaxV :
+               <<s, v>> \in payloadLedger' \cup inflight' \cup pending']_vars
+
+\* While the sender runs, a head it committed and has not registered yet is
+\* owed by its pending registration, and every other by the markers
+\* INV_ObligationConservation names. A sender crash ends that promise.
+INV_ConservedWhileSenderUp == senderUp => INV_ObligationConservation
 
 INV_SingleFlight == \A r \in Roots : flights[r] <= 1
 

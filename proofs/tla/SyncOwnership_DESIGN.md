@@ -118,9 +118,11 @@ commit-receipt order (`merge/txn_broadcaster.rs`
 returns when it ends or is dropped unrun; only then is the writer told the
 write committed.
 
-- `handoff` holds the scopes committed but not yet registered. It is volatile.
-- `ackedV` is the newest head of each scope a writer was told committed.
-- `senderUp` is false once the sender's P2P stopped or its process died.
+- `handoff` holds the scopes committed but not yet registered: their
+  `ordered_transaction_broadcast` tasks, each holding the `BroadcastDone` its
+  commit call waits on. It is volatile.
+- `senderUp` is false once the sender's P2P stopped or its process died
+  (`SyncCoordinator::spawn_background_task` no longer accepts tasks).
 - `Commit` makes the new head current; `RegisterMarker` records the marker,
   sends the hint and returns the commit call.
 - `SenderStop` is P2P's graceful shutdown. Under `Drained`, Node::shutdown
@@ -399,11 +401,15 @@ state a property: the end of a continuation is the liveness property
 - `INV_ObligationConservation`: when a receiver is behind the sender's current
   head, that exact current obligation is in sender durability, in flight,
   durably registered, or merged.
-- `INV_AckedWriteOwned`: a head its writer was told committed is owed to the
-  receiver until merged, by the durable scope marker or a hint or durable
-  registration of it or a newer head. A head whose sender crashed before
-  registering it was never acknowledged and is outside the promise;
-  `INV_ObligationConservation` does not hold across that crash.
+- `ACT_AckedWriteOwned`: a step that returns a commit call to its writer
+  (`RegisterMarker`, or `SenderStop` dropping the registration unrun) leaves
+  its head owed to the receiver, by the durable scope marker or a hint or
+  durable registration of it or a newer head, unless already merged. A crash
+  returns no commit call, so a head whose sender crashed before registering
+  it was never acknowledged and is outside the promise.
+- `INV_ConservedWhileSenderUp`: `INV_ObligationConservation`, counting a
+  pending registration, while the sender runs. It does not hold across a
+  crash between a commit and its registration.
 - `INV_SingleFlight`: at most one fetch owner exists for an exact root/CID.
 - `INV_FetchOwnersBounded`: scheduled and running fetch ownership never
   exceeds `FetchCap`, including the receiver-clock event handoff.

@@ -552,7 +552,7 @@ pub const PROPERTIES: &[Property] = &[
         // the commit returns only once that registration ran, and P2P stops
         // only after the writes the node admitted drained.
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_AckedWriteOwned — a head its writer was told committed stays owed until merged",
+        name: "ACT_AckedWriteOwned / INV_ConservedWhileSenderUp — a commit call returns only once its head is owed; while the sender runs every committed head is owed",
         axis: Tla,
         anchor: "crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/db/src/event/emission.rs register_update_event_callback; crates/defra-node/src/lib.rs Node::shutdown",
         model_ref: "MC_SyncOwnership_{Green_MarkerHandoff,Red_UndrainedMarker}.cfg",
