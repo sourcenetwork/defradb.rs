@@ -288,6 +288,10 @@ where
     if let Some(reason) = send_outcome.failure_reason {
         context.backlog.record_head_hint_failure(reason);
     }
+    let answered = !matches!(
+        send_outcome.failure_reason,
+        Some(HeadHintFailureReason::Transport | HeadHintFailureReason::Local)
+    );
     // A saturated or unreachable receiver parks the whole peer: every CID we
     // would push next fails for the same reason (defradb#1112).
     let demoted = if send_outcome.failure_reason == Some(HeadHintFailureReason::Transport) {
@@ -298,7 +302,7 @@ where
             .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
         context.backlog.take_queued_for_peer(&job.peer_id).await
     } else {
-        if send_outcome.failure_reason != Some(HeadHintFailureReason::Local) {
+        if answered {
             context.backlog.record_peer_answered(&job.peer_id);
         }
         Vec::new()
@@ -325,9 +329,11 @@ where
     let send_failed = send_outcome.failed;
     let any_failed = root_missing || send_failed;
     match send_outcome.error {
-        Some(error) => context
-            .peer_state
-            .record_head_push_failed(job.peer_id.as_str(), error),
+        Some(error) => {
+            context
+                .peer_state
+                .record_head_push_failed(job.peer_id.as_str(), error, answered)
+        }
         None if !any_failed => context.peer_state.record_head_acked(job.peer_id.as_str()),
         None => {}
     }
